@@ -157,9 +157,11 @@ Verified on the primary machine (2026-10-15):
   renders 3D ≈7.9 % horizontally stretched on 4:3 (virtual 496×348 band with projection aspect
   1.42), and the reimplementation reproduces that by default. Hor+ widening applies on top of it:
   the vertical FOV and the same pixel shape are kept, and the view extends sideways.
-- **D2, intro movie:** `komachi.dat` is MPEG-1. Playing it needs an MPEG-1 decoder, which is not on
-  the dependency allowlist (options: a pure-Rust decoder crate, writing a small one, or skipping the
-  movie).
+- **D2, intro movie: POSTPONED (user, 2026-10-15).** `komachi.dat` is MPEG-1 (video plus an MPEG
+  audio stream, layer still to be confirmed). No maintained pure-Rust MPEG-1 video decoder exists.
+  Idea to revisit later: transcode it once with ffmpeg at setup time into a format that's easy to
+  play. The output is derived from game data, so it stays in the user's data dir and is never
+  committed. Writing our own decoder (~1.5–2k lines) is the fallback.
 
 ## 10. Open questions → next phases
 
