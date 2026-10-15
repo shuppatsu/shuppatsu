@@ -132,19 +132,17 @@ tv = ( h      · (v_part / 256) + v_rect) / 256
 - **Size of a unit:** a train car spans about 650 raw in z. A 20 m car then gives 32 raw ≈ 1 m,
   so 1 world unit ≈ 8 m. That fits fog 1→10 units (≈8–80 m), far plane 32 (≈256 m) and the
   scenery cull radius 10 (renderer.md). **guess**: the route/placement scale (stages/route docs) should confirm it.
-- **Winding (corrected in Phase 3, confirmed by rendering):** in the renderer's left-handed
-  game frame (look-at LH, projection LH), visible faces wind **clockwise on screen**: drawing
-  with front face = CW and back-face culling shows rails, track bed, platforms and walls from
-  the right side, while CCW fronts culled almost all ground-level geometry (the first viewer
-  build showed only the inner faces of far walls). Text on signs reads correctly, so the scene
-  is not mirrored; only the winding rule was wrong. The first draft of this note inferred CCW
-  from the signed volume of 12 closed parts; that sign test assumed the opposite convention.
-  This agrees with the original: D3D judges winding in screen space with y pointing down, and
-  culls CW there (D3DCULL_CW), so visible faces are CCW in y-down screen space, which is CW in
-  wgpu's y-up normalised device coordinates.
-  - For a port: keep the index order; front face = CW, cull back, in the left-handed frame.
-    (The Phase 2 glTF export negates z and reverses the winding, which gives a consistent
-    right-handed mesh either way.)
+- **Handedness and winding (settled in Phase 3 against a screenshot of the original):** the
+  original's view chain is a right-handed look-at (0x418420) followed by the fixed VIEW
+  transform diag(1, 1, −1, 1), so screen x is the mirror of a plain left-handed look-at. With
+  that view, visible faces wind **counter-clockwise** in wgpu's y-up NDC (= clockwise in D3D's
+  y-down screen space, consistent with D3DCULL_CW). The signed-volume reading above is right.
+  History: the first viewer used a left-handed look-at; the scene came out mirrored, and CW
+  fronts appeared to fix culling. A screenshot of the original (Keihin, approaching
+  Higashi-Kanagawa) showed the platform on the opposite side, which exposed the mirror. Sign
+  textures that read correctly in the mirrored view are therefore UV-mirrored in the data.
+  - For a port: keep the index order; use the original's view (`f × up`, `up`, `f` rows) and
+    front face = CCW in y-up NDC with back-face culling.
 - Parts carry no normals, bounding volumes or LOD data. Culling uses object placement
   (renderer.md §10).
 
@@ -166,7 +164,7 @@ tv = ( h      · (v_part / 256) + v_rect) / 256
    the texture page `rect.page`. Use a repeat sampler (nearest filtering for arcade fidelity,
    renderer.md §6).
 3. Discard texels with RGB565 == 0. Depth test and write on. No blending.
-4. Front face CW, cull back (see the winding note above). Apply linear fog per renderer.md §7.
+4. Front face CCW (with the original's view), cull back (see the handedness note above). Apply linear fog per renderer.md §7.
 
 ## Open questions
 

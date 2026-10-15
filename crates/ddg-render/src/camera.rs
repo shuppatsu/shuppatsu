@@ -93,11 +93,15 @@ pub struct Camera {
 }
 
 impl Camera {
-    /// Left-handed look-at (D3DX `LookAtLH` layout), Y up.
+    /// The original's view: `Camera_LookAt` (0x418420) builds a right-handed look-at (forward
+    /// = −z) and the fixed VIEW transform diag(1, 1, −1, 1) flips z. Net effect: rows `f × up`,
+    /// `up`, `f`, i.e. screen x is the mirror of a left-handed look-at. Verified against a
+    /// screenshot of the original (Keihin, approaching Higashi-Kanagawa): with a left-handed
+    /// look-at the whole scene came out mirrored.
     pub fn view(&self) -> Mat4 {
         let f = (self.target - self.eye).normalize();
-        let s = Vec3::Y.cross(f).normalize();
-        let u = f.cross(s);
+        let s = f.cross(Vec3::Y).normalize();
+        let u = s.cross(f);
         Mat4::from_cols(
             s.extend(-s.dot(self.eye)),
             u.extend(-u.dot(self.eye)),
@@ -137,5 +141,24 @@ mod tests {
         let m43 = p.matrix(4.0 / 3.0);
         assert_eq!(m.y_axis.y, m43.y_axis.y);
         assert!(m.x_axis.x < m43.x_axis.x);
+    }
+}
+
+#[cfg(test)]
+mod view_tests {
+    use super::*;
+
+    #[test]
+    fn view_matches_original_handedness() {
+        // Looking along +z from the origin: forward maps to +z (depth), and world −x appears on
+        // the right of the screen (x row = f × up = z × y = −x).
+        let v = Camera {
+            eye: Vec3::ZERO,
+            target: Vec3::Z,
+        }
+        .view();
+        assert!(v.transform_point3(Vec3::Z).abs_diff_eq(Vec3::Z, 1e-6));
+        assert!(v.transform_point3(Vec3::NEG_X).abs_diff_eq(Vec3::X, 1e-6));
+        assert!(v.transform_point3(Vec3::Y).abs_diff_eq(Vec3::Y, 1e-6));
     }
 }

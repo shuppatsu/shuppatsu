@@ -31,6 +31,7 @@ options:
   --original-visibility    the original 4:3 visibility lists, even in a wider window
   --stable-track-variants  enhancement: side-track models don't switch every point (no flicker)
   --texture-filtering      enhancement: mipmaps + trilinear/anisotropic filtering (no shimmer)
+  --fog                    linear fog as DengoSetting's FOGENABLE (off on a fresh install)
   --size <WxH>             window/frame size (default 1280x800, 16:10)
 
 keys: Space pause, Up/Down speed, Left/Right jump 100 m, L track lines, F fog, Esc quit";
@@ -55,6 +56,7 @@ struct Options {
     original_visibility: bool,
     stable_track_variants: bool,
     texture_filtering: bool,
+    fog: bool,
     size: (u32, u32),
 }
 
@@ -76,6 +78,7 @@ fn parse_args() -> Result<Options> {
         original_visibility: false,
         stable_track_variants: false,
         texture_filtering: false,
+        fog: false,
         size: (1280, 800),
     };
     let mut rest = args[2..].iter();
@@ -89,6 +92,7 @@ fn parse_args() -> Result<Options> {
             "--original-visibility" => opts.original_visibility = true,
             "--stable-track-variants" => opts.stable_track_variants = true,
             "--texture-filtering" => opts.texture_filtering = true,
+            "--fog" => opts.fog = true,
             "--size" => {
                 let s = rest.next().context("--size needs WxH")?;
                 let (w, h) = s.split_once('x').context("--size needs WxH")?;
@@ -112,6 +116,9 @@ fn track_pos(units: f32) -> TrackPos {
 
 fn configure_renderer(renderer: &mut Renderer, opts: &Options) {
     renderer.texture_filtering = opts.texture_filtering;
+    // The original reads FOGENABLE from the registry; with no key (fresh install, never run
+    // DengoSetting) it parses as 0, so fog is off.
+    renderer.fog.enabled = opts.fog;
     renderer.projection.fov_tenths = (DRIVING_FOV_Y_DEG * 10.0) as u16;
     renderer.projection.stretch = if opts.square_pixels {
         1.0

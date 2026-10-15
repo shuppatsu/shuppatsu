@@ -230,11 +230,11 @@ impl Renderer {
                 step_mode: wgpu::VertexStepMode::Vertex,
                 attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2],
             },
-            // Visible faces wind clockwise on screen in this left-handed setup (verified by
-            // rendering: with CCW fronts, rails, platforms and most scenery were culled).
+            // With the original's (mirrored) view, visible faces wind counter-clockwise in wgpu's
+            // y-up NDC, matching D3DCULL_CW in D3D's y-down screen space (models.md).
             wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Cw,
+                front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
                 ..Default::default()
             },
