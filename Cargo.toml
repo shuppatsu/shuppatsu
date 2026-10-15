@@ -16,6 +16,11 @@ thiserror = "2"
 encoding_rs = "0.8"
 pelite = "0.10"
 image = { version = "0.25", default-features = false, features = ["png"] }
+wgpu = "30"
+winit = "0.30"
+glam = { version = "0.34", features = ["bytemuck"] }
+bytemuck = { version = "1", features = ["derive"] }
+ddg-render = { path = "crates/ddg-render" }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
