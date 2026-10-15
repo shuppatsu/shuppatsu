@@ -12,6 +12,8 @@ pub struct Entry {
     pub sha256: String,
     /// The file is entirely zero bytes (e.g. lost to a truncated image).
     pub all_zero: bool,
+    /// Shannon entropy in bits per byte.
+    pub entropy: f64,
 }
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) -> Result<()> {
@@ -44,6 +46,7 @@ pub fn collect(root: &Path) -> Result<Vec<Entry>> {
                 magic,
                 sha256: sha256::to_hex(&sha256::sha256(&data)),
                 all_zero: !data.is_empty() && data.iter().all(|&b| b == 0),
+                entropy: crate::pe::entropy(&data),
             })
         })
         .collect()
@@ -60,7 +63,7 @@ pub fn print_inventory(root: &Path) -> Result<()> {
     let mut hist: BTreeMap<String, (usize, u64)> = BTreeMap::new();
     let mut total = 0;
     println!(
-        "| path | size | magic (hex) | magic | sha256 (prefix) | note |\n|---|---:|---|---|---|---|"
+        "| path | size | magic (hex) | magic | entropy | sha256 (prefix) | note |\n|---|---:|---|---|---:|---|---|"
     );
     for e in &entries {
         let ext = Path::new(&e.rel)
@@ -72,11 +75,12 @@ pub fn print_inventory(root: &Path) -> Result<()> {
         h.1 += e.size;
         total += e.size;
         println!(
-            "| {} | {} | `{}` | `{}` | `{}` | {} |",
+            "| {} | {} | `{}` | `{}` | {:.3} | `{}` | {} |",
             e.rel,
             e.size,
             sha256::to_hex(&e.magic),
             magic_ascii(&e.magic),
+            e.entropy,
             &e.sha256[..16],
             if e.all_zero { "ALL ZERO" } else { "" }
         );

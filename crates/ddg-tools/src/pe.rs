@@ -6,7 +6,7 @@ use pelite::pe32::{Pe, PeFile};
 use pelite::resources::{Directory, Entry, Name};
 use std::path::Path;
 
-fn entropy(data: &[u8]) -> f64 {
+pub fn entropy(data: &[u8]) -> f64 {
     if data.is_empty() {
         return 0.0;
     }
@@ -22,7 +22,9 @@ fn entropy(data: &[u8]) -> f64 {
             let p = c as f64 / n;
             -p * p.log2()
         })
-        .sum()
+        .sum::<f64>()
+        // Normalise -0.0 (single-symbol data) to 0.0.
+        + 0.0
 }
 
 fn u32_at(d: &[u8], off: usize) -> Option<u32> {
@@ -80,6 +82,10 @@ fn walk_resources(dir: Directory<'_>, depth: usize, path: &mut Vec<String>) {
 
 pub fn print_report(path: &Path) -> Result<()> {
     let data = std::fs::read(path)?;
+    let ne = u32_at(&data, 0x3c).map(|o| o as usize);
+    if let Some(ne) = ne.filter(|&o| data.get(o..o + 2) == Some(b"NE")) {
+        return print_ne_report(path, &data, ne);
+    }
     let pe = PeFile::from_bytes(&data).context("not a 32-bit PE")?;
     let fh = pe.file_header();
     let oh = pe.optional_header();
@@ -147,16 +153,7 @@ pub fn print_report(path: &Path) -> Result<()> {
         Ok(imports) => {
             for desc in imports {
                 let dll = desc.dll_name().map(|n| n.to_string()).unwrap_or_default();
-                let mut names: Vec<String> = Vec::new();
-                if let Ok(int) = desc.int() {
-                    for imp in int.flatten() {
-                        names.push(match imp {
-                            pelite::pe32::imports::Import::ByName { name, .. } => name.to_string(),
-                            pelite::pe32::imports::Import::ByOrdinal { ord } => format!("#{ord}"),
-                        });
-                    }
-                }
-                println!("{dll} ({}): {}", names.len(), names.join(", "));
+                println!("{dll}: {}", import_names(pe, &desc).join(", "));
             }
         }
         Err(e) => println!("(none: {e})"),
@@ -186,5 +183,89 @@ pub fn print_report(path: &Path) -> Result<()> {
         }
         Err(e) => println!("(none: {e})"),
     }
+    Ok(())
+}
+
+/// Import names for one descriptor. Borland linkers leave the import name table
+/// (OriginalFirstThunk) empty, so fall back to the on-disk IAT, which then still
+/// holds the hint/name RVAs.
+fn import_names<'a>(
+    pe: PeFile<'a>,
+    desc: &pelite::pe32::imports::Desc<'a, PeFile<'a>>,
+) -> Vec<String> {
+    use pelite::pe32::imports::Import;
+    let from_int: Vec<String> = desc
+        .int()
+        .map(|int| {
+            int.flatten()
+                .map(|imp| match imp {
+                    Import::ByName { name, .. } => name.to_string(),
+                    Import::ByOrdinal { ord } => format!("#{ord}"),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    if !from_int.is_empty() {
+        return from_int;
+    }
+    let Ok(iat) = desc.iat() else {
+        return Vec::new();
+    };
+    iat.take_while(|&&v| v != 0)
+        .map(|&v| {
+            if v & 0x8000_0000 != 0 {
+                format!("#{}", v & 0xffff)
+            } else {
+                pe.derva_c_str(v + 2)
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|_| format!("<rva {v:#x}>"))
+            }
+        })
+        .collect()
+}
+
+fn u16_at(d: &[u8], off: usize) -> Option<u16> {
+    d.get(off..off + 2)
+        .map(|b| u16::from_le_bytes([b[0], b[1]]))
+}
+
+/// Pascal-style (length-prefixed) string at `off`.
+fn pstr(d: &[u8], off: usize) -> Option<String> {
+    let len = *d.get(off)? as usize;
+    d.get(off + 1..off + 1 + len)
+        .map(|s| String::from_utf8_lossy(s).into_owned())
+}
+
+/// Minimal report for 16-bit NE modules: module name, linker, imported modules,
+/// resident (exported) names.
+fn print_ne_report(path: &Path, data: &[u8], ne: usize) -> Result<()> {
+    let field = |off: usize| u16_at(data, ne + off).context("truncated NE header");
+    println!("# {}", path.display());
+    println!(
+        "16-bit NE module, linker {}.{}, flags {:#06x}, target OS {}",
+        data[ne + 2],
+        data[ne + 3],
+        field(0x0c)?,
+        data.get(ne + 0x36).copied().unwrap_or(0)
+    );
+    let modref_count = field(0x1e)? as usize;
+    let resident = ne + field(0x26)? as usize;
+    let modref = ne + field(0x28)? as usize;
+    let imported = ne + field(0x2a)? as usize;
+
+    let mut names = Vec::new();
+    let mut off = resident;
+    while let Some(name) = pstr(data, off).filter(|s| !s.is_empty()) {
+        let ordinal = u16_at(data, off + 1 + name.len()).unwrap_or(0);
+        names.push(format!("{name}@{ordinal}"));
+        off += name.len() + 3;
+    }
+    println!("resident names: {}", names.join(", "));
+
+    let modules: Vec<String> = (0..modref_count)
+        .filter_map(|i| u16_at(data, modref + 2 * i))
+        .filter_map(|o| pstr(data, imported + o as usize))
+        .collect();
+    println!("imported modules: {}", modules.join(", "));
     Ok(())
 }
