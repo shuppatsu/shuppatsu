@@ -84,9 +84,11 @@ impl TrackPoint {
         (self.flags >> 5) as u8
     }
 
+    /// Marker slots carry the segment index as an integer in both the `x` field (raw bits, so it
+    /// reads as a denormal float such as 1e-45 for segment 1) and the height field.
     fn is_marker(&self, high: u16, segment: usize) -> bool {
         self.flags & 0xf000 == high
-            && self.x == 0.0
+            && (self.x == 0.0 || self.x.to_bits() as usize == segment)
             && self.z == 0.0
             && usize::try_from(self.height_raw).is_ok_and(|s| s == segment)
     }

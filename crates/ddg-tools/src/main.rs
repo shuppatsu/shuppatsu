@@ -2,6 +2,7 @@
 
 mod check;
 mod export;
+mod gltf;
 mod inventory;
 mod pe;
 
@@ -18,7 +19,7 @@ commands:
   strings <file> [--min N] [--jp] ASCII and Shift-JIS strings with offsets
   export <what> [--out DIR] [--palette N]
                                   write PNG/WAV from $DDG_DATA_DIR to out/export (default)
-                                  what: textures | tilemaps | audio | all
+                                  what: textures | tilemaps | audio | models | routes | all
   check [-v]                      Phase 2 exit check: every file in $DDG_DATA_DIR parsed or documented";
 
 fn main() -> Result<()> {
@@ -107,6 +108,14 @@ fn run_export(args: &[String]) -> Result<()> {
     }
     if all || what == "audio" {
         println!("audio: {} files", export::audio(&dirs, &out)?);
+        any = true;
+    }
+    if all || what == "models" {
+        println!("models: {} glTF files", export::models(&dirs, &out)?);
+        any = true;
+    }
+    if all || what == "routes" {
+        println!("routes: {} glTF files", export::routes(&dirs, &out)?);
         any = true;
     }
     if !any {

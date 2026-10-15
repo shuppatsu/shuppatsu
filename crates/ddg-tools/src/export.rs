@@ -210,3 +210,193 @@ pub fn audio(dirs: &GameDirs, out: &Path) -> Result<usize> {
     }
     Ok(written)
 }
+
+// ---------------------------------------------------------------------------------------------
+// 3D: models and routes as glTF.
+//
+// Conversion from the game's left-handed, Y-up space to glTF's right-handed, Y-up space: negate Z
+// and reverse each triangle's winding. UVs: the PNGs are exported upright (tex pages are stored
+// bottom-up and the game's UVs address that layout), so V is mirrored (v' = 1 − v).
+
+use crate::gltf::{Gltf, Primitive};
+use ddg_formats::{part::Part, rom2::Rom2, route::Route, stages::StageTables, tex::TexRect};
+use std::collections::HashMap;
+
+/// Texture rects by global id → (tex file stem, rect). Files later in `tex_names` win, matching
+/// the game (rect table 0x825144 is overwritten per file).
+fn rect_map(dirs: &GameDirs, tex_names: &[String]) -> Result<HashMap<u16, (String, TexRect)>> {
+    let mut map = HashMap::new();
+    for name in tex_names {
+        let t = TexFile::parse(&dirs.read_data(name)?).with_context(|| name.clone())?;
+        for r in t.rects {
+            map.insert(r.id, (stem(name), r));
+        }
+    }
+    Ok(map)
+}
+
+/// Parts by id from `parts_names`; the first file wins (part table 0x817c7c).
+fn part_map(dirs: &GameDirs, parts_names: &[String]) -> Result<HashMap<u16, Part>> {
+    let mut map = HashMap::new();
+    for name in parts_names {
+        let data = dirs.read_data(name)?;
+        for entry in Rom2::parse(&data)?.iter() {
+            let (id, part) = Part::parse_entry(entry).with_context(|| name.clone())?;
+            map.entry(id).or_insert(part);
+        }
+    }
+    Ok(map)
+}
+
+/// Converts a part into glTF primitives, one per (tex file, page) material.
+fn part_mesh(
+    gltf: &mut Gltf,
+    materials: &mut HashMap<(String, u16), usize>,
+    rects: &HashMap<u16, (String, TexRect)>,
+    id: u16,
+    part: &Part,
+) -> usize {
+    let mut prims = Vec::new();
+    for g in &part.groups {
+        let material = rects.get(&g.rect_id).map(|(tex, r)| {
+            *materials.entry((tex.clone(), r.page)).or_insert_with(|| {
+                let uri = format!("../tex/{tex}/page{:02}.png", r.page);
+                gltf.textured_material(&format!("{tex}/page{:02}", r.page), &uri)
+            })
+        });
+        let positions = g
+            .vertices
+            .iter()
+            .map(|v| {
+                let [x, y, z] = v.position();
+                [x, y, -z]
+            })
+            .collect();
+        let uvs = rects.get(&g.rect_id).map(|(_, r)| {
+            g.page_uvs(r)
+                .into_iter()
+                .map(|[u, v]| [u, 1.0 - v])
+                .collect()
+        });
+        let indices = g
+            .triangles()
+            .flat_map(|[a, b, c]| [u32::from(a), u32::from(c), u32::from(b)])
+            .collect();
+        prims.push(Primitive {
+            positions,
+            uvs,
+            indices: Some(indices),
+            material,
+            mode: 4,
+        });
+    }
+    gltf.mesh(&format!("part{id}"), prims)
+}
+
+fn write_gltf(dir: &Path, name: &str, gltf: Gltf) -> Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let (json, bin) = gltf.finish(&format!("{name}.bin"));
+    std::fs::write(dir.join(format!("{name}.gltf")), json)?;
+    std::fs::write(dir.join(format!("{name}.bin")), bin)?;
+    Ok(())
+}
+
+/// The texture set paired with a parts file: `partsTR3.rom` ↔ `texTR3.rom`, plus the common set.
+fn tex_for(parts_name: &str) -> Vec<String> {
+    let suffix = &stem(parts_name)["parts".len()..];
+    let mut names = vec!["texRC.rom".to_owned()];
+    if suffix != "rc" {
+        names.push(format!("tex{}.rom", suffix.to_ascii_uppercase()));
+    }
+    names
+}
+
+/// One glTF per parts file, every part laid out on a grid for inspection (models need the
+/// texture PNGs from `export textures` next to them in `../tex`).
+pub fn models(dirs: &GameDirs, out: &Path) -> Result<usize> {
+    let dir = out.join("models");
+    let mut written = 0;
+    for name in dirs.data_names("parts")? {
+        let rects = rect_map(dirs, &tex_for(&name))?;
+        let data = dirs.read_data(&name)?;
+        let mut gltf = Gltf::default();
+        let mut materials = HashMap::new();
+        for (i, entry) in Rom2::parse(&data)?.iter().enumerate() {
+            let (id, part) = Part::parse_entry(entry).with_context(|| name.clone())?;
+            let mesh = part_mesh(&mut gltf, &mut materials, &rects, id, &part);
+            let (col, row) = ((i % 40) as f32, (i / 40) as f32);
+            gltf.node(
+                &format!("part{id}"),
+                Some(mesh),
+                [col * 6.0, 0.0, row * 6.0],
+                0.0,
+            );
+        }
+        write_gltf(&dir, &stem(&name), gltf)?;
+        written += 1;
+    }
+    Ok(written)
+}
+
+/// One glTF per `.COM`: every track segment as a line strip and every placement with its model.
+pub fn routes(dirs: &GameDirs, out: &Path) -> Result<usize> {
+    let exe_data = dirs.read_exe()?;
+    let tables = StageTables::read(&Exe::parse(&exe_data)?)?;
+    let dir = out.join("routes");
+    let mut written = 0;
+    for (com, file) in tables.com_files.iter().enumerate() {
+        let Some(file) = file else { continue };
+        // The area comes from any stage that uses this COM.
+        let area = tables
+            .stages
+            .iter()
+            .find(|s| s.segments.iter().any(|seg| seg.com as usize == com))
+            .map(|s| s.area)
+            .with_context(|| format!("no stage uses {file}"))?;
+        let route = Route::parse(&dirs.read_data(file)?).with_context(|| file.clone())?;
+        let parts = part_map(dirs, &["partsRC.rom".into(), format!("partsR{area}.rom")])?;
+        let rects = rect_map(dirs, &["texRC.rom".into(), format!("texR{area}.rom")])?;
+
+        let mut gltf = Gltf::default();
+        let track = gltf.colour_material("track", [1.0, 0.2, 0.1]);
+        for (si, seg) in route.segments.iter().enumerate() {
+            let positions: Vec<[f32; 3]> = route.slots[seg.points.clone()]
+                .iter()
+                .map(|p| [p.x, p.y(), -p.z])
+                .collect();
+            if positions.len() < 2 {
+                continue;
+            }
+            let mesh = gltf.mesh(
+                &format!("segment{si}"),
+                vec![Primitive {
+                    positions,
+                    uvs: None,
+                    indices: None,
+                    material: Some(track),
+                    mode: 3,
+                }],
+            );
+            gltf.node(&format!("segment{si}"), Some(mesh), [0.0; 3], 0.0);
+        }
+        let mut materials = HashMap::new();
+        let mut meshes: HashMap<u32, Option<usize>> = HashMap::new();
+        for (i, p) in route.placements.iter().enumerate().skip(1) {
+            let mesh = *meshes.entry(p.part_id).or_insert_with(|| {
+                let id = u16::try_from(p.part_id).ok()?;
+                let part = parts.get(&id)?;
+                Some(part_mesh(&mut gltf, &mut materials, &rects, id, part))
+            });
+            // Yaw sign flips with the Z mirror (guess; verify visually against the original).
+            gltf.node(
+                &format!("place{i}_part{}", p.part_id),
+                mesh,
+                [p.x, p.y, -p.z],
+                -p.yaw,
+            );
+        }
+        write_gltf(&dir, &stem(file), gltf)?;
+        written += 1;
+    }
+    Ok(written)
+}

@@ -110,10 +110,13 @@ c: 126.
 
 - `start` is the first real point; `end` is one past the last slot. Point count can be 0
   (one empty segment in several files).
-- **Markers.** A *head marker* slot `{0, 0, segment index, 0xf000}` may sit just before `start`; a
-  *tail marker* `{0, 0, segment index, 0xe000}` may be the last slot before `end`. Segment 0 of
-  every file has both. Of ~7700 side segments only ~1075 have a head marker and none have a tail
-  marker; their last real point carries the 0xe000/0x8000 flags instead.
+- **Markers.** A *head marker* slot (flags 0xf000) may sit just before `start`; a *tail marker*
+  (flags 0xe000) may be the last slot before `end`. In both, `z` = 0 and the segment index is stored
+  twice: in the height field **and as a raw integer in the `x` field** (so `x` reads as a denormal
+  float, e.g. 1e-45 for segment 1; segment 0 gives 0.0). **confirmed** (all 15 files; corrected in
+  Phase 2 review: the first parser compared `x` with 0.0 and missed most tail markers, which then
+  showed up as track points at the origin). Real track points can also carry 0xe000/0x8000 flags
+  (turnouts etc.) and have ordinary coordinates.
 - Segment 0 is the driven line. Its region is separate; segments 1.. are stored back to back in
   table order with no gaps (checked by the parser).
 - **Links.** `linkA`/`linkB` point at a slot (0 = none). The walkers 0x4078c0 (previous) and
