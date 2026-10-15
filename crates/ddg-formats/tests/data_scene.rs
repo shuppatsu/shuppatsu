@@ -481,3 +481,158 @@ fn live_intervals_match_walker_and_widen_past_the_4_3_edge() {
     );
     assert!(early_after * 20 < early_before);
 }
+
+/// Parts by id from `partsRC.rom` and the area's `partsR*.rom`.
+fn area_part(dir: &Path, area: usize, id: u32) -> Option<ddg_formats::part::Part> {
+    for name in [format!("partsR{}.rom", area + 1), "partsRC.rom".to_string()] {
+        let data = data_file(dir, &name);
+        for e in Rom2::parse(&data).unwrap().iter() {
+            if u32::from(u16::from_le_bytes([e[0], e[1]])) == id {
+                return Some(ddg_formats::part::Part::parse_entry(e).unwrap().1);
+            }
+        }
+    }
+    None
+}
+
+fn area_rect(dir: &Path, area: usize, id: u16) -> Option<ddg_formats::tex::TexRect> {
+    for name in [format!("texR{}.rom", area + 1), "texRC.rom".to_string()] {
+        let tex = ddg_formats::tex::TexFile::parse(&data_file(dir, &name)).unwrap();
+        if let Some(r) = tex.rects.iter().find(|r| r.id == id) {
+            return Some(*r);
+        }
+    }
+    None
+}
+
+fn sprite_texture(dir: &Path, area: usize, part_id: u32) -> scene::SpriteTexture {
+    let part = area_part(dir, area, part_id).unwrap_or_else(|| panic!("part {part_id:#x}"));
+    let g = &part.groups[0];
+    assert_eq!(
+        g.vertices.len(),
+        4,
+        "part {part_id:#x}: first group is not a quad"
+    );
+    let rect = area_rect(dir, area, g.rect_id).unwrap_or_else(|| panic!("rect {}", g.rect_id));
+    scene::SpriteTexture::from_group(g, &rect).unwrap()
+}
+
+/// Every COM's sky sprites and textured grounds resolve to a 4-vertex part with a known rect,
+/// and the panorama quads are finite and cover the original viewport along the whole route.
+#[test]
+fn background_quads_resolve_and_cover_the_view() {
+    let dir = require_data!();
+    let w = load(&dir);
+    let bg = &w.tables.background;
+    for (i, s) in bg.sky_sprites.iter().enumerate() {
+        eprintln!("sky sprite {i:2}: {s:?}");
+    }
+    let vp = scene::Viewport2d::original(
+        (scene::DRIVING_FOV_Y_DEG.to_radians() * 0.5).tan(),
+        scene::DRIVING_ASPECT,
+    );
+    let wide = vp.hor_plus(vp.half[1] * 21.0 / 9.0);
+    for (&com, (route, area)) in &w.routes {
+        let eye_h = w.tables.eye_height(*area, com);
+        let mut textures = BTreeMap::new();
+        let mut walker = CabWalker::at_segment_start(route, 0);
+        walker.advance(route, 0.0);
+        let last_stop = *route.stops.last().unwrap();
+        let (mut frames, mut drawn, mut uncovered, mut extra) = (0, 0, 0, 0);
+        let mut station = 1;
+        while walker.pos().engine_index + 1 < last_stop {
+            let pos = walker.pos();
+            while station < route.stops.len() && route.stops[station] <= pos.engine_index + 1 {
+                station += 1;
+            }
+            let ctx = ctx_for(&w, com, station as u32);
+            let plan = scene::background(route, &w.tables, ctx, pos);
+            let cam = scene::cab_camera(route, pos, eye_h, 0.0);
+            let view = scene::ViewBasis::from_cab(&cam);
+            for &idx in &plan.sky_sprites {
+                let sprite = &bg.sky_sprites[idx];
+                let tex = *textures.entry(idx).or_insert_with(|| {
+                    sprite_texture(&dir, *area, sprite.part_id).for_sky(sprite.flags)
+                });
+                let q = scene::sky_quads(sprite, &tex, &view, &vp, true);
+                assert_eq!(q.len(), 3);
+                assert!(q.iter().flat_map(|t| t.xy).flatten().all(f32::is_finite));
+                let left = q.iter().map(|t| t.xy[0][0]).fold(f32::INFINITY, f32::min);
+                let right = q
+                    .iter()
+                    .map(|t| t.xy[3][0])
+                    .fold(f32::NEG_INFINITY, f32::max);
+                if left > 0.0 || right < 496.0 {
+                    uncovered += 1;
+                }
+                let q = scene::sky_quads(sprite, &tex, &view, &wide, true);
+                let [l, r] = wide.x_range();
+                let left = q.iter().map(|t| t.xy[0][0]).fold(f32::INFINITY, f32::min);
+                let right = q
+                    .iter()
+                    .map(|t| t.xy[3][0])
+                    .fold(f32::NEG_INFINITY, f32::max);
+                assert!(
+                    left <= l && right >= r,
+                    "COM {com} sprite {idx}: {left}..{right}"
+                );
+                drawn += 1;
+            }
+            if let Some(which) = plan.extra_quad
+                && let Some(q) = scene::extra_quad(bg, which, &view, &vp, true)
+            {
+                assert!(q.xy.iter().flatten().all(|v| v.is_finite()));
+                extra += 1;
+            }
+            frames += 1;
+            walker.advance(route, 16.0 * 0.125);
+        }
+        eprintln!(
+            "COM {com:2}: {frames} frames, sprites {:?}, {drawn} drawn, {uncovered} not covering 0..496, {extra} extra quads",
+            textures.keys().collect::<Vec<_>>()
+        );
+        assert_eq!(uncovered, 0, "COM {com}");
+    }
+    for (area, part) in [
+        (0, scene::GROUND_PART_AREA0),
+        (3, scene::GROUND_PART_AREA3),
+        (4, scene::GROUND_PART_AREA4),
+    ] {
+        let tex = sprite_texture(&dir, area, part);
+        eprintln!("ground part {part:#x} (area {area}): {tex:?}");
+        for screen_uv in [true, false] {
+            let g = scene::Ground::Textured {
+                xy: bg.ground_quad.xy,
+                part_id: part,
+                screen_uv,
+                depth: scene::BACKGROUND_DEPTH,
+            };
+            let q = scene::ground_quad(bg, &g, &tex, wide.x_range()).unwrap();
+            assert!(q.uv.iter().chain(&q.xy).flatten().all(|v| v.is_finite()));
+        }
+    }
+    eprintln!(
+        "sky quad {:?}, ground quad {:?}",
+        bg.sky_quad.xy, bg.ground_quad.xy
+    );
+    eprintln!("extra quads {:?}", bg.extra_quads);
+    assert!(
+        bg.extra_quads
+            .iter()
+            .flatten()
+            .flatten()
+            .all(|v| v.is_finite())
+    );
+}
+
+#[test]
+fn gradient_event_tables_are_sane() {
+    let dir = require_data!();
+    let exe_bytes = std::fs::read(dir.join("BIN/dengo3k.exe")).unwrap();
+    let exe = Exe::parse(&exe_bytes).unwrap();
+    let t = scene::GradientEventTables::read(&exe).unwrap();
+    eprintln!("{t:?}");
+    assert!(t.from_station.iter().all(|&s| (0..=99).contains(&s)));
+    assert!(t.duration_ticks.iter().all(|&d| d > 0));
+    assert!(t.min_remaining.iter().flatten().all(|&m| m >= 0));
+}

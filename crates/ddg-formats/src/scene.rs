@@ -18,7 +18,10 @@ use std::ops::RangeInclusive;
 
 use crate::error::{FormatError, Result};
 use crate::exe::Exe;
+use crate::part::Group;
 use crate::route::{HEIGHT_SCALE, Route, TrackPoint, TrackRun, UNITS_PER_POINT};
+use crate::stages::{DIFFICULTY_COUNT, STAGE_COUNT};
+use crate::tex::TexRect;
 
 const WHAT: &str = "scene tables";
 
@@ -90,6 +93,15 @@ const COLOURS_GROUND_GRADIENT: u32 = 0x469c78;
 const COLOURS_GROUND_TOP: u32 = 0x469c80;
 const COLOURS_GROUND_BOTTOM: u32 = 0x469c88;
 const COLOURS_MASK: u32 = 0x469858;
+/// {f32 x, y, z}[4] world corners of the extra quads 1 and 2 (0x41df00).
+const EXTRA_QUAD_POINTS: [u32; 2] = [0x469d24, 0x469d54];
+/// i16[20] by stage: station index from which the gradient event may start (0x40d340,
+/// 0x40d620); 0 = active from the stage start (0x40d040); 99 = only by course event.
+const GRADIENT_EVENT_FROM_STATION: u32 = 0x459cf8;
+/// i16[20 × 4] by `stage × 4 + difficulty`: minimum remaining time 0x856fb0 to start it.
+const GRADIENT_EVENT_MIN_TIME: u32 = 0x459d20;
+/// i32[20] by stage: ticks the event stays active (0x40c4e0 compares 0x856fa8).
+const GRADIENT_EVENT_DURATION: u32 = 0x459dc0;
 /// Per-point background switch tables {i32 from_engine_index, u32 bits}: (COM, VA, count),
 /// immediates in 0x41cb00 at 0x41cddd..0x41ce2d.
 const BACKGROUND_EVENTS: [(u32, u32, usize); 4] = [
@@ -310,6 +322,8 @@ pub struct BackgroundTables {
     pub ground_tex_xy: [[i16; 2]; 4],
     /// Drawn at depth 0 before the track every frame (0x41e460): masks virtual rows 0..94.
     pub mask_quad: Quad2d,
+    /// World corners of the extra flat quads 1 and 2 of area 3 (0x41df00: 0x469d24, 0x469d54).
+    pub extra_quads: [[[f32; 3]; 4]; 2],
     /// Per-point switch tables by COM index (only 7, 10, 11, 12 have one).
     pub events: Vec<Vec<BackgroundEvent>>,
 }
@@ -418,6 +432,13 @@ fn quad(exe: &Exe<'_>, xy: u32, colours: u32) -> Result<Quad2d> {
             [r.u16(0)?, r.u16(2)?, r.u16(4)?, r.u16(6)?]
         },
     })
+}
+
+fn world_quad(exe: &Exe<'_>, va: u32) -> Result<[[f32; 3]; 4]> {
+    let v = f32s::<12>(exe, va)?;
+    Ok(std::array::from_fn(|i| {
+        [v[3 * i], v[3 * i + 1], v[3 * i + 2]]
+    }))
 }
 
 fn quad_xy(exe: &Exe<'_>, va: u32) -> Result<[[i16; 2]; 4]> {
@@ -593,6 +614,10 @@ fn read_background(exe: &Exe<'_>) -> Result<BackgroundTables> {
         ground_bottom_quad: quad(exe, QUAD_GROUND_XY, COLOURS_GROUND_BOTTOM)?,
         ground_tex_xy: quad_xy(exe, QUAD_GROUND_TEX_XY)?,
         mask_quad: quad(exe, QUAD_MASK_XY, COLOURS_MASK)?,
+        extra_quads: [
+            world_quad(exe, EXTRA_QUAD_POINTS[0])?,
+            world_quad(exe, EXTRA_QUAD_POINTS[1])?,
+        ],
         events,
     })
 }
@@ -1442,11 +1467,15 @@ pub enum Ground {
     None,
     /// Flat quad with palette references (see [`BackgroundTables`]).
     Flat(Quad2d),
-    /// Textured quad: `part_id`'s first group selects the page. For 0x76f and 0x283b the UVs
-    /// are the sky-quad corners × 16 (tiled); for 0x2dd2 the part's own UVs.
+    /// Textured quad: `part_id`'s first group selects the texture rect. With `screen_uv`
+    /// (0x76f, 0x283b) the UVs come from the sky-quad corners, a fixed screen-space tiling;
+    /// otherwise from the part's own first four vertices (0x2dd2). See [`ground_quad`].
     Textured {
         xy: [[i16; 2]; 4],
         part_id: u32,
+        screen_uv: bool,
+        /// Raw depth word (z = depth / 32768).
+        depth: u16,
     },
 }
 
@@ -1541,13 +1570,20 @@ pub fn background(
     };
     match ctx.area {
         0 => {
-            // Ground drawn nearer (depth 0x7fee) on COM 4 at 1501..1589: ordering only.
+            // Ground drawn nearer on COM 4 at 1501..=1589: ordering only.
+            let depth = if ctx.com == 4 && (1501..=1589).contains(&engine) {
+                GROUND_NEAR_DEPTH
+            } else {
+                BACKGROUND_DEPTH
+            };
             plan(
                 slots[0].into_iter().collect(),
                 true,
                 Ground::Textured {
                     xy: bg.ground_quad.xy,
-                    part_id: 0x76f,
+                    part_id: GROUND_PART_AREA0,
+                    screen_uv: true,
+                    depth,
                 },
             )
         }
@@ -1588,7 +1624,9 @@ pub fn background(
                 1 => Ground::Flat(bg.ground_top_quad),
                 2 => Ground::Textured {
                     xy: bg.ground_tex_xy,
-                    part_id: 0x2dd2,
+                    part_id: GROUND_PART_AREA3,
+                    screen_uv: false,
+                    depth: BACKGROUND_DEPTH,
                 },
                 3 => Ground::Flat(bg.ground_bottom_quad),
                 _ => Ground::None,
@@ -1605,7 +1643,9 @@ pub fn background(
             true,
             Ground::Textured {
                 xy: bg.ground_quad.xy,
-                part_id: 0x283b,
+                part_id: GROUND_PART_AREA4,
+                screen_uv: true,
+                depth: BACKGROUND_DEPTH,
             },
         ),
         _ => plan(
@@ -1614,6 +1654,608 @@ pub fn background(
             Ground::Flat(bg.ground_quad),
         ),
     }
+}
+
+// --- Background drawing: 2D quads (0x401600, 0x432d30, 0x432da0, 0x41df00) -------------------
+
+/// Depth word of the sky panorama sprites (0x41c890 passes 0x7ff0 to 0x401420).
+pub const SKY_SPRITE_DEPTH: u16 = 0x7ff0;
+/// Depth word of the sky gradient and ground quads (0x41dfc0 immediates).
+pub const BACKGROUND_DEPTH: u16 = 0x7ffe;
+/// Ground depth in area 0 on COM 4 at engine index 1501..=1589 (0x41dfc0).
+pub const GROUND_NEAR_DEPTH: u16 = 0x7fee;
+/// Depth words of the extra quads 1 and 2 (0x41df00).
+pub const EXTRA_QUAD_DEPTH: [u16; 2] = [0x7ffd, 0x7fe0];
+/// Textured ground part of area 0 (0x41cb00 → 0x432d30 into 0x850260).
+pub const GROUND_PART_AREA0: u32 = 0x76f;
+/// Textured ground part of area 3, ground mode 2 (0x41cb00 → 0x432d30 into 0x850220).
+pub const GROUND_PART_AREA3: u32 = 0x2dd2;
+/// Textured ground part of area 4 (0x41cb00 → 0x432d30 into 0x8500e0).
+pub const GROUND_PART_AREA4: u32 = 0x283b;
+/// Horizontal distance from the eye to the panorama's horizon anchor point (0x41c890 passes
+/// 128.0 to 0x401420, which stores it at sprite +0x20).
+pub const SKY_ANCHOR_DISTANCE: f32 = 128.0;
+/// Added to a panorama tile's horizontal edge so neighbouring tiles overlap (double at
+/// 0x457720).
+const SKY_TILE_OVERLAP: f64 = 1.2;
+/// Tile offsets the original draws: −1.0 stepping by 1.0 (0x457718) while < 1.1 (0x457710).
+const SKY_TILES: RangeInclusive<i32> = -1..=1;
+/// Default 3D viewport band in 496×400 virtual units (0x436c80 → 0x849d64/0x849d5c centre,
+/// 0x849d68/0x849d60 half-size).
+pub const VIEWPORT_CENTRE: [f32; 2] = [248.0, 226.0];
+pub const VIEWPORT_HALF: [f32; 2] = [248.0, 174.0];
+/// Ticks a palette-3 fade takes (0x40f320 → 0x436a60(3, 0x96)).
+pub const PALETTE_FADE_TICKS: u32 = 150;
+
+/// z of a 2D quad for a depth word (float 1/32768 at 0x47c968; rhw is 1).
+pub fn depth_z(depth: u16) -> f32 {
+    f32::from(depth) * (1.0 / 32768.0)
+}
+
+/// A textured 2D quad as 0x432da0 draws it: a 4-vertex fan, white diffuse, no lighting.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TexQuad2d {
+    /// Corners in 496×400 virtual units.
+    pub xy: [[f32; 2]; 4],
+    /// Normalised page UVs (1.0 = page size; outside 0..1 wraps).
+    pub uv: [[f32; 2]; 4],
+    /// Texture rect whose page is bound (tex*.rom record id).
+    pub rect_id: u16,
+    /// Raw depth word; see [`depth_z`].
+    pub depth: u16,
+}
+
+/// A flat-coloured 2D quad (0x432b50) with floating-point corners.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FlatQuad2d {
+    pub xy: [[f32; 2]; 4],
+    /// Palette references as in [`Quad2d`].
+    pub colours: [u16; 4],
+    pub depth: u16,
+}
+
+impl Quad2d {
+    /// Corners as floats, the left and right edges moved to `x_range` (Hor+ widening; the
+    /// default range `[0, 496]` returns the corners unchanged). Colours are per corner and only
+    /// vary vertically, so they stay valid.
+    pub fn widened(&self, x_range: [f32; 2]) -> [[f32; 2]; 4] {
+        let mut xy = self.xy.map(|p| p.map(f32::from));
+        let mut uv = [[0.0; 2]; 4];
+        widen_quad(&mut xy, &mut uv, x_range);
+        xy
+    }
+}
+
+/// The texture of a 2D sprite as 0x432d30 caches it: the rect of a part's first group and the
+/// first four vertices' page UVs, ×256 and truncated toward zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpriteTexture {
+    pub rect_id: u16,
+    /// `[u, v]` per corner in 1/256 page units (0x432d30 stores them as `v, u` and 0x432da0
+    /// swaps them back, so there is no net swap).
+    pub uv: [[i16; 2]; 4],
+}
+
+impl SpriteTexture {
+    /// From a part's first group and its rect (`rect.id == group.rect_id`). `None` if the group
+    /// has fewer than four vertices.
+    pub fn from_group(group: &Group, rect: &TexRect) -> Option<Self> {
+        let v = group.vertices.get(..4)?;
+        let uv = std::array::from_fn(|i| {
+            let p = rect.map_uv(v[i].uv);
+            // __ftol truncates.
+            [(p[0] * 256.0) as i32 as i16, (p[1] * 256.0) as i32 as i16]
+        });
+        Some(Self {
+            rect_id: group.rect_id,
+            uv,
+        })
+    }
+
+    /// The panorama variant (0x401420): every coordinate moves one unit inwards (towards the
+    /// other corners: +1 if it is the minimum, −1 otherwise), then `flags` bit 2 reverses the
+    /// corner order and bits 0–1 rotate it (corner *i* takes the UV of corner *i + n*).
+    pub fn for_sky(mut self, flags: u32) -> Self {
+        for c in 0..2 {
+            let min = self.uv.iter().map(|p| p[c]).min().unwrap_or(0);
+            for p in &mut self.uv {
+                p[c] += if p[c] > min { -1 } else { 1 };
+            }
+        }
+        if flags & 4 != 0 {
+            self.uv.reverse();
+        }
+        self.uv.rotate_left((flags & 3) as usize);
+        self
+    }
+
+    /// Normalised page UVs.
+    pub fn page_uv(&self) -> [[f32; 2]; 4] {
+        self.uv.map(|p| p.map(|c| f32::from(c) * (1.0 / 256.0)))
+    }
+}
+
+/// Camera axes in world space, as the rows of the inverse view matrix (0x856c20) that
+/// 0x418420 builds: `right` (= forward × up, i.e. screen x), `up`, `forward` (towards the
+/// target), plus the eye. Roll, if any, is already applied to `right`/`up`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ViewBasis {
+    pub eye: [f32; 3],
+    pub right: [f32; 3],
+    pub up: [f32; 3],
+    pub forward: [f32; 3],
+}
+
+impl ViewBasis {
+    /// Roll-free look-at, as 0x418420 with roll 0.
+    pub fn look_at(eye: [f32; 3], target: [f32; 3]) -> Self {
+        let norm = |v: [f32; 3]| {
+            let l = dot(v, v).sqrt();
+            if l > 0.0 { v.map(|c| c / l) } else { v }
+        };
+        let forward = norm(sub(target, eye));
+        let right = norm(cross(forward, [0.0, 1.0, 0.0]));
+        let up = cross(right, forward);
+        Self {
+            eye,
+            right,
+            up,
+            forward,
+        }
+    }
+
+    pub fn from_cab(cam: &CabCamera) -> Self {
+        Self::look_at(cam.eye, cam.target)
+    }
+
+    /// A world point in the original's view space (0x856be0): x right, y up, z = −depth.
+    pub fn to_view(&self, p: [f32; 3]) -> [f32; 3] {
+        let d = sub(p, self.eye);
+        [dot(self.right, d), dot(self.up, d), -dot(self.forward, d)]
+    }
+}
+
+fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+/// The 3D viewport in 496×400 virtual units plus the CPU projection scales (0x856b80 =
+/// 1/(aspect·tan½fov), 0x856b84 = 1/tan½fov) that the 2D background code uses.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Viewport2d {
+    pub centre: [f32; 2],
+    pub half: [f32; 2],
+    pub scale: [f32; 2],
+}
+
+impl Viewport2d {
+    /// The original band (x 0..496, y 52..400) for a projection.
+    pub fn original(tan_half_fov_y: f32, aspect: f32) -> Self {
+        Self {
+            centre: VIEWPORT_CENTRE,
+            half: VIEWPORT_HALF,
+            scale: [1.0 / (aspect * tan_half_fov_y), 1.0 / tan_half_fov_y],
+        }
+    }
+
+    /// Hor+ widening (enhancement): the same vertical extent and pixel scale, with the
+    /// horizontal half-size changed to `half_width` virtual units around the same centre.
+    pub fn hor_plus(&self, half_width: f32) -> Self {
+        let k = self.half[0] * self.scale[0];
+        Self {
+            half: [half_width, self.half[1]],
+            scale: [k / half_width, self.scale[1]],
+            ..*self
+        }
+    }
+
+    /// Covered virtual x range, `[left, right]`.
+    pub fn x_range(&self) -> [f32; 2] {
+        [self.centre[0] - self.half[0], self.centre[0] + self.half[0]]
+    }
+
+    fn is_original_width(&self) -> bool {
+        let [l, r] = self.x_range();
+        l.abs() < 1e-3 && (r - 2.0 * VIEWPORT_CENTRE[0]).abs() < 1e-3
+    }
+}
+
+/// `__ftol` into a 16-bit vertex coordinate, or the exact value when `snap` is off.
+fn snap_coord(v: f64, snap: bool) -> f32 {
+    if snap {
+        f32::from(v as i64 as i16)
+    } else {
+        v as f32
+    }
+}
+
+/// The sky panorama tiles of one sprite for a camera (0x401600), in tile order (k = −1, 0, +1).
+///
+/// `tex` is [`SpriteTexture::for_sky`] of the sprite's part. With the original viewport width
+/// this returns the original's 3 tiles. A wider [`Viewport2d`] (Hor+) gets as many extra tiles
+/// as needed to cover its x range. `snap` truncates corners to whole units like the original;
+/// turning it off is a smoothness enhancement.
+pub fn sky_quads(
+    sprite: &SkySprite,
+    tex: &SpriteTexture,
+    view: &ViewBasis,
+    vp: &Viewport2d,
+    snap: bool,
+) -> Vec<TexQuad2d> {
+    // Roll compensation: (a, b) is the in-screen direction of world up.
+    let (rx, ry) = (view.right, view.up);
+    let r = (rx[1] * rx[1] + ry[1] * ry[1]).sqrt();
+    if r <= 0.0 || sprite.height == 0 {
+        return Vec::new();
+    }
+    let (a, b) = (rx[1] / r, ry[1] / r);
+    // Horizontal camera direction from the roll-free right axis: right_h = (q, 0, −p).
+    let p = a * ry[2] - b * rx[2];
+    let q = b * rx[0] - a * ry[0];
+    // Horizon anchor: the ground-plane point (y = 0) straight ahead.
+    let anchor = [
+        view.eye[0] - p * SKY_ANCHOR_DISTANCE,
+        0.0,
+        view.eye[2] - q * SKY_ANCHOR_DISTANCE,
+    ];
+    let v = view.to_view(anchor);
+    let (sx, sy) = (-v[0] / v[2], -v[1] / v[2]);
+    // Heading in turns, scaled by the repeat count and shifted by the phase (0x457738 = 1/2π,
+    // 0x457730 = 0.5, phase = (flags >> 8) / 256 from 0x41c890).
+    let heading = f64::from(-p).atan2(f64::from(q));
+    let phase = ((sprite.flags as i32) >> 8) as f32 * (1.0 / 256.0);
+    let t = (heading / std::f64::consts::TAU + 0.5) * f64::from(sprite.repeats as f32)
+        + f64::from(phase);
+    let frac = t - t.floor();
+
+    let hx = vp.half[0] * vp.scale[0];
+    let hy = vp.half[1] * vp.scale[1];
+    let w1 = (sprite.width as f32 - 1.0) / hy;
+    let h1 = (sprite.height as f32 - 1.0) / hy;
+    // Tile step along the horizon (ax, ay) and tile height vector (bx, by), screen units.
+    let ax = w1 * hx * b;
+    let ay = w1 * hy * a;
+    let bx = h1 * hx * a;
+    let by = h1 * hy * b;
+    let v_off = sprite.v_offset as f32 / sprite.height as f32;
+    let (ax, ay, bx, by, v_off) = (
+        f64::from(ax),
+        f64::from(ay),
+        f64::from(bx),
+        f64::from(by),
+        f64::from(v_off),
+    );
+    let x0 = f64::from(hx * sx) - ax * frac - bx * v_off + f64::from(vp.centre[0]) + 0.5;
+    let y0 = by * v_off - (f64::from(hy * sy) + ay * frac) + f64::from(vp.centre[1]) + 0.5;
+    let (x0, y0) = (f64::from(x0 as f32), f64::from(y0 as f32));
+    let ax2 = ax + SKY_TILE_OVERLAP * f64::from(b);
+    let ay2 = ay + SKY_TILE_OVERLAP * f64::from(a);
+
+    let tiles = if vp.is_original_width() || ax.abs() < 1e-3 {
+        SKY_TILES
+    } else {
+        // Tiles k..=m cover x from x0 − m·ax to x0 − k·ax + ax2; one spare tile per side
+        // absorbs roll.
+        let [left, right] = vp.x_range().map(f64::from);
+        let lo = ((x0 + ax2 - right) / ax).floor() as i32 - 1;
+        let hi = ((x0 - left) / ax).ceil() as i32 + 1;
+        lo.min(*SKY_TILES.start())..=hi.max(*SKY_TILES.end())
+    };
+    let uv = tex.page_uv();
+    tiles
+        .map(|k| {
+            let k = f64::from(k);
+            let (xk, yk) = (x0 - ax * k, y0 - ay * k);
+            let corners = [
+                [xk, yk],
+                [xk + bx, yk - by],
+                [xk + bx + ax2, yk - by + ay2],
+                [xk + ax2, yk + ay2],
+            ];
+            TexQuad2d {
+                xy: corners.map(|c| c.map(|v| snap_coord(v, snap))),
+                uv,
+                rect_id: tex.rect_id,
+                depth: SKY_SPRITE_DEPTH,
+            }
+        })
+        .collect()
+}
+
+/// Moves a quad's leftmost corners to `x_range[0]` and rightmost to `x_range[1]`, extrapolating
+/// each moved corner's UV along its horizontal edge.
+fn widen_quad(xy: &mut [[f32; 2]; 4], uv: &mut [[f32; 2]; 4], x_range: [f32; 2]) {
+    let (src_xy, src_uv) = (*xy, *uv);
+    let lo = src_xy.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min);
+    let hi = src_xy
+        .iter()
+        .map(|p| p[0])
+        .fold(f32::NEG_INFINITY, f32::max);
+    if lo >= hi {
+        return;
+    }
+    for i in 0..4 {
+        let x = src_xy[i][0];
+        let new_x = if x == lo {
+            x_range[0]
+        } else if x == hi {
+            x_range[1]
+        } else {
+            continue;
+        };
+        let partner = (0..4).find(|&j| src_xy[j][1] == src_xy[i][1] && src_xy[j][0] != x);
+        if let Some(j) = partner {
+            let t = (new_x - x) / (src_xy[j][0] - x);
+            uv[i] = [0, 1].map(|c| src_uv[i][c] + (src_uv[j][c] - src_uv[i][c]) * t);
+        }
+        xy[i][0] = new_x;
+    }
+}
+
+/// The textured ground quad of a [`Ground::Textured`] layer (0x41dfc0 → 0x432da0), widened to
+/// `x_range` (`[0, 496]` = original). `tex` is [`SpriteTexture::from_group`] of the layer's
+/// part. Returns `None` for the other ground kinds.
+///
+/// With `screen_uv` the UVs are the sky-gradient quad's corners shifted left by 4 (0x41cb00):
+/// `u = y/16`, `v = x/16` page units, so the page repeats every 16 virtual units and is turned
+/// 90° on screen. It does not scroll.
+pub fn ground_quad(
+    bg: &BackgroundTables,
+    ground: &Ground,
+    tex: &SpriteTexture,
+    x_range: [f32; 2],
+) -> Option<TexQuad2d> {
+    let Ground::Textured {
+        xy,
+        screen_uv,
+        depth,
+        ..
+    } = *ground
+    else {
+        return None;
+    };
+    let mut uv = if screen_uv {
+        let raw = bg.sky_quad.xy.map(|[x, y]| [y << 4, x << 4]);
+        SpriteTexture {
+            rect_id: tex.rect_id,
+            uv: raw,
+        }
+        .page_uv()
+    } else {
+        tex.page_uv()
+    };
+    let mut xy = xy.map(|p| p.map(f32::from));
+    widen_quad(&mut xy, &mut uv, x_range);
+    Some(TexQuad2d {
+        xy,
+        uv,
+        rect_id: tex.rect_id,
+        depth,
+    })
+}
+
+/// Clip helper of 0x432f40 (0x432f10): y on the line through `a` and `b`, evaluated at
+/// `x`. The original has a sign slip and actually returns the line's y at **−x**; kept.
+fn clip_edge_y(a: [f32; 2], b: [f32; 2], x: f32) -> f32 {
+    (a[0] * b[1] - a[1] * b[0] + (b[1] - a[1]) * x) / (a[0] - b[0])
+}
+
+/// Extra flat quad 1 or 2 of area 3 (0x41df00): four world points CPU-projected (0x432f40),
+/// drawn in ground-top colour. `None` if any corner is behind the eye or `which` is not 1/2.
+///
+/// The left/right corners are clipped to the viewport's x range: corner 0/3 to the left edge
+/// (along 0–1 / 3–2), corner 1/2 to the right edge, reproducing the original's clip formula.
+pub fn extra_quad(
+    bg: &BackgroundTables,
+    which: u32,
+    view: &ViewBasis,
+    vp: &Viewport2d,
+    snap: bool,
+) -> Option<FlatQuad2d> {
+    let idx = usize::try_from(which.checked_sub(1)?).ok()?;
+    let points = bg.extra_quads.get(idx)?;
+    let mut ndc = [[0.0f32; 2]; 4];
+    for (out, p) in ndc.iter_mut().zip(points) {
+        let v = view.to_view(*p);
+        if v[2] >= 0.0 {
+            return None;
+        }
+        *out = [-(vp.scale[0] * v[0]) / v[2], (vp.scale[1] * v[1]) / v[2]];
+    }
+    let [left, right] = vp.x_range().map(|x| (x - vp.centre[0]) / vp.half[0]);
+    let clip = |i: usize, a: usize, b: usize, edge: f32, inside: bool| {
+        if inside {
+            ndc[i]
+        } else {
+            [edge, clip_edge_y(ndc[a], ndc[b], edge)]
+        }
+    };
+    let clipped = [
+        clip(0, 0, 1, left, ndc[0][0] >= left),
+        clip(1, 0, 1, right, ndc[1][0] <= right),
+        clip(2, 2, 3, right, ndc[2][0] <= right),
+        clip(3, 2, 3, left, ndc[3][0] >= left),
+    ];
+    let xy = clipped.map(|[x, y]| {
+        [
+            snap_coord(f64::from(vp.centre[0] + x * vp.half[0]), snap),
+            snap_coord(f64::from(vp.centre[1] + y * vp.half[1]), snap),
+        ]
+    });
+    Some(FlatQuad2d {
+        xy,
+        colours: bg.ground_top_quad.colours,
+        depth: EXTRA_QUAD_DEPTH[idx],
+    })
+}
+
+// --- Gradient palette event (variant 1 colours, 0x857230) ----------------------------------
+
+/// Per-stage tables of the event that fades palette 3 to the variant-1 gradients.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GradientEventTables {
+    /// Station index from which a random start is allowed; 0 = active from the stage start,
+    /// 99 = never by station (course event 0x15 only).
+    pub from_station: [i16; STAGE_COUNT],
+    /// `[stage][difficulty]`: remaining time (0x856fb0) needed to start.
+    pub min_remaining: [[i16; DIFFICULTY_COUNT]; STAGE_COUNT],
+    /// Ticks the event stays active once started.
+    pub duration_ticks: [i32; STAGE_COUNT],
+}
+
+impl GradientEventTables {
+    pub fn read(exe: &Exe<'_>) -> Result<Self> {
+        let i16s = |va: u32, n: usize| -> Result<Vec<i16>> {
+            let r = exe.reader_at(va, 2 * n, WHAT)?;
+            (0..n).map(|i| r.i16(2 * i)).collect()
+        };
+        let from = i16s(GRADIENT_EVENT_FROM_STATION, STAGE_COUNT)?;
+        let min = i16s(GRADIENT_EVENT_MIN_TIME, STAGE_COUNT * DIFFICULTY_COUNT)?;
+        let from_station = std::array::from_fn(|s| from[s]);
+        let min_remaining =
+            std::array::from_fn(|s| std::array::from_fn(|d| min[s * DIFFICULTY_COUNT + d]));
+        let duration_ticks = i32s::<STAGE_COUNT>(exe, GRADIENT_EVENT_DURATION)?;
+        Ok(Self {
+            from_station,
+            min_remaining,
+            duration_ticks,
+        })
+    }
+}
+
+/// What can start the event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GradientTrigger {
+    /// Leaving for the next segment after a stop (0x40d340): needs `station ≥ from_station`
+    /// and the frame counter (0x84c494) divisible by 4. Starts without a palette fade.
+    SegmentAdvance { frame_counter: u32 },
+    /// The station-reached handler (0x40d620): `station ≥ from_station`, frame counter
+    /// divisible by 3. Fades in.
+    StationReached { frame_counter: u32 },
+    /// Course event kind 0x15 (0x40acd0). Fades in.
+    CourseEvent,
+}
+
+/// A palette-3 fade request ([`PALETTE_FADE_TICKS`] long, see [`palette_fade`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaletteFade {
+    ToVariant,
+    ToNormal,
+}
+
+/// State of the gradient event: 0x84c3a0 (`active`), 0x857230 (`level`), 0x856fa8 (`ticks`).
+/// `level` is 0 before the event, ramps 1..=254 while active and back down after, and is −1
+/// once it is over (it never restarts in the same stage run).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct GradientEvent {
+    pub active: bool,
+    pub level: i32,
+    pub ticks: i32,
+}
+
+impl GradientEvent {
+    /// Stage start (0x40d040): stages whose `from_station` is 0 start active.
+    pub fn stage_start(t: &GradientEventTables, stage: usize) -> Self {
+        let on = t.from_station.get(stage) == Some(&0);
+        Self {
+            active: on,
+            level: i32::from(on),
+            ticks: 0,
+        }
+    }
+
+    /// Gradient variant (index into [`BackgroundTables::gradients`]) to build when the drive
+    /// (re)starts without a fade (0x4080d0 passes `level`; any value ≥ 1 selects variant 1).
+    pub fn variant(&self) -> usize {
+        usize::from(self.level >= 1)
+    }
+
+    /// Tries to start the event. Returns the fade to run, if the trigger runs one.
+    pub fn try_start(
+        &mut self,
+        t: &GradientEventTables,
+        stage: usize,
+        difficulty: usize,
+        station: i32,
+        remaining: i32,
+        trigger: GradientTrigger,
+    ) -> Option<PaletteFade> {
+        let min = t.min_remaining.get(stage)?.get(difficulty).copied()?;
+        if self.level != 0 || self.active || remaining < i32::from(min) {
+            return None;
+        }
+        let from = i32::from(t.from_station[stage]);
+        let (ok, fade) = match trigger {
+            GradientTrigger::SegmentAdvance { frame_counter } => {
+                (station >= from && frame_counter % 4 == 0, None)
+            }
+            GradientTrigger::StationReached { frame_counter } => (
+                station >= from && frame_counter % 3 == 0,
+                Some(PaletteFade::ToVariant),
+            ),
+            GradientTrigger::CourseEvent => (true, Some(PaletteFade::ToVariant)),
+        };
+        if !ok {
+            return None;
+        }
+        *self = Self {
+            active: true,
+            level: 1,
+            ticks: 0,
+        };
+        fade
+    }
+
+    /// Course event kind 0x16: ends the active phase.
+    pub fn end(&mut self) {
+        self.active = false;
+    }
+
+    /// One simulation tick (0x40c4e0). Returns the fade back to normal when the event is over.
+    pub fn tick(&mut self, t: &GradientEventTables, stage: usize) -> Option<PaletteFade> {
+        let mut fade = None;
+        if self.active {
+            if (1..0xfe).contains(&self.level) {
+                self.level += 1;
+            }
+        } else {
+            if self.level > 0 {
+                self.level -= 1;
+            }
+            if self.level == 1 {
+                self.level = -1;
+                fade = Some(PaletteFade::ToNormal);
+            }
+        }
+        if self.level > 0 {
+            self.ticks += 1;
+            if self.ticks >= t.duration_ticks.get(stage).copied().unwrap_or(i32::MAX) {
+                self.active = false;
+            }
+        }
+        fade
+    }
+
+    /// Volume of the looped sound 0x28 while the event runs (`level / 2`, 0..=127).
+    pub fn sound_volume(&self) -> Option<u8> {
+        (self.level > 0).then_some(((self.level / 2) & 0x7f) as u8)
+    }
+}
+
+/// Palette 3 during a fade (task 0x436ad0): `from + (to − from)·frame/150` per channel,
+/// truncated; `frame` is clamped to [`PALETTE_FADE_TICKS`].
+pub fn palette_fade(from: &[[u8; 3]; 256], to: &[[u8; 3]; 256], frame: u32) -> [[u8; 3]; 256] {
+    let t = frame.min(PALETTE_FADE_TICKS) as f32 / PALETTE_FADE_TICKS as f32;
+    std::array::from_fn(|i| {
+        std::array::from_fn(|c| {
+            let (a, b) = (f32::from(from[i][c]), f32::from(to[i][c]));
+            ((b - a) * t + a) as i32 as u8
+        })
+    })
 }
 
 #[cfg(test)]
@@ -1746,6 +2388,7 @@ mod tests {
                 ground_bottom_quad: quad,
                 ground_tex_xy: [[0; 2]; 4],
                 mask_quad: quad,
+                extra_quads: [[[0.0; 3]; 4]; 2],
                 events: vec![vec![]; COM_COUNT],
             },
         }
@@ -1887,5 +2530,294 @@ mod tests {
             (x[2] + 0.125).abs() < 1e-6,
             "kind pieces are not scaled by 8: {x:?}"
         );
+    }
+
+    // --- Background drawing ---
+
+    fn sprite(width: i32, height: i32, repeats: i32, v_offset: i32, flags: u32) -> SkySprite {
+        SkySprite {
+            part_id: 1,
+            width,
+            height,
+            repeats,
+            v_offset,
+            unused: 127,
+            flags,
+        }
+    }
+
+    /// Viewport whose horizontal and vertical screen scales are equal (hx = hy = 174).
+    fn square_viewport() -> Viewport2d {
+        Viewport2d {
+            centre: VIEWPORT_CENTRE,
+            half: VIEWPORT_HALF,
+            scale: [174.0 / 248.0, 1.0],
+        }
+    }
+
+    fn yawed_view(yaw: f32) -> ViewBasis {
+        let eye = [0.0, 0.5, 0.0];
+        ViewBasis::look_at(eye, [yaw.sin(), 0.5, yaw.cos()])
+    }
+
+    fn plain_texture() -> SpriteTexture {
+        SpriteTexture {
+            rect_id: 7,
+            uv: [[0, 0], [0, 64], [64, 64], [64, 0]],
+        }
+    }
+
+    #[test]
+    fn sky_texture_insets_and_reorders_corners() {
+        let t = SpriteTexture {
+            rect_id: 3,
+            uv: [[10, 20], [50, 20], [50, 60], [10, 60]],
+        };
+        let inset = [[11, 21], [49, 21], [49, 59], [11, 59]];
+        assert_eq!(t.for_sky(0).uv, inset);
+        assert_eq!(t.for_sky(1).uv, [inset[1], inset[2], inset[3], inset[0]]);
+        assert_eq!(t.for_sky(3).uv, [inset[3], inset[0], inset[1], inset[2]]);
+        assert_eq!(t.for_sky(4).uv, [inset[3], inset[2], inset[1], inset[0]]);
+        assert_eq!(t.for_sky(6).uv, [inset[1], inset[0], inset[3], inset[2]]);
+    }
+
+    #[test]
+    fn view_basis_puts_world_x_on_the_left() {
+        let v = ViewBasis::look_at([0.0; 3], [0.0, 0.0, 1.0]);
+        assert!(close(v.right, [-1.0, 0.0, 0.0]));
+        assert!(close(v.up, [0.0, 1.0, 0.0]));
+        assert!(close(v.to_view([0.0, 0.0, 2.0]), [0.0, 0.0, -2.0]));
+    }
+
+    #[test]
+    fn sky_tiles_sit_on_the_horizon_and_scroll_with_heading() {
+        let s = sprite(257, 65, 4, 0, 0);
+        let vp = square_viewport();
+        let q = sky_quads(&s, &plain_texture(), &yawed_view(0.3), &vp, false);
+        assert_eq!(q.len(), 3);
+        // Horizon: the ground point 128 ahead is 0.5 below the eye → y = 226 + 174·0.5/128.
+        let horizon = 226.0 + 174.0 * 0.5 / 128.0 + 0.5;
+        for t in &q {
+            assert!((t.xy[0][1] - horizon).abs() < 1e-3, "{t:?}");
+            // Bottom-left, top-left, top-right, bottom-right; width (w − 1) + 1.2.
+            assert!((t.xy[1][1] - (horizon - 64.0)).abs() < 1e-3);
+            assert!((t.xy[3][0] - t.xy[0][0] - 257.2).abs() < 1e-3);
+            assert_eq!(t.depth, SKY_SPRITE_DEPTH);
+            assert_eq!(t.rect_id, 7);
+        }
+        // Tiles step by w − 1 to the left with k.
+        assert!((q[0].xy[0][0] - q[1].xy[0][0] - 256.0).abs() < 1e-3);
+        // Turning left (yaw up) moves the strip right by (w − 1)·repeats·Δ/2π.
+        let d = 0.01f32;
+        let q2 = sky_quads(&s, &plain_texture(), &yawed_view(0.3 + d), &vp, false);
+        let shift = q2[1].xy[0][0] - q[1].xy[0][0];
+        let expect = 256.0 * 4.0 * d / std::f32::consts::TAU;
+        assert!((shift - expect).abs() < 1e-2, "{shift} vs {expect}");
+        // The middle tile starts within one tile left of the centre.
+        assert!(q[1].xy[0][0] <= 248.5 && q[1].xy[0][0] > 248.5 - 256.0);
+        // Snapped corners are whole numbers.
+        let snapped = sky_quads(&s, &plain_texture(), &yawed_view(0.3), &vp, true);
+        assert!(
+            snapped
+                .iter()
+                .flat_map(|t| t.xy)
+                .all(|p| p == p.map(f32::trunc))
+        );
+    }
+
+    #[test]
+    fn sky_vertical_offset_shifts_by_scaled_texels() {
+        let vp = square_viewport();
+        let a = sky_quads(
+            &sprite(257, 65, 4, 0, 0),
+            &plain_texture(),
+            &yawed_view(0.3),
+            &vp,
+            false,
+        );
+        let b = sky_quads(
+            &sprite(257, 65, 4, 13, 0),
+            &plain_texture(),
+            &yawed_view(0.3),
+            &vp,
+            false,
+        );
+        // +0x28 = v_offset / h, multiplied by (h − 1).
+        let d = b[0].xy[0][1] - a[0].xy[0][1];
+        assert!((d - 13.0 * 64.0 / 65.0).abs() < 1e-3, "{d}");
+    }
+
+    #[test]
+    fn wide_viewport_gets_enough_sky_tiles() {
+        let s = sprite(129, 65, 8, 0, 0x80 << 8);
+        let vp = square_viewport();
+        for yaw in [0.0f32, 0.7, 2.0, -1.3] {
+            assert_eq!(
+                sky_quads(&s, &plain_texture(), &yawed_view(yaw), &vp, false).len(),
+                3
+            );
+            let wide = vp.hor_plus(450.0);
+            let q = sky_quads(&s, &plain_texture(), &yawed_view(yaw), &wide, false);
+            let left = q.iter().map(|t| t.xy[0][0]).fold(f32::INFINITY, f32::min);
+            let right = q
+                .iter()
+                .map(|t| t.xy[3][0])
+                .fold(f32::NEG_INFINITY, f32::max);
+            let [l, r] = wide.x_range();
+            assert!(left <= l && right >= r, "{left}..{right} vs {l}..{r}");
+            // Same pixel scale: the tile width does not change.
+            assert!((q[0].xy[3][0] - q[0].xy[0][0] - 129.2).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn hor_plus_keeps_the_screen_scale() {
+        let vp = Viewport2d::original(0.4142, 1.42);
+        let w = vp.hor_plus(300.0);
+        assert!((w.half[0] * w.scale[0] - vp.half[0] * vp.scale[0]).abs() < 1e-4);
+        assert_eq!(w.x_range(), [-52.0, 548.0]);
+        assert_eq!(vp.x_range(), [0.0, 496.0]);
+    }
+
+    fn background_tables() -> BackgroundTables {
+        let mut bg = tables().background;
+        bg.sky_quad.xy = [[0, 66], [496, 66], [496, 235], [0, 235]];
+        bg.ground_quad.xy = [[0, 235], [496, 235], [496, 415], [0, 415]];
+        bg.ground_top_quad.colours = [0x380; 4];
+        bg
+    }
+
+    #[test]
+    fn screen_tiled_ground_uses_sky_corners_swapped() {
+        let bg = background_tables();
+        let g = Ground::Textured {
+            xy: bg.ground_quad.xy,
+            part_id: GROUND_PART_AREA0,
+            screen_uv: true,
+            depth: BACKGROUND_DEPTH,
+        };
+        let tex = plain_texture();
+        let q = ground_quad(&bg, &g, &tex, [0.0, 496.0]).unwrap();
+        assert_eq!(q.xy[2], [496.0, 415.0]);
+        // u = sky y / 16, v = sky x / 16.
+        assert_eq!(q.uv[0], [66.0 / 16.0, 0.0]);
+        assert_eq!(q.uv[2], [235.0 / 16.0, 31.0]);
+        assert_eq!(q.depth, BACKGROUND_DEPTH);
+        // Widened: x and v extend linearly, u stays.
+        let w = ground_quad(&bg, &g, &tex, [-100.0, 596.0]).unwrap();
+        assert_eq!(w.xy[0], [-100.0, 235.0]);
+        assert!((w.uv[0][1] + 100.0 / 16.0).abs() < 1e-5);
+        assert!((w.uv[1][1] - 596.0 / 16.0).abs() < 1e-5);
+        assert_eq!(w.uv[0][0], q.uv[0][0]);
+        // The part's own UVs otherwise.
+        let own = Ground::Textured {
+            xy: bg.ground_quad.xy,
+            part_id: GROUND_PART_AREA3,
+            screen_uv: false,
+            depth: BACKGROUND_DEPTH,
+        };
+        let q = ground_quad(&bg, &own, &tex, [0.0, 496.0]).unwrap();
+        assert_eq!(q.uv[2], [0.25, 0.25]);
+        assert!(ground_quad(&bg, &Ground::None, &tex, [0.0, 496.0]).is_none());
+    }
+
+    #[test]
+    fn flat_quads_widen_to_the_viewport() {
+        let bg = background_tables();
+        assert_eq!(
+            bg.sky_quad.widened([0.0, 496.0]),
+            [[0.0, 66.0], [496.0, 66.0], [496.0, 235.0], [0.0, 235.0]]
+        );
+        assert_eq!(bg.sky_quad.widened([-10.0, 506.0])[1], [506.0, 66.0]);
+    }
+
+    #[test]
+    fn clip_helper_evaluates_the_mirrored_x() {
+        // Line through (−2, 0) and (0, 2): y = x + 2. Asked for x = −1 it returns y(1) = 3.
+        assert!((clip_edge_y([-2.0, 0.0], [0.0, 2.0], -1.0) - 3.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn extra_quad_projects_and_clips() {
+        let mut bg = background_tables();
+        // A ground patch 0.5 below the eye, 2..4 ahead, wider than the view.
+        bg.extra_quads[0] = [
+            [10.0, 0.0, 2.0],
+            [-10.0, 0.0, 2.0],
+            [-10.0, 0.0, 4.0],
+            [10.0, 0.0, 4.0],
+        ];
+        let view = ViewBasis::look_at([0.0, 0.5, 0.0], [0.0, 0.5, 1.0]);
+        let vp = square_viewport();
+        let q = extra_quad(&bg, 1, &view, &vp, true).unwrap();
+        assert_eq!(q.depth, EXTRA_QUAD_DEPTH[0]);
+        assert_eq!(q.colours, [0x380; 4]);
+        // World +x is screen left: corner 0 is clipped to the left edge, 1 to the right.
+        assert_eq!(q.xy[0][0], 0.0);
+        assert_eq!(q.xy[1][0], 496.0);
+        // Both near corners are on the same row (the clip only reads the mirrored side).
+        assert_eq!(q.xy[0][1], q.xy[1][1]);
+        assert!(extra_quad(&bg, 3, &view, &vp, true).is_none());
+        // Behind the eye: not drawn.
+        let back = ViewBasis::look_at([0.0, 0.5, 0.0], [0.0, 0.5, -1.0]);
+        assert!(extra_quad(&bg, 1, &back, &vp, true).is_none());
+    }
+
+    fn event_tables() -> GradientEventTables {
+        let mut t = GradientEventTables {
+            from_station: [99; STAGE_COUNT],
+            min_remaining: [[10; DIFFICULTY_COUNT]; STAGE_COUNT],
+            duration_ticks: [300; STAGE_COUNT],
+        };
+        t.from_station[1] = 0;
+        t.from_station[5] = 7;
+        t
+    }
+
+    #[test]
+    fn gradient_event_runs_its_course() {
+        let t = event_tables();
+        assert_eq!(GradientEvent::stage_start(&t, 0).variant(), 0);
+        let mut e = GradientEvent::stage_start(&t, 1);
+        assert!(e.active && e.variant() == 1);
+        let mut fades = vec![];
+        for _ in 0..1000 {
+            if let Some(f) = e.tick(&t, 1) {
+                fades.push(f);
+            }
+        }
+        assert_eq!(fades, [PaletteFade::ToNormal]);
+        assert_eq!(e.level, -1);
+        assert_eq!(e.variant(), 0);
+
+        let mut e = GradientEvent::stage_start(&t, 5);
+        let trig = |n| GradientTrigger::StationReached { frame_counter: n };
+        assert_eq!(e.try_start(&t, 5, 0, 6, 50, trig(3)), None); // station too early
+        assert_eq!(e.try_start(&t, 5, 0, 7, 50, trig(4)), None); // frame gate
+        assert_eq!(e.try_start(&t, 5, 0, 7, 5, trig(3)), None); // not enough time left
+        assert_eq!(
+            e.try_start(&t, 5, 0, 7, 50, trig(3)),
+            Some(PaletteFade::ToVariant)
+        );
+        assert_eq!(e.sound_volume(), Some(0));
+        for _ in 0..100 {
+            e.tick(&t, 5);
+        }
+        assert_eq!(e.level, 101);
+        assert_eq!(e.sound_volume(), Some(50));
+        e.end();
+        assert_eq!(
+            e.try_start(&t, 5, 0, 7, 50, GradientTrigger::CourseEvent),
+            None
+        );
+    }
+
+    #[test]
+    fn palette_fade_interpolates_and_truncates() {
+        let a = [[0u8, 100, 255]; 256];
+        let b = [[255u8, 0, 0]; 256];
+        assert_eq!(palette_fade(&a, &b, 0)[0], [0, 100, 255]);
+        assert_eq!(palette_fade(&a, &b, 75)[0], [127, 50, 127]);
+        assert_eq!(palette_fade(&a, &b, 999)[5], [255, 0, 0]);
     }
 }

@@ -21,12 +21,21 @@ pub struct LineVertex {
     pub colour: [f32; 4],
 }
 
-/// Screen-space background vertex: normalised device coordinates and a linear-RGB colour.
+/// Screen-space background vertex: normalised device coordinates (z = reversed depth, see
+/// [`bg_depth`]) and a linear-RGB colour.
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct BgVertex {
-    pub pos: [f32; 2],
+    pub pos: [f32; 3],
     pub colour: [f32; 4],
+}
+
+/// Screen-space textured background vertex: NDC (z = reversed depth) and a page UV.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct BgTexVertex {
+    pub pos: [f32; 3],
+    pub uv: [f32; 2],
 }
 
 /// A texture page as RGBA8 in the **stored row order** (bottom-up picture), which is what the
@@ -108,6 +117,9 @@ pub struct FrameGeometry {
     pub batches: Vec<Batch>,
     /// Background triangles (screen space), drawn first without depth.
     pub background: Vec<BgVertex>,
+    /// Textured background triangles per page (screen space), drawn after `background`,
+    /// before the world, without depth. Same length as `batches`.
+    pub background_tex: Vec<Vec<BgTexVertex>>,
     /// Line list, for debug overlays such as track centre lines.
     pub lines: Vec<LineVertex>,
     pub missing_parts: usize,
@@ -123,6 +135,11 @@ impl FrameGeometry {
             b.indices.clear();
         }
         self.background.clear();
+        self.background_tex
+            .resize_with(library.pages.len(), Vec::new);
+        for b in &mut self.background_tex {
+            b.clear();
+        }
         self.lines.clear();
         self.missing_parts = 0;
     }
@@ -154,13 +171,35 @@ impl FrameGeometry {
         true
     }
 
-    /// Adds a screen-space quad (corners in fan order) with per-corner colours.
-    pub fn add_bg_quad(&mut self, corners: [[f32; 2]; 4], colours: [[f32; 4]; 4]) {
+    /// Adds a screen-space quad (corners in fan order) with per-corner colours at the
+    /// original's 2D depth word `depth` (z = depth / 32768).
+    pub fn add_bg_quad(&mut self, corners: [[f32; 2]; 4], colours: [[f32; 4]; 4], depth: u16) {
+        let z = bg_depth(depth);
         for i in [0, 1, 2, 0, 2, 3] {
             self.background.push(BgVertex {
-                pos: corners[i],
+                pos: [corners[i][0], corners[i][1], z],
                 colour: colours[i],
             });
+        }
+    }
+
+    /// Adds a textured screen-space quad (corners in fan order) on texture page `page` at the
+    /// original's 2D depth word `depth`.
+    pub fn add_bg_tex_quad(
+        &mut self,
+        page: usize,
+        corners: [[f32; 2]; 4],
+        uvs: [[f32; 2]; 4],
+        depth: u16,
+    ) {
+        let z = bg_depth(depth);
+        if let Some(list) = self.background_tex.get_mut(page) {
+            for i in [0, 1, 2, 0, 2, 3] {
+                list.push(BgTexVertex {
+                    pos: [corners[i][0], corners[i][1], z],
+                    uv: uvs[i],
+                });
+            }
         }
     }
 
@@ -178,6 +217,12 @@ impl FrameGeometry {
     pub fn triangle_count(&self) -> usize {
         self.batches.iter().map(|b| b.indices.len() / 3).sum()
     }
+}
+
+/// The original's 2D quads carry a depth word (z = depth / 32768 in D3D's 0 = near … 1 = far
+/// range; renderer.md §8). The renderer uses reversed depth, so this returns 1 − z.
+pub fn bg_depth(depth: u16) -> f32 {
+    1.0 - f32::from(depth) / 32768.0
 }
 
 /// Placement transform in game space: translate, then rotate about +Y by `yaw` radians.

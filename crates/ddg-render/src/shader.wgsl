@@ -78,7 +78,7 @@ fn fs_line(in: LineOut) -> @location(0) vec4<f32> {
 
 // Background: screen-space gradient quads (sky, ground), drawn first without depth.
 struct BgIn {
-    @location(0) pos: vec2<f32>,
+    @location(0) pos: vec3<f32>,
     @location(1) colour: vec4<f32>,
 };
 
@@ -90,7 +90,7 @@ struct BgOut {
 @vertex
 fn vs_bg(v: BgIn) -> BgOut {
     var out: BgOut;
-    out.clip = vec4<f32>(v.pos, 0.0, 1.0);
+    out.clip = vec4<f32>(v.pos, 1.0);
     out.colour = v.colour;
     return out;
 }
@@ -98,4 +98,32 @@ fn vs_bg(v: BgIn) -> BgOut {
 @fragment
 fn fs_bg(in: BgOut) -> @location(0) vec4<f32> {
     return in.colour;
+}
+
+// Textured background (sky panorama, textured ground): screen-space, colour-keyed, no depth.
+struct BgTexIn {
+    @location(0) pos: vec3<f32>,
+    @location(1) uv: vec2<f32>,
+};
+
+struct BgTexOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+};
+
+@vertex
+fn vs_bgtex(v: BgTexIn) -> BgTexOut {
+    var out: BgTexOut;
+    out.clip = vec4<f32>(v.pos, 1.0);
+    out.uv = v.uv;
+    return out;
+}
+
+@fragment
+fn fs_bgtex(in: BgTexOut) -> @location(0) vec4<f32> {
+    let texel = textureSample(page, page_sampler, in.uv);
+    if (texel.a < 0.5) {
+        discard;
+    }
+    return vec4<f32>(texel.rgb, 1.0);
 }

@@ -17,9 +17,9 @@ screenshots).
   vector `(−dz, dx)` to +x. The flip to +z is the separate VIEW transform, diag(1, 1, −1)
   (renderer.md §4). The camera matrix is a proper rotation, so **world space is right-handed**:
   looking along +z with y up, +x is on the left. In a port, `look_at_rh(eye, target, +y)` with a
-  right-handed perspective reproduces the image without mirroring. **likely** (code). This
-  conflicts with the "left-handed / negative volume" reading in models.md §6. Check the winding
-  visually in the viewer (§8).
+  right-handed perspective reproduces the image without mirroring. **confirmed** (Phase 3: a
+  screenshot of the original at Higashi-Kanagawa matched only with this view; the renderer's
+  `Camera::view` builds the equivalent rows f × up, up, f; models.md §6 updated).
 - **Model matrices** use row vectors: `world = l.x·X + l.y·Y + l.z·Z + T`. The helpers:
   - 0x4186a0 `(x, y, z, s, c)` sets X = (c, 0, −s), Y = (0, 1, 0), Z = (s, 0, c), T = (x, y, z).
     Called with sin/cos it is a yaw rotation. Track code passes an **unnormalised chord**
@@ -285,53 +285,150 @@ the 4:3 screen's 3D band. Use the port's actual 3D viewport if it differs.
 ## 6. Background (0x41dfc0) — confirmed (code) unless noted
 
 `mode` = area (0 Yamanote, 1 Akita, 2 Tōkaidō, 3 Hokuhoku, 4 Keihin). Everything is 2D, in
-496×400 virtual units.
+496×400 virtual units, drawn as 4-vertex fans of pre-transformed vertices (rhw 1, white
+diffuse, `z = depth/32768` with 1/32768 at 0x47c968; screen = virtual × resolution/496 and
+/400 via 0x47c964/0x47c960).
 
-- **Gradient palette.** Palette 3 is built by 0x40eed0(R-index, variant) from the 12-byte rows at
-  0x463b40 (variant 0) / 0x463bac (variant ≠ 0, from 0x857230; probably evening/night): sky
-  top RGB, sky bottom, ground top, ground bottom. Entries 0..127 are the sky and 128..255 the
-  ground, `start + k·(end − start)/128`, truncated. For example, R1 Yamanote has sky
-  (152,177,227)→(178,193,226) and ground 40 grey; R2 Akita (213,213,238) with ground 200; R5
-  Keihin (145,145,145)→(240,80,30), a sunset. `GradientColours::palette()` builds it. Colour
-  words in the quads are `palette<<8 | index`: 0x301→0x37f is the sky, 0x380→0x3ff the ground.
-  The flat-quad decoder (0x432b50) turns palette u32 bytes (1, 2, 0) into R, G, B.
-- **Quads.** Sky gradient 0x469c68: (0,66)–(496,235), colours 0x469c60. Ground 0x469c90:
-  (0,235)–(496,415), with flat colours 0x469c78 (gradient), 0x469c80 (all 0x380) or 0x469c88
-  (all 0x3ff). Textured ground in area 3 uses 0x469ca0, (0,251)–(496,415).
-- **Textured ground.** In areas 0 and 4, part 0x76f (area 0) or 0x283b (area 4) supplies the
-  page. The UVs are replaced by the sky-quad corners × 16 (1/256 page units), so it is a static
-  screen-space tiling. Whether u/v are swapped in 0x432d30 is a **guess**. Area 3 ground 2
-  uses part 0x2dd2 with its own UVs.
-- **Panorama sprites.** 12 rows at 0x469e6c `{part, w, h, repeats, v_offset, 127, flags}`. The
-  texture is the first group of `part`, a 4-vertex quad: its rect and UVs (0x432d30). Per COM
-  ≥ 2, 0x469fa4 gives `{count, s0, s1, s2, switch, switch2}`. COM < 2 uses sprite = area, and
-  Keihin switches at 4419. Areas 1/2/4 draw `s0` before engine index `switch` and `s1` after.
-  COM 15 copies s0 over s1. With count 3, row 9 is also loaded as a fourth sprite.
-- **Panorama placement** (0x401600). The roll-free camera heading `atan2` is turned into
-  `frac((heading/2π + 0.5)·repeats + phase)`, where phase = (flags>>8)/256. Tiles are drawn at
-  offsets −1, 0 and +1 (loop to 1.1). The vertical anchor is the projection of the world point
-  at y = 0, 128 units ahead horizontally (the horizon). Tile size on screen is (w − 1) ×
-  (h − 1) virtual units, scaled by Px/Py to undo the anisotropic projection. So the strip
-  scrolls by one tile width per 360°/repeats of heading. It is a slow parallax layer, not
-  angle-true. **likely** (disassembly read, not run). For a wider view, draw enough tiles to
-  cover the viewport.
+### 6.1 Layers per mode
+
+- **Quads.** Sky gradient 0x469c68, corners (0,66) (0,235) (496,235) (496,66), colours
+  0x469c60. Ground 0x469c90, (0,235) (0,415) (496,415) (496,235), with flat colours 0x469c78
+  (gradient), 0x469c80 (all 0x380) or 0x469c88 (all 0x3ff). Textured ground in area 3 uses
+  0x469ca0, (0,251)–(496,415). Depth 0x7ffe for all of them.
 - **Per mode:**
-  - 0: panorama + sky gradient + textured ground (0x76f). On COM 4 at 1501–1589 the ground is
-    at depth 0x7fee, which only changes ordering.
+  - 0: panorama + sky gradient + textured ground (0x76f). On COM 4 at engine index 1501–1589
+    the ground is at depth 0x7fee instead of 0x7ffe, which only changes ordering.
   - 1 (COM ≠ 7/10): tunnel probe A. If inside, **nothing**. Otherwise panorama (s0/s1) + sky
     gradient + flat ground gradient.
   - 1 (COM 7/10) and 3: per-point table (0x41d0e0, `{from, bits}` entries: COM 7 0x46a5b4 ×30,
     10 0x46a69c ×25, 11 0x46a204 ×58, 12 0x46a3dc ×58). Bits 0–2 select the sprite (4 = s1 + the
     fourth). Bits 3–5 select the ground (area 1: any → flat 0x380; area 3: 1 flat 0x380,
     2 textured 0x2dd2, 3 flat 0x3ff). Bits 6–7 turn on the sky gradient. Bit 8 runs the tunnel
-    probe, whose "inside" result is then ignored. Bits 9–10 select an extra world quad
-    (0x41df00, area 3): 4 world points at 0x469d24 / 0x469d54, CPU-projected and drawn flat in
-    ground colour (likely a water surface).
+    probe, whose "inside" result is then ignored. Bits 9–10 select an extra world quad (§6.5).
   - 2: panorama (s0/s1) + sky gradient + flat ground gradient.
   - 4: panorama (s0/s1) + sky gradient + textured ground (0x283b).
 - The clear colour stays black (0x000000). Fog colour is #BFBFBF (renderer.md §7).
 
-`scene::background()` returns this plan per frame. `BackgroundTables` holds the tables.
+### 6.2 Gradient palette and its variant
+
+- Palette 3 is built by 0x40eed0(R-index, variant) from the 12-byte rows at 0x463b40
+  (variant 0) / 0x463bac (variant 1): sky top RGB, sky bottom, ground top, ground bottom.
+  Entries 0..127 are the sky and 128..255 the ground, `start + k·(end − start)/128`, truncated.
+  Examples: R1 Yamanote sky (152,177,227)→(178,193,226), variant (91,106,136)→(106,115,136);
+  R5 Keihin (145,145,145)→(240,80,30), variant (72,72,72)→(192,64,24). The ground rows are
+  the same in both variants. `GradientColours::palette()` builds it. Colour words in the quads
+  are `palette<<8 | index`: 0x301→0x37f is the sky, 0x380→0x3ff the ground. The flat-quad
+  decoder (0x432b50) turns palette u32 bytes (1, 2, 0) into R, G, B.
+- **What selects variant 1 — confirmed (code), meaning guess.** The variant is not a stage
+  or time-of-day setting. It belongs to a timed per-stage *event* with state 0x84c3a0
+  (active), 0x857230 (level) and 0x856fa8 (ticks active):
+  - Stage start (0x40d040): level = 0, inactive. If `from_station[stage]` (i16[20] at
+    0x459cf8) is 0, the event is active from the start (level 1).
+  - Start conditions, all requiring level = 0, inactive and remaining time 0x856fb0 ≥
+    `min[stage·4 + difficulty]` (i16[80] at 0x459d20; difficulty = 0x829d10):
+    0x40d340 (on to the next segment after a stop): station 0x856d78 ≥ `from_station` and
+    frame counter 0x84c494 divisible by 4, no fade; 0x40d620 (station reached):
+    station ≥ `from_station` and counter divisible by 3, fades in; course event kind 0x15
+    (0x40acd0): fades in. Kind 0x16 ends the active phase. Starting sets level 1, ticks 0.
+  - Per tick (0x40c4e0): while active, level climbs to 254; the event stays active for
+    `duration[stage]` ticks (i32[20] at 0x459dc0: 299970 for stages 0–2 and 17–19, 9000 for
+    most, 10500 for stage 16). Afterwards level falls by one per tick; on reaching 1 the
+    sound stops, level becomes −1 (never again this run) and the palette fades back.
+  - Fades: 0x40f320 builds both palettes and starts task 0x436a60(palette 3, 150 ticks):
+    `out = trunc(from + (to − from)·frame/150)` per channel (0x436ad0). Variant 1 is
+    selected without fading when the drive (re)starts with level ≥ 1 (0x4080d0 passes the
+    level as the variant). **likely** that the 0x40d340 start becomes visible only there.
+  - Data: `from_station` is 0 for stages 1–2, 7 for 6–9, 5 for 12/14/16, 99 (course event
+    only) elsewhere. Sound 0x28 loops at volume `level/2` while it runs, and 0x84c2e0 is set
+    above level 199. 0x424740 starts a 3-callback overlay task. **guess**: rain (a
+    darkened sky, rain noise, windscreen effect).
+  - `GradientEventTables::read`, `GradientEvent { stage_start, try_start(trigger), end, tick,
+    variant, sound_volume }` and `palette_fade` model this for the game layer.
+
+### 6.3 Panorama sprites (0x41c890 → 0x401420)
+
+- 12 rows at 0x469e6c `{part, w, h, repeats, v_offset, 127, flags}`. Per COM ≥ 2, 0x469fa4
+  gives `{count, s0, s1, s2, switch, switch2}`. COM < 2 uses sprite = area, and Keihin switches
+  at 4419. Areas 1/2/4 draw `s0` before engine index `switch` and `s1` after. COM 15 copies s0
+  over s1. With count 3, row 9 is also loaded as a fourth sprite.
+- 0x41c890 turns a row into a 0x30-byte runtime record with 0x401420(part, flags & 0xf, w, h,
+  128.0, repeats, depth 0x7ff0, v_offset, phase): +0x18 w, +0x1c h, +0x20 anchor distance
+  128, +0x24 repeats, +0x28 `v_offset / h`, +0x2c phase = `(flags >> 8)/256` (arithmetic
+  shift, 1/256 = double at 0x46a7b0), +0x14 depth. All floats except depth (u16).
+- **Texture (0x432d30).** From the part's first group: `+2` = its rect id, then for the first
+  4 vertices the page UV (already mapped through the rect, `TexRect::map_uv`) × 256,
+  truncated, stored as (v, u). 0x432da0 divides by 256 and stores (u, v) back, so **there is
+  no u/v swap**. Every sprite part's first group has exactly 4 vertices (data test).
+- 0x401420 then pulls each coordinate one unit inwards (+1 if it equals the minimum of the
+  4, else −1; a half-texel guard), and applies `flags`: bit 2 reverses the corner order,
+  bits 0–1 rotate it (corner *i* takes the UV of corner *i + n mod 4*). Bit 3 is unused.
+- The record's first u16 is set to `param_4` (0x8501e8) during the draw; nothing reads it.
+
+### 6.4 Panorama placement (0x401600) — confirmed (disassembly; not yet compared with screenshots)
+
+Arguments: the record, the **view** matrix 0x856be0 and the **inverse view** 0x856c20 (both
+built by 0x418420; row-vector convention). From the inverse view it reads the camera's right
+axis `R` (row 0, rolled), up axis `U` (row 1) and the eye (row 3). Let
+
+```text
+r = √(R.y² + U.y²);  a = R.y/r;  b = U.y/r          // screen direction of world up (roll)
+p = a·U.z − b·R.z;   q = b·R.x − a·U.x              // horizontal right axis = (q, 0, −p)
+heading = atan2(−p, q)                               // = π − yaw for a camera along (sin yaw, 0, cos yaw)
+anchor = (eye.x − 128·p, 0, eye.z − 128·q)           // ground-plane point 128 ahead, y = 0
+(vx, vy, vz) = view · anchor;  sx = −vx/vz;  sy = −vy/vz
+t = (heading/2π + 0.5)·repeats + phase;  f = t − floor(t)     (0x457738, 0x457730, 0x437b57)
+hx = halfW·Px;  hy = halfH·Py                         (0x849d68·0x856b80, 0x849d60·0x856b84)
+ax = (w−1)/hy·hx·b;  ay = (w−1)·a;  bx = (h−1)/hy·hx·a;  by = (h−1)·b
+v  = v_offset/h
+X0 = cx + hx·sx − ax·f − bx·v + 0.5;   Y0 = cy − hy·sy − ay·f + by·v + 0.5
+ax' = ax + 1.2·b;  ay' = ay + 1.2·a                   (1.2 = double at 0x457720)
+for k in −1, 0, +1  (start −1, step 1.0 at 0x457718, while k < 1.1 at 0x457710):
+    (x, y) = (X0 − k·ax, Y0 − k·ay)
+    corners = (x, y), (x + bx, y − by), (x + bx + ax', y − by + ay'), (x + ax', y + ay')
+```
+
+Corners are truncated to integers (`__ftol`, so the +0.5 rounds positive values). With no roll
+(`a = 0`, `b = 1`) and the original projection (hx ≈ hy) a tile is the rectangle from
+(x, y − (h−1)) to (x + w − 1 + 1.2, y): bottom-left, top-left, top-right, bottom-right, w − 1
+virtual units wide (plus 1.2 overlap), its bottom edge `(h − 1)·v_offset/h` below the projected
+horizon point. The strip scrolls by one tile per `360°/repeats` of heading; turning left moves
+it right. The middle tile starts at most one tile left of the anchor's x (the centre when not
+rolled), so 3 tiles cover 0..496 when `w − 1 ≥ 248` (all data: checked along every route).
+Depth 0x7ff0. Each tile uses the record's 4 UVs (§6.3), drawn with 0x432da0.
+
+The anchor is at world y = 0, not at track height, so on raised track the horizon sits lower.
+
+**Widescreen (enhancement):** keep hx/hy (same pixel scale), centre the wider viewport on the
+same centre and draw tiles k = lo..hi with `lo ≤ ⌊(X0 + ax' − right)/ax⌋`, `hi ≥ ⌈(X0 −
+left)/ax⌉`. `sky_quads` does this, plus one spare tile each side for roll; with the original
+width it returns exactly the 3 original tiles.
+
+### 6.5 Textured ground and extra quads — confirmed (code)
+
+- **Areas 0 / 4** (0x76f / 0x283b, cached by 0x41cb00 into 0x850260 / 0x8500e0): the rect
+  comes from the part's first group, but the UVs are replaced by the **sky-gradient quad's**
+  corners shifted left by 4, stored as (x<<4, y<<4) in the (v, u) slots. So corner *i* of the
+  ground quad (positions 0x469c90) gets `u = y_sky,i/16`, `v = x_sky,i/16` page units: a static
+  screen-space tiling with the page repeated every 16 virtual units and turned 90°. The
+  ground quad's own corners are not used for UVs. Drawn by 0x431ec0 → 0x432da0, depth 0x7ffe
+  (0x7fee on COM 4, 1501–1589).
+- **Area 3, ground 2** (0x2dd2 → 0x850220): the part's own first 4 UVs (no inset, no flags)
+  on 0x469ca0, depth 0x7ffe.
+- **Extra world quads** (0x41df00, area 3, bits 9–10 = 1 or 2): 4 world points at 0x469d24
+  (y −0.2) or 0x469d54 (y 1.0). 0x432f40 transforms them with the view copy 0x856ba0 and
+  returns "not drawn" if any has `vz ≥ 0`. Otherwise it projects `x = −Px·vx/vz`,
+  `y = Py·vy/vz`, clips x: corner 0 to ≥ −1 along edge 0–1, corner 1 to ≤ 1 along 0–1,
+  corner 2 to ≤ 1 along 3–2, corner 3 to ≥ −1 along 2–3, then maps `X = (x + 1)·248`,
+  `Y = 174·y + 226` (floats at 0x47c978/74/70) and truncates. The clip helper 0x432f10
+  returns `(a.x·b.y − a.y·b.x + (b.y − a.y)·x)/(a.x − b.x)`, which is the edge's y at **−x**
+  (sign slip). `extra_quad` keeps it. Flat colours 0x469c80 (ground top), depth 0x7ffd
+  (quad 1) / 0x7fe0 (quad 2). Likely water or a field surface.
+- Widescreen: the flat and textured quads span x 0..496. `Quad2d::widened` and `ground_quad`
+  move the left/right corners to the viewport edges and extrapolate the UVs linearly along each
+  horizontal edge (v = x/16 for the tiled ground).
+
+`scene::background()` returns the per-frame plan. `BackgroundTables` holds the tables;
+`sky_quads`, `ground_quad`, `extra_quad` turn them into `TexQuad2d` / `FlatQuad2d`.
 
 ## 7. API (`ddg_formats::scene`)
 
@@ -346,6 +443,15 @@ the 4:3 screen's 3D band. Use the port's actual 3D viewport if it differs.
 - `scenery(route, tables, ctx, &walker) -> Vec<SceneryInstance>`.
 - `live_intervals`, `widen_intervals`, `live_at`, `ORIGINAL_TAN_HALF_FOV_X` (§5).
 - `tunnel_probe`, `background`, `sky_sprite_slots`, `GradientColours::palette`.
+- Background drawing (§6.3–§6.5): `ViewBasis::{look_at, from_cab}` (camera axes as 0x856c20
+  holds them), `Viewport2d::{original(tan½fov_y, aspect), hor_plus(half_width), x_range}`,
+  `SpriteTexture::{from_group(group, rect), for_sky(flags)}`,
+  `sky_quads(sprite, tex, view, viewport, snap) -> Vec<TexQuad2d>`,
+  `ground_quad(bg, ground, tex, x_range) -> Option<TexQuad2d>`,
+  `extra_quad(bg, which, view, viewport, snap) -> Option<FlatQuad2d>`, `Quad2d::widened`,
+  `depth_z`. `TexQuad2d { xy (virtual units), uv (normalised page), rect_id, depth }`.
+- Gradient event (§6.2): `GradientEventTables::read`, `GradientEvent`, `GradientTrigger`,
+  `PaletteFade`, `palette_fade`, `PALETTE_FADE_TICKS`.
 - `SceneContext { area, com, station }` feeds the hard-coded exceptions.
 
 ## 8. Open questions
@@ -356,7 +462,9 @@ the 4:3 screen's 3D band. Use the port's actual 3D viewport if it differs.
 - The f32 at +16 and the u16 at +2 of a track run are still unknown. Buckets are cut to the
   4:3 view either way.
 - Animated object triggers (global 0x85744c, the proximity threshold) and class-11/≥ 23 drawing.
-- What fires the camera jolts (0x409d0e, 0x409d74, 0x40a5ab), and variant 1 of the gradient
-  palette (0x857230).
-- 0x432d30 u/v order for the textured ground, and the exact panorama vertex formula
-  (0x401600; compare with Wine screenshots).
+- What fires the camera jolts (0x409d0e, 0x409d74, 0x40a5ab).
+- The gradient event: what 0x856fb0 measures (remaining time is a guess), whether the 0x40d340
+  start changes the palette before the next drive restart, and what the overlay task 0x424740
+  draws (rain is a guess).
+- Panorama and ground: compare `sky_quads` / `ground_quad` with Wine screenshots (tile phase,
+  vertical offset, corner/UV orientation against the bottom-up page rows).

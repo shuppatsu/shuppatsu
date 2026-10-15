@@ -1,7 +1,7 @@
 //! wgpu renderer: texture pages are uploaded once; geometry is streamed every frame.
 
 use crate::camera::{Camera, Projection};
-use crate::world::{BgVertex, FrameGeometry, LineVertex, PageImage, Vertex};
+use crate::world::{BgTexVertex, BgVertex, FrameGeometry, LineVertex, PageImage, Vertex};
 use glam::Mat4;
 
 /// Fog parameters (docs/re/renderer.md §7): linear, eye-space, colour #BFBFBF.
@@ -78,12 +78,15 @@ struct PageGpu {
     vertices: StreamBuffer,
     indices: StreamBuffer,
     index_count: u32,
+    bg_tex: StreamBuffer,
+    bg_tex_count: u32,
 }
 
 pub struct Renderer {
     world_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
     bg_pipeline: wgpu::RenderPipeline,
+    bg_tex_pipeline: wgpu::RenderPipeline,
     frame_buffer: wgpu::Buffer,
     frame_bind: wgpu::BindGroup,
     page_layout: wgpu::BindGroupLayout,
@@ -262,14 +265,29 @@ impl Renderer {
             wgpu::VertexBufferLayout {
                 array_stride: std::mem::size_of::<BgVertex>() as u64,
                 step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4],
+                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4],
             },
             wgpu::PrimitiveState::default(),
-            depth_state(false, wgpu::CompareFunction::Always),
+            // The original draws its 2D background with Z test and write, at far depth words.
+            depth_state(true, wgpu::CompareFunction::GreaterEqual),
+        );
+
+        let bg_tex_pipeline = pipeline(
+            "background textured",
+            &[Some(&frame_layout), Some(&page_layout)],
+            ("vs_bgtex", "fs_bgtex"),
+            wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<BgTexVertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2],
+            },
+            wgpu::PrimitiveState::default(),
+            depth_state(true, wgpu::CompareFunction::GreaterEqual),
         );
 
         Self {
             world_pipeline,
+            bg_tex_pipeline,
             line_pipeline,
             bg_pipeline,
             frame_buffer,
@@ -366,6 +384,8 @@ impl Renderer {
                     vertices: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "page vertices"),
                     indices: StreamBuffer::new(wgpu::BufferUsages::INDEX, "page indices"),
                     index_count: 0,
+                    bg_tex: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "page background"),
+                    bg_tex_count: 0,
                 }
             })
             .collect();
@@ -378,6 +398,11 @@ impl Renderer {
         queue: &wgpu::Queue,
         frame: &FrameGeometry,
     ) {
+        for (page, quads) in self.pages.iter_mut().zip(&frame.background_tex) {
+            page.bg_tex_count = quads.len() as u32;
+            page.bg_tex
+                .write(device, queue, bytemuck::cast_slice(quads));
+        }
         for (page, batch) in self.pages.iter_mut().zip(&frame.batches) {
             page.index_count = batch.indices.len() as u32;
             page.vertices
@@ -486,6 +511,16 @@ impl Renderer {
                 pass.set_pipeline(&self.bg_pipeline);
                 pass.set_vertex_buffer(0, slice);
                 pass.draw(0..self.background_count, 0..1);
+            }
+            pass.set_pipeline(&self.bg_tex_pipeline);
+            pass.set_bind_group(0, &self.frame_bind, &[]);
+            for page in self.pages.iter().filter(|p| p.bg_tex_count > 0) {
+                let bytes = u64::from(page.bg_tex_count) * size_of::<BgTexVertex>() as u64;
+                if let Some(slice) = page.bg_tex.slice(bytes) {
+                    pass.set_bind_group(1, &page.bind_group, &[]);
+                    pass.set_vertex_buffer(0, slice);
+                    pass.draw(0..page.bg_tex_count, 0..1);
+                }
             }
             pass.set_pipeline(&self.world_pipeline);
             pass.set_bind_group(0, &self.frame_bind, &[]);

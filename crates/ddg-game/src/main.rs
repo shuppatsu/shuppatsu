@@ -31,6 +31,7 @@ options:
   --original-visibility    the original 4:3 visibility lists, even in a wider window
   --stable-track-variants  enhancement: side-track models don't switch every point (no flicker)
   --texture-filtering      enhancement: mipmaps + trilinear/anisotropic filtering (no shimmer)
+  --gradient-variant <0|1> sky/ground gradient set (1 = the timed alternate set)
   --fog                    linear fog as DengoSetting's FOGENABLE (off on a fresh install)
   --size <WxH>             window/frame size (default 1280x800, 16:10)
 
@@ -57,6 +58,7 @@ struct Options {
     stable_track_variants: bool,
     texture_filtering: bool,
     fog: bool,
+    gradient_variant: usize,
     size: (u32, u32),
 }
 
@@ -79,6 +81,7 @@ fn parse_args() -> Result<Options> {
         stable_track_variants: false,
         texture_filtering: false,
         fog: false,
+        gradient_variant: 0,
         size: (1280, 800),
     };
     let mut rest = args[2..].iter();
@@ -93,6 +96,12 @@ fn parse_args() -> Result<Options> {
             "--stable-track-variants" => opts.stable_track_variants = true,
             "--texture-filtering" => opts.texture_filtering = true,
             "--fog" => opts.fog = true,
+            "--gradient-variant" => {
+                opts.gradient_variant = rest
+                    .next()
+                    .context("--gradient-variant needs 0 or 1")?
+                    .parse()?
+            }
             "--size" => {
                 let s = rest.next().context("--size needs WxH")?;
                 let (w, h) = s.split_once('x').context("--size needs WxH")?;
@@ -254,7 +263,11 @@ impl App {
         let pos = track_pos(self.prev + (self.cur - self.prev) * alpha);
         let camera = self.scene.cab_camera(pos);
         let t = Instant::now();
-        self.scene.compose(&mut self.frame, pos, self.show_lines);
+        let aspect = self.gpu.as_ref().map_or(1.6, |g| {
+            g.config.width as f32 / g.config.height.max(1) as f32
+        });
+        self.scene
+            .compose(&mut self.frame, pos, self.show_lines, aspect);
         self.worst_compose = self.worst_compose.max(t.elapsed());
 
         let Some(gpu) = self.gpu.as_mut() else { return };
@@ -400,6 +413,7 @@ fn main() -> Result<()> {
     let t = Instant::now();
     let mut scene = RouteScene::load(&data, &opts.route, visibility)?;
     scene.stable_track_variants = opts.stable_track_variants;
+    scene.gradient_variant = opts.gradient_variant;
     eprintln!(
         "{}: area {}, COM {}, eye height {:.3}, {} placements, visibility {:?}, loaded in {:.2?}",
         opts.route,

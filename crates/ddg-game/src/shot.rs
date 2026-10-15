@@ -38,7 +38,7 @@ pub fn render_to_ppm(
     configure(&mut renderer);
     renderer.upload_pages(&device, &queue, &scene.library.pages);
     let mut frame = ddg_render::FrameGeometry::default();
-    scene.compose(&mut frame, pos, false);
+    scene.compose(&mut frame, pos, false, width as f32 / height as f32);
     eprintln!(
         "frame at engine index {}: {} triangles, {} missing parts",
         pos.engine_index,

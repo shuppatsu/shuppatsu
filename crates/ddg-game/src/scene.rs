@@ -4,8 +4,7 @@
 
 use anyhow::{Context, Result};
 use ddg_formats::scene::{
-    self, LiveInterval, ORIGINAL_TAN_HALF_FOV_X, Quad2d, SceneContext, SceneTables, TrackPos,
-    WideView,
+    self, LiveInterval, ORIGINAL_TAN_HALF_FOV_X, SceneContext, SceneTables, TrackPos, WideView,
 };
 use ddg_formats::{
     exe::Exe, part::Part, rom2::Rom2, route::Route, stages::StageTables, tex::TexFile,
@@ -60,6 +59,13 @@ pub enum Visibility {
     Wide { tan_half_fov_x: f32 },
 }
 
+/// Driving FOV in tenths of a degree (scene.md §3, likely).
+const DRIVING_FOV_TENTHS: u16 = (scene::DRIVING_FOV_Y_DEG * 10.0) as u16;
+/// Depth words of the gradient quads (renderer.md §8: backgrounds at ≈0x7ffe; the ground is
+/// drawn just in front of the sky; likely).
+const SKY_GRADIENT_DEPTH: u16 = 0x7ffe;
+const GROUND_FLAT_DEPTH: u16 = 0x7ffd;
+
 /// Bucket look-back for side tracks in wide mode (scene.md §5.2).
 const WIDE_EXTRA_BUCKETS: usize = 16;
 
@@ -74,6 +80,8 @@ pub struct RouteScene {
     /// Enhancement `stable_track_variants` (off = the original's flicker): side-track model
     /// variants anchored to the track instead of switching every point.
     pub stable_track_variants: bool,
+    /// Gradient set: 0 normal, 1 the alternate set of the timed per-stage event (scene.md §6.5).
+    pub gradient_variant: usize,
 }
 
 impl RouteScene {
@@ -143,6 +151,7 @@ impl RouteScene {
             intervals,
             visibility,
             stable_track_variants: false,
+            gradient_variant: 0,
         })
     }
 
@@ -160,11 +169,12 @@ impl RouteScene {
     }
 
     /// Fills `frame` with everything drawn at `pos`.
-    pub fn compose(&self, frame: &mut FrameGeometry, pos: TrackPos, show_lines: bool) {
+    /// `aspect` is the viewport's width / height in pixels (for the 2D background layout).
+    pub fn compose(&self, frame: &mut FrameGeometry, pos: TrackPos, show_lines: bool, aspect: f32) {
         frame.clear(&self.library);
         let cam = scene::cab_camera(&self.route, pos, self.eye_height, 0.0);
 
-        self.background(frame, pos);
+        self.background(frame, pos, ScreenMap { aspect });
 
         let options = scene::TrackOptions {
             anchor_side_variants: self.stable_track_variants,
@@ -210,13 +220,13 @@ impl RouteScene {
         }
     }
 
-    /// Sky and ground gradients (scene.md §6). Panorama sprites and textured ground are not
-    /// drawn yet; textured ground falls back to the flat ground gradient.
-    fn background(&self, frame: &mut FrameGeometry, pos: TrackPos) {
+    /// The 2D background (scene.md §6): sky gradient, flat or textured ground, panorama
+    /// sprites and the area-3 extra quads, each at the original's depth word.
+    fn background(&self, frame: &mut FrameGeometry, pos: TrackPos, screen: ScreenMap) {
         let plan = scene::background(&self.route, &self.tables, self.ctx, pos);
         let bg = &self.tables.background;
         let r_index = self.ctx.area + 1;
-        let Some(gradient) = bg.gradients[0].get(r_index) else {
+        let Some(gradient) = bg.gradients[self.gradient_variant.min(1)].get(r_index) else {
             return;
         };
         let palette = gradient.palette();
@@ -234,25 +244,71 @@ impl RouteScene {
             let lin = srgb.map(|c| c.powf(2.2));
             [lin[0], lin[1], lin[2], 1.0]
         };
-        let mut quad = |q: &Quad2d| {
-            frame.add_bg_quad(q.xy.map(virtual_to_ndc), q.colours.map(colour));
-        };
+        let (left, right) = screen.x_range();
+        let x_range = [left, right];
+        let to_ndc = |xy: [[f32; 2]; 4]| xy.map(|[x, y]| screen.ndc(x, y));
+
         if plan.sky_gradient {
             // The original's sky starts at virtual y 66, under the cab roof. The viewer has no
             // cab, so the sky's top edge is raised to the top of the window.
-            let mut sky = bg.sky_quad;
-            let top = sky.xy.iter().map(|p| p[1]).min().unwrap_or(0);
-            for p in &mut sky.xy {
+            let mut xy = bg.sky_quad.widened(x_range);
+            let top = xy.iter().map(|p| p[1]).fold(f32::MAX, f32::min);
+            for p in &mut xy {
                 if p[1] == top {
-                    p[1] = VIEWER_TOP;
+                    p[1] = f32::from(VIEWER_TOP);
                 }
             }
-            quad(&sky);
+            frame.add_bg_quad(
+                to_ndc(xy),
+                bg.sky_quad.colours.map(colour),
+                SKY_GRADIENT_DEPTH,
+            );
         }
-        match plan.ground {
+
+        // A sprite texture from a part's first group (panorama sprites, textured ground).
+        let sprite = |part_id: u32| -> Option<(usize, scene::SpriteTexture)> {
+            let group = self.library.part(part_id)?.groups.first()?;
+            let (page, rect) = self.library.rect(group.rect_id)?;
+            Some((page, scene::SpriteTexture::from_group(group, &rect)?))
+        };
+
+        match &plan.ground {
             scene::Ground::None => {}
-            scene::Ground::Flat(q) => quad(&q),
-            scene::Ground::Textured { .. } => quad(&bg.ground_quad),
+            scene::Ground::Flat(q) => frame.add_bg_quad(
+                to_ndc(q.widened(x_range)),
+                q.colours.map(colour),
+                GROUND_FLAT_DEPTH,
+            ),
+            g @ scene::Ground::Textured { part_id, depth, .. } => {
+                if let Some((page, tex)) = sprite(*part_id)
+                    && let Some(q) = scene::ground_quad(bg, g, &tex, x_range)
+                {
+                    frame.add_bg_tex_quad(page, to_ndc(q.xy), q.uv, *depth);
+                }
+            }
+        }
+
+        let cam = scene::cab_camera(&self.route, pos, self.eye_height, 0.0);
+        let view = scene::ViewBasis::from_cab(&cam);
+        let tan_half = ddg_render::camera::quantised_tan_half(DRIVING_FOV_TENTHS);
+        let vp = scene::Viewport2d::original(tan_half, scene::DRIVING_ASPECT)
+            .hor_plus(screen.half_width());
+        for &i in &plan.sky_sprites {
+            let Some(s) = bg.sky_sprites.get(i) else {
+                continue;
+            };
+            let Some((page, tex)) = sprite(s.part_id) else {
+                continue;
+            };
+            let tex = tex.for_sky(s.flags);
+            for q in scene::sky_quads(s, &tex, &view, &vp, true) {
+                frame.add_bg_tex_quad(page, to_ndc(q.xy), q.uv, q.depth);
+            }
+        }
+        if let Some(which) = plan.extra_quad
+            && let Some(q) = scene::extra_quad(bg, which, &view, &vp, true)
+        {
+            frame.add_bg_quad(to_ndc(q.xy), q.colours.map(colour), q.depth);
         }
     }
 }
@@ -260,13 +316,35 @@ impl RouteScene {
 /// Virtual y of the window's top edge in the viewer's band mapping (the 3D band starts at 52).
 const VIEWER_TOP: i16 = 52;
 
-/// Maps a 496×400 virtual-screen point to NDC for a viewer whose 3D view fills the window:
-/// the original's 3D band (virtual y 52..400) becomes the full height, and x stretches over the
-/// full width (background quads are horizontal gradients, so widening doesn't distort them).
-fn virtual_to_ndc([x, y]: [i16; 2]) -> [f32; 2] {
-    let nx = f32::from(x) / 496.0 * 2.0 - 1.0;
-    let ny = 1.0 - (f32::from(y) - 52.0) / 348.0 * 2.0;
-    [nx, ny]
+/// Placement of the original's 496×400 virtual screen in the viewer's window. The original's
+/// 3D band (virtual y 52..400) fills the window height; virtual x keeps the original's pixel
+/// ratio to y (1 x unit = 640/496 px, 1 y unit = 480/400 px at 640×480) around x = 248, so
+/// 2D layers line up with the 3D view at any aspect (Hor+ reveals more virtual x).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ScreenMap {
+    pub aspect: f32,
+}
+
+impl ScreenMap {
+    /// Original x:y size ratio of one virtual unit.
+    const UNIT_RATIO: f32 = (640.0 / 496.0) / (480.0 / 400.0);
+
+    /// Half the visible width in virtual x units.
+    pub fn half_width(&self) -> f32 {
+        self.aspect * 348.0 / (2.0 * Self::UNIT_RATIO)
+    }
+
+    /// Visible virtual x range (left, right).
+    pub fn x_range(&self) -> (f32, f32) {
+        (248.0 - self.half_width(), 248.0 + self.half_width())
+    }
+
+    pub fn ndc(&self, x: f32, y: f32) -> [f32; 2] {
+        [
+            (x - 248.0) / self.half_width(),
+            1.0 - (y - 52.0) / 348.0 * 2.0,
+        ]
+    }
 }
 
 #[cfg(test)]
@@ -274,8 +352,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn band_mapping() {
-        assert_eq!(virtual_to_ndc([0, 52]), [-1.0, 1.0]);
-        assert_eq!(virtual_to_ndc([496, 400]), [1.0, -1.0]);
+    fn screen_map_hor_plus() {
+        let m = ScreenMap { aspect: 4.0 / 3.0 };
+        assert_eq!(m.ndc(248.0, 52.0), [0.0, 1.0]);
+        // 16:10 shows more virtual x than 4:3, centred on 248.
+        let wide = ScreenMap { aspect: 1.6 };
+        assert!(wide.x_range().0 < m.x_range().0);
+        assert!((wide.ndc(wide.x_range().1, 400.0)[0] - 1.0).abs() < 1e-6);
     }
 }
