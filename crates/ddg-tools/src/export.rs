@@ -151,10 +151,10 @@ pub fn tilemaps(dirs: &GameDirs, out: &Path, palette_slot: u8) -> Result<usize> 
     std::fs::create_dir_all(&pal_dir)?;
     for (slot, p) in &palettes {
         let mut rgba = vec![0u8; 128 * 128 * 4];
-        for (i, px) in rgba.chunks_exact_mut(4).enumerate() {
+        for (i, px) in rgba.as_chunks_mut::<4>().0.iter_mut().enumerate() {
             let (x, y) = (i % 128 / 8, i / 128 / 8);
             let c = p.0[y * 16 + x].to_le_bytes();
-            px.copy_from_slice(&[c[1], c[2], c[0], 255]);
+            *px = [c[1], c[2], c[0], 255];
         }
         save_png(
             &pal_dir.join(format!("palette{slot:03}.png")),
