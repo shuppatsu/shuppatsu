@@ -29,6 +29,7 @@ options:
   --uncapped               present without vsync
   --square-pixels          disable the original's 7.9 % horizontal stretch
   --original-visibility    the original 4:3 visibility lists, even in a wider window
+  --stable-track-depth     enhancement: no z-fighting between overlapping track beds
   --size <WxH>             window/frame size (default 1280x800, 16:10)
 
 keys: Space pause, Up/Down speed, Left/Right jump 100 m, L track lines, F fog, Esc quit";
@@ -51,6 +52,7 @@ struct Options {
     uncapped: bool,
     square_pixels: bool,
     original_visibility: bool,
+    stable_track_depth: bool,
     size: (u32, u32),
 }
 
@@ -70,6 +72,7 @@ fn parse_args() -> Result<Options> {
         uncapped: false,
         square_pixels: false,
         original_visibility: false,
+        stable_track_depth: false,
         size: (1280, 800),
     };
     let mut rest = args[2..].iter();
@@ -81,6 +84,7 @@ fn parse_args() -> Result<Options> {
             "--out" => opts.out = Some(rest.next().context("--out needs a path")?.into()),
             "--square-pixels" => opts.square_pixels = true,
             "--original-visibility" => opts.original_visibility = true,
+            "--stable-track-depth" => opts.stable_track_depth = true,
             "--size" => {
                 let s = rest.next().context("--size needs WxH")?;
                 let (w, h) = s.split_once('x').context("--size needs WxH")?;
@@ -382,7 +386,8 @@ fn main() -> Result<()> {
         }
     };
     let t = Instant::now();
-    let scene = RouteScene::load(&data, &opts.route, visibility)?;
+    let mut scene = RouteScene::load(&data, &opts.route, visibility)?;
+    scene.stable_track_depth = opts.stable_track_depth;
     eprintln!(
         "{}: area {}, COM {}, eye height {:.3}, {} placements, visibility {:?}, loaded in {:.2?}",
         opts.route,

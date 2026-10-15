@@ -129,6 +129,20 @@ impl FrameGeometry {
 
     /// Adds part `id` with a model-to-world transform. Returns false if the part is unknown.
     pub fn add_instance(&mut self, library: &PartLibrary, id: u32, transform: &Mat4) -> bool {
+        self.add_instance_pulled(library, id, transform, Vec3::ZERO, 0.0)
+    }
+
+    /// Like [`Self::add_instance`], but every vertex is moved the fraction `pull` of its distance
+    /// towards `eye`. On screen this changes only depth, which lets coplanar pieces be given a
+    /// stable order (enhancement `stable_track_depth`).
+    pub fn add_instance_pulled(
+        &mut self,
+        library: &PartLibrary,
+        id: u32,
+        transform: &Mat4,
+        eye: Vec3,
+        pull: f32,
+    ) -> bool {
         let Some(part) = library.part(id) else {
             self.missing_parts += 1;
             return false;
@@ -140,10 +154,9 @@ impl FrameGeometry {
             let batch = &mut self.batches[page];
             let base = batch.vertices.len() as u32;
             batch.vertices.extend(g.vertices.iter().map(|v| {
+                let p = transform.transform_point3(Vec3::from(v.position()));
                 Vertex {
-                    pos: transform
-                        .transform_point3(Vec3::from(v.position()))
-                        .to_array(),
+                    pos: (p + (eye - p) * pull).to_array(),
                     uv: rect.map_uv(v.uv),
                 }
             }));
@@ -259,5 +272,49 @@ mod tests {
         let m = placement_transform(Vec3::ZERO, std::f32::consts::FRAC_PI_2);
         // local x → (cos, 0, −sin) = (0, 0, −1)
         assert!(m.transform_vector3(Vec3::X).abs_diff_eq(Vec3::NEG_Z, 1e-6));
+    }
+}
+
+#[cfg(test)]
+mod pull_tests {
+    use super::*;
+
+    #[test]
+    fn pull_moves_towards_eye_along_the_ray() {
+        let mut lib = PartLibrary::default();
+        lib.add_textures(&TexFile {
+            rects: vec![TexRect {
+                id: 1,
+                page: 0,
+                u: 0,
+                v: 0,
+                w: 255,
+                h: 255,
+            }],
+            pages: vec![ddg_formats::tex::TexPage {
+                width: 1,
+                height: 1,
+                pixels: vec![1],
+            }],
+        });
+        let v = ddg_formats::part::Vertex {
+            pos: [0, 0, 2560],
+            uv: [0, 0],
+        };
+        lib.add_parts([(
+            1,
+            Part {
+                groups: vec![ddg_formats::part::Group {
+                    rect_id: 1,
+                    vertices: vec![v; 3],
+                    indices: vec![0, 1, 2],
+                }],
+            },
+        )]);
+        let mut f = FrameGeometry::default();
+        f.clear(&lib);
+        f.add_instance_pulled(&lib, 1, &Mat4::IDENTITY, Vec3::ZERO, 0.1);
+        // (0, 0, 10) pulled 10 % towards the origin: same direction, distance 9.
+        assert_eq!(f.batches[0].vertices[0].pos, [0.0, 0.0, 9.0]);
     }
 }

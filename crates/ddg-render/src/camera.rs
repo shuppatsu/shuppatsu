@@ -50,12 +50,15 @@ impl Default for Projection {
 impl Projection {
     /// Left-handed perspective with depth in 0..1 (wgpu), Hor+: the vertical FOV is fixed and
     /// the horizontal extent follows `viewport_aspect` (width / height in pixels).
+    ///
+    /// Depth is **reversed** (near → 1, far → 0) for near-uniform float depth precision. X/Y and
+    /// the clipping volume match the original; only the depth encoding differs.
     pub fn matrix(&self, viewport_aspect: f32) -> Mat4 {
         let tan_half = quantised_tan_half(self.fov_tenths);
         let aspect = viewport_aspect / self.stretch;
-        // Same layout as the original's PerspectiveLH (0x4261e0): m00 = 1/(t·a), m11 = 1/t,
-        // m22 = f/(f−n), m23 = 1, m32 = −n·f/(f−n).
-        let q = FAR / (FAR - NEAR);
+        // The original's PerspectiveLH (0x4261e0) has m00 = 1/(t·a), m11 = 1/t, m23 = 1 and
+        // depth m22 = f/(f−n), m32 = −n·f/(f−n). Reversed: m22 = −n/(f−n), m32 = n·f/(f−n).
+        let r = NEAR / (FAR - NEAR);
         Mat4::from_cols_array(&[
             1.0 / (tan_half * aspect),
             0.0,
@@ -67,11 +70,11 @@ impl Projection {
             0.0,
             0.0,
             0.0,
-            q,
+            -r,
             1.0,
             0.0,
             0.0,
-            -NEAR * q,
+            FAR * r,
             0.0,
         ])
     }
@@ -127,8 +130,9 @@ mod tests {
         let m = p.matrix(16.0 / 10.0);
         let near = m * Vec4::new(0.0, 0.0, NEAR, 1.0);
         let far = m * Vec4::new(0.0, 0.0, FAR, 1.0);
-        assert!((near.z / near.w).abs() < 1e-6);
-        assert!((far.z / far.w - 1.0).abs() < 1e-6);
+        // Reversed depth: near → 1, far → 0.
+        assert!((near.z / near.w - 1.0).abs() < 1e-6);
+        assert!((far.z / far.w).abs() < 1e-6);
         // Hor+: same vertical scale at any aspect, wider aspect → smaller horizontal scale.
         let m43 = p.matrix(4.0 / 3.0);
         assert_eq!(m.y_axis.y, m43.y_axis.y);

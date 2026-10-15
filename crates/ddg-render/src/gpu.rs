@@ -223,7 +223,7 @@ impl Renderer {
                 cull_mode: Some(wgpu::Face::Back),
                 ..Default::default()
             },
-            depth_state(true, wgpu::CompareFunction::LessEqual),
+            depth_state(true, wgpu::CompareFunction::GreaterEqual),
         );
         let line_pipeline = pipeline(
             "lines",
@@ -238,7 +238,7 @@ impl Renderer {
                 topology: wgpu::PrimitiveTopology::LineList,
                 ..Default::default()
             },
-            depth_state(true, wgpu::CompareFunction::LessEqual),
+            depth_state(true, wgpu::CompareFunction::GreaterEqual),
         );
         let bg_pipeline = pipeline(
             "background",
@@ -432,7 +432,8 @@ impl Renderer {
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: &depth,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
+                        // Reversed depth: 0 is the far plane.
+                        load: wgpu::LoadOp::Clear(0.0),
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,

@@ -63,6 +63,13 @@ pub enum Visibility {
 /// Bucket look-back for side tracks in wide mode (scene.md §5.2).
 const WIDE_EXTRA_BUCKETS: usize = 16;
 
+/// Enhancement `stable_track_depth`: each track piece is pulled this fraction of its distance
+/// towards the eye per position in the original's draw order, so overlapping coplanar track
+/// beds no longer z-fight (the original flickers there). A few hundred pieces stay below 0.1 %
+/// of the distance, far less than the rail height along any view ray, and well above the
+/// precision of the reversed-Z float depth buffer.
+const TRACK_PULL_STEP: f32 = 2e-6;
+
 pub struct RouteScene {
     pub route: Route,
     pub tables: SceneTables,
@@ -71,6 +78,8 @@ pub struct RouteScene {
     pub eye_height: f32,
     intervals: Vec<LiveInterval>,
     visibility: Visibility,
+    /// Enhancement `stable_track_depth` (off = the original's flicker).
+    pub stable_track_depth: bool,
 }
 
 impl RouteScene {
@@ -139,6 +148,7 @@ impl RouteScene {
             library,
             intervals,
             visibility,
+            stable_track_depth: false,
         })
     }
 
@@ -175,9 +185,15 @@ impl RouteScene {
                 WIDE_EXTRA_BUCKETS,
             ),
         };
-        for p in pieces {
+        let eye = Vec3::from(cam.eye);
+        for (rank, p) in pieces.iter().enumerate() {
             let m = Mat4::from_cols_array(&p.transform.to_cols_array());
-            frame.add_instance(&self.library, p.part_id, &m);
+            let pull = if self.stable_track_depth {
+                rank as f32 * TRACK_PULL_STEP
+            } else {
+                0.0
+            };
+            frame.add_instance_pulled(&self.library, p.part_id, &m, eye, pull);
         }
 
         let live = scene::live_at(&self.intervals, pos.engine_index);
