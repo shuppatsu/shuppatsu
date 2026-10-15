@@ -20,4 +20,7 @@ cd "$WINEPREFIX/drive_c/Program Files (x86)/TAITO/DENGO3K/BIN" # game uses ..\da
 if [[ $desktop == off ]]; then
   exec wine "$exe" "$@"
 fi
-exec wine explorer "/desktop=dengo3k,$desktop" "$exe" "$@"
+# explorer resolves the program on the Windows search path, not the cwd, so pass the game
+# directory explicitly via start.exe (/d also sets the working directory the game needs).
+bin='C:\Program Files (x86)\TAITO\DENGO3K\BIN'
+exec wine explorer "/desktop=dengo3k,$desktop" start /wait /d "$bin" "$exe" "$@"
