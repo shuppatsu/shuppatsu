@@ -8,32 +8,32 @@ Generated artefacts (gitignored, regenerate with the commands below):
 
 ```sh
 nix develop
-scripts/extract-disc.sh DENGO3K.mdf          # -> data/extracted/{disc,install}
+scripts/extract-disc.sh data/disc/DENGO3K.mdf # -> data/extracted/{disc,install}
 cargo run -p ddg-tools -- inventory data/extracted/install
 cargo run -p ddg-tools -- pe data/extracted/install/Program_Executable_Files/BIN/dengo3k.exe
 cargo run -p ddg-tools -- strings <file> [--min N] [--jp]
 cargo run -p ddg-tools -- manifest data/extracted 3000-bandai
 ```
 
-## 1. Source image — DAMAGED
+## 1. Source image
 
 | fact | value | confidence / evidence |
 |---|---|---|
-| Format | Alcohol 120% `.mdf`, raw 2352-byte sectors, no `.mds` | confirmed: 241,032,960 B = 102,480 × 2352; sync pattern on every data sector |
-| Tracks | one Mode 1 data track; **no CD-DA tracks** | confirmed: every non-zero sector is Mode 1 |
-| Volume | ISO 9660 + Joliet, label `DENGO3K`, 102,179 sectors | confirmed: PVD at sector 16 |
-| Damage | sectors 0–88833 good; 88834 half-written; 88835–102479 all zero | confirmed: EDC check fails only at 88834; tail scan |
+| Format | Alcohol 120% `DENGO3K.mdf` + `DENGO3K.mds` (MDS v1.3), raw 2352-byte sectors | confirmed: 241,032,960 B = 102,480 × 2352; `MEDIA DESCRIPTOR` header |
+| Session/tracks | 1 session, **3 Mode 1 data tracks**, no CD-DA | confirmed: MDS track blocks + sector headers |
+| Track 1 | LBA 0–101725 (101,726 sectors): the ISO 9660 filesystem, all files | confirmed |
+| Track 2 | LBA 101726–102177 (452 sectors): all zero | confirmed |
+| Track 3 | LBA 102178–102479 (302 sectors): read only by the disc check (see §5) | confirmed |
+| Volume | ISO 9660 + Joliet, label `DENGO3K`, 102,179 sectors (just reaches LBA 102178) | confirmed: PVD at sector 16 |
+| Integrity | 0 EDC errors over all 102,480 sectors; no DPM block, no bad-sector list in the MDS | confirmed |
 
-The image is a **truncated copy**: the file was cut off after about 208.9 MB and zero-padded
-to full size. The data present has no read errors and no deliberate bad sectors.
+History: the first image supplied (`./DENGO3K.mdf`, no `.mds`) was a truncated copy of this same
+file. It is byte-identical up to offset 208,938,752 and zero after that. It is superseded by
+`data/disc/DENGO3K.{mdf,mds}`, which came from the user's own backup archive.
 
-Lost: the last ~25 MB of `DATA1.CAB` (and with it **`komachi.dat`**, 39,001,368 B), plus the
-root installer files placed after it: `SETUP.EXE`, `setup.ins`, `README.TXT`, `dengo3k.ico`,
-`lang.dat`, `layout.bin`, `os.dat`, `SETUP.INI`, `setup.lid`.
-Intact: **56 of 57 installed game files** (InstallShield checks each file's MD5 on extraction),
-the DirectX 6 redistributable, the controller-driver installer, and InstallShield support cabs.
-
-**Action needed:** a complete dump of the user's own disc (bin/cue or iso).
+`scripts/extract-disc.sh` treats the MDF as one MODE1/2352 track. That's correct for extraction
+because all three tracks are Mode 1 and contiguous. It does not preserve the TOC; anything that
+needs the TOC (e.g. presenting the disc to Wine) must use the `.mds`.
 
 ## 2. Disc layout and inventory
 
@@ -47,7 +47,7 @@ Disc (330 files, of which 295 are the DirectX 6 redistributable):
 | `DRIVER/` | separate InstallShield setup: driver for the official DDG controller | confirmed |
 | `DIRECTX6/` | DirectX 6.0/6.1 + DirectX Media redistributable | confirmed |
 
-Installed game (`DATA1.CAB`), 57 files, 223,675,371 B; 56 extracted, 184,673,946 B:
+Installed game (`DATA1.CAB`), 57 files, 223,675,314 B, all extracted (MD5-verified by unshield):
 
 | file(s) | count | bytes | magic | entropy | notes |
 |---|---:|---:|---|---|---|
@@ -61,7 +61,7 @@ Installed game (`DATA1.CAB`), 57 files, 223,675,371 B; 56 extracted, 184,673,946
 | `DATA/parts{R1..R5,RC,TR1..TR9}.rom` | 15 | 4,086,612 | `ROM2` | 5.5–6.5 | models/parts |
 | `DATA/tex{R1..R5,RC,TR1..TR9}.rom` | 15 | 38,026,552 | no magic; leading u16 counts, 8-byte records | 5.2–7.0 | textures |
 | `DATA/cg.rom` | 1 | 5,051,558 | no magic; u32 offset table | 6.4 | 2D graphics (guess) |
-| `DATA/komachi.dat` | 1 | 39,001,368 | **missing** | — | video played via DirectShow `amstream` (likely, see §4) |
+| `DATA/komachi.dat` | 1 | 39,001,368 | `00 00 01 BA 21…` | — | **MPEG-1 program stream** (pack header, MPEG-1 marker), played via DirectShow `amstream` (confirmed format; usage likely, §4) |
 
 `ROM2` container (likely, checked on tbl/bgm/effect/parts): `"ROM2"`, `u32 count`, then
 `count × (u32 offset, u32 size)`; the first offset is always `8 + 8·count` and entries are contiguous.
@@ -118,7 +118,7 @@ menus or bitmaps (confirmed). All UI art is in the data files.
 | 0x86308… | `SOUND CODE : %03XH %s`, `LAMP..... %s`, `VER %d.%d%s %c` | debug/test-menu output, arcade test-mode heritage |
 | 0x85b80… | romanised station names (`OHSAKA`, `SHINJYUKU`, `KOUBE`, …) | station tables in the exe |
 | 0x84db8 | `EASY/NORMAL/HARD/HARDEST`, `CONFIGURATION`, `ADJUSTMENT` | option/test menus |
-| 0x87134… | `CLSID_AMMultiMediaStream … regsvr32 amstream.dll`, `..\data\Komachi.DAT` | `Komachi.DAT` is a video (MPEG-1 probably) played through DirectShow (likely) |
+| 0x87134… | `CLSID_AMMultiMediaStream … regsvr32 amstream.dll`, `..\data\Komachi.DAT` | `Komachi.DAT` (an MPEG-1 program stream, confirmed) is played through DirectShow (likely) |
 
 The exe opens data with paths relative to `BIN\` (`..\data\…`), so the working directory must be
 `BIN` (confirmed by the strings; to verify at runtime).
@@ -140,15 +140,16 @@ analysed and is not bypassed.**
 |---|---|---|
 | Installer | InstallShield 5 (16-bit `SETUP.EXE` bootstrap, `_INST32I.EX_`) | confirmed |
 | Installed tree | `<target>\BIN\` (exe, settings tool, Cd2 DLLs), `<target>\DATA\` (all data) | confirmed: cab component paths `Program Executable Files\BIN|DATA\…` |
-| Default target | `<ProgramFiles>\TAITO\DENGO3K` | guess: `_user1.cab` strings `COMPANY_NAME=TAITO`, `TARGET_NAME=DENGO3K`; the script (`setup.ins`) is lost |
+| Default target | `C:\Program Files\TAITO\DENGO3K` | confirmed: `Readme.txt` (標準では、C:¥Program Files¥TAITO¥DENGO3K); `setup.ins` uses `PROGRAMFILES`, `TARGET_NAME` |
 | Shortcuts | game + "環境設定アプリケーション" (DengoSetting) | likely: `SETTING_NAME`, `SETTING_KEY=DengoSetting.exe` |
 | Uninstall key | `電車でGO！２ 高速編 ３０００番台` | likely: `UNINST_KEY` |
 | Registry (game) | `Software\TAITO\電車でGO！２ 高速編 ３０００番台`, subkey `Option` (fog), display settings | likely: strings + `RegCreateKeyExA` |
-| Runtime files | `BIN\dengo3k.ini`, `BIN\REPLAY.DAT` written by the game | likely |
+| Runtime files | `BIN\dengo3k.ini`, `BIN\replay.dat` written by the game; replays are one file for all routes | `replay.dat`: confirmed (Readme); ini: likely |
 | Run-from-CD | nothing; CD needed only for the presence check | likely |
-| Requirements | DirectX 6 (bundled); DirectShow `amstream.dll` for the video | confirmed (disc contents, strings) |
+| Requirements | DirectX 6+ (6.1 bundled and recommended; installer can run `DIRECTX6\DXSETUP.EXE`), about 120 MB virtual memory (Readme); DirectShow `amstream.dll` for the video | confirmed (disc contents, strings) |
 | Controller | official DDG controller on a **15-pin game port**, Win9x VxD `DGOC44.VXD` (+ `DGOC44.dll`, INF registers it as a DirectInput OEM joystick with 2 axes + buttons); readme: game port only, USB not supported | confirmed: `DRIVER/DATA1.CAB` |
 | Product version | 1.00 | confirmed: `DATA.TAG`, `_user1.cab` |
+| Credits | published by TAITO, sold by Unbalance, with JR East Planning (ジェイアール東日本企画); © TAITO 1996, 2000 | confirmed: Readme |
 
 The driver package also contains `dengo.ini` / `dengo2.ini`: per-GPU (PCI `vendor.device`)
 viewport fixes for **Densha de GO!** and **Densha de GO! 2**. `dgcsave.cfg` lists `Dengo.exe`,
@@ -161,18 +162,17 @@ viewport fixes for **Densha de GO!** and **Densha de GO! 2**. `dgcsave.cfg` list
 
 For the original Kōsoku-hen the detection key would most likely be `dengo2.exe` (from
 `dgcsave.cfg` / `dengo2.ini`). That's a guess; no original disc is available to confirm it.
-Hash manifest: `data-manifest/3000-bandai.toml` (388 files, hashes only; damaged and missing
-files excluded or listed).
+Hash manifest: `data-manifest/3000-bandai.toml`: image SHA-256 + track layout, and 399 extracted
+files (disc, installed game, driver, installer support), hashes and sizes only.
 
 ## 8. Open questions
 
-1. **Complete disc image** needed: `komachi.dat`, `README.TXT`, root `setup.ins` (exact install
-   paths/registry), and a full `DATA1.CAB` hash.
-2. The disc check: deliberately not analysed (§5).
-3. Tick rate: `timeSetEvent` interval and the sim/render split (Phase 1).
-4. Direct3D version/interfaces obtained through DirectDraw (Phase 1).
-5. `bgm.rom` audio encoding; `tex*.rom` and `cg.rom` layouts; `.COM` header fields (Phase 2).
-6. Registry hive (HKLM vs HKCU) and the full value list; `dengo3k.ini` contents (Phase 1, or by running under Wine).
-7. Whether a newer patch or exe version exists for 3000-bandai: `VER %d.%d%s %c` is built at
+1. The disc check: deliberately not analysed (§5).
+2. Tick rate: `timeSetEvent` interval and the sim/render split (Phase 1).
+3. Direct3D version/interfaces obtained through DirectDraw (Phase 1).
+4. `bgm.rom` audio encoding; `tex*.rom` and `cg.rom` layouts; `.COM` header fields (Phase 2).
+5. Registry hive (HKLM vs HKCU) and the full value list; `dengo3k.ini` contents (Phase 1, or by running under Wine).
+6. Whether a newer patch or exe version exists for 3000-bandai: `VER %d.%d%s %c` is built at
    runtime, and this disc says 1.00.
-8. Whether the 16-bit `Cd2` path runs under Wine on modern Linux (affects the oracle setup).
+7. Whether the 16-bit `Cd2` path runs under Wine on modern Linux (affects the oracle setup).
+8. Purpose of the empty 452-sector track 2: plain spacer or part of the check (guess: spacer).
