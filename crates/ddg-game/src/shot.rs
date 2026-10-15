@@ -9,6 +9,7 @@ pub fn render_to_ppm(
     pos: ddg_formats::scene::TrackPos,
     (width, height): (u32, u32),
     configure: impl FnOnce(&mut Renderer),
+    hud: Option<&[u8]>,
     path: &std::path::Path,
 ) -> Result<()> {
     let instance =
@@ -38,7 +39,8 @@ pub fn render_to_ppm(
     configure(&mut renderer);
     renderer.upload_pages(&device, &queue, &scene.library.pages);
     let mut frame = ddg_render::FrameGeometry::default();
-    scene.compose(&mut frame, pos, false, width as f32 / height as f32);
+    let band = (height as f32 * (1.0 - renderer.band_top)).max(1.0);
+    scene.compose(&mut frame, pos, false, width as f32 / band);
     eprintln!(
         "frame at engine index {}: {} triangles, {} missing parts",
         pos.engine_index,
@@ -54,6 +56,16 @@ pub fn render_to_ppm(
         (width, height),
         &scene.cab_camera(pos),
     );
+    if let Some(canvas) = hud {
+        let overlay = ddg_render::overlay::Overlay::new(&device, format);
+        overlay.upload(&queue, canvas);
+        overlay.render(
+            &device,
+            &queue,
+            &view,
+            ddg_render::overlay::canvas_rect(width, height),
+        );
+    }
 
     // Rows must be 256-byte aligned for the copy.
     let row = (width * 4).div_ceil(256) * 256;

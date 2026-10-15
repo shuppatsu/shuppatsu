@@ -3,6 +3,8 @@
 //! Phase 3: `ddg-game view <route.com>` flies through a route; `ddg-game shot` renders one frame
 //! headless for checks.
 
+mod hud;
+mod input;
 mod scene;
 mod shot;
 
@@ -33,6 +35,7 @@ options:
   --texture-filtering      enhancement: mipmaps + trilinear/anisotropic filtering (no shimmer)
   --gradient-variant <0|1> sky/ground gradient set (1 = the timed alternate set)
   --fog                    linear fog as DengoSetting's FOGENABLE (off on a fresh install)
+  --hud                    the driving HUD over the view (test values)
   --size <WxH>             window/frame size (default 1280x800, 16:10)
 
 keys: Space pause, Up/Down speed, Left/Right jump 100 m, L track lines, F fog, Esc quit";
@@ -58,6 +61,7 @@ struct Options {
     stable_track_variants: bool,
     texture_filtering: bool,
     fog: bool,
+    hud: bool,
     gradient_variant: usize,
     size: (u32, u32),
 }
@@ -81,6 +85,7 @@ fn parse_args() -> Result<Options> {
         stable_track_variants: false,
         texture_filtering: false,
         fog: false,
+        hud: false,
         gradient_variant: 0,
         size: (1280, 800),
     };
@@ -96,6 +101,7 @@ fn parse_args() -> Result<Options> {
             "--stable-track-variants" => opts.stable_track_variants = true,
             "--texture-filtering" => opts.texture_filtering = true,
             "--fog" => opts.fog = true,
+            "--hud" => opts.hud = true,
             "--gradient-variant" => {
                 opts.gradient_variant = rest
                     .next()
@@ -137,6 +143,7 @@ fn configure_renderer(renderer: &mut Renderer, opts: &Options) {
 }
 
 struct Gpu {
+    overlay: ddg_render::overlay::Overlay,
     window: Arc<Window>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -159,10 +166,82 @@ struct App {
     paused: bool,
     speed_kmh: f32,
     show_lines: bool,
+    hud: Option<HudView>,
     frames: u32,
     frame_window_start: Instant,
     worst_frame: Duration,
     worst_compose: Duration,
+}
+
+/// The original's 3D viewport starts at virtual y 52 of 400 (renderer.md §5); the HUD owns the
+/// strip above it.
+const HUD_BAND_TOP: f32 = 52.0 / 400.0;
+
+/// The HUD for the viewer, driven by test values (the fly-through speed and a running clock).
+struct HudView {
+    bank: ddg_render::sprites::SpriteBank,
+    layer: ddg_render::sprites::SpriteLayer,
+    hud: hud::Hud,
+    state: hud::HudState,
+    canvas: Vec<u8>,
+    dirty: bool,
+}
+
+impl HudView {
+    fn load(data: &scene::GameData) -> Result<Self> {
+        use ddg_formats::cg;
+        use ddg_render::sprites::{CANVAS_H, CANVAS_W, SpriteBank, SpriteLayer};
+        let exe_bytes = data.exe()?;
+        let exe = ddg_formats::exe::Exe::parse(&exe_bytes)?;
+        let cg_bytes = data.read("cg.rom")?;
+        let bank = SpriteBank::new(
+            &cg::CgFile::parse(&cg_bytes)?,
+            cg::parse_tbl(&data.read("tbl.rom")?)?,
+        );
+        let mut layer = SpriteLayer::default();
+        hud::Hud::install_palettes(&exe, &mut layer)?;
+        let hud = hud::Hud::new(&exe, 0)?;
+        hud.create(&mut layer);
+        let state = hud::HudState {
+            remaining_s: 30,
+            clock: 10 * 108_000 + 30 * 1800,
+            scheduled: 10 * 108_000 + 32 * 1800,
+            clocks_visible: true,
+            remaining_visible: true,
+            panel_active: true,
+            panel_on: true,
+            next_is_stop: true,
+            dist_m: 1234.5,
+            dist_round_m: 1235,
+            tolerance_m: 5,
+            ..Default::default()
+        };
+        Ok(Self {
+            bank,
+            layer,
+            hud,
+            state,
+            canvas: vec![0; CANVAS_W * CANVAS_H * 4],
+            dirty: true,
+        })
+    }
+
+    fn tick(&mut self, speed_kmh: f32, paused: bool) {
+        let s = &mut self.state;
+        s.speed_kmh = speed_kmh;
+        s.power = if paused { 0 } else { 3 };
+        s.brake = if paused { 9 } else { 0 };
+        s.hud_counter += 1;
+        if !paused {
+            s.clock += 1;
+            s.dist_m -= speed_kmh / 3.6 / 30.0;
+            s.dist_round_m = s.dist_m.round() as i32;
+        }
+        self.layer.reset_transient();
+        self.hud.update(s, &mut self.layer);
+        self.layer.compose(&self.bank, &mut self.canvas);
+        self.dirty = true;
+    }
 }
 
 /// Minimal executor for wgpu's setup futures (no extra dependency).
@@ -219,6 +298,10 @@ impl App {
         let mut renderer = Renderer::new(&device, config.format);
         configure_renderer(&mut renderer, &self.opts);
         renderer.upload_pages(&device, &queue, &self.scene.library.pages);
+        if self.hud.is_some() {
+            renderer.band_top = HUD_BAND_TOP;
+        }
+        let overlay = ddg_render::overlay::Overlay::new(&device, config.format);
         eprintln!(
             "present mode {:?}, format {:?}, {}x{}",
             config.present_mode, config.format, config.width, config.height
@@ -230,6 +313,7 @@ impl App {
             queue,
             config,
             renderer,
+            overlay,
         })
     }
 
@@ -238,6 +322,9 @@ impl App {
         if !self.paused {
             self.cur = (self.cur + self.speed_kmh * UNITS_PER_KMH_TICK)
                 .clamp(self.limits.0, self.limits.1);
+        }
+        if let Some(h) = self.hud.as_mut() {
+            h.tick(self.speed_kmh, self.paused);
         }
     }
 
@@ -263,8 +350,13 @@ impl App {
         let pos = track_pos(self.prev + (self.cur - self.prev) * alpha);
         let camera = self.scene.cab_camera(pos);
         let t = Instant::now();
+        let band_top = if self.hud.is_some() {
+            HUD_BAND_TOP
+        } else {
+            0.0
+        };
         let aspect = self.gpu.as_ref().map_or(1.6, |g| {
-            g.config.width as f32 / g.config.height.max(1) as f32
+            g.config.width as f32 / (g.config.height.max(1) as f32 * (1.0 - band_top))
         });
         self.scene
             .compose(&mut self.frame, pos, self.show_lines, aspect);
@@ -299,6 +391,17 @@ impl App {
             (gpu.config.width, gpu.config.height),
             &camera,
         );
+        if let Some(h) = self.hud.as_mut() {
+            if std::mem::take(&mut h.dirty) {
+                gpu.overlay.upload(&gpu.queue, &h.canvas);
+            }
+            gpu.overlay.render(
+                &gpu.device,
+                &gpu.queue,
+                &view,
+                ddg_render::overlay::canvas_rect(gpu.config.width, gpu.config.height),
+            );
+        }
         gpu.window.pre_present_notify();
         gpu.queue.present(frame);
 
@@ -437,17 +540,36 @@ fn main() -> Result<()> {
     if opts.shot {
         let out = opts.out.clone().context("shot needs --out <file.ppm>")?;
         let units = (start + opts.at_m / METRES_PER_UNIT).clamp(limits.0, limits.1);
+        let mut hud = if opts.hud {
+            Some(HudView::load(&data)?)
+        } else {
+            None
+        };
+        if let Some(h) = hud.as_mut() {
+            h.tick(opts.speed_kmh, false);
+        }
         shot::render_to_ppm(
             &scene,
             track_pos(units),
             opts.size,
-            |r| configure_renderer(r, &opts),
+            |r| {
+                configure_renderer(r, &opts);
+                if opts.hud {
+                    r.band_top = HUD_BAND_TOP;
+                }
+            },
+            hud.as_ref().map(|h| h.canvas.as_slice()),
             &out,
         )?;
         eprintln!("wrote {}", out.display());
         return Ok(());
     }
 
+    let hud = if opts.hud {
+        Some(HudView::load(&data)?)
+    } else {
+        None
+    };
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     let now = Instant::now();
@@ -464,6 +586,7 @@ fn main() -> Result<()> {
         last_frame: now,
         paused: false,
         show_lines: false,
+        hud,
         frames: 0,
         frame_window_start: now,
         worst_frame: Duration::ZERO,
