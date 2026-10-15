@@ -418,6 +418,7 @@ name = "ddg-tools"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ddg-engine",
  "ddg-formats",
  "encoding_rs",
  "image",

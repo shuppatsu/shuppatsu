@@ -5,6 +5,7 @@ mod export;
 mod gltf;
 mod inventory;
 mod pe;
+mod trace;
 
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
@@ -20,7 +21,8 @@ commands:
   export <what> [--out DIR] [--palette N]
                                   write PNG/WAV from $DDG_DATA_DIR to out/export (default)
                                   what: textures | tilemaps | audio | models | routes | all
-  check [-v]                      Phase 2 exit check: every file in $DDG_DATA_DIR parsed or documented";
+  check [-v]                      Phase 2 exit check: every file in $DDG_DATA_DIR parsed or documented
+  trace-replay <trace.csv> [-v]   replay an oracle trace through the engine physics and compare";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -42,6 +44,15 @@ fn main() -> Result<()> {
         }
         "pe" => pe::print_report(&path(1)?),
         "export" => run_export(&args[1..]),
+        "trace-replay" => {
+            let dirs = export::GameDirs::from_env()?;
+            let ok = trace::replay_physics(
+                &path(1)?,
+                &dirs.bin.join("dengo3k.exe"),
+                args.get(2).is_some_and(|a| a == "-v"),
+            )?;
+            if ok { Ok(()) } else { bail!("trace mismatch") }
+        }
         "check" => {
             let verbose = args.get(1).is_some_and(|a| a == "-v");
             let root = std::env::var_os("DDG_DATA_DIR")
