@@ -260,10 +260,11 @@ traced in this pass. They are probably used by the leftover arcade test mode and
      if (DAT_00856fb0 > 0) FUN_0040a0a0()        # failure/over-run handling (guess)
      Task_Tick()                                  # tasks + render + input for next tick
      ```
-     **This is the per-tick train simulation call site** (confirmed). The order is: track/signal lookup
-     (`FUN_00407c10` reads track records: aspect/limit bytes into `DAT_00857200[3]`), then distance-to-stop
-     (`FUN_0040dad0`, `DAT_0085708c`), then the physics/scoring steps. The physics agent should start from
-     `FUN_0040acd0` (1901 B), `FUN_0040c4e0` (2633 B), `FUN_0040c010` and `FUN_0040b4a0`.
+     These calls are the per-tick rules/track lookups (confirmed): `FUN_00407c10` computes the gradient
+     and the ambient-sound class at three probe points (`DAT_00857200[3]`, not signal aspects), then
+     distance-to-stop (`FUN_0040dad0`, `DAT_0085708c`), then events and checks. **The speed
+     integration itself is not here**: it is the list-2 task `0x422c20`, which runs inside
+     `Task_Tick` after these calls (see `physics.md` §1).
      Input for tick N is polled at the **end** of tick N−1 (inside `Task_Tick`), so the sim always sees
      the inputs that were latched one tick earlier (confirmed by order).
    * Arrival: wait 20 ticks, `FUN_004158b0` (stop evaluation), kill HUD tasks, accumulate the distance error into

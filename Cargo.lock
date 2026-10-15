@@ -374,6 +374,9 @@ version = "0.1.0"
 [[package]]
 name = "ddg-engine"
 version = "0.1.0"
+dependencies = [
+ "ddg-formats",
+]
 
 [[package]]
 name = "ddg-formats"
