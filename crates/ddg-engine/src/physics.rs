@@ -6,12 +6,11 @@
 //! behaviour, not a translation of the original code.
 //!
 //! # Numerics
-//! The original runs its x87 FPU in single precision (the renderer asks DirectDraw for
-//! `DDSCL_FPUSETUP`), so every add/sub/mul/div is rounded to a 24-bit mantissa. Plain `f32`
-//! arithmetic gives the same results. Several constants are `f64` in the exe; an operation with
-//! such a constant is done in `f64` and rounded once to `f32` ([`mul_d`], [`add_d`]), which
-//! matches the FPU except for rare double-rounding cases. Operation order follows the original
-//! where it changes the rounding.
+//! The original keeps intermediate values on the x87 stack in double precision (the oracle
+//! logs control word 0x027f under Wine) and rounds to `f32` only where it stores a value to a
+//! float variable. This module computes in `f64` and converts to `f32` at exactly those stores;
+//! operation order follows the original. Comparisons that the original makes against the
+//! unrounded stack value use the `f64`.
 //!
 //! # Units
 //! Speed is in m/s (`km/h ÷ 3.6`), distance in metres, track position in track units
@@ -55,7 +54,7 @@ const CURVE_SCALE_VA: u32 = 0x459a50;
 const MPS_TO_KMH: f64 = 3.6;
 /// Running resistance below this speed is a flat 3.0 (f64 @ 0x458b88 = 10, f32 3.0 @ 0x422fe7).
 const RESISTANCE_LOW_SPEED_KMH: f64 = 10.0;
-const RESISTANCE_LOW: f32 = 3.0;
+const RESISTANCE_LOW: f64 = 3.0;
 /// Running resistance `0.0164 v + ((drag + 1) × 0.0078 + 0.028) v² / mass + 1.32`
 /// (f64 @ 0x472618, 0x457718, 0x472628, 0x472620, 0x472610).
 const RES_LINEAR: f64 = 0.0164;
@@ -71,12 +70,12 @@ const EXTRA_RES_GAIN: f64 = 5.0;
 const EXTRA_RES_FLOOR: f64 = 0.2;
 /// Traction (0x422610). f32 @ 0x459428 (10), 0x4725b4 (0.1), 0x457728 (1), 0x4725b0 (0.25),
 /// 0x4725ac (6), 0x4725a8 (1.1), 0x472598 (1.25); f64 @ 0x457720 (1.2), 0x4725a0 (0.6f), 0x457718 (1).
-const TAPER_SPAN_KMH: f32 = 10.0;
-const TAPER_SLOPE: f32 = 0.1;
-const TAPER_FORCE_SHARE: f32 = 0.25;
-const MID_FLAT_FORCE: f32 = 6.0;
-const MID_SLOPE_GAIN: f32 = 1.1;
-const LOW_FORCE_GAIN: f32 = 1.25;
+const TAPER_SPAN_KMH: f64 = 10.0;
+const TAPER_SLOPE: f64 = 0.1_f32 as f64;
+const TAPER_FORCE_SHARE: f64 = 0.25;
+const MID_FLAT_FORCE: f64 = 6.0;
+const MID_SLOPE_GAIN: f64 = 1.1_f32 as f64;
+const LOW_FORCE_GAIN: f64 = 1.25;
 const LOW_SPEED_HEADROOM: f64 = 1.2;
 const LOW_SPEED_BOOST: f64 = 0.6_f32 as f64;
 /// Brake force (0x422750). f32 @ 0x4725d0; f64 @ 0x4725c8, 0x469820, 0x4725c0, 0x467b00,
@@ -129,20 +128,15 @@ const ATC_FORCED_BRAKE: u8 = 8;
 pub const ATC_NO_LIMIT_KMH: f32 = 1000.0;
 /// Coast-down while the title/result flags are set: −0.15 m/s per tick (f64 @ 0x458ae8).
 const COAST_DECEL: f64 = 0.15;
+/// Leg-distance marker in 0x40c4e0: stage rank ≤ 3, trunc(leg) ∈ {50, 51}, skip 2.5 m (f64 @ 0x458c00).
+const LEG_MARKER_MAX_RANK: i32 = 3;
+const LEG_MARKER_METRES: [i32; 2] = [50, 51];
+const LEG_MARKER_SKIP: f64 = 2.5;
 /// Gradient scale: track height units (1/4096) per raw height step (f64 @ 0x458c38).
 const HEIGHT_STEP: f32 = 1.0 / 4096.0;
 
-/// `a × k` with an f64 constant, rounded once to f32 (one x87 `fmul qword` in single precision).
-#[inline]
-fn mul_d(a: f32, k: f64) -> f32 {
-    (f64::from(a) * k) as f32
-}
-
-/// `a + k` with an f64 constant, rounded once to f32.
-#[inline]
-fn add_d(a: f32, k: f64) -> f32 {
-    (f64::from(a) + k) as f32
-}
+/// Factor at task+0x34, written as 1.0 every tick by 0x422740 (an unused adhesion hook).
+const TRACTION_ADHESION: f32 = 1.0;
 
 /// One train type: the 15 floats of a 0x3c-byte record at 0x471ad8.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -433,13 +427,16 @@ impl TrainState {
         }
     }
 
-    /// Speed in km/h (as the game computes it: `speed × 3.6`, rounded to f32).
+    /// Speed in km/h (as the game computes it: `speed × 3.6`, stored as f32).
     pub fn speed_kmh(&self) -> f32 {
-        mul_d(self.speed, MPS_TO_KMH)
+        (f64::from(self.speed) * MPS_TO_KMH) as f32
     }
 
     /// Advances one tick. `spec` must be `tables.specs[self.train_type]`; `clock` is the stage
     /// clock 0x8570b0 (only its value mod 3 is used, for the brake history).
+    ///
+    /// Intermediate values are `f64` (the x87 stack in double precision); a value becomes `f32`
+    /// exactly where the original stores it to a float variable.
     pub fn step(
         &mut self,
         spec: &TrainSpec,
@@ -450,8 +447,8 @@ impl TrainState {
         let mut events = StepEvents::default();
         let mut power = i32::from(controls.power.min(MAX_POWER_NOTCH));
         let mut brake = i32::from(controls.brake.min(MAX_BRAKE_INPUT));
-        // `speed` is the task's working copy (task+0x3c); `self.speed` (0x857234) still holds
-        // the value from the start of the tick until the end.
+        // `speed` is the task's working copy (task+0x3c); `self.speed` (0x857234) keeps the
+        // value from the start of the tick until the end.
         let mut speed = self.speed;
 
         if ctx.forced_stop {
@@ -460,11 +457,12 @@ impl TrainState {
         }
 
         // ATC: trip above limit + 3 km/h, reset below 97.2 % of the limit, B8 while tripped.
-        let trip = mul_d(add_d(ctx.atc_limit_kmh, ATC_MARGIN_KMH), KMH_TO_MPS_C);
-        if self.speed > trip {
+        let limit = f64::from(ctx.atc_limit_kmh);
+        let start = f64::from(self.speed);
+        if start > (limit + ATC_MARGIN_KMH) * KMH_TO_MPS_C {
             self.atc_latched = true;
             events.atc_tripped = true;
-        } else if self.speed < mul_d(ctx.atc_limit_kmh, ATC_RESET_FACTOR) {
+        } else if start < limit * ATC_RESET_FACTOR {
             self.atc_latched = false;
         }
         if self.atc_latched {
@@ -472,53 +470,58 @@ impl TrainState {
         }
 
         if ctx.coast_down {
-            speed = (f64::from(speed) - COAST_DECEL) as f32;
+            let v = f64::from(speed) - COAST_DECEL;
+            speed = v as f32;
             power = 0;
-            if speed < 0.0 || ctx.coast_hold {
+            if v < 0.0 || ctx.coast_hold {
                 speed = 0.0;
             }
         }
 
-        let kmh = mul_d(speed, MPS_TO_KMH);
-        let resistance = running_resistance(spec, kmh);
-        let extra_resistance = speed_resistance(spec, speed);
-        let traction = traction_force(spec, power, kmh, self.traction_scale);
+        // km/h: the rounded copy feeds the traction curve, the unrounded one the resistance.
+        let kmh = f64::from(speed) * MPS_TO_KMH;
+        let kmh_stored = kmh as f32;
+        let resistance = running_resistance(spec, kmh) as f32;
+        let extra_resistance = speed_resistance(spec, speed) as f32;
+        let traction = (traction_force(spec, power, kmh_stored, self.traction_scale) as f32)
+            * TRACTION_ADHESION;
 
         // Traction fades in/out (power cut sections); the fade applies to the force, not the notch.
-        let ramp = if ctx.power_cut {
-            let r = (f64::from(self.traction_ramp) - TRACTION_RAMP_STEP) as f32;
-            if r < 0.0 { 0.0 } else { r }
+        self.traction_ramp = if ctx.power_cut {
+            let r = f64::from(self.traction_ramp) - TRACTION_RAMP_STEP;
+            if r < 0.0 { 0.0 } else { r as f32 }
         } else {
-            let r = add_d(self.traction_ramp, TRACTION_RAMP_STEP);
-            if f64::from(r) > 1.0 { 1.0 } else { r }
+            let r = f64::from(self.traction_ramp) + TRACTION_RAMP_STEP;
+            if r > 1.0 { 1.0 } else { r as f32 }
         };
-        self.traction_ramp = ramp;
-        let mut net = traction * ramp;
+        let mut net = (f64::from(traction) * f64::from(self.traction_ramp)) as f32;
 
         // Brake cylinder. Release vs apply depends on LAST tick's notch; the target on this one's.
         let before = self.brake_cylinder;
+        let rate = f64::from(spec.brake_rate);
         if self.prev_brake < 1 {
-            let c = (f64::from(before) - f64::from(spec.brake_rate) * BRAKE_RELEASE_FACTOR) as f32;
-            self.brake_cylinder = if f64::from(c) <= BRAKE_RELEASED {
+            let c = f64::from(before) - rate * BRAKE_RELEASE_FACTOR;
+            self.brake_cylinder = if c <= BRAKE_RELEASED {
                 BRAKE_RELEASED_F32
             } else {
-                c
+                c as f32
             };
         } else {
             net = 0.0; // no traction while the brake was applied
-            let raised = spec.brake_rate + before;
-            let step = mul_d(
-                brake.min(i32::from(EMERGENCY_BRAKE)) as f32,
-                BRAKE_PER_NOTCH_STEP,
-            );
+            let raised = (rate + f64::from(before)) as f32;
+            let step = f64::from(brake.min(i32::from(EMERGENCY_BRAKE))) * BRAKE_PER_NOTCH_STEP;
+            let target = f64::from(spec.brake_per_notch) * step;
             self.brake_cylinder = raised;
-            if spec.brake_per_notch * step <= raised {
-                let eased = raised - mul_d(spec.brake_rate, BRAKE_EASE_FACTOR);
-                let target = step * spec.brake_per_notch;
-                self.brake_cylinder = if eased <= target { target } else { eased };
+            if target <= f64::from(raised) {
+                let eased = (f64::from(raised) - rate * BRAKE_EASE_FACTOR) as f32;
+                self.brake_cylinder = if f64::from(eased) <= target {
+                    target as f32
+                } else {
+                    eased
+                };
             }
         }
-        if f64::from((self.brake_cylinder - before).abs()) > BRAKE_CHANGE_EPSILON {
+        if (f64::from(self.brake_cylinder) - f64::from(before)).abs() > BRAKE_CHANGE_EPSILON {
             self.brake_moving_ticks += 1;
         } else {
             self.brake_moving_ticks = 0;
@@ -526,25 +529,27 @@ impl TrainState {
 
         if !ctx.driving {
             self.hold_at_rest(ctx, brake);
+            speed = 0.0;
         } else {
             let mut resistance = resistance;
             if ctx.track_effects {
-                let g = mul_d(self.grade_scale * ctx.gradient, GRADE_GAIN);
-                self.grade_force = if f64::from(g) >= GRADE_GLITCH {
-                    0.0
-                } else if g >= 0.0 {
-                    mul_d(g, GRADE_UPHILL_FACTOR)
-                } else {
-                    g
-                };
+                let g = f64::from(self.grade_scale) * f64::from(ctx.gradient) * GRADE_GAIN;
+                self.grade_force = g as f32;
+                if g >= GRADE_GLITCH {
+                    self.grade_force = 0.0;
+                } else if self.grade_force >= 0.0 {
+                    self.grade_force = (f64::from(self.grade_force) * GRADE_UPHILL_FACTOR) as f32;
+                }
                 let abs_heading = ctx.heading.abs();
-                let c = mul_d((self.prev_abs_heading - abs_heading).abs(), CURVE_GAIN);
-                self.curve_sharpness = if f64::from(c) >= CURVE_CAP {
+                let c =
+                    (f64::from(self.prev_abs_heading) - f64::from(abs_heading)).abs() * CURVE_GAIN;
+                self.curve_sharpness = if c >= CURVE_CAP {
                     CURVE_CAP as f32
                 } else {
-                    c
+                    c as f32
                 };
-                resistance += self.curve_scale * self.curve_sharpness;
+                let curve = f64::from(self.curve_scale) * f64::from(self.curve_sharpness);
+                resistance = (curve + f64::from(resistance)) as f32;
                 self.prev_abs_heading = abs_heading;
             }
             let brake_force = brake_force(
@@ -556,28 +561,29 @@ impl TrainState {
                 ctx.forced_stop,
                 self.brake_scale,
             );
-            net = net - resistance - extra_resistance - brake_force - self.grade_force;
-            self.net_force = net;
-            self.accel = mul_d(mul_d(net, FORCE_TO_KMH_PER_S), KMH_TO_MPS_C);
-            let new_speed = mul_d(self.accel, TICK_SECONDS) + speed;
-            speed = if f64::from(new_speed) < 0.0 {
+            let a =
+                f64::from(net) - f64::from(resistance) - f64::from(extra_resistance) - brake_force;
+            let a = a - f64::from(self.grade_force);
+            self.net_force = a as f32;
+            let accel = a * FORCE_TO_KMH_PER_S * KMH_TO_MPS_C;
+            self.accel = accel as f32;
+            let new_speed = accel * TICK_SECONDS + f64::from(speed);
+            speed = if new_speed < 0.0 {
                 0.0
-            } else if mul_d(spec.max_speed_kmh(), CAP_TEST_KMH_TO_MPS) <= new_speed {
-                mul_d(spec.max_speed_kmh(), KMH_TO_MPS_A)
+            } else if f64::from(spec.max_speed_kmh()) * CAP_TEST_KMH_TO_MPS <= new_speed {
+                (f64::from(spec.max_speed_kmh()) * KMH_TO_MPS_A) as f32
             } else {
-                new_speed
+                new_speed as f32
             };
-            let advance = mul_d(speed, TICK_SECONDS);
-            self.odometer += advance;
-            self.leg_distance += advance;
-            self.units_per_tick = mul_d(speed, UNITS_PER_MPS_TICK);
+            let advance = f64::from(speed) * TICK_SECONDS;
+            self.odometer = (advance + f64::from(self.odometer)) as f32;
+            self.leg_distance = (advance + f64::from(self.leg_distance)) as f32;
+            self.units_per_tick = (f64::from(speed) * UNITS_PER_MPS_TICK) as f32;
 
             self.decel_prev_tick = self.speed_prev2 - self.speed;
             self.speed_prev2 = self.speed;
-            self.brake_decel = mul_d(
-                mul_d(mul_d(brake_force, FORCE_TO_KMH_PER_S), KMH_TO_MPS_D),
-                TICK_SECONDS,
-            );
+            self.brake_decel =
+                (brake_force * FORCE_TO_KMH_PER_S * KMH_TO_MPS_D * TICK_SECONDS) as f32;
             if self.decel_prev_tick_max <= self.decel_prev_tick {
                 self.decel_prev_tick_max = self.decel_prev_tick;
             }
@@ -587,14 +593,31 @@ impl TrainState {
             self.brake_history_delta = self.prev_brake - self.brake_history[0];
             self.brake_history[clock.rem_euclid(3) as usize] = self.prev_brake;
         }
-        if !ctx.driving {
-            speed = 0.0;
-        }
 
         self.prev_power = power;
         self.prev_brake = brake;
         self.speed = speed;
         events
+    }
+
+    /// The 50 m marker on [`Self::leg_distance`] (0x40c4e0, runs before the physics in the same
+    /// tick): on stages whose rank (0x4656c4) is at most 3, once `trunc(leg)` reads 50 or 51
+    /// the leg distance jumps by 2.5 m so the check fires only once. Returns true when it fired;
+    /// the rules then decide on the announcement (sounds 0x20/0x21).
+    pub fn leg_marker(&mut self, stage_rank: i32) -> bool {
+        if stage_rank > LEG_MARKER_MAX_RANK {
+            return false;
+        }
+        if !LEG_MARKER_METRES.contains(&(self.leg_distance as i32)) {
+            return false;
+        }
+        self.leg_distance = (f64::from(self.leg_distance) + LEG_MARKER_SKIP) as f32;
+        true
+    }
+
+    /// Passing a non-stop station clears the leg distance (0x40d620, before the physics).
+    pub fn pass_station(&mut self) {
+        self.leg_distance = 0.0;
     }
 
     /// The not-driving branch (0x423f5d): everything that moves is zeroed.
@@ -613,16 +636,13 @@ impl TrainState {
     }
 }
 
-/// Running resistance (in 0x422c20 itself): flat 3.0 when creeping, else
-/// `0.0164 v + c v² / mass + 1.32` with `c = (drag + 1) × 0.0078 + 0.028`, v in km/h.
-pub fn running_resistance(spec: &TrainSpec, kmh: f32) -> f32 {
-    if f64::from(kmh) > RESISTANCE_LOW_SPEED_KMH {
-        let c = add_d(
-            mul_d(add_d(spec.drag, RES_DRAG_OFFSET), RES_DRAG_SCALE),
-            RES_QUAD_BASE,
-        );
-        let quad = c * kmh * kmh / spec.mass;
-        add_d(mul_d(kmh, RES_LINEAR) + quad, RES_CONSTANT)
+/// Running resistance (in 0x422c20 itself), `kmh` unrounded: flat 3.0 when creeping, else
+/// `0.0164 v + c v² / mass + 1.32` with `c = (drag + 1) × 0.0078 + 0.028`.
+pub fn running_resistance(spec: &TrainSpec, kmh: f64) -> f64 {
+    if kmh > RESISTANCE_LOW_SPEED_KMH {
+        let c = (f64::from(spec.drag) + RES_DRAG_OFFSET) * RES_DRAG_SCALE + RES_QUAD_BASE;
+        let quad = c * kmh * kmh / f64::from(spec.mass);
+        kmh * RES_LINEAR + quad + RES_CONSTANT
     } else if kmh > 0.0 {
         RESISTANCE_LOW
     } else {
@@ -632,14 +652,12 @@ pub fn running_resistance(spec: &TrainSpec, kmh: f32) -> f32 {
 
 /// Extra resistance that falls with speed (0x422860): with `k` = 102 % of top speed in m/s,
 /// `x = (k² − v²)/k²`, result `5x² + 0.2`. Note it is 5.2 at rest. `mps` in m/s.
-pub fn speed_resistance(spec: &TrainSpec, mps: f32) -> f32 {
-    let k = mul_d(
-        mul_d(spec.max_speed_kmh(), KMH_TO_MPS_A),
-        EXTRA_RES_SPEED_MARGIN,
-    );
+pub fn speed_resistance(spec: &TrainSpec, mps: f32) -> f64 {
+    let k = f64::from(spec.max_speed_kmh()) * KMH_TO_MPS_A * EXTRA_RES_SPEED_MARGIN;
     let k2 = k * k;
-    let x = (k2 - mps * mps) / k2;
-    add_d(mul_d(x * x, EXTRA_RES_GAIN), EXTRA_RES_FLOOR)
+    let v = f64::from(mps);
+    let x = (k2 - v * v) / k2;
+    x * x * EXTRA_RES_GAIN + EXTRA_RES_FLOOR
 }
 
 /// Traction force for `notch` at `kmh` (0x422610). Three regions:
@@ -648,7 +666,7 @@ pub fn speed_resistance(spec: &TrainSpec, mps: f32) -> f32 {
 ///   (slope × 1.1);
 /// * up to the base speed: `1.25 × force_base × (p − v)/p` with
 ///   `p = notch_speed × (1 + 0.6 (1.2 vmax − v)/(1.2 vmax))`.
-pub fn traction_force(spec: &TrainSpec, notch: i32, kmh: f32, scale: f32) -> f32 {
+pub fn traction_force(spec: &TrainSpec, notch: i32, kmh: f32, scale: f32) -> f64 {
     let Some(&notch_speed) = usize::try_from(notch)
         .ok()
         .and_then(|n| n.checked_sub(1))
@@ -656,34 +674,38 @@ pub fn traction_force(spec: &TrainSpec, notch: i32, kmh: f32, scale: f32) -> f32
     else {
         return 0.0;
     };
+    let (v, pt, scale) = (f64::from(kmh), f64::from(notch_speed), f64::from(scale));
+    let (base, top) = (
+        f64::from(spec.base_speed_kmh),
+        f64::from(spec.max_speed_kmh()),
+    );
+    let force_base = f64::from(spec.force_base);
     if notch_speed < kmh {
-        let over = kmh - notch_speed;
+        let over = v - pt;
         let over = if over < TAPER_SPAN_KMH {
             over
         } else {
             TAPER_SPAN_KMH
         };
-        return (1.0 - over * TAPER_SLOPE) * spec.force_base * TAPER_FORCE_SHARE * scale;
+        return (1.0 - over * TAPER_SLOPE) * force_base * TAPER_FORCE_SHARE * scale;
     }
     if kmh > spec.base_speed_kmh {
         if notch_speed < spec.base_speed_kmh {
             return MID_FLAT_FORCE * scale;
         }
-        let slope = (spec.force_base - spec.force_top)
-            / (spec.max_speed_kmh() - spec.base_speed_kmh)
-            * MID_SLOPE_GAIN;
-        return (slope * (kmh - spec.base_speed_kmh) + spec.force_base) * scale;
+        let slope = (force_base - f64::from(spec.force_top)) / (top - base) * MID_SLOPE_GAIN;
+        return ((v - base) * slope + force_base) * scale;
     }
-    let headroom = mul_d(spec.max_speed_kmh(), LOW_SPEED_HEADROOM);
-    let boost = add_d(mul_d((headroom - kmh) / headroom, LOW_SPEED_BOOST), 1.0);
-    let p = boost * notch_speed;
-    (p - kmh) / p * spec.force_base * LOW_FORCE_GAIN * scale
+    let headroom = top * LOW_SPEED_HEADROOM;
+    let p = ((headroom - v) / headroom * LOW_SPEED_BOOST + 1.0) * pt;
+    (p - v) / p * force_base * LOW_FORCE_GAIN * scale
 }
 
 /// Brake force from the cylinder value (0x422750). Zero unless the cylinder is above 0.
 /// With `vl` = top speed in m/s, `v = min(mps, vl)`, `x = (vl² − v²)/vl²`:
 /// `cyl × gain0 × gain1 × (0.9 + 0.12x) × (0.45 − 0.18 v²/vl²)(1 + 0.8x) × (1 − 0.0018 load)`,
-/// then × 0.8 on slippery rail, × 4 in a forced stop, × `scale`.
+/// then × 0.8 on slippery rail, × 4 in a forced stop, × `scale`. The result is not rounded
+/// (the caller keeps it on the FPU stack).
 pub fn brake_force(
     spec: &TrainSpec,
     cylinder: f32,
@@ -692,29 +714,30 @@ pub fn brake_force(
     slippery: bool,
     forced_stop: bool,
     scale: f32,
-) -> f32 {
+) -> f64 {
     if cylinder <= 0.0 {
         return 0.0;
     }
-    let vl = spec.max_speed_kmh() * KMH_TO_MPS_B;
-    let v = if vl < mps { vl } else { mps };
-    let vl2 = vl * vl;
-    let v2 = v * v;
-    let load_factor = (1.0 - f64::from(mul_d(load as f32, BRAKE_LOAD_PER_UNIT))) as f32;
+    let vl = f64::from(spec.max_speed_kmh()) * f64::from(KMH_TO_MPS_B);
+    let v = if vl < f64::from(mps) { vl as f32 } else { mps };
+    let vl2 = f64::from((vl * vl) as f32);
+    let v2 = f64::from(v) * f64::from(v);
+    let v2 = f64::from(v2 as f32);
+    let load_factor = f64::from((1.0 - f64::from(load) * BRAKE_LOAD_PER_UNIT) as f32);
     let x = (vl2 - v2) / vl2;
-    let fade = (BRAKE_FADE_BASE - f64::from(mul_d(v2 / vl2, BRAKE_FADE_SLOPE))) as f32;
-    let low = add_d(mul_d(x, BRAKE_LOW_SPEED_GAIN), 1.0);
-    let mut curve = fade * low;
+    let fade = BRAKE_FADE_BASE - v2 / vl2 * BRAKE_FADE_SLOPE;
+    let low = x * BRAKE_LOW_SPEED_GAIN + 1.0;
+    let mut curve = (fade * low) as f32;
     if slippery {
-        curve = mul_d(curve, SLIPPERY_BRAKE_FACTOR);
+        curve = (f64::from(curve) * SLIPPERY_BRAKE_FACTOR) as f32;
     }
-    let gains = spec.brake_gain[1] * spec.brake_gain[0] * cylinder;
-    let shape = add_d(mul_d(x, BRAKE_SHAPE_SLOPE), BRAKE_SHAPE_BASE);
-    let mut f = gains * shape * (curve * load_factor);
+    let gains = f64::from(spec.brake_gain[1]) * f64::from(spec.brake_gain[0]) * f64::from(cylinder);
+    let shape = x * BRAKE_SHAPE_SLOPE + BRAKE_SHAPE_BASE;
+    let mut f = gains * shape * (f64::from(curve) * load_factor);
     if forced_stop {
-        f = mul_d(f, FORCED_STOP_BRAKE_FACTOR);
+        f *= FORCED_STOP_BRAKE_FACTOR;
     }
-    f * scale
+    f * f64::from(scale)
 }
 
 /// Gradient as the track lookup computes it each tick (0x407c10 → 0x857228): height of the
@@ -733,7 +756,9 @@ pub fn gradient_at(route: &Route, pos: TrackPos) -> f32 {
 pub fn heading_at(route: &Route, pos: TrackPos) -> f32 {
     let slot = pos.slot(route);
     match (route.slots.get(slot), route.slots.get(slot + 1)) {
-        (Some(a), Some(b)) => f64::from(b.z - a.z).atan2(f64::from(b.x - a.x)) as f32,
+        (Some(a), Some(b)) => {
+            (f64::from(b.z) - f64::from(a.z)).atan2(f64::from(b.x) - f64::from(a.x)) as f32
+        }
         _ => 0.0,
     }
 }
@@ -741,7 +766,7 @@ pub fn heading_at(route: &Route, pos: TrackPos) -> f32 {
 /// Distance to the stop point in metres (0x40dad0 → 0x85708c) from the camera's remaining
 /// track units to the stop (0x8500c8) and the extra offset 0x85709c (0 in practice).
 pub fn distance_to_stop(units_to_stop: f32, offset_m: i32) -> f32 {
-    mul_d(units_to_stop, 10.0) + offset_m as f32
+    (f64::from(units_to_stop) * 10.0 + f64::from(offset_m)) as f32
 }
 
 /// The integer distance to the stop (0x85722c): [`distance_to_stop`] rounded half away from
@@ -790,7 +815,8 @@ mod tests {
         assert!((mid - 65.0).abs() < 0.01, "{mid}");
         // Above the balancing speed of P1 (10 km/h): 25 % of force_base, tapering to 0.
         assert!((traction_force(&s, 1, 10.0001, 1.0) - 16.25).abs() < 0.01);
-        assert_eq!(traction_force(&s, 1, 25.0, 1.0), 0.0);
+        // 10 km/h over: 1 − 10 × 0.1f leaves a tiny negative force, as in the original.
+        assert!(traction_force(&s, 1, 25.0, 1.0).abs() < 1e-5);
     }
 
     #[test]
@@ -800,7 +826,7 @@ mod tests {
         assert_eq!(running_resistance(&s, 5.0), 3.0);
         let r = running_resistance(&s, 100.0);
         let expect = 0.0164 * 100.0 + (8.0 * 0.0078 + 0.028) * 10000.0 / 449.5 + 1.32;
-        assert!((f64::from(r) - expect).abs() < 1e-3, "{r} vs {expect}");
+        assert!((r - expect).abs() < 1e-3, "{r} vs {expect}");
         assert!((speed_resistance(&s, 0.0) - 5.2).abs() < 1e-6);
     }
 

@@ -25,7 +25,7 @@ One tick of the stage loop is therefore:
 2. Clock increment (§6).
 3. `Task_Tick` (0x4253c0): list 2 runs; the physics task runs before the in-cab camera task
    (0x41d160, created later per segment by 0x41cb00, so it sits after the physics task in the list
-   — **likely**). The camera then moves by the distance the physics just produced.
+   — **confirmed** by the oracle: 0x8500c8 drops by the 0x850208 of the same tick). The camera then moves by the distance the physics just produced.
 4. Input poll at the end of `Task_Tick`: the notches the physics uses next tick.
 
 So the physics reads notches latched one tick earlier, and the track position, gradient and
@@ -46,17 +46,35 @@ task+0x34 — an unused adhesion hook), 0x422910 (sets three lamp/indicator bits
 | 0x40acd0 / 0x40b4a0 / 0x40b710 | course, limit and traffic event lists (stages.rs). Course event 7 sets the ATC limit 0x84c424, events 10/11 the power cut 0x856fba. |
 | 0x40b780, 0x40c010, 0x40c4e0 | limit/signal overspeed checks, signal blocks, overrun state machine 0x857206, slippery-rail counter 0x857230, misc announcements. |
 
-## 2. Numerics — likely
+## 2. Numerics — confirmed (oracle, Wine)
 
-The game creates its DirectDraw device with `DDSCL_FPUSETUP` (renderer.md §3), which puts the
-x87 FPU into **24-bit (single) precision**. Every add/sub/mul/div is then rounded to a float
-mantissa, and plain `f32` arithmetic reproduces it. Many constants are stored as `double`; an
-operation with such a constant rounds the exact result once to 24 bits, which the engine models as
-`(f64(a) · k) as f32` (double rounding can differ in the last bit in rare cases).
-Comparisons against `double` constants are done in `f64`. The CRT helpers used here are
-`__ftol` (0x437b30, truncation), `floor` (0x437b57, CW 0x173f), `ceil` (0x437e0b, CW 0x1b3f) and
-`fmod` (0x437eea, `fprem`). **Experiment:** the oracle should log the FPU control word (`fnstcw`)
-at 0x422c20; if it is not 24-bit precision, intermediate results are doubles instead.
+The oracle logs the x87 control word **0x027f** on every tick: 53-bit (double) precision,
+round to nearest. `DDSCL_FPUSETUP` (renderer.md §3) does not switch the FPU to single precision
+under Wine. Intermediate values therefore live on the FPU stack as doubles and become `f32` only
+where the code stores them to a float variable (`fst`/`fstp dword`). Two consequences matter for
+bit-exactness:
+
+* `fst` stores a rounded copy but keeps the unrounded value on the stack. Several comparisons
+  test the unrounded value: the traction fade against 1.0 and 0, the released brake cylinder
+  against −0.4, the gradient force against 100, the curve value against 200, the new speed
+  against 0 and the top speed, and the coast-down speed against 0.
+* Some results are never stored before use. The brake force from 0x422750 stays on the stack
+  through the force sum and the brake-deceleration readout. The force sum `T − R − R2 − Fb` is
+  stored to task+0x44, and the gradient force is subtracted from the unrounded sum.
+
+`ddg-engine` computes in `f64` and rounds at exactly the original's stores. The CRT helpers
+used here are `__ftol` (0x437b30, truncation), `floor` (0x437b57, CW 0x173f), `ceil` (0x437e0b,
+CW 0x1b3f) and `fmod` (0x437eea, `fprem`).
+
+**Open:** on real Windows, Direct3D with `DDSCL_FPUSETUP` would normally select 24-bit
+precision. Results would then differ in the last bits; the size of the difference is unmeasured.
+The Wine oracle is the reference for now.
+
+**Result:** replaying `yamate-drive.csv` (6350 driving ticks, first Yamanote segment, including
+EB use, overrun handling and coast-down) gives **158 700 of 158 700 values bit-exact**. That
+covers 25 fields: speed, task fields, forces, distances, brake readouts and history.
+Not exercised by that trace: a non-zero gradient (the segment is flat), the power cut, slippery
+rail and an ATC trip.
 
 ## 3. Train tables — confirmed
 
@@ -231,6 +249,12 @@ Computed here, consumed by the rules (**confirmed** code; meanings likely):
 * EB counters: 0x856d64 (consecutive ticks at EB while ≥ 4 m/s), 0x8571e0 (EB applications),
   0x856da8 (EB ticks near the stop), 0x8571f6 (power during the stop approach).
 * ATC trip (§4.1) zeroes 0x856fb0.
+* **Leg distance 0x84c40c** is also written by the driving loop before the physics runs, in
+  the same tick. 0x40d620 clears it when the train passes a non-stop station. 0x40c4e0 adds
+  2.5 m on stages of rank ≤ 3 (0x4656c4) once `trunc(leg)` is 50 or 51; the 2.5 m skip makes
+  the 50 m check fire only once, and it may trigger announcements 0x20/0x21. The engine
+  provides these as `TrainState::pass_station` and `TrainState::leg_marker`. **confirmed**
+  (the replay is exact with both).
 
 ## 8. Oracle trace schema
 
@@ -283,11 +307,19 @@ whose update is 0x422c20). `i16` fields are words.
 | 0x8571e8 | i32 | scheduled time at the next station |
 | 0x856fc0 | i32 | seconds late at the last stop/pass |
 
+### Row alignment (confirmed by the replay)
+
+The hook writes one row per game tick at the end of `Task_Tick`, before that tick's input
+poll. Row *k* therefore shows the state after tick *k*'s physics. The inputs of tick *k* come
+from row *k* as well: the notches latched at the end of tick *k−1*, and the driving-loop
+globals (gradient, flags, ATC limit, overrun state, power cut, slippery, brake load, clock). The
+heading is the exception: the camera task writes it after the physics, so the physics of tick
+*k* sees the heading of row *k−1*. `ddg-tools trace-replay` (`crates/ddg-tools/src/trace.rs`)
+replays the trace with this alignment.
+
 ## 9. Open questions
 
-* FPU precision during play (24-bit assumed, §2) — log the control word.
-* List order of the physics and camera tasks in list 2 (§1, likely physics first) — compare
-  0x8500c8 and 0x850208 in a trace.
+* Precision on real Windows (§2): Wine runs in double precision.
 * 0x857084 (brake load) is 0 in the rows checked; are other values used anywhere?
 * Attract/demo mode 2 (scripted notches at 0x467b20/0x46857c) and the ending train (0x4240d0)
   are not implemented.

@@ -1,8 +1,9 @@
 //! Oracle traces (CSV written by ddg-hook) and replaying them through ddg-engine.
 //!
-//! The physics replay isolates the integrator: every tick it takes the context the original
-//! logged (inputs, flags, gradient, heading, ATC limit, …) from the previous row, steps the
-//! engine, and compares its outputs with the next row. Floats are compared bit for bit (the hook
+//! The physics replay isolates the integrator: for each tick it takes the inputs and context
+//! the original logged (notches, flags, gradient, ATC limit, …, from that tick's row; the
+//! heading from the row before, see physics.md §8), steps the engine, and compares its outputs
+//! with that row. Floats are compared bit for bit (the hook
 //! logs `value:bits`).
 
 use anyhow::{Context, Result, bail};
@@ -151,63 +152,135 @@ fn state_from_row(t: &Trace, r: usize, tables: &TrainTables) -> Result<TrainStat
     Ok(s)
 }
 
-/// Compared outputs: (name in trace, engine value).
-fn outputs(s: &TrainState) -> [(&'static str, f32); 6] {
-    [
+/// Compared outputs: (name in trace, engine value). Integers are compared as exact f32.
+fn outputs(s: &TrainState) -> Vec<(&'static str, f32)> {
+    vec![
         ("speed", s.speed),
+        ("t_speed", s.speed),
         ("t_brake_cyl", s.brake_cylinder),
         ("t_fade", s.traction_ramp),
         ("t_force", s.net_force),
+        ("t_accel", s.accel),
+        ("t_prev_heading", s.prev_abs_heading),
+        ("t_brake_ticks", s.brake_moving_ticks as f32),
+        ("t_last_power", s.prev_power as f32),
+        ("t_last_brake", s.prev_brake as f32),
+        ("t_atc_latch", f32::from(u8::from(s.atc_latched))),
+        ("gradient_force", s.grade_force),
+        ("curve_sharpness", s.curve_sharpness),
         ("odometer", s.odometer),
+        ("leg_distance", s.leg_distance),
         ("step_units", s.units_per_tick),
+        ("speed_two_back", s.speed_prev2),
+        ("speed_lost", s.decel_prev_tick),
+        ("speed_max", s.decel_prev_tick_max),
+        ("brake_decel", s.brake_decel),
+        ("brake_decel_max", s.brake_decel_max),
+        ("brake_hist0", s.brake_history[0] as f32),
+        ("brake_hist1", s.brake_history[1] as f32),
+        ("brake_hist2", s.brake_history[2] as f32),
+        ("brake_delta", s.brake_history_delta as f32),
     ]
+}
+
+/// Result of a physics replay.
+#[derive(Debug, Default)]
+pub struct Report {
+    pub compared: usize,
+    pub exact: usize,
+    /// Largest absolute error per field, for fields that ever differed.
+    pub worst: Vec<(&'static str, f32)>,
+    pub first_mismatch: Option<String>,
+}
+
+impl Report {
+    fn note(&mut self, name: &'static str, err: f32) {
+        match self.worst.iter_mut().find(|(n, _)| *n == name) {
+            Some((_, w)) => *w = w.max(err),
+            None => self.worst.push((name, err)),
+        }
+    }
 }
 
 /// Replays the physics over every driving stretch of the trace. Returns false on a mismatch.
 pub fn replay_physics(trace_path: &Path, exe_path: &Path, verbose: bool) -> Result<bool> {
     let t = Trace::load(trace_path)?;
     let exe_bytes = std::fs::read(exe_path)?;
-    let tables = TrainTables::read(&Exe::parse(&exe_bytes)?)?;
+    let exe = Exe::parse(&exe_bytes)?;
+    let tables = TrainTables::read(&exe)?;
+    let ranks = ddg_engine::time::read_stage_ranks(&exe)?;
+    let report = replay(&t, &tables, &ranks, verbose)?;
+    println!(
+        "compared {} values, {} bit-exact",
+        report.compared, report.exact
+    );
+    for (name, err) in &report.worst {
+        println!("  worst {name} error {err}");
+    }
+    if let Some(m) = &report.first_mismatch {
+        println!("first mismatch: {m}");
+    }
+    Ok(report.first_mismatch.is_none())
+}
+
+/// Replays every driving stretch of `t`, each started from its first row's logged state.
+pub fn replay(
+    t: &Trace,
+    tables: &TrainTables,
+    stage_ranks: &[i32],
+    verbose: bool,
+) -> Result<Report> {
     let driving = |r: usize| {
         t.get(r, "phase_flags")
             .int()
             .is_some_and(|p| p & DRIVING != 0)
     };
-
-    let (mut compared, mut exact, mut worst) = (0usize, 0usize, 0f32);
-    let mut first_mismatch: Option<String> = None;
+    let mut report = Report::default();
     let mut r = 0;
     while r < t.rows.len() {
         if !driving(r) {
             r += 1;
             continue;
         }
-        // Start a stretch at this driving row from its logged state.
-        let mut state = state_from_row(&t, r, &tables)?;
+        let mut state = state_from_row(t, r, tables)?;
         let spec = tables.specs[state.train_type];
         let start = r;
         while r + 1 < t.rows.len() && driving(r + 1) {
+            // Row r+1 was logged at the end of the tick being replayed but before its input poll,
+            // so its notches are the ones the physics used, and the driving-loop globals
+            // (gradient, flags, limits, clock) were set before the physics ran. Only the heading
+            // is written after the physics (by the camera task), so it comes from row r.
+            let k = r + 1;
             let controls = Controls {
-                power: u8::try_from(t.i(r, "power_notch")?).unwrap_or(0),
-                brake: u8::try_from(t.i(r, "brake_notch")?).unwrap_or(0),
+                power: u8::try_from(t.i(k, "power_notch")?).unwrap_or(0),
+                brake: u8::try_from(t.i(k, "brake_notch")?).unwrap_or(0),
             };
-            let ctx = context(&t, r)?;
-            let clock = i32::try_from(t.i(r, "stage_clock")?)?;
+            let mut ctx = context(t, k)?;
+            ctx.heading = t.f(r, "heading")?;
+            let clock = i32::try_from(t.i(k, "stage_clock")?)?;
+            // Driving-loop writes to the leg distance that precede the physics in this tick.
+            if t.get(k, "station_index") != t.get(r, "station_index") {
+                state.pass_station();
+            }
+            let rank = usize::try_from(t.i(k, "stage")?)
+                .ok()
+                .and_then(|s| stage_ranks.get(s).copied())
+                .unwrap_or(i32::MAX);
+            state.leg_marker(rank);
             state.step(&spec, controls, &ctx, clock);
-            r += 1;
+            r = k;
             for (name, mine) in outputs(&state) {
                 let Some(theirs) = t.get(r, name).f32() else {
                     continue;
                 };
-                compared += 1;
+                report.compared += 1;
                 if mine.to_bits() == theirs.to_bits() {
-                    exact += 1;
+                    report.exact += 1;
                     continue;
                 }
-                let err = (mine - theirs).abs();
-                worst = worst.max(if name == "speed" { err } else { 0.0 });
-                if first_mismatch.is_none() {
-                    first_mismatch = Some(format!(
+                report.note(name, (mine - theirs).abs());
+                if report.first_mismatch.is_none() {
+                    report.first_mismatch = Some(format!(
                         "row {r} (stretch from row {start}): {name} engine {mine} ({:08x}) vs original {theirs} ({:08x})",
                         mine.to_bits(),
                         theirs.to_bits()
@@ -220,9 +293,55 @@ pub fn replay_physics(trace_path: &Path, exe_path: &Path, verbose: bool) -> Resu
         }
         r += 1;
     }
-    println!("compared {compared} values, {exact} bit-exact, worst speed error {worst} m/s");
-    if let Some(m) = &first_mismatch {
-        println!("first mismatch: {m}");
+    Ok(report)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every physics trace in `DDG_TRACE_DIR` must replay bit-exactly. Needs `DDG_DATA_DIR`
+    /// for the exe tables; skips when either is unset.
+    #[test]
+    fn oracle_traces_replay_bit_exactly() {
+        let (Some(traces), Some(data)) = (
+            std::env::var_os("DDG_TRACE_DIR"),
+            std::env::var_os("DDG_DATA_DIR"),
+        ) else {
+            eprintln!("skipped: DDG_TRACE_DIR or DDG_DATA_DIR not set");
+            return;
+        };
+        let exe =
+            std::path::PathBuf::from(data).join("install/Program_Executable_Files/BIN/dengo3k.exe");
+        let bytes = std::fs::read(&exe).unwrap();
+        let exe = Exe::parse(&bytes).unwrap();
+        let tables = TrainTables::read(&exe).unwrap();
+        let ranks = ddg_engine::time::read_stage_ranks(&exe).unwrap();
+        let mut paths: Vec<_> = std::fs::read_dir(traces)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|e| e == "csv"))
+            .collect();
+        paths.sort();
+        for path in paths {
+            let t = Trace::load(&path).unwrap();
+            if !t.columns.contains_key("t_force") {
+                continue; // not a physics trace
+            }
+            let report = replay(&t, &tables, &ranks, false).unwrap();
+            eprintln!(
+                "{}: {} / {} bit-exact",
+                path.display(),
+                report.exact,
+                report.compared
+            );
+            assert_eq!(
+                report.first_mismatch,
+                None,
+                "{}: worst {:?}",
+                path.display(),
+                report.worst
+            );
+        }
     }
-    Ok(first_mismatch.is_none())
 }
