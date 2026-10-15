@@ -14,3 +14,4 @@ ddg-formats.workspace = true
 anyhow.workspace = true
 encoding_rs.workspace = true
 pelite.workspace = true
+image.workspace = true

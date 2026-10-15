@@ -1,5 +1,6 @@
 //! Developer CLI for reconnaissance and asset inspection.
 
+mod export;
 mod inventory;
 mod pe;
 
@@ -13,7 +14,10 @@ commands:
   inventory <dir>                 list files with size, magic, hash; extension histogram
   manifest <dir> <variant>        print a data-manifest TOML (hashes only) for <dir>
   pe <file>                       PE sections/entropy, imports, Rich header, resources
-  strings <file> [--min N] [--jp] ASCII and Shift-JIS strings with offsets";
+  strings <file> [--min N] [--jp] ASCII and Shift-JIS strings with offsets
+  export <what> [--out DIR] [--palette N]
+                                  write PNG/WAV from $DDG_DATA_DIR to out/export (default)
+                                  what: textures | tilemaps | audio | all";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -34,6 +38,7 @@ fn main() -> Result<()> {
             inventory::print_manifest(&path(1)?, variant)
         }
         "pe" => pe::print_report(&path(1)?),
+        "export" => run_export(&args[1..]),
         "strings" => {
             let mut min = 6;
             let mut jp_only = false;
@@ -59,4 +64,41 @@ fn main() -> Result<()> {
         }
         other => bail!("unknown command {other}\n\n{USAGE}"),
     }
+}
+
+fn run_export(args: &[String]) -> Result<()> {
+    let what = args.first().context("export: missing <what>")?.as_str();
+    let mut out = PathBuf::from("out/export");
+    let mut palette = 4u8;
+    let mut rest = args[1..].iter();
+    while let Some(a) = rest.next() {
+        match a.as_str() {
+            "--out" => out = PathBuf::from(rest.next().context("--out needs a path")?),
+            "--palette" => palette = rest.next().context("--palette needs N")?.parse()?,
+            other => bail!("unknown option {other}"),
+        }
+    }
+    let dirs = export::GameDirs::from_env()?;
+    let all = what == "all";
+    let mut any = false;
+    if all || what == "textures" {
+        println!("textures: {} pages", export::textures(&dirs, &out)?);
+        any = true;
+    }
+    if all || what == "tilemaps" {
+        println!(
+            "tilemaps: {} images",
+            export::tilemaps(&dirs, &out, palette)?
+        );
+        any = true;
+    }
+    if all || what == "audio" {
+        println!("audio: {} files", export::audio(&dirs, &out)?);
+        any = true;
+    }
+    if !any {
+        bail!("unknown export target {what}");
+    }
+    println!("written to {}", out.display());
+    Ok(())
 }

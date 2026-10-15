@@ -15,6 +15,7 @@ anyhow = "1"
 thiserror = "2"
 encoding_rs = "0.8"
 pelite = "0.10"
+image = { version = "0.25", default-features = false, features = ["png"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
