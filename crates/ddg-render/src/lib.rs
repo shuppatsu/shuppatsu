@@ -5,6 +5,7 @@
 
 pub mod camera;
 pub mod gpu;
+pub mod mip;
 pub mod world;
 
 pub use camera::{Camera, Projection};

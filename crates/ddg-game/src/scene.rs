@@ -63,11 +63,12 @@ pub enum Visibility {
 /// Bucket look-back for side tracks in wide mode (scene.md §5.2).
 const WIDE_EXTRA_BUCKETS: usize = 16;
 
-/// Enhancement `stable_track_depth`: each track piece is pulled this fraction of its distance
-/// towards the eye per position in the original's draw order, so overlapping coplanar track
-/// beds no longer z-fight (the original flickers there). A few hundred pieces stay below 0.1 %
-/// of the distance, far less than the rail height along any view ray, and well above the
-/// precision of the reversed-Z float depth buffer.
+/// Enhancement `stable_track_depth`: track pieces are pulled towards the eye by this fraction of
+/// their distance per priority step, so overlapping coplanar track beds no longer z-fight (the
+/// original flickers there). Priority is fixed per track segment (side segments by index, the
+/// main line above all), so the winner of an overlap never changes from frame to frame. Up to
+/// ~1000 segments stay below 0.2 % of the distance, far less than the rail height along a view
+/// ray, and well above the precision of the reversed-Z float depth buffer.
 const TRACK_PULL_STEP: f32 = 2e-6;
 
 pub struct RouteScene {
@@ -80,6 +81,8 @@ pub struct RouteScene {
     visibility: Visibility,
     /// Enhancement `stable_track_depth` (off = the original's flicker).
     pub stable_track_depth: bool,
+    /// Depth priority per slot for `stable_track_depth` (segment based, main line highest).
+    slot_priority: Vec<u16>,
 }
 
 impl RouteScene {
@@ -126,6 +129,7 @@ impl RouteScene {
             library.add_parts(entries);
         }
 
+        let slot_priority = slot_priorities(&route);
         let original = scene::live_intervals(&route);
         let intervals = match visibility {
             Visibility::Original => original,
@@ -149,6 +153,7 @@ impl RouteScene {
             intervals,
             visibility,
             stable_track_depth: false,
+            slot_priority,
         })
     }
 
@@ -186,12 +191,11 @@ impl RouteScene {
             ),
         };
         let eye = Vec3::from(cam.eye);
-        for (rank, p) in pieces.iter().enumerate() {
+        for p in &pieces {
             let m = Mat4::from_cols_array(&p.transform.to_cols_array());
-            let pull = if self.stable_track_depth {
-                rank as f32 * TRACK_PULL_STEP
-            } else {
-                0.0
+            let pull = match self.slot_priority.get(p.slot) {
+                Some(&prio) if self.stable_track_depth => f32::from(prio) * TRACK_PULL_STEP,
+                _ => 0.0,
             };
             frame.add_instance_pulled(&self.library, p.part_id, &m, eye, pull);
         }
@@ -275,6 +279,24 @@ fn virtual_to_ndc([x, y]: [i16; 2]) -> [f32; 2] {
     let nx = f32::from(x) / 496.0 * 2.0 - 1.0;
     let ny = 1.0 - (f32::from(y) - 52.0) / 348.0 * 2.0;
     [nx, ny]
+}
+
+/// Per-slot depth priority for `stable_track_depth`: side segments by index (1, 2, …), the main
+/// line above all of them. Marker and unassigned slots get 0.
+fn slot_priorities(route: &Route) -> Vec<u16> {
+    let mut prio = vec![0u16; route.slots.len()];
+    let top = u16::try_from(route.segments.len()).unwrap_or(u16::MAX);
+    for (i, seg) in route.segments.iter().enumerate() {
+        let p = if i == 0 {
+            top
+        } else {
+            u16::try_from(i).unwrap_or(u16::MAX)
+        };
+        for slot in seg.points.clone() {
+            prio[slot] = p;
+        }
+    }
+    prio
 }
 
 #[cfg(test)]

@@ -88,6 +88,7 @@ pub struct Renderer {
     frame_bind: wgpu::BindGroup,
     page_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    filtered_sampler: wgpu::Sampler,
     pages: Vec<PageGpu>,
     lines: StreamBuffer,
     line_count: u32,
@@ -97,6 +98,9 @@ pub struct Renderer {
     pub fog: Fog,
     pub projection: Projection,
     pub show_lines: bool,
+    /// Enhancement `texture_filtering` (off = the original's nearest sampling, no mipmaps).
+    /// Takes effect at the next [`Renderer::upload_pages`].
+    pub texture_filtering: bool,
 }
 
 fn depth_state(write: bool, compare: wgpu::CompareFunction) -> wgpu::DepthStencilState {
@@ -170,6 +174,17 @@ impl Renderer {
             address_mode_v: wgpu::AddressMode::Repeat,
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+        // Enhancement `texture_filtering`: trilinear + anisotropic over CPU-built mipmaps.
+        let filtered_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("page sampler (filtered)"),
+            address_mode_u: wgpu::AddressMode::Repeat,
+            address_mode_v: wgpu::AddressMode::Repeat,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            anisotropy_clamp: 16,
             ..Default::default()
         });
 
@@ -261,6 +276,7 @@ impl Renderer {
             frame_bind,
             page_layout,
             sampler,
+            filtered_sampler,
             pages: Vec::new(),
             lines: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "lines"),
             line_count: 0,
@@ -270,6 +286,7 @@ impl Renderer {
             fog: Fog::default(),
             projection: Projection::default(),
             show_lines: false,
+            texture_filtering: false,
         }
     }
 
@@ -289,26 +306,42 @@ impl Renderer {
                     height: page.height,
                     depth_or_array_layers: 1,
                 };
+                let levels = if self.texture_filtering {
+                    crate::mip::chain(page.width, page.height, &page.rgba)
+                } else {
+                    vec![(page.width, page.height, page.rgba.clone())]
+                };
                 let texture = device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("page"),
                     size,
-                    mip_level_count: 1,
+                    mip_level_count: levels.len() as u32,
                     sample_count: 1,
                     dimension: wgpu::TextureDimension::D2,
                     format: wgpu::TextureFormat::Rgba8UnormSrgb,
                     usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                     view_formats: &[],
                 });
-                queue.write_texture(
-                    texture.as_image_copy(),
-                    &page.rgba,
-                    wgpu::TexelCopyBufferLayout {
-                        offset: 0,
-                        bytes_per_row: Some(4 * page.width),
-                        rows_per_image: Some(page.height),
-                    },
-                    size,
-                );
+                for (level, (w, h, rgba)) in levels.iter().enumerate() {
+                    queue.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &texture,
+                            mip_level: level as u32,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        rgba,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(4 * w),
+                            rows_per_image: Some(*h),
+                        },
+                        wgpu::Extent3d {
+                            width: *w,
+                            height: *h,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                }
                 let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
                 let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("page"),
@@ -320,7 +353,11 @@ impl Renderer {
                         },
                         wgpu::BindGroupEntry {
                             binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&self.sampler),
+                            resource: wgpu::BindingResource::Sampler(if self.texture_filtering {
+                                &self.filtered_sampler
+                            } else {
+                                &self.sampler
+                            }),
                         },
                     ],
                 });

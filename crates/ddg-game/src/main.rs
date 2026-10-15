@@ -29,7 +29,8 @@ options:
   --uncapped               present without vsync
   --square-pixels          disable the original's 7.9 % horizontal stretch
   --original-visibility    the original 4:3 visibility lists, even in a wider window
-  --stable-track-depth     enhancement: no z-fighting between overlapping track beds
+  --stable-track-depth     enhancement: fixed depth order for overlapping track beds
+  --texture-filtering      enhancement: mipmaps + trilinear/anisotropic filtering (no shimmer)
   --size <WxH>             window/frame size (default 1280x800, 16:10)
 
 keys: Space pause, Up/Down speed, Left/Right jump 100 m, L track lines, F fog, Esc quit";
@@ -53,6 +54,7 @@ struct Options {
     square_pixels: bool,
     original_visibility: bool,
     stable_track_depth: bool,
+    texture_filtering: bool,
     size: (u32, u32),
 }
 
@@ -73,6 +75,7 @@ fn parse_args() -> Result<Options> {
         square_pixels: false,
         original_visibility: false,
         stable_track_depth: false,
+        texture_filtering: false,
         size: (1280, 800),
     };
     let mut rest = args[2..].iter();
@@ -85,6 +88,7 @@ fn parse_args() -> Result<Options> {
             "--square-pixels" => opts.square_pixels = true,
             "--original-visibility" => opts.original_visibility = true,
             "--stable-track-depth" => opts.stable_track_depth = true,
+            "--texture-filtering" => opts.texture_filtering = true,
             "--size" => {
                 let s = rest.next().context("--size needs WxH")?;
                 let (w, h) = s.split_once('x').context("--size needs WxH")?;
@@ -107,6 +111,7 @@ fn track_pos(units: f32) -> TrackPos {
 }
 
 fn configure_renderer(renderer: &mut Renderer, opts: &Options) {
+    renderer.texture_filtering = opts.texture_filtering;
     renderer.projection.fov_tenths = (DRIVING_FOV_Y_DEG * 10.0) as u16;
     renderer.projection.stretch = if opts.square_pixels {
         1.0
