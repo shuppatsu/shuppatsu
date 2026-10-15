@@ -281,7 +281,8 @@ of the points 4 and 6 ahead. **confirmed** (lookup) / guess (what the sounds are
 
 - u16 at +2 of a track run; the f32 at +16 is only "likely" a squared distance.
 - Bits 5–12 on 0x2000 / 0xc000 points; bit 12 on turnouts.
-- Timetable fields 4–8; signal aspect encoding; course event kind 3.
+- Timetable fields 4–8, the signal aspect encoding and course event kinds are decoded in
+  rules.md (§4, §8, §10); the "aspect + 1 per block" note in §9 describes kind 0 only.
 - The per-area rail/model tables (0x486170, 0x486eb0, 0x47c2cc…) are now read by
   `scene::SceneTables` (scene.md §2).
 - Station-name array consumer (no code xref found).
