@@ -3,6 +3,7 @@ name = "ddg-hook"
 description = "i686 Windows proxy DLL used as a measurement oracle"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 publish.workspace = true
 
 [lib]
