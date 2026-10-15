@@ -1,0 +1,15 @@
+[package]
+name = "ddg-tools"
+description = "Recon, inventory, dump and export CLI"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+ddg-formats.workspace = true
+anyhow.workspace = true
+encoding_rs.workspace = true
+pelite.workspace = true
