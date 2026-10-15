@@ -1,0 +1,15 @@
+# Game data and anything derived from it — never commit (CLAUDE.md hard rule 1)
+/data/
+/re/
+/out/
+/wine/
+*.mdf
+*.mds
+*.bin
+*.cue
+*.iso
+*.toc
+
+/target/
+/result*
+.direnv/
