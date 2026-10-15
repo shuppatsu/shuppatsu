@@ -101,6 +101,9 @@ pub struct Renderer {
     pub fog: Fog,
     pub projection: Projection,
     pub show_lines: bool,
+    /// Fraction of the target height above the 3D view. The original's 3D viewport is virtual
+    /// y 52..400 of 400 (renderer.md §5), leaving the top 13 % to the HUD; 0 fills the target.
+    pub band_top: f32,
     /// Enhancement `texture_filtering` (off = the original's nearest sampling, no mipmaps).
     /// Takes effect at the next [`Renderer::upload_pages`].
     pub texture_filtering: bool,
@@ -304,6 +307,7 @@ impl Renderer {
             fog: Fog::default(),
             projection: Projection::default(),
             show_lines: false,
+            band_top: 0.0,
             texture_filtering: false,
         }
     }
@@ -457,7 +461,9 @@ impl Renderer {
         (width, height): (u32, u32),
         camera: &Camera,
     ) {
-        let aspect = width as f32 / height.max(1) as f32;
+        let band_y = (height as f32 * self.band_top).round();
+        let band_h = (height as f32 - band_y).max(1.0);
+        let aspect = width as f32 / band_h;
         let view = camera.view();
         let view_proj: Mat4 = self.projection.matrix(aspect) * view;
         let fog = self.fog;
@@ -504,6 +510,7 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            pass.set_viewport(0.0, band_y, width as f32, band_h, 0.0, 1.0);
             let bg_bytes = u64::from(self.background_count) * size_of::<BgVertex>() as u64;
             if self.background_count > 0
                 && let Some(slice) = self.background.slice(bg_bytes)

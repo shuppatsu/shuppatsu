@@ -9,6 +9,7 @@
 //!   (`0x436720` / `0x436770`). Colour byte order: B, R, G.
 
 use crate::error::{FormatError, Result};
+use crate::exe::Exe;
 use crate::lz;
 use crate::reader::Bytes;
 use crate::rom2::Rom2;
@@ -196,6 +197,37 @@ impl Palette {
     pub fn indices_to_rgba8(&self, indices: &[u8]) -> Vec<u8> {
         indices.iter().flat_map(|&i| self.rgba(i)).collect()
     }
+}
+
+/// Palette blobs set by GAME_INIT (0x40e910): (palette slot, source VA). Small verified
+/// constants; the colours themselves are read from the user's exe.
+const INIT_PALETTES: &[(u8, u32)] = &[
+    (1, 0x4636c0),
+    (4, 0x488290),
+    (5, 0x489e90),
+    (6, 0x48a290),
+    (7, 0x489290),
+    (8, 0x487e90),
+    (9, 0x487a90),
+    (10, 0x48aa90),
+    (11, 0x488e90),
+    (12, 0x487690),
+    (13, 0x489690),
+    (14, 0x489a90),
+    (15, 0x488690),
+    (16, 0x488a90),
+    (17, 0x48a690),
+    (18, 0x463740),
+    (24, 0x48ae90),
+    (25, 0x48b290),
+    (26, 0x48b690),
+];
+
+pub fn init_palettes(exe: &Exe<'_>) -> Result<Vec<(u8, Palette)>> {
+    INIT_PALETTES
+        .iter()
+        .map(|&(slot, va)| Ok((slot, Palette::parse(exe.bytes_at(va, Palette::BYTES)?)?)))
+        .collect()
 }
 
 #[cfg(test)]

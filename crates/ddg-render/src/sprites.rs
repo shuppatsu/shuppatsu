@@ -1,0 +1,315 @@
+//! The original's 2D layers over the 3D view (docs/re/hud.md §1.1, §6): the software sprite
+//! layer and the rect layer, composed on the CPU into a 640×480 RGBA canvas exactly as the
+//! original blits them into its back buffer. The canvas is then drawn as one overlay texture.
+
+use ddg_formats::cg::{CgFile, Palette, TILE_PIXELS, TILE_SIZE, Tilemap};
+
+/// The HUD design size: native pixels of resolution mode 1 (hud.md §1.1).
+pub const CANVAS_W: usize = 640;
+pub const CANVAS_H: usize = 480;
+/// Sprite slot records at 0x816f88 (207 × 16 bytes).
+pub const SLOT_COUNT: usize = 207;
+/// Palette table entries (`0x829d5c + p·0x400`).
+pub const PALETTE_COUNT: usize = 128;
+/// Rect layer capacity (0x816b00, 16 fans of ≤ 4 points).
+pub const MAX_FANS: usize = 16;
+const LAYERS: u8 = 4;
+
+/// One sprite slot (hud.md §1.1 record layout).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Slot {
+    pub x: i16,
+    pub y: i16,
+    /// Source sub-rectangle in tiles; `w`/`h` ≤ 0 means the whole map.
+    pub col: i8,
+    pub row: i8,
+    pub w: i8,
+    pub h: i8,
+    pub palette: u8,
+    /// 0..=3; layer 3 is drawn first, layer 0 on top.
+    pub layer: u8,
+    /// `tbl.rom` tilemap id, or −1 when hidden.
+    pub tilemap: i16,
+    /// Survives the per-tick reset (0x4316b0) when set.
+    pub keep: bool,
+}
+
+impl Slot {
+    /// The cleared state (0x431790): off-screen, layer 3, no image.
+    pub const CLEAR: Self = Self {
+        x: 0x800,
+        y: 0x800,
+        col: 0,
+        row: 0,
+        w: 0,
+        h: 0,
+        palette: 0,
+        layer: 3,
+        tilemap: -1,
+        keep: false,
+    };
+
+    /// Everything set at once (0x4316e0); the source rect is the whole map.
+    pub fn new(tilemap: i16, x: i16, y: i16, palette: u8, layer: u8, keep: bool) -> Self {
+        Self {
+            x,
+            y,
+            palette,
+            layer,
+            tilemap,
+            keep,
+            ..Self::CLEAR
+        }
+    }
+}
+
+/// An untextured fan of up to four integer points in canvas pixels, ARGB colour (0x431950).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fan {
+    pub points: [[i32; 2]; 4],
+    pub count: u8,
+    pub argb: u32,
+}
+
+/// Decoded tiles and tilemaps (`cg.rom`, `tbl.rom`).
+pub struct SpriteBank {
+    tiles: Vec<Option<Box<[u8; TILE_PIXELS]>>>,
+    pub tilemaps: Vec<Tilemap>,
+}
+
+impl SpriteBank {
+    /// Decodes every tile up front; tiles that fail to decode are drawn as empty.
+    pub fn new(cg: &CgFile<'_>, tilemaps: Vec<Tilemap>) -> Self {
+        let tiles = (0..cg.len())
+            .map(|i| cg.tile(i).ok().map(Box::new))
+            .collect();
+        Self { tiles, tilemaps }
+    }
+
+    fn tile(&self, id: u16) -> Option<&[u8; TILE_PIXELS]> {
+        self.tiles.get(usize::from(id))?.as_deref()
+    }
+}
+
+/// The sprite slots, palettes, rect layer and shake offset of one frame.
+#[derive(Clone)]
+pub struct SpriteLayer {
+    pub slots: [Slot; SLOT_COUNT],
+    pub palettes: Vec<Option<Palette>>,
+    pub fans: Vec<Fan>,
+    /// Global shake offset (signed bytes 0x856358/0x856359).
+    pub shake: (i8, i8),
+}
+
+impl Default for SpriteLayer {
+    fn default() -> Self {
+        Self {
+            slots: [Slot::CLEAR; SLOT_COUNT],
+            palettes: vec![None; PALETTE_COUNT],
+            fans: Vec::new(),
+            shake: (0, 0),
+        }
+    }
+}
+
+impl SpriteLayer {
+    /// The per-tick reset (0x4316b0 for slots, 0x431db0 for the rect layer).
+    pub fn reset_transient(&mut self) {
+        for s in self.slots.iter_mut().filter(|s| !s.keep) {
+            *s = Slot::CLEAR;
+        }
+        self.fans.clear();
+    }
+
+    /// Appends a fan; ignored once the list is full (16 fans).
+    pub fn add_fan(&mut self, points: &[[i32; 2]], argb: u32) {
+        if self.fans.len() >= MAX_FANS || points.len() < 3 {
+            return;
+        }
+        let mut p = [[0; 2]; 4];
+        let n = points.len().min(4);
+        p[..n].copy_from_slice(&points[..n]);
+        self.fans.push(Fan {
+            points: p,
+            count: n as u8,
+            argb,
+        });
+    }
+
+    /// Draws the layer into `canvas` (`CANVAS_W × CANVAS_H` RGBA8, cleared to transparent):
+    /// sprites in four passes (layer 3 → 0, slot high → low), then the rect layer.
+    pub fn compose(&self, bank: &SpriteBank, canvas: &mut [u8]) {
+        assert_eq!(canvas.len(), CANVAS_W * CANVAS_H * 4);
+        canvas.fill(0);
+        let (sx, sy) = (i32::from(self.shake.0), i32::from(self.shake.1));
+        for layer in (0..LAYERS).rev() {
+            for slot in self.slots.iter().rev().filter(|s| s.layer == layer) {
+                self.blit(bank, slot, sx, sy, canvas);
+            }
+        }
+        for fan in &self.fans {
+            fill_fan(fan, sx, sy, canvas);
+        }
+    }
+
+    fn blit(&self, bank: &SpriteBank, slot: &Slot, sx: i32, sy: i32, canvas: &mut [u8]) {
+        let Ok(id) = usize::try_from(slot.tilemap) else {
+            return;
+        };
+        let (Some(map), Some(Some(palette))) = (
+            bank.tilemaps.get(id),
+            self.palettes.get(usize::from(slot.palette)),
+        ) else {
+            return;
+        };
+        let (mw, mh) = (i32::from(map.width), i32::from(map.height));
+        let (c0, r0) = (i32::from(slot.col).max(0), i32::from(slot.row).max(0));
+        let w = if slot.w <= 0 { mw } else { i32::from(slot.w) };
+        let h = if slot.h <= 0 { mh } else { i32::from(slot.h) };
+        let ts = TILE_SIZE as i32;
+        for ty in 0..h {
+            for tx in 0..w {
+                let (mc, mr) = (c0 + tx, r0 + ty);
+                if mc >= mw || mr >= mh {
+                    continue;
+                }
+                let id = map.tiles[(mr * mw + mc) as usize];
+                let Some(tile) = (id != 0).then(|| bank.tile(id)).flatten() else {
+                    continue;
+                };
+                let ox = i32::from(slot.x) + sx + tx * ts;
+                let oy = i32::from(slot.y) + sy + ty * ts;
+                for py in 0..ts {
+                    let y = oy + py;
+                    if !(0..CANVAS_H as i32).contains(&y) {
+                        continue;
+                    }
+                    for px in 0..ts {
+                        let x = ox + px;
+                        let index = tile[(py * ts + px) as usize];
+                        if index == 0 || !(0..CANVAS_W as i32).contains(&x) {
+                            continue;
+                        }
+                        let o = (y as usize * CANVAS_W + x as usize) * 4;
+                        canvas[o..o + 4].copy_from_slice(&palette.rgba(index));
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Fills a convex fan, sampling pixel centres (D3D's top-left fill convention is approximated
+/// by the half-pixel centre test). Opaque; the original's alpha byte is not used (guess).
+fn fill_fan(fan: &Fan, sx: i32, sy: i32, canvas: &mut [u8]) {
+    let n = usize::from(fan.count);
+    let pts: Vec<[f32; 2]> = fan.points[..n]
+        .iter()
+        .map(|p| [(p[0] + sx) as f32, (p[1] + sy) as f32])
+        .collect();
+    let [_, r, g, b] = fan.argb.to_be_bytes();
+    for i in 1..n - 1 {
+        fill_triangle([pts[0], pts[i], pts[i + 1]], [r, g, b, 255], canvas);
+    }
+}
+
+fn fill_triangle(t: [[f32; 2]; 3], rgba: [u8; 4], canvas: &mut [u8]) {
+    let edge = |a: [f32; 2], b: [f32; 2], p: [f32; 2]| {
+        (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
+    };
+    let area = edge(t[0], t[1], t[2]);
+    if area == 0.0 {
+        return;
+    }
+    let min_x = t.iter().map(|p| p[0]).fold(f32::MAX, f32::min).max(0.0) as usize;
+    let max_x = (t.iter().map(|p| p[0]).fold(f32::MIN, f32::max).ceil() as usize).min(CANVAS_W);
+    let min_y = t.iter().map(|p| p[1]).fold(f32::MAX, f32::min).max(0.0) as usize;
+    let max_y = (t.iter().map(|p| p[1]).fold(f32::MIN, f32::max).ceil() as usize).min(CANVAS_H);
+    for y in min_y..max_y {
+        for x in min_x..max_x {
+            let p = [x as f32 + 0.5, y as f32 + 0.5];
+            let w = [
+                edge(t[1], t[2], p),
+                edge(t[2], t[0], p),
+                edge(t[0], t[1], p),
+            ];
+            if w.iter().all(|&v| v * area >= 0.0) {
+                let o = (y * CANVAS_W + x) * 4;
+                canvas[o..o + 4].copy_from_slice(&rgba);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A bank with one 1×1 tilemap whose tile is solid index `v`.
+    fn bank(v: u8) -> SpriteBank {
+        SpriteBank {
+            tiles: vec![None, Some(Box::new([v; TILE_PIXELS]))],
+            tilemaps: vec![Tilemap {
+                width: 1,
+                height: 1,
+                tiles: vec![1],
+            }],
+        }
+    }
+
+    fn palette() -> Palette {
+        let mut p = [0u32; 256];
+        p[1] = 0x00_ff_00_00; // B=0, R=0, G=0xff (bytes B, R, G)
+        p[2] = 0x00_00_ff_00; // R=0xff
+        Palette(p)
+    }
+
+    fn pixel(c: &[u8], x: usize, y: usize) -> [u8; 4] {
+        let o = (y * CANVAS_W + x) * 4;
+        c[o..o + 4].try_into().unwrap()
+    }
+
+    #[test]
+    fn layer_zero_and_low_slots_are_on_top() {
+        let b = bank(1);
+        let mut l = SpriteLayer::default();
+        l.palettes[0] = Some(palette());
+        let mut red = palette();
+        red.0[1] = red.0[2];
+        l.palettes[1] = Some(red);
+        // Slot 5 (layer 0, green) over slot 3 (layer 1, red), though 3 has the lower number.
+        l.slots[5] = Slot::new(0, 10, 10, 0, 0, true);
+        l.slots[3] = Slot::new(0, 10, 10, 1, 1, true);
+        let mut c = vec![0; CANVAS_W * CANVAS_H * 4];
+        l.compose(&b, &mut c);
+        assert_eq!(pixel(&c, 10, 10), [0, 255, 0, 255]);
+        assert_eq!(pixel(&c, 9, 10), [0, 0, 0, 0]);
+        // Same layer: the lower slot wins.
+        l.slots[3].layer = 0;
+        l.compose(&b, &mut c);
+        assert_eq!(pixel(&c, 10, 10), [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn clipping_transparency_and_reset() {
+        let b = bank(0);
+        let mut l = SpriteLayer::default();
+        l.palettes[0] = Some(palette());
+        l.slots[0] = Slot::new(0, 632, 472, 0, 0, false);
+        let mut c = vec![0; CANVAS_W * CANVAS_H * 4];
+        l.compose(&b, &mut c); // index 0 everywhere: nothing drawn, no panic at the edge
+        assert!(c.iter().all(|&v| v == 0));
+        l.reset_transient();
+        assert_eq!(l.slots[0], Slot::CLEAR);
+    }
+
+    #[test]
+    fn fans_fill_inside() {
+        let mut l = SpriteLayer::default();
+        l.add_fan(&[[0, 0], [10, 0], [10, 10], [0, 10]], 0xff_12_34_56);
+        let mut c = vec![0; CANVAS_W * CANVAS_H * 4];
+        l.compose(&bank(0), &mut c);
+        assert_eq!(pixel(&c, 5, 5), [0x12, 0x34, 0x56, 255]);
+        assert_eq!(pixel(&c, 10, 5), [0, 0, 0, 0]);
+    }
+}
