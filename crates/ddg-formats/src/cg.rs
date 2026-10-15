@@ -131,8 +131,10 @@ impl Tilemap {
             ));
         }
         let tiles = raw
-            .chunks_exact(2)
-            .map(|c| u16::from_le_bytes([c[0], c[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&c| u16::from_le_bytes(c))
             .collect();
         Ok(Self {
             width,

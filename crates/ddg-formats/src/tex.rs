@@ -103,8 +103,10 @@ impl TexFile {
             let n = width as usize * height as usize;
             let raw = b.slice(pos + 4, n * 2)?;
             let pixels = raw
-                .chunks_exact(2)
-                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|&c| u16::from_le_bytes(c))
                 .collect();
             pages.push(TexPage {
                 width,
