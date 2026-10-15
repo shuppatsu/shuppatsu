@@ -69,7 +69,8 @@
 
             # reverse engineering / oracle
             ghidra
-            wineWow64Packages.stable
+            # 11.0 stable segfaults in glibc 2.44 __tunables_init via wine-preloader; 11.19 works.
+            wineWow64Packages.unstable
           ])
           ++ runtimeLibs;
 
@@ -78,10 +79,13 @@
         # nixpkgs mingw gcc uses the mcfgthread threading model; libgcc_eh needs it.
         CARGO_TARGET_I686_PC_WINDOWS_GNU_RUSTFLAGS = "-L native=${mingw32.windows.pthreads}/lib -L native=${mingw32.windows.mcfgthreads}/lib -C link-arg=-l:libmcfgthread.a -C link-arg=-lkernel32 -C link-arg=-lntdll";
         GHIDRA_HOME = "${pkgs.ghidra}/lib/ghidra";
+        # The original game needs a Japanese locale (ANSI code page 932) under Wine; the host
+        # system may only ship en_US, so use the full glibc locale set.
+        LOCALE_ARCHIVE = "${pkgs.glibcLocales}/lib/locale/locale-archive";
 
         shellHook = ''
           export DDG_DATA_DIR="''${DDG_DATA_DIR:-$PWD/data/extracted}"
-          export WINEPREFIX="$PWD/wine/prefix"
+          export WINEPREFIX="''${WINEPREFIX:-$PWD/wine/prefix}"
         '';
       };
     };
