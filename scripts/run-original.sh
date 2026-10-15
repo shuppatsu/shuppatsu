@@ -4,23 +4,33 @@
 # and the disc presented by scripts/mount-disc.sh.
 #
 # Usage: scripts/run-original.sh [dengo3k.exe|DengoSetting.exe] [args...]
-# Env:   DDG_WINE_DESKTOP=WxH   virtual desktop size (default 640x480; "off" to disable)
+# Env:   DDG_WINE_DISPLAY=wayland|desktop   (default: wayland if available, else desktop)
+#        DDG_WINE_DESKTOP=WxH               virtual desktop size for "desktop" (default 640x480)
 #
-# Why a virtual desktop: the game calls SetDisplayMode(640x480x16) and creates a 640x480
-# Z-buffer. On Wayland/XWayland Wine can't change the real mode, so the back buffer stays at
-# desktop size; wined3d then disables the mismatched depth buffer and ignores the per-frame
-# clears (wrong z-order, smeared frames). A virtual desktop of the requested size avoids that.
+# Why: the game calls SetDisplayMode(640x480x16) and creates a 640x480 Z-buffer. Under
+# winex11 on XWayland the real mode never changes, the back buffer stays desktop-sized, and
+# wined3d disables the mismatched depth buffer and skips frame clears (wrong z-order, smeared
+# frames). winewayland emulates the mode change with compositor scaling (full screen, correct
+# sizes); a virtual desktop of the requested size is the X11 fallback (unscaled).
 set -euo pipefail
 : "${WINEPREFIX:?run inside nix develop}"
 export LC_ALL=ja_JP.UTF-8 # ANSI code page 932; LANG alone can be overridden by the host
 exe=${1:-dengo3k.exe}
 shift || true
-desktop=${DDG_WINE_DESKTOP:-640x480}
-cd "$WINEPREFIX/drive_c/Program Files (x86)/TAITO/DENGO3K/BIN" # game uses ..\data paths
-if [[ $desktop == off ]]; then
-  exec wine "$exe" "$@"
-fi
-# explorer resolves the program on the Windows search path, not the cwd, so pass the game
-# directory explicitly via start.exe (/d also sets the working directory the game needs).
+mode=${DDG_WINE_DISPLAY:-$([[ -n ${WAYLAND_DISPLAY:-} ]] && echo wayland || echo desktop)}
 bin='C:\Program Files (x86)\TAITO\DENGO3K\BIN'
-exec wine explorer "/desktop=dengo3k,$desktop" start /wait /d "$bin" "$exe" "$@"
+cd "$WINEPREFIX/drive_c/Program Files (x86)/TAITO/DENGO3K/BIN" # game uses ..\data paths
+
+case $mode in
+  wayland)
+    wine reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d wayland /f >/dev/null
+    exec wine "$exe" "$@"
+    ;;
+  desktop)
+    wine reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d x11 /f >/dev/null
+    # explorer resolves the program on the Windows search path, not the cwd, so pass the
+    # game directory explicitly via start.exe (/d also sets the working directory).
+    exec wine explorer "/desktop=dengo3k,${DDG_WINE_DESKTOP:-640x480}" start /wait /d "$bin" "$exe" "$@"
+    ;;
+  *) echo "DDG_WINE_DISPLAY must be wayland or desktop" >&2; exit 1 ;;
+esac
