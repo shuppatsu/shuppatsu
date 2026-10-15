@@ -30,7 +30,11 @@ case $mode in
   gamescope)
     # Nested compositor: a normal desktop window whose inner "screen" is 640x480, so the
     # game's mode change matches and the output is scaled into the window.
+    # winex11 on gamescope's Xwayland (winewayland needs wl_subcompositor, which gamescope lacks).
     wine reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d x11 /f >/dev/null
+    # The reg call started a Wine session (explorer.exe) on the host display; let it exit, or
+    # the game joins it from inside gamescope and explorer dies with BadWindow.
+    wineserver -w
     # The dev shell's LD_LIBRARY_PATH breaks gamescope (SDL3 load fails); restore it for Wine only.
     exec env -u LD_LIBRARY_PATH nix shell nixpkgs#gamescope -c gamescope -w 640 -h 480 \
       -W "${DDG_WINE_WINDOW_W:-1280}" -H "${DDG_WINE_WINDOW_H:-960}" -- \
