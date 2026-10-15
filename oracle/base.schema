@@ -1,0 +1,11 @@
+# Oracle trace schema: name address type (docs/re/*.md for meanings and confidence).
+# Addresses only; no game data.
+global_tick   0x84c494 u32   # Task_Tick counter (main-loop.md)
+phase_flags   0x855ff8 u32   # 0x200 = driving (likely)
+system_flags  0x855ffc u32   # 4 = paused
+stage_timer   0x8570b0 i32   # stage tick timer (main-loop.md §5)
+engine_index  0x8502a4 i32   # camera/train point index on the main line (scene.md)
+power_notch   0x829d00 i32   # 0..5 (input.md)
+brake_notch   0x829d04 i32   # 0..10, 9 = EB (input.md)
+speed         0x857234 f32   # replay m_fSpeed (main-loop.md §7)
+dist_to_stop  0x85708c f32   # replay m_fDist (main-loop.md §7)
