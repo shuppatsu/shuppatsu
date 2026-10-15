@@ -874,6 +874,18 @@ struct TrackBuilder<'a> {
     area: &'a AreaTables,
     camera: &'a CabCamera,
     out: Vec<TrackInstance>,
+    options: TrackOptions,
+}
+
+/// Enhancements to track drawing; `Default` reproduces the original.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TrackOptions {
+    /// Choose the single-piece model variant of side-track runs from the track slot instead of
+    /// the camera's engine index. The original passes `engine & 3` as the phase but counts from
+    /// the run start, so every side-track piece switches variant (different ballast heaps) each
+    /// time the camera passes a point: the flicker around the tracks. The main line is anchored
+    /// in the original already.
+    pub anchor_side_variants: bool,
 }
 
 fn h(p: &TrackPoint) -> i32 {
@@ -1107,7 +1119,20 @@ pub fn track_instances(
     pos: TrackPos,
     camera: &CabCamera,
 ) -> Vec<TrackInstance> {
+    track_instances_with(route, tables, ctx, pos, camera, TrackOptions::default())
+}
+
+/// [`track_instances`] with enhancement options.
+pub fn track_instances_with(
+    route: &Route,
+    tables: &SceneTables,
+    ctx: SceneContext,
+    pos: TrackPos,
+    camera: &CabCamera,
+    options: TrackOptions,
+) -> Vec<TrackInstance> {
     let mut b = TrackBuilder::new(route, tables, ctx, camera);
+    b.options = options;
     let phase = pos.engine_index & 3;
     b.rail_run(
         pos.slot(route) + MAIN_LINE_LEAD,
@@ -1138,6 +1163,7 @@ impl<'a> TrackBuilder<'a> {
             area: &tables.areas[ctx.area],
             camera,
             out: Vec::new(),
+            options: TrackOptions::default(),
         }
     }
 
@@ -1147,7 +1173,12 @@ impl<'a> TrackBuilder<'a> {
             1 => {
                 let [b4, b5, b6, b7] = run.lod.map(usize::from);
                 let counts = [b4, b5 >> 4, b5 & 15, b6 >> 4, b6 & 15, b7];
-                self.rail_run(run.slots.start, counts, engine & 3, false);
+                let phase = if self.options.anchor_side_variants {
+                    run.slots.start & 3
+                } else {
+                    engine & 3
+                };
+                self.rail_run(run.slots.start, counts, phase, false);
             }
             k => {
                 if let Some(parts) = self.tables.kind_parts(ctx.area, k) {
@@ -1178,7 +1209,28 @@ pub fn track_instances_wide(
     camera: &CabCamera,
     extra_buckets: usize,
 ) -> Vec<TrackInstance> {
-    let mut out = track_instances(route, tables, ctx, pos, camera);
+    track_instances_wide_with(
+        route,
+        tables,
+        ctx,
+        pos,
+        camera,
+        extra_buckets,
+        TrackOptions::default(),
+    )
+}
+
+/// [`track_instances_wide`] with enhancement options.
+pub fn track_instances_wide_with(
+    route: &Route,
+    tables: &SceneTables,
+    ctx: SceneContext,
+    pos: TrackPos,
+    camera: &CabCamera,
+    extra_buckets: usize,
+    options: TrackOptions,
+) -> Vec<TrackInstance> {
+    let mut out = track_instances_with(route, tables, ctx, pos, camera, options);
     let current = pos.engine_index / 4;
     let mut covered = std::collections::HashSet::new();
     let cover = |covered: &mut std::collections::HashSet<(bool, usize)>, run: &TrackRun| {
@@ -1192,6 +1244,7 @@ pub fn track_instances_wide(
     for b in (current.saturating_sub(extra_buckets)..current).rev() {
         for run in &route.buckets[b] {
             let mut builder = TrackBuilder::new(route, tables, ctx, camera);
+            builder.options = options;
             builder.limit = route.slots.len();
             builder.run(run, ctx, pos.engine_index);
             out.extend(

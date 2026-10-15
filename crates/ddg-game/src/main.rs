@@ -29,7 +29,7 @@ options:
   --uncapped               present without vsync
   --square-pixels          disable the original's 7.9 % horizontal stretch
   --original-visibility    the original 4:3 visibility lists, even in a wider window
-  --stable-track-depth     enhancement: fixed depth order for overlapping track beds
+  --stable-track-variants  enhancement: side-track models don't switch every point (no flicker)
   --texture-filtering      enhancement: mipmaps + trilinear/anisotropic filtering (no shimmer)
   --size <WxH>             window/frame size (default 1280x800, 16:10)
 
@@ -53,7 +53,7 @@ struct Options {
     uncapped: bool,
     square_pixels: bool,
     original_visibility: bool,
-    stable_track_depth: bool,
+    stable_track_variants: bool,
     texture_filtering: bool,
     size: (u32, u32),
 }
@@ -74,7 +74,7 @@ fn parse_args() -> Result<Options> {
         uncapped: false,
         square_pixels: false,
         original_visibility: false,
-        stable_track_depth: false,
+        stable_track_variants: false,
         texture_filtering: false,
         size: (1280, 800),
     };
@@ -87,7 +87,7 @@ fn parse_args() -> Result<Options> {
             "--out" => opts.out = Some(rest.next().context("--out needs a path")?.into()),
             "--square-pixels" => opts.square_pixels = true,
             "--original-visibility" => opts.original_visibility = true,
-            "--stable-track-depth" => opts.stable_track_depth = true,
+            "--stable-track-variants" => opts.stable_track_variants = true,
             "--texture-filtering" => opts.texture_filtering = true,
             "--size" => {
                 let s = rest.next().context("--size needs WxH")?;
@@ -392,7 +392,7 @@ fn main() -> Result<()> {
     };
     let t = Instant::now();
     let mut scene = RouteScene::load(&data, &opts.route, visibility)?;
-    scene.stable_track_depth = opts.stable_track_depth;
+    scene.stable_track_variants = opts.stable_track_variants;
     eprintln!(
         "{}: area {}, COM {}, eye height {:.3}, {} placements, visibility {:?}, loaded in {:.2?}",
         opts.route,

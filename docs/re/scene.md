@@ -120,7 +120,12 @@ the segment end instead. **confirmed** (data) / the original's garbage there is 
   b6&15` and `b7` for bands 1–5, starting at the run's first slot. Drawn as in §2.3/§2.4,
   with the single-piece phase taken from the **camera's** `engine_index & 3`, not from the run.
   The group-0/1/2 choice on side tracks therefore changes as the camera moves (on the original
-  too).
+  too). **Visible effect (Phase 3):** every side-track single piece swaps model (different
+  ballast heaps) each time the camera passes a point, which is the flicker around the tracks
+  at low speed (the user confirms the original flickers there). Across one point boundary this
+  changes ~32,600 pixels of the lower half at 1280×800; anchoring the phase to the run's slot
+  (`run.slots.start & 3`, enhancement `stable_track_variants`, `TrackOptions`) halves it to
+  ~16,500, leaving ordinary motion and the far LOD re-cuts. Off by default.
 - **kinds 3, 4, 7, 8** → the fixed sets. **kinds ≥ 9** → the area table. Both are drawn by
   0x41d7d0 (§2.7). **kinds 2, 5, 6** draw nothing.
 
