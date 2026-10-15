@@ -221,7 +221,9 @@ so the reimplementation must match case-insensitively): 1 keihin1a, 2 keihin1b, 
 | 12–13, 14–15 | R3 Tōkaidō | toukai2a@0 + toukai1b@2 / toukai1a@0 + toukai1b@2 |
 | 16 | R1 Yamanote | yamate1a@0, yamate1b@5 |
 
-Entries 20–23 of 0x485610 point at 0x459750, which does not decode as a segment list. They are probably unused or
+**Corrected in Phase 2 (routes.md):** there are only 20 stages; what looked like "entries 20–23" of 0x485610 is the start
+of the next per-stage array (track-sound tables at 0x485660). Earlier draft: entries 20–23 point at 0x459750, which
+does not decode as a segment list. They are probably unused or
 a different mode. Open question. The romanised station-name lists (pointer arrays around 0x4858f0..0x485b2c,
 with strings at 0x485b80..0x485fe8) have a per-stage pointer table at 0x485b30. No direct code xref was found,
 so the consumer is still open. **guess**
@@ -308,6 +310,6 @@ itself. **likely**
 ## Open questions
 - Exact meaning of the .COM h1/h4/h6/h7 records and the third point word (0x20000000 on the first point). This is
   formats-phase work.
-- Stage entries 20–23 and the consumer of the station-name tables.
+- ~~Stage entries 20–23~~ (resolved: next array, see routes.md) and the consumer of the station-name tables.
 - eeprom.dat layout; the effect of ini bits 0–12, 15, 17–19.
 - Volume curve constants in 0x430da0 (the float maths was lost in the decompile; read the disassembly).

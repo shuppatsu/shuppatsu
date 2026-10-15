@@ -1,5 +1,6 @@
 //! Developer CLI for reconnaissance and asset inspection.
 
+mod check;
 mod export;
 mod inventory;
 mod pe;
@@ -17,7 +18,8 @@ commands:
   strings <file> [--min N] [--jp] ASCII and Shift-JIS strings with offsets
   export <what> [--out DIR] [--palette N]
                                   write PNG/WAV from $DDG_DATA_DIR to out/export (default)
-                                  what: textures | tilemaps | audio | all";
+                                  what: textures | tilemaps | audio | all
+  check [-v]                      Phase 2 exit check: every file in $DDG_DATA_DIR parsed or documented";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -39,6 +41,17 @@ fn main() -> Result<()> {
         }
         "pe" => pe::print_report(&path(1)?),
         "export" => run_export(&args[1..]),
+        "check" => {
+            let verbose = args.get(1).is_some_and(|a| a == "-v");
+            let root = std::env::var_os("DDG_DATA_DIR")
+                .map(PathBuf::from)
+                .context("DDG_DATA_DIR is not set (run inside `nix develop`)")?;
+            if check::run(&root, verbose)? {
+                Ok(())
+            } else {
+                bail!("some files failed to parse or are unclassified")
+            }
+        }
         "strings" => {
             let mut min = 6;
             let mut jp_only = false;

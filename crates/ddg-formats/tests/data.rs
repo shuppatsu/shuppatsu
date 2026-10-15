@@ -92,3 +92,120 @@ fn every_part_parses_exactly() {
         (13087, 37736, 497336, 314511, 7)
     );
 }
+
+// ---- Route .COM files and exe stage tables (docs/re/routes.md) ----
+
+fn com_files(dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut files: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("com")))
+        .collect();
+    files.sort();
+    files
+}
+
+/// Case-insensitive lookup of a file in the DATA directory.
+fn find_file(dir: &std::path::Path, name: &str) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .map(|e| e.unwrap().path())
+        .find(|p| {
+            p.file_name()
+                .is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(name))
+        })
+}
+
+fn exe_bytes(dir: &std::path::Path) -> Vec<u8> {
+    std::fs::read(dir.join("../BIN/dengo3k.exe")).unwrap()
+}
+
+#[test]
+fn every_route_parses_completely() {
+    use ddg_formats::route::Route;
+    let dir = require_data!();
+    let files = com_files(&dir);
+    assert_eq!(files.len(), 15);
+    for path in files {
+        let data = std::fs::read(&path).unwrap();
+        let name = path.display();
+        let r = Route::parse(&data).unwrap_or_else(|e| panic!("{name}: {e}"));
+        // Everything is accounted for except ≤3-byte alignment padding.
+        for (offset, len) in r.unparsed(data.len()) {
+            assert!(len < 4, "{name}: {len} unparsed bytes at {offset:#x}");
+            assert!(data[offset..offset + len].iter().all(|&b| b == 0));
+        }
+        let seg0 = &r.segments[0];
+        assert!(seg0.head_marker && seg0.tail_marker, "{name}");
+        let main = r.main_line();
+        assert_eq!(r.activation_index.len(), main.len());
+        assert_eq!(r.buckets.len(), main.len() / 4, "{name}");
+        assert!(!r.stops.is_empty() && r.stops.windows(2).all(|w| w[0] < w[1]));
+        assert!(r.segments.iter().all(|s| s.reserved == [0, 0]));
+        assert_eq!(r.placements[0].part_id, 0);
+        // Part ids index the 13087-entry part table (docs/re/loaders.md §5).
+        assert!(r.placements.iter().all(|p| p.part_id < 13087), "{name}");
+        // Consecutive main-line points are ~0.125 world units apart.
+        let gaps: Vec<f32> = main
+            .windows(2)
+            .map(|w| ((w[1].x - w[0].x).powi(2) + (w[1].z - w[0].z).powi(2)).sqrt())
+            .collect();
+        let mean = gaps.iter().sum::<f32>() / gaps.len() as f32;
+        assert!((0.115..0.13).contains(&mean), "{name}: mean spacing {mean}");
+    }
+}
+
+#[test]
+fn stage_tables_read_and_agree_with_routes() {
+    use ddg_formats::{exe::Exe, route, route::Route, stages::StageTables};
+    let dir = require_data!();
+    let exe_data = exe_bytes(&dir);
+    let exe = Exe::parse(&exe_data).unwrap();
+    let tables = StageTables::read(&exe).unwrap();
+    assert_eq!(tables.stages.len(), 20);
+    assert_eq!(tables.com_files.iter().flatten().count(), 15);
+
+    let mut routes = std::collections::HashMap::new();
+    for (com, name) in tables.com_files.iter().enumerate() {
+        if let Some(name) = name {
+            let path = find_file(&dir, name).unwrap_or_else(|| panic!("{name} missing"));
+            routes.insert(
+                com as u32,
+                Route::parse(&std::fs::read(path).unwrap()).unwrap(),
+            );
+        }
+    }
+
+    let (mut checked, mut worst) = (0, 0.0f32);
+    for (s, stage) in tables.stages.iter().enumerate() {
+        assert!((1..=5).contains(&stage.area), "stage {s}");
+        let table = &stage.timetables[0];
+        assert!(!table.is_empty(), "stage {s}");
+        assert_eq!(stage.station_names.len(), table.len());
+        assert!(stage.station_names.iter().all(|n| !n.is_empty()));
+        for (station, row) in table.iter().enumerate().take(table.len() - 1) {
+            // Station-to-station distance in the timetable vs. stop points × 1.25 m.
+            let (seg, local) = stage.segment_for_station(station as u32).unwrap();
+            let stops = &routes[&seg.com].stops;
+            if let (Some(a), Some(b)) = (stops.get(local as usize), stops.get(local as usize + 1)) {
+                let metres = (b - a) as f32 * route::METRES_PER_POINT;
+                worst = worst.max((metres - row.to_next_m as f32).abs());
+                checked += 1;
+            }
+        }
+        for ev in &stage.traffic_events {
+            let (seg, _) = stage.segment_for_station(ev.station as u32).unwrap();
+            let spawns = routes[&seg.com].traffic.len();
+            assert!(
+                (ev.spawn as usize) < spawns,
+                "stage {s}: spawn {}",
+                ev.spawn
+            );
+        }
+        assert!(stage.course_events.iter().all(|e| e.station >= 0));
+        assert!(stage.limit_events.iter().all(|e| (4..=6).contains(&e.kind)));
+    }
+    eprintln!("timetable vs .COM stop spacing: {checked} pairs, worst error {worst} m");
+    assert!(checked > 100);
+    assert!(worst <= 5.0, "worst {worst} m");
+}

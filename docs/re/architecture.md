@@ -167,7 +167,7 @@ Verified on the primary machine (2026-10-15):
 
 1. Physics, signals, speed limits, stop scoring and penalties: the driving-loop functions
    0x409fc0–0x40c4e0 (Phase 4; start with 0x40acd0 and 0x40c4e0).
-2. `.COM` field semantics, stage entries 20–23, station-name table users (Phase 2).
+2. `.COM` field semantics and stage tables: largely resolved in Phase 2 (routes.md); open items listed there.
 3. Which camera preset is the in-cab view (30°/1.42 likely); world unit scale (hook `0x84c150`).
 4. Track/scenery section selection for drawing (affects edge pop-in at wide aspect).
 5. Brake code 10; `eeprom.dat` layout; the input-word semantics in full.
