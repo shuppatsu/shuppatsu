@@ -324,3 +324,12 @@ replays the trace with this alignment.
 * Attract/demo mode 2 (scripted notches at 0x467b20/0x46857c) and the ending train (0x4240d0)
   are not implemented.
 * Which settings value 0x829d10 holds (difficulty-like; stage tables are indexed by it).
+
+## Decision: numeric reference (user, 2026-10-15)
+
+The reference is the measured Wine behaviour: x87 at 53-bit precision (control word 0x027f),
+which the engine reproduces bit for bit. Real Windows with D3D's `DDSCL_FPUSETUP` probably ran at
+24-bit precision; the other platforms (PS1 fixed point, PS2/Dreamcast single precision) differed
+anyway. The visible effect is a fraction of a km/h over minutes. A 24-bit mode may be added later
+as an option and can be verified with the oracle by having the hook set the precision as
+DirectX would.
