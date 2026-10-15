@@ -58,7 +58,24 @@ weather_level      0x857230 i16
 wet_rails          0x84c2e0 i32
 last_lateness      0x856fc0 i32
 stop_streak        0x8570c0 i16
-pass_streak        0x857094 i32
+pass_streak        0x857094 i16
 stop_error_sum     0x856fa4 f32
 stop_count         0x856fc8 i16
 continues          0x8570b8 i16
+# --- rules replay inputs and statistics (crates/ddg-tools/src/trace.rs replay_rules) ---
+buttons_held       0x48c428 u32   # active-low; 0x100 horn
+buttons_pressed    0x48c42c u32   # active-low edges; 0x100 horn, 0x100000 ATS confirm
+track_class_ahead  0x857202 i16   # sound class 4 points ahead, 3 = tunnel (weather)
+stat0              0x857050 i32   # run statistics (rules.md section 9)
+stat1              0x857054 i32
+stat2              0x857058 i32
+stat3              0x85705c i32
+stat4              0x857060 i32
+stat5              0x857064 i32
+stat6              0x857068 i32
+stat7              0x85706c i32
+stat8              0x857070 i32
+stat9              0x857074 i32
+stat10             0x857078 i32
+stat11             0x85707c i32
+units_to_stop      0x8500c8 f32   # remaining track units, x10 = metres
