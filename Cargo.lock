@@ -469,6 +469,7 @@ name = "ddg-game"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "ddg-engine",
  "ddg-formats",
  "ddg-render",
  "glam",

@@ -1,6 +1,3 @@
-// Wired up by `ddg-game play` (next step); until then only the tests use it.
-#![allow(dead_code)]
-
 //! Keyboard controls the way the original decodes them (docs/re/input.md §4): keys are polled
 //! once per tick, each held key has a frame counter, and the notch handles move on the press
 //! and then on every third tick from the ninth while held.

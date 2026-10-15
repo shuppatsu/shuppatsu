@@ -5,8 +5,10 @@
 
 mod hud;
 mod input;
+mod play;
 mod scene;
 mod shot;
+mod window;
 
 use anyhow::{Context, Result, bail};
 use ddg_formats::route::UNITS_PER_POINT;
@@ -14,16 +16,17 @@ use ddg_formats::scene::{DRIVING_FOV_Y_DEG, TrackPos};
 use ddg_render::camera::ORIGINAL_STRETCH;
 use ddg_render::{FrameGeometry, Renderer};
 use scene::{RouteScene, Visibility};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
+use window::Gpu;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{KeyCode, PhysicalKey};
-use winit::window::{Window, WindowId};
+use winit::window::WindowId;
 
 const USAGE: &str = "\
-usage: ddg-game view <route.com> [options]
+usage: ddg-game play <stage 0..19> [--difficulty <0..>] [--station <n>] [--keys <0..3>] [options]
+       ddg-game view <route.com> [options]
        ddg-game shot <route.com> --at <metres> --out <file.ppm> [options]
 
 options:
@@ -38,7 +41,9 @@ options:
   --hud                    the driving HUD over the view (test values)
   --size <WxH>             window/frame size (default 1280x800, 16:10)
 
-keys: Space pause, Up/Down speed, Left/Right jump 100 m, L track lines, F fog, Esc quit";
+play keys (mode 0): Down/Up power +/-, Right/Left brake +/- (one more press past B8 = EB),
+  Space horn, Enter ATS confirm / panel / continue, Esc pause, Q quit while paused
+view keys: Space pause, Up/Down speed, Left/Right jump 100 m, L track lines, F fog, Esc quit";
 
 /// The original's fixed tick (timeSetEvent(33, …) at 0x436f30).
 const TICK: Duration = Duration::from_millis(33);
@@ -64,6 +69,53 @@ struct Options {
     hud: bool,
     gradient_variant: usize,
     size: (u32, u32),
+}
+
+fn parse_play_args() -> Result<play::PlayOptions> {
+    let args: Vec<String> = std::env::args().skip(2).collect();
+    let mut opts = play::PlayOptions {
+        stage: args
+            .first()
+            .context(USAGE)?
+            .parse()
+            .context("stage must be a number")?,
+        difficulty: 0,
+        station: 0,
+        keyboard_mode: 0,
+        size: (1280, 800),
+        uncapped: false,
+        square_pixels: false,
+        original_visibility: false,
+        stable_track_variants: false,
+        texture_filtering: false,
+        fog: false,
+    };
+    let mut rest = args[1..].iter();
+    while let Some(a) = rest.next() {
+        let mut value = |what: &str| {
+            rest.next()
+                .with_context(|| format!("{a} needs {what}"))
+                .cloned()
+        };
+        match a.as_str() {
+            "--difficulty" => opts.difficulty = value("a number")?.parse()?,
+            "--station" => opts.station = value("a number")?.parse()?,
+            "--keys" => opts.keyboard_mode = value("a mode")?.parse()?,
+            "--size" => {
+                let s = value("WxH")?;
+                let (w, h) = s.split_once('x').context("--size needs WxH")?;
+                opts.size = (w.parse()?, h.parse()?);
+            }
+            "--uncapped" => opts.uncapped = true,
+            "--square-pixels" => opts.square_pixels = true,
+            "--original-visibility" => opts.original_visibility = true,
+            "--stable-track-variants" => opts.stable_track_variants = true,
+            "--texture-filtering" => opts.texture_filtering = true,
+            "--fog" => opts.fog = true,
+            other => bail!("unknown option {other}\n\n{USAGE}"),
+        }
+    }
+    Ok(opts)
 }
 
 fn parse_args() -> Result<Options> {
@@ -142,16 +194,6 @@ fn configure_renderer(renderer: &mut Renderer, opts: &Options) {
     };
 }
 
-struct Gpu {
-    overlay: ddg_render::overlay::Overlay,
-    window: Arc<Window>,
-    surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
-    renderer: Renderer,
-}
-
 struct App {
     opts: Options,
     scene: RouteScene,
@@ -173,9 +215,7 @@ struct App {
     worst_compose: Duration,
 }
 
-/// The original's 3D viewport starts at virtual y 52 of 400 (renderer.md §5); the HUD owns the
-/// strip above it.
-const HUD_BAND_TOP: f32 = 52.0 / 400.0;
+use play::HUD_BAND_TOP;
 
 /// The HUD for the viewer, driven by test values (the fly-through speed and a running clock).
 struct HudView {
@@ -244,77 +284,23 @@ impl HudView {
     }
 }
 
-/// Minimal executor for wgpu's setup futures (no extra dependency).
-pub(crate) fn block_on<F: std::future::Future>(fut: F) -> F::Output {
-    let mut fut = std::pin::pin!(fut);
-    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
-    loop {
-        if let std::task::Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
-            return v;
-        }
-        std::thread::yield_now();
-    }
-}
+pub(crate) use window::block_on;
 
 impl App {
     fn init_gpu(&mut self, event_loop: &ActiveEventLoop) -> Result<Gpu> {
-        let attrs = Window::default_attributes()
-            .with_title("ddg-game view")
-            .with_inner_size(winit::dpi::PhysicalSize::new(
-                self.opts.size.0,
-                self.opts.size.1,
-            ));
-        let window = Arc::new(event_loop.create_window(attrs)?);
-        let instance = wgpu::Instance::new(
-            wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(window.clone())),
-        );
-        let surface = instance.create_surface(window.clone())?;
-        let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            ..Default::default()
-        }))?;
-        let info = adapter.get_info();
-        eprintln!("adapter: {} ({:?})", info.name, info.backend);
-        let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
-        let size = window.inner_size();
-        let mut config = surface
-            .get_default_config(&adapter, size.width.max(1), size.height.max(1))
-            .context("surface not supported by adapter")?;
-        let caps = surface.get_capabilities(&adapter);
-        config.present_mode = if self.opts.uncapped {
-            [wgpu::PresentMode::Immediate, wgpu::PresentMode::Mailbox]
-                .into_iter()
-                .find(|m| caps.present_modes.contains(m))
-                .unwrap_or(wgpu::PresentMode::Fifo)
-        } else {
-            wgpu::PresentMode::Fifo
-        };
-        // sRGB target so the sRGB-encoded texture data round-trips unchanged.
-        if let Some(f) = caps.formats.iter().find(|f| f.is_srgb()) {
-            config.format = *f;
-        }
-        surface.configure(&device, &config);
-        let mut renderer = Renderer::new(&device, config.format);
-        configure_renderer(&mut renderer, &self.opts);
-        renderer.upload_pages(&device, &queue, &self.scene.library.pages);
+        let mut gpu = Gpu::create(
+            event_loop,
+            "ddg-game view",
+            self.opts.size,
+            self.opts.uncapped,
+        )?;
+        configure_renderer(&mut gpu.renderer, &self.opts);
+        gpu.renderer
+            .upload_pages(&gpu.device, &gpu.queue, &self.scene.library.pages);
         if self.hud.is_some() {
-            renderer.band_top = HUD_BAND_TOP;
+            gpu.renderer.band_top = HUD_BAND_TOP;
         }
-        let overlay = ddg_render::overlay::Overlay::new(&device, config.format);
-        eprintln!(
-            "present mode {:?}, format {:?}, {}x{}",
-            config.present_mode, config.format, config.width, config.height
-        );
-        Ok(Gpu {
-            window,
-            surface,
-            device,
-            queue,
-            config,
-            renderer,
-            overlay,
-        })
+        Ok(gpu)
     }
 
     fn tick(&mut self) {
@@ -363,21 +349,7 @@ impl App {
         self.worst_compose = self.worst_compose.max(t.elapsed());
 
         let Some(gpu) = self.gpu.as_mut() else { return };
-        let frame = match gpu.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(f) => f,
-            wgpu::CurrentSurfaceTexture::Suboptimal(f) => {
-                gpu.surface.configure(&gpu.device, &gpu.config);
-                f
-            }
-            wgpu::CurrentSurfaceTexture::Outdated => {
-                gpu.surface.configure(&gpu.device, &gpu.config);
-                return;
-            }
-            other => {
-                eprintln!("surface: skipping frame ({other:?})");
-                return;
-            }
-        };
+        let Some(frame) = gpu.acquire() else { return };
         let view = frame
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
@@ -468,9 +440,7 @@ impl ApplicationHandler for App {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
                 if let Some(g) = self.gpu.as_mut() {
-                    g.config.width = size.width.max(1);
-                    g.config.height = size.height.max(1);
-                    g.surface.configure(&g.device, &g.config);
+                    g.resize(size.width, size.height);
                 }
             }
             WindowEvent::KeyboardInput {
@@ -494,6 +464,9 @@ impl ApplicationHandler for App {
 }
 
 fn main() -> Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("play") {
+        return play::run(parse_play_args()?);
+    }
     let opts = parse_args()?;
     let data = scene::GameData::from_env()?;
 
