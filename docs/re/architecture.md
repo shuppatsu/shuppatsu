@@ -172,3 +172,32 @@ Verified on the primary machine (2026-10-15):
 4. Track/scenery section selection for drawing (affects edge pop-in at wide aspect).
 5. Brake code 10; `eeprom.dat` layout; the input-word semantics in full.
 6. Real tick period and the 30-ticks-per-second assumption, measured under the oracle.
+
+## 11. Phase 2 status: formats (2026-10-15)
+
+Every file on the disc is either parsed by `ddg-formats` or documented as not needed:
+`ddg-tools check` → **399 files: 52 parsed, 347 documented, 0 failed, 0 unknown**
+(documented = DirectX 6 redistributable, InstallShield installer and runtime, controller driver,
+autorun launcher, README, and the Cd2 CD-check DLLs).
+
+| Module | Covers | Spec |
+|---|---|---|
+| `rom2`, `lz` | ROM2 containers; multi-pass LZ (all 13087 parts unpack exactly) | loaders.md |
+| `part` | model parts: textured triangle lists, rect-relative UVs | models.md |
+| `tex` | texture pages (RGB565, stored bottom-up) and rects; the game's UV mapping | loaders.md, models.md |
+| `cg` | cg.rom tiles, tbl.rom tilemaps, palettes from the exe | loaders.md, audio-text.md |
+| `audio` | effect.rom (u8 PCM, loop points), bgm.rom (s16 stereo) | audio-text.md |
+| `route` | .COM track geometry (1.25 m per point), segment graph, stops, placements, visibility, traffic spawns | routes.md |
+| `stages` | per-stage tables read from the exe: area, trains, segments, timetables, course/limit/traffic events, station names | routes.md |
+| `exe` | VA → bytes for tables in the user's exe | (code) |
+
+`ddg-tools export textures|tilemaps|audio|models|routes|all` writes PNG/WAV/glTF into `out/export`.
+Visually checked: texture pages, HUD tilemaps (palette slot 4), and a route with its placed scenery.
+
+Open (moved to later phases):
+- Runtime save/config files (`eeprom.dat`, `joystick.dat`, `REPLAY.DAT`): not on the disc. Parse
+  once the original has written real ones (Phase 4/5).
+- Per-area track-model tables (`0x486170`, `0x486eb0`): needed to draw rails and ballast (Phase 3).
+- Course-event kinds (signal aspects, kind 3), timetable fields 4–8 (Phase 4, with the oracle).
+- Which palette each tilemap uses at runtime (Phase 5 menus/HUD).
+- `komachi.dat` playback (decision D2, postponed).
