@@ -153,9 +153,10 @@ Verified on the primary machine (2026-10-15):
 
 ## 9. Decisions for the user
 
-- **D1, aspect fidelity:** the original renders 3D ≈7.9 % horizontally stretched on 4:3 (virtual
-  496×348 band with projection aspect 1.42). Options: reproduce it in "arcade" mode and offer
-  square pixels as an enhancement, or treat square pixels as the baseline.
+- **D1, aspect fidelity: DECIDED (user, 2026-10-15): keep the original aspect.** The original
+  renders 3D ≈7.9 % horizontally stretched on 4:3 (virtual 496×348 band with projection aspect
+  1.42), and the reimplementation reproduces that by default. Hor+ widening applies on top of it:
+  the vertical FOV and the same pixel shape are kept, and the view extends sideways.
 - **D2, intro movie:** `komachi.dat` is MPEG-1. Playing it needs an MPEG-1 decoder, which is not on
   the dependency allowlist (options: a pure-Rust decoder crate, writing a small one, or skipping the
   movie).
