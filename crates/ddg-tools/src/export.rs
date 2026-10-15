@@ -82,16 +82,13 @@ pub fn textures(dirs: &GameDirs, out: &Path) -> Result<usize> {
                 &dir.join(format!("page{i:02}.png")),
                 page.width.into(),
                 page.height.into(),
-                page.to_rgba8(),
+                page.to_rgba8_upright(),
             )?;
             written += 1;
         }
-        let mut csv = String::from("rect_id,page,u,v,width,height\n");
+        let mut csv = String::from("rect_id,page,u,v,w_minus_1,h_minus_1 (1/256 page units)\n");
         for r in &t.rects {
-            csv += &format!(
-                "{},{},{},{},{},{}\n",
-                r.id, r.page, r.u, r.v, r.width, r.height
-            );
+            csv += &format!("{},{},{},{},{},{}\n", r.id, r.page, r.u, r.v, r.w, r.h);
         }
         std::fs::write(dir.join("rects.csv"), csv)?;
     }

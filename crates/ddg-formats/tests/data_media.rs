@@ -39,10 +39,10 @@ fn every_texture_file_parses_to_eof() {
         let t = TexFile::parse(&read(&dir, &name)).unwrap_or_else(|e| panic!("{name}: {e}"));
         assert!(!t.pages.is_empty(), "{name}");
         for r in &t.rects {
-            let p = &t.pages[r.page as usize];
+            assert!((r.page as usize) < t.pages.len(), "{name}: rect {}", r.id);
+            // Placement is in 1/256 page units, so it must stay inside 0..=255.
             assert!(
-                r.u as u16 + r.width <= p.width.max(256)
-                    && r.v as u16 + r.height <= p.height.max(256),
+                r.u as u16 + r.w as u16 <= 255 && r.v as u16 + r.h as u16 <= 255,
                 "{name}: rect {} outside page",
                 r.id
             );

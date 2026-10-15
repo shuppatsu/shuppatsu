@@ -81,9 +81,13 @@ nPage × :     u16 width, u16 height, width*height × u16 pixel   (row-major, no
 - `rectId` is a global id (table 0x825144, 3000 entries × 6 B). Stored there: page + running page base
   (0x8248f8), u, v, w, h. The table is written unconditionally, so a later file wins for the same rectId
   (the opposite of parts, where the first file wins). **likely**
-- In `part_get_unpacked` the UVs are rebuilt as `(rect.w+1)*uv + rect.u` and `(rect.h+1)*uv + rect.v`, scaled
-  by the float at 0x47c95c (0x3b800000 = 1/256). So w and h are stored as size−1 (127 = 128 px) and the part's
-  own UVs are rect-relative. **likely**
+- In `part_get_unpacked` the UVs are rebuilt as `(rect.w+1)*uv + rect.u` but `rect.h*uv + rect.v` (V uses `h`,
+  not `h+1`), scaled by the float at 0x47c95c (0x3b800000 = 1/256). The rect fields are in **1/256-of-page units**,
+  not texels; w and h are stored as size−1, so 255 spans a full page of any pixel size. **confirmed** (corrected
+  in Phase 2, see models.md; the first draft of this note said `h+1` and texels)
+- **Orientation:** pages are stored bottom-up. The loader copies row *i* to surface row *i* (no flip), and model UVs
+  address that layout. A renderer keeps the stored order; only viewers should flip. **confirmed** (0x432200, visual
+  check of exported pages)
 - Surface size: the smallest power of two ≥ the image, starting from the device minimum (0x816758/0x816610).
   The device maximum (0x816760/0x81675c) caps it, as do the ini flags (`texmax128`: 128, but 256 for images
   ≥1024/512; `texmax256`: 256). Square-only devices get w=h. If the surface size differs from the image size, the

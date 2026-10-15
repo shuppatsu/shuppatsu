@@ -61,3 +61,34 @@ fn every_part_unpacks_to_declared_size() {
     // Counts from docs/re/loaders.md §4a.
     assert_eq!((packed, raw), (9877, 3210));
 }
+
+#[test]
+fn every_part_parses_exactly() {
+    use ddg_formats::part::{MAX_BYTE_INDEX_VERTS, Part};
+    let dir = require_data!();
+    let (mut parts, mut groups, mut verts, mut tris, mut wide) = (0, 0, 0, 0, 0);
+    for path in parts_files(&dir) {
+        let data = std::fs::read(&path).unwrap();
+        let rom = Rom2::parse(&data).unwrap();
+        for (i, entry) in rom.iter().enumerate() {
+            // Part::parse rejects trailing bytes and out-of-range indices.
+            let (_, part) = Part::parse_entry(entry)
+                .unwrap_or_else(|e| panic!("{} entry {i}: {e}", path.display()));
+            parts += 1;
+            for g in &part.groups {
+                assert_eq!(g.indices.len() % 3, 0, "{} entry {i}", path.display());
+                groups += 1;
+                verts += g.vertices.len();
+                tris += g.indices.len() / 3;
+                if g.vertices.len() > usize::from(MAX_BYTE_INDEX_VERTS) {
+                    wide += 1;
+                }
+            }
+        }
+    }
+    // Totals from docs/re/models.md.
+    assert_eq!(
+        (parts, groups, verts, tris, wide),
+        (13087, 37736, 497336, 314511, 7)
+    );
+}

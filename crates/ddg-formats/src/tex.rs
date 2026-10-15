@@ -8,23 +8,48 @@
 //! No magic; the walk ending exactly at EOF is the format check (loader @0x432200).
 //! Pixels are uploaded unconverted as RGB565, and colour 0x0000 is the transparent colour key
 //! (renderer.md §9).
+//!
+//! Orientation: pages are stored **bottom-up** (the first row is the bottom of the picture). The
+//! loader copies row *i* to surface row *i* unchanged (0x432200), and model UVs address that
+//! layout, so a renderer must keep the stored row order. Flip only for human viewing
+//! ([`TexPage::to_rgba8_upright`]).
 
 use crate::error::{FormatError, Result};
 use crate::reader::Bytes;
 
-/// A placed rectangle inside a texture page. Model parts reference these by `id`
-/// (a global id; a later file overrides an earlier one with the same id).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// A texture rectangle: where a model group's texture sits inside its page. Model parts
+/// reference these by `id` (global; a later file overrides an earlier one with the same id).
+///
+/// All four placement fields are in units of 1/256 of the page, whatever the page's pixel size
+/// (16..512 px), because D3D texture coordinates are normalised. `w` and `h` are stored as
+/// size − 1, so `w = 255` spans the whole page width (docs/re/models.md).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct TexRect {
     pub id: u16,
-    /// Page index within this file.
+    /// Page index within the file it came from (the game adds a per-file page base).
     pub page: u16,
     pub u: u8,
     pub v: u8,
-    /// Width in texels (stored as width − 1).
-    pub width: u16,
-    /// Height in texels (stored as height − 1).
-    pub height: u16,
+    pub w: u8,
+    pub h: u8,
+}
+
+impl TexRect {
+    /// Maps a stored rect-relative UV (1/256 units) to a normalised page UV (1.0 = page size).
+    ///
+    /// Reproduces the game exactly (exe 0x432a41..0x432a90):
+    /// `u' = ((w + 1) * u/256 + rect.u) / 256` but `v' = (h * v/256 + rect.v) / 256`;
+    /// the V axis uses `h`, not `h + 1`. Results outside 0..1 are intended to wrap
+    /// (D3D's default WRAP addressing; tiled textures rely on it).
+    pub fn map_uv(&self, uv: [i16; 2]) -> [f32; 2] {
+        const S: f32 = 1.0 / 256.0;
+        let lu = f32::from(uv[0]) * S;
+        let lv = f32::from(uv[1]) * S;
+        [
+            ((f32::from(self.w) + 1.0) * lu + f32::from(self.u)) * S,
+            (f32::from(self.h) * lv + f32::from(self.v)) * S,
+        ]
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -41,6 +66,16 @@ impl TexPage {
     pub fn to_rgba8(&self) -> Vec<u8> {
         self.pixels
             .iter()
+            .flat_map(|&p| rgb565_to_rgba8(p))
+            .collect()
+    }
+
+    /// Like [`Self::to_rgba8`] but with the rows reversed, so the picture is upright.
+    pub fn to_rgba8_upright(&self) -> Vec<u8> {
+        self.pixels
+            .chunks(usize::from(self.width).max(1))
+            .rev()
+            .flatten()
             .flat_map(|&p| rgb565_to_rgba8(p))
             .collect()
     }
@@ -81,8 +116,8 @@ impl TexFile {
                 page: u16::from_le_bytes([r[2], r[3]]),
                 u: r[4],
                 v: r[5],
-                width: r[6] as u16 + 1,
-                height: r[7] as u16 + 1,
+                w: r[6],
+                h: r[7],
             };
             if rect.page as usize >= page_count {
                 return Err(FormatError::invalid(
@@ -132,7 +167,7 @@ mod tests {
     #[test]
     fn parses_minimal_file() {
         let mut f = vec![1, 0, 1, 0]; // 1 rect, 1 page
-        f.extend_from_slice(&[7, 0, 0, 0, 1, 0, 0, 1]); // id 7, page 0, u1 v0, 1x2
+        f.extend_from_slice(&[7, 0, 0, 0, 1, 0, 0, 1]); // id 7, page 0, u1 v0, w0 h1
         f.extend_from_slice(&[1, 0, 2, 0]); // 1x2 page
         f.extend_from_slice(&[0xff, 0xff, 0, 0]);
         let t = TexFile::parse(&f).unwrap();
@@ -143,8 +178,8 @@ mod tests {
                 page: 0,
                 u: 1,
                 v: 0,
-                width: 1,
-                height: 2
+                w: 0,
+                h: 1
             }
         );
         assert_eq!(t.pages[0].pixels, [0xffff, 0]);
