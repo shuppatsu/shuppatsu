@@ -201,3 +201,28 @@ Open (moved to later phases):
 - Course-event kinds (signal aspects, kind 3), timetable fields 4–8 (Phase 4, with the oracle).
 - Which palette each tilemap uses at runtime (Phase 5 menus/HUD).
 - `komachi.dat` playback (decision D2, postponed).
+
+## 12. Phase 3 status: viewer (2026-10-15) — complete
+
+`ddg-game view <route.com>` flies through any route; `ddg-game shot` renders headless frames.
+Exit criterion met: all 15 routes render end to end (start/middle/end smoke test, 0 missing
+parts, 2–8k triangles per frame); 16:10 without edge pop-in (wide visibility); smooth at 180 Hz on
+the user's display.
+
+Fidelity, verified against a screenshot of the original (Keihin, Higashi-Kanagawa):
+- the original's view chain (right-handed look-at + Z flip, i.e. mirrored relative to a plain
+  left-handed look-at) and CCW front faces; scene layout matches the screenshot;
+- per-frame track pieces, live scenery, cab camera (eye height per COM, 45° driving FOV, likely),
+  background (gradient sets, skyline panorama, textured ground, area-3 quads) at the original's
+  depth words; fog off by default (fresh install has no FOGENABLE).
+- Known original artefacts reproduced: side-track variant flicker, LOD re-cuts, nearest
+  sampling shimmer, the platform-floor gap at some stations (also visible in recordings of the
+  original PC port).
+
+Enhancements (all off in arcade defaults): `wide_visibility` (on for wider than 4:3),
+`stable_track_variants`, `texture_filtering`, `fog` (the original's DengoSetting option).
+Candidates noted: platform-gap fill, smooth panorama, lighter fog distance, atlas-seam-free
+filtering.
+
+Open for later phases: driving FOV and gradient colours to be confirmed with the oracle; cab,
+HUD and the top mask quad (Phase 5); LOD variants of special scenery objects.
