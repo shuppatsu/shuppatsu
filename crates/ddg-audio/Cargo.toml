@@ -8,3 +8,8 @@ publish.workspace = true
 
 [lints]
 workspace = true
+
+[dependencies]
+ddg-formats.workspace = true
+thiserror.workspace = true
+cpal.workspace = true

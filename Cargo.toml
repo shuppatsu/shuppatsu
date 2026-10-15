@@ -21,6 +21,8 @@ winit = "0.30"
 glam = { version = "0.34", features = ["bytemuck"] }
 bytemuck = { version = "1", features = ["derive"] }
 ddg-render = { path = "crates/ddg-render" }
+ddg-audio = { path = "crates/ddg-audio" }
+cpal = "0.18"
 
 [workspace.lints.rust]
 unsafe_code = "deny"

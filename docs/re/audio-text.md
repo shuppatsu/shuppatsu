@@ -45,10 +45,12 @@ regions that Ghidra did not turn into functions, and hexdumps of `DATA/bgm.rom`,
 | 0x4206b0 | `snd_seq_clear` | marks every sequence slot free | confirmed |
 | 0x420630 / 0x420650 / 0x420660 | release / release / stop-all wrappers | | confirmed |
 | 0x41ffe0 | `voice_call_pair(a, b)` | 2-phrase voice call built from the table at 0x46c368 | confirmed |
-| 0x420180 | `voice_call_signal_speed(aspect, kmh)` | "signal + speed" call: speed/5 picks code 0xae..0xcd | likely |
-| 0x4229c0 | `train_task_create` | creates the player-train task; starts the motor sound at its base pitch | confirmed |
-| 0x422c20 | `train_task_update` (not a Ghidra function) | per-tick train update; motor/running-noise pitch and volume (0x423bee–0x423c74) | likely |
+| 0x420180 | `voice_call_prefix_speed(prefix, kmh)` | "prefix + speed" call (e.g. speed limit): kmh/5 picks code 0xae..0xcd (§5) | confirmed |
+| 0x4229c0 | `train_task_create` | creates the player-train task; picks the running-noise mode by train type; posts the motor's base pitch | confirmed |
+| 0x422c20 | `train_task_update` (not a Ghidra function) | per-tick train update; horn, brake air, motor/running-noise pitch and volume, rail joints, squeal (0x4234eb–0x423eb0, §6) | confirmed (objdump) |
 | 0x424070 | `train_task_sound_reset` (label) | resets code 9 to vol 0x7f and the motor code to its base pitch | confirmed |
+| 0x407c10 | `track_probe_tick` | gradient, and the track-class ambient sounds 0x2c/0x2e/0x29 (§6.6) | confirmed (objdump) |
+| 0x40d040 | `stage_setup` | copies the stage's motor/joint/horn codes from 0x459e38/0x459e60/0x459e88 | confirmed |
 | 0x42b700 | `parse_options` | command-line `-opt` / `/opt` and `..\bin\dengo3k.ini` [default] → bit flags in 0x816840 | confirmed |
 | 0x428db0 | `movie_open_amstream` | DirectShow AMMultiMediaStream (video into DDraw + primary audio to the default renderer) | confirmed |
 | 0x430ec0 | `gfx2d_load` | loads `tbl.rom` (tilemaps) and `cg.rom` (16×16 tiles) | confirmed |
@@ -120,6 +122,29 @@ Retrigger: playing a code that is already sounding reuses its slot. The slot is 
 then pos = 0, pitch parameter = 0, frequency = native rate, volume parameter = 0x7f. If no slot is
 free, the request is dropped silently. There is no priority or voice stealing. **confirmed**
 
+When a voice frees its slot (this matters for the 8-slot limit and for later release/pitch/volume
+messages, which look the code up). **confirmed** (0x430720, 0x430a40 control flow), derived from
+the fill order:
+- The fill for half *k* runs when playback enters half *k−1*. The half that receives the last
+  sample sets pos = −2. The next fill writes a silent half (pos = −1). The fill after that,
+  which runs when playback *reaches* the silent half, stops and frees the voice. So the silent
+  half is never heard, and the voice frees exactly at the end of the half that holds its last
+  sample: after `ceil(n / H) · H` streamed samples, where `n` is the number of samples streamed
+  since the (re)start and H = 0x1000 (SE, samples) or 0x2000 (BGM, frames). A sample that ends
+  exactly on a half boundary gets no extra silent half. An empty sample lasts one half.
+- Release-to-tail restarts the buffer (Stop, SetCurrentPosition(0), prime half 0, Play). The
+  half alignment therefore restarts at the release point.
+- **Guess**: the first notification (offset 0) fires when Play starts, so half 1 is filled in
+  time. If it did not, half 1 would hold stale data. Wine's behaviour should be checked with the
+  oracle.
+
+Every voice-level message looks the code up across all 10 slots (0x4307f0). Pitch and volume
+messages act only when the parameter differs from the cached one (0x430960 / 0x4309b0).
+A SetFrequency outside DirectSound's 100–100000 Hz range fails, which leaves the old frequency
+(the parameter is still cached). If it fails inside `voice_play`, the voice is never started. No
+code reaches either case with the parameters the game sends. **confirmed** (code), **likely**
+(no game path reaches it).
+
 ## 3. Sample formats
 
 ### bgm.rom: ROM2, 18 entries, sound codes 0x197–0x1a8 (index = code − 0x197)
@@ -153,6 +178,12 @@ free, the request is dropped silently. There is no priority or voice stealing. *
   `p` is the 0..127 parameter. A larger p gives a lower pitch, down to about 0.5×. **Code 0x31 is
   inverted** (`p = 127 − p`). BGM codes always return 44100, so the "BGM_TEMPO" test item has no
   effect on PC. **confirmed**
+  - 0x31 is the **motor sound of every stage** (table 0x459e38 holds 0x31 twenty times). Thanks to
+    the inversion, its pitch rises with the motor parameter: 0.51× at p = 1 and 1.0× at p = 127.
+    That settles the "larger p lowers the frequency" puzzle in §6. **confirmed** (data)
+- The code-volume table at 0x486b4e covers codes 0..0x1af, of which 0..0x1a8 are used. Code 0 is 0.
+  The other values seen are 0x63..0x7c, and the data test checks that all lie in 0x40..0x7f.
+  **confirmed** (data)
 - **Volume** (0x430da0; Ghidra lost the float maths, so this is from the disassembly at
   0x430da0–0x430df8):
   `g = (tbl[code] / 127) * (v / 127)`, `mB = −10000 − trunc(−10000 * g)`, clamped to [−10000, 0],
@@ -186,42 +217,136 @@ free, the request is dropped silently. There is no priority or voice stealing. *
   resets the counter and plays that step's code, unless its delay is −1, which ends the sequence.
   The counter is incremented on every call. The step-0 sound is played when the sequence starts.
   `snd_seq_tick` runs twice per call of 0x430210, which is called once per frame-pump from 0x42a130.
-  So the delay units are half-frames. **confirmed** (the logic); the absolute unit depends on the
-  game tick (timeSetEvent 33 ms at 0x436f30, per the architecture notes), which **suggests** about
-  60 units/s. **guess**
-- Callers also build sequences on the fly: `voice_call_pair` (0x41ffe0, table 0x46c368 of
-  (code, delay) pairs) and `voice_call_signal_speed` (0x420180: aspect call 0xc2/0xa8/0xa9/0xaa/
-  0xab/0xc1/0xc3 followed by a speed number phrase 0xae–0xcd, chosen by kmh/5). **likely**
+  So the delay units are half-frames. **confirmed** (the logic). PumpMessages 0x42a130 runs once
+  per `Task_Tick` (0x4253c0), and `Task_Tick` runs once per 33 ms timer tick, so one unit is
+  16.5 ms (≈ 60.6 units/s). **likely** (it holds while the game is not dropping ticks)
+- Exact timing (0x41ff60). The counter is compared *before* it is incremented, and reset to 0 on
+  advance. So the first phrase change comes **delay₀ + 1** sequencer ticks after the start, and
+  every later change after **max(delayₖ, 1)** ticks. The sequence ends on the tick where the step
+  being entered has delay −1, and that step's code is *not* played. The step-0 sound goes through
+  `snd_request`, so a step-0 code with 0x1000 set chains into another sequence; this is bounded
+  by the 4 slots. Later steps use the plain play path. While the enable flag 0x84faf8 is 0
+  (cleared by the stage flow 0x4080d0 around result screens, and by 0x4253c0/0x419510), starts
+  are ignored and running sequences are dropped on their next tick. **confirmed**
+- The sequence table has exactly 47 pointers: the string "SOUND VOLUME" follows at 0x48624c.
+  Every list holds valid codes 1..0x1a8, and the data test checks them. **confirmed** (data)
+- Callers also build sequences on the fly:
+  - `voice_call_pair(first, second)` (0x41ffe0) plays pair `second` of the table at 0x46c368 and
+    then pair `first`. The table holds **180** (code, delay) entries and ends at 0x46c638, where
+    the code is 0. Entries 0–4 and 90–94 are suffix phrases (0xc1, 0xc0, 0xbf, 0xbd, 0xbc, all
+    with delay 0). The rest are station-name phrases with their lengths. 0x40c4e0 calls it with a
+    per-station index as `second` and 2 or 3 as `first`, which gives "<station> + suffix".
+    **confirmed** (code, data); **likely** (the meaning)
+  - `voice_call_prefix_speed(prefix, kmh)` (0x420180). The table is built on the stack: 7
+    (code, delay) prefixes `(0xc2,0x22) (0xa8,0x28) (0xa9,0x24) (0xaa,0x26) (0xab,0x26)
+    (0xc1,0x22) (0xc3,−1)`, followed by the speed phrases. The speed phrase is element
+    `12 + min(kmh/5, 26)`, so it overlaps the last prefix: kmh 0–4 → 0xc3, 5–9 → none (−1),
+    10–79 → 0xae..0xbb and 80–129 → 0xc4..0xcd (one phrase per 5 km/h), ≥ 130 → none. With no speed phrase
+    only the prefix plays (via `snd_request`). Otherwise the sequence is
+    `{prefix, prefix_delay}, {speed, 0}`. All callers (0x40acd0, 0x40b4a0) pass prefix 0, i.e.
+    0xc2, and 0 for "limit lifted", so this is the speed-limit call, not a signal-aspect call.
+    **confirmed** (code); **likely** (the meaning)
 - So all spoken text (announcements, the driver's signal and speed calls) is **pre-recorded 10 kHz
   audio** in effect.rom, chained by code. There is nothing to translate in data except optional
   subtitles, which would have to be keyed by sequence/code ID.
 
-## 6. Train sounds (motor, running noise)
+## 6. Train sounds (motor, running noise, joints, horn, ambient)
 
-- The motor sound code is the global s16 at **0x8570b6** (part of the stage/vehicle struct at
-  0x8570a0; written by a struct copy, so the source table is still open). Its base pitch parameter
-  is `0x45adb0[stage_idx 0x8570a4]`, which is 1 for every entry inspected. Started in 0x4229c0
-  and 0x4080d0/0x40a0a0. **confirmed** (the use); **open** (where 0x8570b6 is loaded from)
-- Code **9** is a second continuous running/rail noise, started with p = 0x7f and v = 1.
-- Per-tick update (inside `train_task_update`, 0x423bee–0x423c74, only reachable by disassembly):
-  - motor pitch parameter `[task+0x90] = clamp(1..127, trunc(X * k * env * 127))`, where
-    `X = [task+0x30]` (a speed-like float), `k` = 0.0005 (0x472660) or 1/3000 (0x472698)
-    depending on a mode flag, and `env = [task+0x38]`. That ramps by ±0.02 per tick (0x458bd0)
-    between 0 and 1, rising while powering (0x856fba == 0). Then
-    `snd_post_pitch(motor_code, [+0x90])`. **likely** (formula); **guess** (meaning of X and the
-    flag). Because a larger p lowers the frequency, either the samples are pitched high or X is
-    not plain speed. Confirm with the ddg-hook oracle.
-  - code 9: the volume parameter `[+0x92]` and pitch parameter `[+0x94]` slew toward targets that
-    depend on speed (0x857234), clamped at 0x70, 0x40, 80 and 127, in steps of ±1/±3/−5 per tick.
-    Sent every tick through `snd_post_volume(9, …)` and `snd_post_pitch(9, …)`. **likely**
-  - rail-joint clicks: the per-vehicle table at 0x471f88 (stride 0x20: period, 4 thresholds, 2
-    codes at +0x18/+0x1c) triggers code 0x856d98 (from 0x459e60[vehicle]) at 4 phases of a
-    distance counter. **likely**
-  - Other per-tick triggers: 0x19 (every ≥0x50 ticks while 0x84c408 > 2.1), 0x30, 0x28 (pitch =
-    0x857230/2), 0x2c/0x2e/0x29 (brake/air sounds whose volume follows state). **likely**
-- The DirectSound frequency resolution is fine for this. Our mixer should apply pitch and volume
-  changes at the sim tick and interpolate per sample to avoid zipper noise. That interpolation is an
-  enhancement, so it needs its own config flag.
+Read from `train_task_update` 0x422c20 (sound part 0x4234eb–0x423eb0, objdump; Ghidra loses every
+`__ftol` argument here) and from 0x407c10. Float maths runs at x87 53-bit precision (physics.md §2).
+`v` is the new speed task+0x3c (m/s), `v₀` the previous tick's speed 0x857234, `fade` the
+traction fade task+0x38, and `kmh` the f32 store `[esp+0x14] = v·3.6`. **confirmed** unless noted.
+
+### 6.1 Per-stage codes and per-type settings
+- 0x40d040 copies three per-stage i16 codes: motor **0x8570b6 = 0x459e38[stage]** (0x31 for all
+  20 stages), rail joint **0x856d98 = 0x459e60[stage]** (0x32 for all), and horn
+  **0x8570a2 = 0x459e88[stage]**: 8 8 8 4 4 4 4 **0x1a3** 4 4 6 6 4 4 4 4 4 8 8 8. The motor's base
+  pitch is 0x45adb0[stage] (1 everywhere). This answers the old "struct copy" question.
+  **confirmed** (code + data)
+- 0x4229c0 sets the running-noise mode task+0x96 from the train type: type 9 → 1; types 2, 3, 6, 8 →
+  3; types 4, 5 → 2; otherwise 0. These are code immediates. It also latches two flags from the
+  rail-joint row of the type at creation (0x471f9c + 0x20·type): bit 0 → 0x84c430 (brake-air
+  sounds) and bit 1 → 0x84c400 (flange squeal, departure sound). Bit 2 (rail joints) is read live,
+  each tick, from the *current* type.
+
+### 6.2 Segment start, stop and reset
+- Segment start (0x4080d0): `play 9; pitch(9, 0x7f); volume(9, 1); play motor; pitch(motor, base)`.
+  If 0x857230 > 0 and 0x857210 < 3 it also plays 0x28 with pitch 0x857230/2 (rain or slippery
+  rail; game rules, not part of the train task).
+- Reset hook 0x424070: `volume(9, 0x7f); pitch(motor, base)`.
+- Not driving (flag 0x200 clear): release 0x1c, and zero the squeal counter task+0x84 and the joint
+  state task+0x80.
+- Driving with `v ≤ 0`: release 0x1c; noise volume/pitch parameters = 1 / 0x7f; then
+  `volume(9, 1); pitch(9, 0x7f); pitch(motor, base)`.
+
+### 6.3 Moving: motor and running noise (code 9)
+1. Noise volume `nv` (task+0x92) steps ±1 toward `clamp(v₀·32·fade, 1, 127)`.
+2. Motor pitch (task+0x90) = `clamp(trunc(X·k·fade·127), 1, 127)`, where `X` = task+0x30 =
+   f32(`v·3.6·34.6597·1.149425287`) (0x459420, 0x472638, 0x472630). `k` = 0.0005 (0x472660) in
+   mode 2 and 1/3000 (0x472698) otherwise. With code 0x31's inversion the motor plays at
+   `rate·(129 + p)/256`, so it rises from 0.51× at rest to 1.0× at about 75 km/h (mode 0, full
+   fade).
+3. Noise pitch `np` (task+0x94) uses a target `T(d) = 128 − kmh/(top·d)·fade·127`, where top is the
+   P5 speed of the current type (0x471aec), and a "slow step" divisor
+   `D = 1 − trunc(rate)` (as i16):
+   - **mode 0**: T(1.4) clamped to [1, 127], with rate = `v·(−0.1176470588)` (0x472678). If
+     `stage_tick % D == 0` and np > T: np −1. If np > T and |T − np| > 32 (0x472670): np −1. If
+     np < T: np +1. Then the coast step below.
+   - **mode 1** (type 9): T = 127 while `v₀ < 8.889` m/s (0x472668), else T(1.4) clamped, with
+     rate = `v₀·(−0.1176…)`. Slow step and +1 as in mode 0. Then, if decelerating
+     (`v₀ > v`), `v₀ < 5.556` (0x469830) and the brake ≠ 0: np 0x7f → 0x20, then np 0x20 → 0x1f
+     (so 0x7f becomes 0x1f), and nv +1 while below `clamp(v₀·30·fade, 1, 127)` (0x458b90). There
+     is no coast step in that case. Otherwise the "> 32 above" step and the coast step.
+   - **mode 2** (types 4, 5): if `v₀ ≤ 5` (0x4594f8) and accelerating, T = 120 (0x458b00); if
+     also `trunc(v₀·3.6)` is 9 or 17, np = 0x78. Otherwise T = T(1.2) (0x457720). If accelerating,
+     T = min(T, 80) (0x472658) **without** a lower clamp; else T is clamped to [1, 127].
+     rate = `v·(−0.25)` (0x472650). Slow step, > 32 step, +1. Then, with power last tick
+     (task+0x60 ≠ 0), nv = max(nv, 0x70); without power, the coast step.
+   - **mode 3**: np = 0x7f.
+   - **coast step** (power last tick = 0): np +3 if np < 0x70; nv −5 if nv > 0x40.
+4. Post `volume(9, nv)` (twice, through 0x4301b0 and its wrapper; the second is a cached no-op),
+   then `pitch(9, np)` and `pitch(motor, motor_p)`.
+
+### 6.4 Rail joints, squeal, departure, brake air, horn
+- Rail joints (0x423c79): `row = 0x8570c2 ? 20 : type`, `phase = trunc(odometer·10) % period`
+  (in 0.1 m). If `phase ≤ click₀` and state = 4, state = 0. If the current type's flag bit 2 is set,
+  each of `click₀..click₃` plays the joint code when `phase ≥ clickᵢ` and state = i. The checks
+  run in sequence within one tick and advance the state. At `v ≥ 22.2` m/s (80 km/h, 0x472648)
+  the first and third clicks advance the state by 2, so only two clicks per period remain.
+  Every click also bumps a counter 0x84c3dc and calls 0x433260 (force feedback, which has no
+  effect; input.md). Rows on this disc: period 120/360/1200/1500, clicks e.g. 12/24/94/104.
+- Flange squeal (flag 0x84c400): if `0x84c408 ≥ 2.1` (0x472640) and the counter ≥ 0x50, play 0x19
+  and reset. Otherwise count up to 0x51. **Departure**: with the same flag, `v₀ == 0` while moving
+  plays 0x30, so it fires on the first moving tick.
+- Brake air (flag 0x84c430; any phase): brake-cylinder moving counter task+0x58 == 1 → play 0x14,
+  == 0 → release 0x14. Brake notch falling to 0 (`B < B_prev && B == 0`) → play 0x13.
+- Horn (start of 0x422c20; skipped while 0x855ff8 & 0x4000). Press edge → play the horn code,
+  except that 0x1a3 (a BGM-slot melody horn, stage 7) only plays if task+0x6c > 99, which then
+  resets. Release edge → release, except for 0x1a3 and 8. task+0x6c counts every tick. The edges come
+  from input bit 0x100 (0x48c42c pressed / 0x48c430 released) or the replay byte.
+- Code 0x1c is released here but no starter was found (open question 6).
+
+### 6.5 What the sounds probably are (guess)
+0x31 motor whine, 9 running/rail roar, 0x32 joint click, 0x14/0x13 brake air / release, 0x19
+flange squeal, 0x30 departure, 4/6/8 horns, 0x1a3 melody horn.
+
+### 6.6 Track-class ambient sounds (0x407c10)
+Each tick (before the physics) the class at the points 16 behind, 4 ahead and 24 ahead
+(`stages.track_sounds[point & 0x1f]`) goes to 0x857200[3]. On a change, "entered" = new class
+(0x8570a8[i]) and "left" = old class (0x857218[i]); both are 0 otherwise.
+- Classes 2 / 3 (codes 0x2e / 0x29), probe +4: entered → play; left → release (class 2 also gets
+  volume 0x7f); while current → `volume = min(trunc(v₀·3.6 + 64), 127)`.
+- Class 1 (code 0x2c), a point sound with distance-based volume and pitch (probably a level
+  crossing):
+  - entered at +24 → anchor = trunc(odo + 25), state 0, play, pitch 1, volume 1;
+  - current at +4 → anchor = trunc(odo), state 1, volume 0x7f;
+  - left at +4 → anchor = trunc(odo), state 2. Otherwise, if state = −1, stop here.
+  - `d = |anchor − odo|`, `x = clamp(trunc(d)·2)` and `y = clamp(trunc(d))`, where clamp means
+    `>127 → 127, ≤0 → 1`. State 0: volume `(−x) & 0x7f`. State 2: pitch `x`, volume
+    `(−y) & 0x7f`, and once `anchor − odo < −64`, release, anchor = −1, state = −1.
+  - The anchor is an **i16** (0x856d94), so past 32767 m it wraps and the class-1 sound becomes
+    inaudible or is released at once. Faithful behaviour; whether any route reaches it is open.
+  - Segment reset 0x40cf40: anchor = −1, state = 0.
 
 ## 7. Text: where Japanese comes from
 
@@ -281,11 +406,56 @@ system renderer and does not pass through the DSound voices. **confirmed** (impo
 reimplementation needs an MPEG-1 video + Layer I/II audio decoder, or it can skip the movie.
 The allowed dependency list has no decoder, so ask before adding one.
 
+## 9. Reimplementation (`crates/ddg-audio`)
+
+- **No CD audio.** The disc has three Mode 1 data tracks and no CD-DA (recon.md §1), so all music
+  comes from `bgm.rom`. `SoundBank::load` reads `effect.rom` and `bgm.rom` (117 MB) into memory
+  once. The original memory-maps `bgm.rom`; there is no mmap dependency, so we read it.
+- `SoundTables::from_exe` reads the code volumes, the 47 sequences, the 180 call pairs, the per-stage
+  motor, joint and horn codes and base pitch, and the 21 rail-joint rows from the user's exe. Only
+  addresses and the counts above are hardcoded, plus the 0x420180 prefix/speed phrase list and
+  the type → noise-mode map, both of which are code immediates.
+- `Mixer` (audio thread, pure) implements §1, §2 and §4: slots, retrigger, no stealing, loops and
+  release tails, the half-buffer free rule, the cached pitch and volume parameters, the
+  millibel volume curve and pause. Mono effects go to both channels at full level. The output is
+  f32 stereo at the device rate, resampled per voice at `pitch_hz`, with linear interpolation
+  by default.
+  - Enhancements, each a `MixerConfig` field: `master_volume` (≠ 1), `smooth_volume` (ramps
+    volume changes over 5 ms; arcade = off), `interpolation` (`Nearest` / `Linear`). Which one
+    sounds closest to Win9x DirectSound software mixing is unknown.
+  - Out-of-range frequencies at play time are clamped instead of leaving a stuck silent voice (§2).
+    No code path in the game hits this.
+- `SoundSystem` (game thread) implements `snd_request`, the post functions with their pause and
+  enable gating, the 4-slot sequencer (`frame()` once per 33 ms tick = two sequencer ticks),
+  `call_pair` and `call_prefix_speed`. It produces `Command`s.
+- `TrainSound::tick(&TrainTick)` implements §6.1–6.4 and `AmbientSound::tick` implements §6.6. Both
+  are deterministic and covered by unit tests built from the formulas above. Differential checks
+  against oracle logs of the 0x464–0x469 messages are still to do.
+- `AudioOutput` (cpal, default device and format, any channel count) owns the stream. It receives
+  `Command`s over a channel and applies them at the start of each device buffer.
+- `ddg-tools play-sound <code> [--wav out/…]` plays a code or sequence live, or renders it to a WAV.
+
 ## Open questions
 
-1. What fills the motor code 0x8570b6 (stage/vehicle struct copy) and the meaning of `[task+0x30]`
-   in the motor pitch formula. Measure with ddg-hook: log the 0x467 messages against speed.
-2. The absolute duration of a sequence-delay unit. It depends on how often 0x42a130 runs per sim tick.
+1. ~~Motor code source and the meaning of task+0x30~~: answered in §6.1/§6.3 (0x459e38; X = km/h ×
+   39.84). Still to do: compare the motor/noise pitch and volume messages (0x467/0x468) against
+   ddg-hook traces.
+2. Sequence-delay unit: 1/2 tick, ≈ 16.5 ms (likely, §5). Confirm with an oracle timestamp of
+   two consecutive phrase starts.
 3. A full catalogue of which tbl.rom maps carry text, for translation.
 4. Whether `nosound` (bit 9 of 0x816840) is read anywhere outside the decompiled functions.
 5. The high byte of the 0x486b4e per-code records (unreferenced, maybe priority or a leftover).
+6. Who starts code 0x1c? It is only ever released (train task, stopped or not driving). Search
+   for a computed `snd_request` argument, or log 0x464 messages in the oracle.
+7. Whether the offset-0 notification fires at Play (§2) under Wine and real DirectSound. If not,
+   the original would play one half of stale data on every start.
+8. Win9x DirectSound resampling quality (nearest, linear or better) for the default
+   `Interpolation`, and whether its software mixer clipped or wrapped when voices summed past
+   full scale. We clamp.
+9. Does any route's odometer pass 32767 m, where the class-1 ambient anchor (i16) wraps (§6.6)?
+10. The meaning of the pair-table blocks at 0–4 / 90–94 and of the second station-name block, and
+    the per-station index source (0x856d58).
+11. The meaning of sequences 0x00–0x18 and 0x24–0x2e (which events request them). Needed for
+    subtitles keyed by sequence ID.
+12. The code 0x28 condition (0x857230 > 0 and 0x857210 < 3 at segment start; 0x40c4e0/0x40acd0
+    also play it). It belongs to the rules port, not the train task.

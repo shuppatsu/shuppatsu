@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 ddg-formats.workspace = true
 ddg-engine.workspace = true
+ddg-audio.workspace = true
 anyhow.workspace = true
 encoding_rs.workspace = true
 pelite.workspace = true
