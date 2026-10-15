@@ -87,7 +87,16 @@ not a route base height (scene.md §1, §3). **confirmed**
 `stops[s]` and the remaining distance is `(index[s+1] − index[s]) × 0.125` units.
 At segment start (0x41cb00) the camera is placed up to 300 points (37.5 units, double at
 0x46a7b8) **behind** the stop point and catches up immediately, which pre-runs the activation
-lists (§5). **likely**
+lists (§5). **confirmed** (oracle: the engine index and `0x8500c8` match on every setup row of three
+traces, `ddg-tools trace-replay --drive`).
+
+Units to the stop `0x8500c8`: set to `(index[s+1] − index[s]) × 0.125f` by 0x41c7b0, reduced by
+the per-tick advance in the camera task (0x41d181), and when a non-stop station is passed
+0x41c820 adds the next leg `(index[k+1] − index[k]) × 0.125f` and advances the COM-local stop
+counter 0x850214. The distance to the stop is `0x8500c8 × 10` (0x40dad0). The track sound class
+four points ahead (0x857202, 3 = tunnel) and the gradient come from the camera point of the
+previous tick (0x407c10, driving iterations only). **confirmed** (bit-exact over the three
+traces, physics.md §8a)
 
 ### 3.4 Point flags
 

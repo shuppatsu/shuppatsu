@@ -57,6 +57,7 @@ keeps transferring time. The engine models them as `Phase::Holding`.
 | 0x45a8b0 | re-power, s | Power during the station approach | confirmed |
 | 0x45a950 | horn bonus, s | Full horn bonus | confirmed |
 | 0x45a9f0 | exact stop bonus, s | Stop within 1 cm | confirmed |
+| 0x459910 | overrun factor, s per m | Station-result overrun deduction (`0x856fb8`, §7.3) | confirmed |
 | 0x45aa90 | on-time stop bonus, s | + streak | confirmed |
 | 0x45ab30 | clean stop bonus, s | | confirmed |
 | 0x45abd0 | on-time pass bonus, s | + streak | confirmed |
@@ -270,14 +271,20 @@ Let `d` = distance rounded to metres half away from zero (`0x85722c`), `tol` = 0
 
 Deducted directly from `0x856fb0` (not through the pending counter) — **confirmed**:
 
-* **Overrun**: `d < −tol` → `−d` seconds (1 s per metre of overrun, cap 999).
+* **Overrun**: `d < −tol` → `min(−d, 999) × f` seconds, with `f` = `0x856fb8`, set by 0x40d040
+  from the `[stage][difficulty]` i16 table **0x459910** (values 1–3, rising with the
+  difficulty, e.g. stage 0: 1 1 2 2, stage 1: 2 2 2 3, stage 13: 1 1 1 2). **confirmed** (code: 0x413d90 stores
+  the metres in task+0x50; task 0x413f30 at 0x41436e shows the factor sprite
+  `0x4654ec[f]` (the "m×1/2/3秒" banner) and at 0x4143fa multiplies task+0x50 by `f` before
+  the sum at 0x4145a3 is capped at 999; oracle: stops-drive.csv, stage 13 difficulty 1, `f` = 1,
+  24 s for 24 m). Read as `RuleTables::overrun_factor`.
 * **Re-power** in the approach: 0x45a8b0 s.
 * **EB** in the approach: 10 s (stat 4 += 2); not on lesson stages.
 * Sum capped at 999 (20 on lesson stages), then `+0x45a9f0` (**10 s**) if `trunc(|dist|·100) == 0`
   (within 1 cm) and the station got a clean-stop mark. Clamped at 0.
 
-So: the **合格範囲** is ±`tol` metres (short side: you must creep up; long side: costs a
-second per metre beyond it), the bonus window is ±0.5 m, the perfect window ±1 cm.
+So: the **合格範囲** is ±`tol` metres (short side: you must creep up; long side: costs 1–3 s
+per metre beyond it, by stage and difficulty), the bonus window is ±0.5 m, the perfect window ±1 cm.
 
 ### 7.4 Final station, continue
 
@@ -449,6 +456,17 @@ Hook points for event-level traces: 0x415080 (every time message: kind, seconds)
   physics); then the caller steps the physics and calls `Rules::end_tick(readout)` for the train
   task's rule parts, the departure task and the HUD transfer (`Rules::tick` = both, without a
   readout). The pre-departure wait is ended by the departure task, not by the caller.
+* Outside the loops `Rules::segment_setup` (0x40b970 + the priming 0x40dad0 of a segment's setup
+  tick) and `Rules::idle_tick` (train task + HUD only, for result/continue screens and loading
+  ticks) complete the tick model; `ddg_engine::drive::Drive` sequences them as 0x4080d0 does
+  (physics.md §8a). The signal blocks are built in the setup, not by `finish_station` /
+  `continue_run` (lazily on the first `step` for callers without a setup).
+* Red-signal / ATS recovery (`AfterHold::Resume`) keeps `0x200` set (`Rules::train_driving`)
+  and forces the speed to 0 only outside the last 11 ticks; the obstacle hold
+  (`AfterHold::ObstacleCleared`) is still a guess. `continue_run` moves on to the target
+  station first when the time ran out inside the approach (0x4080d0, `0x856d9a ≥ 1`;
+  yamate-drive.csv). A stop at the final station holds 120 ticks longer (0x40aaa5; not traced).
+  All **confirmed** by the whole-run replay unless noted.
 * The blocking sequences are modelled as holds of the documented length. The arrival is split into
   `Holding`(80, forced stop only) → `Draining` (until pending = 0; the tick that finds it 0 is
   0x407ff0's extra `Task_Tick`) → `Evaluating(1)` (stop error, count) → `Evaluating(2)`
@@ -509,7 +527,7 @@ release, jolt, game over.
 
 ### stops-drive.csv
 
-Stage 0, three stretches, 9 277 ticks: stop at station 1 overrunning by 24.6 m (result screen
+Stage 13, difficulty 1, three stretches, 9 277 ticks: stop at station 1 overrunning by 24.6 m (result screen
 deducts it, time runs out, continue), stop at station 2 at 0.17 m (result screen deducts
 20 s), then time over. Both approaches used the EB; the second also re-applied power. Since this trace the replay also checks the **station
 result**: after a stretch ends at the station it runs `finish_station` and compares remaining

@@ -5,6 +5,7 @@ mod export;
 mod gltf;
 mod inventory;
 mod pe;
+mod sound;
 mod trace;
 
 use anyhow::{Context, Result, bail};
@@ -22,9 +23,13 @@ commands:
                                   write PNG/WAV from $DDG_DATA_DIR to out/export (default)
                                   what: textures | tilemaps | audio | models | routes | all
   check [-v]                      Phase 2 exit check: every file in $DDG_DATA_DIR parsed or documented
-  trace-replay <trace.csv> [-v] [--rules]
+  trace-replay <trace.csv> [-v] [--rules | --drive]
                                   replay an oracle trace through the engine physics (or, with
-                                  --rules, the game rules) and compare";
+                                  --rules, the game rules; with --drive, the whole engine from
+                                  the logged notches and buttons only) and compare
+  play-sound <code> [--wav FILE] [--seconds S] [--pitch P] [--volume V] [--release-after S]
+                                  play a sound code (hex 0x31 / 31h or decimal; 0x1000|n =
+                                  sequence n) live, or render it to a WAV (gitignored out/)";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -45,12 +50,15 @@ fn main() -> Result<()> {
             inventory::print_manifest(&path(1)?, variant)
         }
         "pe" => pe::print_report(&path(1)?),
+        "play-sound" => sound::play_sound(&args[1..]),
         "export" => run_export(&args[1..]),
         "trace-replay" => {
             let dirs = export::GameDirs::from_env()?;
             let flag = |f: &str| args.iter().skip(2).any(|a| a == f);
             let exe = dirs.bin.join("dengo3k.exe");
-            let ok = if flag("--rules") {
+            let ok = if flag("--drive") {
+                trace::drive::replay_drive(&path(1)?, &exe, &dirs.data, flag("-v"))?
+            } else if flag("--rules") {
                 trace::rules::replay_rules(&path(1)?, &exe, flag("-v"))?
             } else {
                 trace::replay_physics(&path(1)?, &exe, flag("-v"))?

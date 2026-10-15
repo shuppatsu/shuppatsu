@@ -70,7 +70,7 @@ CW 0x1b3f) and `fmod` (0x437eea, `fprem`).
 precision. Results would then differ in the last bits; the size of the difference is unmeasured.
 The Wine oracle is the reference for now.
 
-**Result:** replaying `yamate-drive.csv` (6350 driving ticks, first Yamanote segment, including
+**Result:** replaying `yamate-drive.csv` (6350 driving ticks, stage 5 = hokuho1a despite the file name, including
 EB use, overrun handling and coast-down) gives **158 700 of 158 700 values bit-exact**. That
 covers 25 fields: speed, task fields, forces, distances, brake readouts and history.
 Not exercised by that trace: a non-zero gradient (the segment is flat), the power cut, slippery
@@ -316,6 +316,64 @@ globals (gradient, flags, ATC limit, overrun state, power cut, slippery, brake l
 heading is the exception: the camera task writes it after the physics, so the physics of tick
 *k* sees the heading of row *k−1*. `ddg-tools trace-replay` (`crates/ddg-tools/src/trace.rs`)
 replays the trace with this alignment.
+
+## 8a. Whole-run replay: `ddg_engine::drive::Drive`
+
+`Drive` (`crates/ddg-engine/src/drive.rs`) runs one stage from the route load to the end:
+rules, physics, the in-cab camera walk and every track-derived input (gradient, heading, units
+to the stop, sound class ahead, station passing, segment changes, odometer). `ddg-tools
+trace-replay <csv> --drive` (`crates/ddg-tools/src/trace/drive.rs`) feeds it only the logged
+notches and buttons plus stage, difficulty and start station, and compares every column.
+
+**Result** (all floats bit for bit):
+
+| trace | stage | ticks | values | mismatches | covers |
+|---|---|---|---|---|---|
+| hilly-drive.csv | 0 | 7 155 | 815 657 | 0 | 2 segments, passing stations, red-signal/ATS recovery, game over while driving, continue |
+| stops-drive.csv | 13 | 10 522 | 1 170 663 | 0 | 3 segments, 2 arrivals with results, game over on the result screen, continue, final time over |
+| yamate-drive.csv | 5 (hokuho1a) | 6 771 | 338 537 | 0 | passing station, recovery, game over inside the approach, continue to the next station |
+
+Not compared: the camera globals before the first setup tick (they belong to the stage
+intro's camera, as does the physics copy of the heading on the first setup row), and rule
+columns while stopped at a station (the result screen deducts over several ticks; `Drive`
+deducts in `finish_station`). yamate-drive.csv has no button columns: the engine missed the
+whistle sign at row 3898 where the original lost no time, so the replay holds the horn from the
+sign to that row (reported as an inferred input). The HUD transfer phase (counter of the HUD
+task since the stage load, which depends on the intro) is inferred from the first ±1 s step.
+
+Findings this replay needed (all **confirmed** by code and by the traces above):
+
+* **Heading rounding**: 0x41d160 stores Δz to a float temporary (`fstp [esp+0xc]` at
+  0x41d31f) and reloads it for `fpatan` (0x41d362), while Δx stays on the FPU stack.
+  `atan2(f32 Δz, f64 Δx)`; the double Δz gave a 1-ulp heading error at yamate row 6431.
+* **Gradient** 0x857228 is zeroed by the not-driving branch of the train task (§4.7) and only
+  recomputed by 0x407c10 in driving iterations; it keeps its value while the train coasts after
+  a game over.
+* **Track units** at a segment start: `(stop[s+1] − stop[s]) × 0.125f` (0x41c7b0, one f32
+  rounding); passing: `units += leg × 0.125f` in double, stored once (0x41c820); the camera
+  task subtracts `0x850208` with one f32 rounding (0x41d181).
+* **Red-signal / ATS recovery** (0x40a0a0, second branch) keeps `0x855ff8 & 0x200` set: the
+  train task runs its driving branch throughout. 0x857234 is zeroed before each of the 60
+  standstill ticks only; the 10 ticks after them and the loop's own `Task_Tick` are not forced
+  (`rules::RECOVERY_RELEASE_TICKS` = 11). The arrival branch clears `0x200` (0x40a590).
+* **Flow tick counts** of 0x4080d0, all between rows of the traces: route load → setup tick:
+  2 idle ticks; result screen closed → 0x40d340: 1 tick, then 4 idle ticks to the setup tick;
+  continue screen closed → 0x40d930: 2 ticks (no coast, `0x200` cleared), then 3 idle ticks (13
+  when the time ran out inside the approach: 0x40d340 + 0x40d930 + 10 ticks); arrival:
+  `0x857206 = 0`, `0x8570d4 = −1` (0x4085e0) before the first tick after the stop sequence and
+  `0x857004 += 0x85708c` before the second.
+* **Game over while driving**: 20 `Task_Tick`s including the game-over tick, then the pending
+  time is discarded and 0x4085e0 resets the ATS; the train coasts (`0x210`) with the camera
+  walking until the continue screen closes.
+* `0x8570d4` (ATS chime start) is not reset by 0x40cf40; it is 0 before the first departure
+  and −1 after every wait / loop exit.
+* 0x40d340 on a game over (remaining < 1 after a result) still updates the target, resets the
+  segment state and adds the 690-tick dwell (stops-drive.csv row 4381).
+* The signal blocks (0x40b970) are built in the segment setup, not by 0x40d340/0x40d930: the
+  old blocks stay visible in between (hilly-drive.csv rows 7778–7780).
+
+Not exercised by any trace: arrival at the final station (+120 ticks, 0x40aaa5), the obstacle
+sequence, weather, the power-cut fade, the ATC trip.
 
 ## 9. Open questions
 

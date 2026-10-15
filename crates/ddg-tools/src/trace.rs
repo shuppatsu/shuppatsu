@@ -12,6 +12,7 @@ use ddg_formats::exe::Exe;
 use std::collections::HashMap;
 use std::path::Path;
 
+pub mod drive;
 pub mod rules;
 
 /// One logged value.

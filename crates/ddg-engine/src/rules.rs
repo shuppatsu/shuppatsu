@@ -93,6 +93,11 @@ const DEPART_MOVING_MPS: f64 = 0.04;
 const MAX_REMAINING_S: i32 = 999;
 /// Block array size: 0x856dc0..0x856fa8 holds 40 records of 12 bytes (0x40bfd0).
 const MAX_BLOCKS: usize = 40;
+/// Ticks at the end of the red-signal / ATS recovery in which 0x40a0a0 no longer zeroes the
+/// speed: 10 `Task_Tick`s after the 60-tick standstill (0x40a548) plus the loop's own.
+pub const RECOVERY_RELEASE_TICKS: u32 = 11;
+/// Extra standstill after stopping at the final station (0x40aaa5: 0x78 `Task_Tick`s).
+const FINAL_STATION_HOLD: u32 = 0x78;
 /// Sentinel signal position for "no signal" (0xfffffc19 = −999, 0x40b970).
 const NO_SIGNAL: i32 = -999;
 
@@ -164,6 +169,9 @@ pub struct RuleTables {
     pub horn_missed_s: DiffTable,
     /// 0x45a8b0: re-applying power during the station approach, s (0x413d90).
     pub repower_s: DiffTable,
+    /// 0x459910 → 0x856fb8 (0x40d040): seconds per metre of overrun on the station result
+    /// (task 0x413f30 at 0x4143fa multiplies the overrun by it; banner sprite 0x4654ec[factor]).
+    pub overrun_factor: DiffTable,
     /// 0x45a950: horn bonus at full value, s (0x40acd0).
     pub horn_bonus_s: DiffTable,
     /// 0x45a9f0: bonus for a stop within 1 cm, s (station result task 0x413f30).
@@ -283,6 +291,7 @@ impl RuleTables {
             stopped_between_s: t(0x45a770)?,
             horn_missed_s: t(0x45a810)?,
             repower_s: t(0x45a8b0)?,
+            overrun_factor: t(0x459910)?,
             horn_bonus_s: t(0x45a950)?,
             exact_stop_bonus_s: t(0x45a9f0)?,
             on_time_stop_bonus_s: t(0x45aa90)?,
@@ -525,7 +534,11 @@ pub enum Phase {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AfterHold {
+    /// Red-signal / ATS recovery (0x40a0a0): `0x200` stays set, so the train task keeps
+    /// driving; the speed is forced to 0 except in the last [`RECOVERY_RELEASE_TICKS`] ticks.
     Resume,
+    /// Obstacle cleared (0x40a0a0, first branch): back to driving afterwards.
+    ObstacleCleared,
     Drain,
     Arrived,
 }
@@ -697,6 +710,9 @@ pub struct Rules {
     pub stats_total: [i32; STAT_COUNT],
     /// Continues used (`0x8570b8`).
     pub continues: i32,
+    /// The signal blocks still have to be built for the segment (0x40b970 runs in the segment
+    /// setup, after 0x40d040 / 0x40d340 / 0x40d930).
+    signals_pending: bool,
     /// Per-station marks (`0x856fe1`).
     pub marks: Vec<u8>,
     /// Arrival records `(clock, distance)` (`0x8570e8`).
@@ -776,7 +792,10 @@ impl Rules {
             limit_enforce_odo: 0,
             ats: 0,
             ats_ticks: 0,
-            ats_chime_from: -1,
+            // 0x8570d4 is only set to −1 when leaving a wait / the loop (0x4080d0); before the
+            // first departure it holds its initial 0 (oracle: hilly-drive.csv).
+            ats_chime_from: 0,
+            signals_pending: true,
             horn_state: -1,
             horn_deadline: 0,
             coasting: 0,
@@ -881,7 +900,8 @@ impl Rules {
             self.weather_level = 1;
         }
         self.final_station = self.is_final_next();
-        self.build_blocks();
+        // 0x40b970 runs in the segment setup (`segment_setup` or the first `step`).
+        self.signals_pending = true;
     }
 
     fn seek_cursors(&mut self) {
@@ -909,7 +929,6 @@ impl Rules {
         self.horn_state = -1;
         self.ats = 0;
         self.ats_ticks = 0;
-        self.ats_chime_from = -1;
         self.repower_excused = 0;
         self.limit_state = 0;
         self.limit_mps = NO_LIMIT_MPS;
@@ -1126,6 +1145,7 @@ impl Rules {
 
     /// 0x40b970: builds the signal blocks for the segment and picks the aspects.
     fn build_blocks(&mut self) {
+        self.signals_pending = false;
         let margin = self.table(&self.tables.limit_margin_kmh) as f32;
         let [s1, s2, s3] = self.tables.signal_speed_kmh;
         self.speed_by_aspect = [GREEN_KMH, margin + s1, margin + s2, margin + s3, 0.0];
@@ -1880,7 +1900,7 @@ impl Rules {
             self.eb_ticks = 0;
             self.phase = Phase::Holding {
                 ticks: 36,
-                then: AfterHold::Resume,
+                then: AfterHold::ObstacleCleared,
             };
             return;
         }
@@ -1903,6 +1923,9 @@ impl Rules {
         self.ats = 0;
         self.ats_chime_from = -1;
         out.events.push(RuleEvent::SignalsReset);
+        // The first of the 60 standstill ticks (0x40a238: 0x857234 = 0 before each `Task_Tick`).
+        self.speed_mps = 0.0;
+        out.force_stop = true;
         // Is a signal in sight ahead? If not, re-powering in the approach is excused; past the
         // home signal the block index drops to 0.
         if self.repeater_m != 0 {
@@ -2046,6 +2069,13 @@ impl Rules {
             self.stop_streak = 0;
             30
         };
+        // 0x40aaa5: 120 more ticks at the final station (stage-specific endings of stages 1, 2,
+        // 10 and 17–19 are not modelled).
+        let hold = if self.final_station {
+            hold + FINAL_STATION_HOLD
+        } else {
+            hold
+        };
         if let Some(m) = self.marks.get_mut(self.station) {
             *m = mark;
         }
@@ -2113,6 +2143,75 @@ impl Rules {
         }
     }
 
+    fn latch_input(&mut self, input: &TickInput) {
+        self.input_power = input.power;
+        self.input_brake = input.brake;
+        self.speed_mps = input.speed_mps;
+        self.odometer_m = input.odometer_m;
+    }
+
+    /// The segment setup in 0x4080d0 before its `Task_Tick`: the priming call of 0x40dad0
+    /// (distance to the stop and its rounding, approach latch) with the notches that tick uses.
+    /// Run the physics afterwards, then [`Rules::end_tick`], which runs the segment's new
+    /// departure task for the first time (counter 0 → 1).
+    pub fn segment_setup(&mut self, input: &TickInput) -> TickOutput {
+        let mut out = TickOutput::default();
+        self.latch_input(input);
+        if self.signals_pending {
+            self.build_blocks();
+        }
+        self.distance_step(&mut out, input);
+        out
+    }
+
+    /// A tick outside the stage loops (after the route load, on the result and continue screens
+    /// and between them): only the train task's rule part (EB counters, re-power, derailment,
+    /// comfort statistics) and the HUD time transfer run. The departure task does not exist yet.
+    pub fn idle_tick(&mut self, input: &TickInput, train: Option<&TrainReadout>) -> TickOutput {
+        let mut out = TickOutput::default();
+        self.latch_input(input);
+        self.train_task_tick(&mut out, train);
+        self.hud_tick();
+        out
+    }
+
+    /// The timetable of the run (one row per station, without the terminator).
+    pub fn timetable(&self) -> &[TimetableRow] {
+        &self.timetable
+    }
+
+    /// Stage index and difficulty of the run.
+    pub fn stage(&self) -> (usize, usize) {
+        (self.stage, self.difficulty)
+    }
+
+    /// The stage's rank / kind (i32 at 0x4656c4 + stage × 0x20; also read by the 50 m leg
+    /// marker of 0x40c4e0 and the clock skew).
+    pub fn stage_rank(&self) -> i32 {
+        self.tables.stage_kind[self.stage]
+    }
+
+    /// Whether the driving flag `0x855ff8 & 0x200` is set, i.e. the train task runs its driving
+    /// branch: while driving and during the red-signal / ATS recovery (0x40a0a0 keeps the flag;
+    /// the arrival branch clears it).
+    pub fn train_driving(&self) -> bool {
+        matches!(
+            self.phase,
+            Phase::Driving
+                | Phase::Holding {
+                    then: AfterHold::Resume,
+                    ..
+                }
+        )
+    }
+
+    /// 0x4085e0, when the stage loop is left after an arrival or a game over: the ATS and its
+    /// chime are reset (`0x857206 = 0`, `0x8570d4 = −1`).
+    pub fn leave_driving_loop(&mut self) {
+        self.ats = 0;
+        self.ats_chime_from = -1;
+    }
+
     /// Departure: leave the pre-departure wait (0x4080d0 after the `0x800` loop).
     pub fn depart(&mut self) {
         self.ats = 0;
@@ -2133,22 +2232,31 @@ impl Rules {
     /// physics afterwards, then [`Rules::end_tick`].
     pub fn step(&mut self, input: &TickInput) -> TickOutput {
         let mut out = TickOutput::default();
+        // Callers that skip `segment_setup` get the blocks on the first tick of the segment.
+        if self.signals_pending && matches!(self.phase, Phase::PreDeparture | Phase::Driving) {
+            self.build_blocks();
+        }
         if self.phase == Phase::PreDeparture && self.departure_done {
             // The 0x800 wait ended in the last `Task_Tick`: 0x857206 = 0, 0x8570d4 = −1.
             self.depart();
         }
-        self.input_power = input.power;
-        self.input_brake = input.brake;
-        self.speed_mps = input.speed_mps;
-        self.odometer_m = input.odometer_m;
+        self.latch_input(input);
         match self.phase {
             Phase::Driving => self.drive(&mut out, input),
             Phase::Holding { ticks, then } => {
-                self.speed_mps = 0.0;
-                out.force_stop = true;
+                // 0x40a0a0 zeroes 0x857234 before each `Task_Tick` of its wait loops, except in
+                // the recovery's last 10 ticks and the loop's own `Task_Tick` after it.
+                if !(then == AfterHold::Resume && ticks <= RECOVERY_RELEASE_TICKS) {
+                    self.speed_mps = 0.0;
+                    out.force_stop = true;
+                }
                 if ticks <= 1 {
+                    if then == AfterHold::Resume && self.coasting == 1 {
+                        // 0x40a555: leaving a no-power section is forgotten.
+                        self.coasting = 0;
+                    }
                     self.phase = match then {
-                        AfterHold::Resume => Phase::Driving,
+                        AfterHold::Resume | AfterHold::ObstacleCleared => Phase::Driving,
                         AfterHold::Drain => Phase::Draining,
                         AfterHold::Arrived => Phase::Arrived,
                     };
@@ -2229,11 +2337,13 @@ impl Rules {
         let tol = self.table(&self.tables.stop_tolerance_m);
         let overrun_s = if self.dist_round_m < -tol {
             let v = -self.dist_round_m;
-            if self.dist_round_m != -999 && v > 998 {
+            let m = if self.dist_round_m != -999 && v > 998 {
                 999
             } else {
                 v
-            }
+            };
+            // 0x4143fa: the metres are multiplied by 0x856fb8 (1–3) on the result screen.
+            m * self.table(&self.tables.overrun_factor)
         } else {
             0
         };
@@ -2291,10 +2401,9 @@ impl Rules {
             self.phase = Phase::Cleared;
             return StationOutcome::Cleared;
         }
-        if self.remaining_s < 1 {
-            self.phase = Phase::GameOver;
-            return StationOutcome::GameOver;
-        }
+        // Out of time: 0x40d340 still updates the target, resets the segment state and adds
+        // the dwell (oracle: stops-drive.csv row 4381, clock +690 with the game over).
+        let game_over = self.remaining_s < 1;
         self.scheduled = self.target_row().time_ticks;
         self.final_station = self.is_final_next();
         self.reset_segment_state();
@@ -2302,7 +2411,11 @@ impl Rules {
         self.displayed = None;
         // 0x40d340 may also start scripted weather here when the global frame counter is a
         // multiple of 4; that depends on non-rule state and is left to the caller.
-        self.build_blocks();
+        self.signals_pending = true;
+        if game_over {
+            self.phase = Phase::GameOver;
+            return StationOutcome::GameOver;
+        }
         self.phase = Phase::PreDeparture;
         StationOutcome::Continue
     }
@@ -2310,10 +2423,15 @@ impl Rules {
     /// Continue after a game over (0x40d930): back to the last stopping station with a fresh
     /// remaining time.
     pub fn continue_run(&mut self) {
-        let row_stops = |r: &Self, i: usize| r.timetable.get(i).is_some_and(|t| t.stops == 1);
-        while !row_stops(self, self.station) && self.station != 0 {
-            self.station -= 1;
+        if self.approach > 0 {
+            // 0x4080d0 (continue branch): out of time inside the station approach
+            // (0x856d9a ≥ 1). The run first moves on to the target station as if it had been
+            // reached (0x856fb0 = 1, 0x40d340), then 0x40d930 rewinds from there. Oracle:
+            // yamate-drive.csv continues at station 2 after timing out 11 m short of it.
+            self.remaining_s = 1;
+            self.next_segment();
         }
+        self.station = self.rewind_station(self.station);
         self.stats = [0; STAT_COUNT];
         self.early_ticks = 0;
         self.pending_s = 0;
@@ -2337,8 +2455,27 @@ impl Rules {
             self.weather_ticks = 0;
             self.weather_on = false;
         }
-        self.build_blocks();
+        self.signals_pending = true;
         self.phase = Phase::PreDeparture;
+    }
+
+    /// 0x40d930: the last stopping station at or before `station`.
+    fn rewind_station(&self, mut station: usize) -> usize {
+        let stops = |i: usize| self.timetable.get(i).is_some_and(|t| t.stops == 1);
+        while !stops(station) && station != 0 {
+            station -= 1;
+        }
+        station
+    }
+
+    /// The station [`Rules::continue_run`] would restart from (to load its route in advance).
+    pub fn continue_station(&self) -> usize {
+        let from = if self.approach > 0 {
+            self.station + 1
+        } else {
+            self.station
+        };
+        self.rewind_station(from)
     }
 
     // ----------------------------------------------------------------------------------------
@@ -2434,6 +2571,7 @@ mod tests {
             stopped_between_s: diff(5),
             horn_missed_s: diff(5),
             repower_s: diff(10),
+            overrun_factor: diff(1),
             horn_bonus_s: diff(3),
             exact_stop_bonus_s: diff(10),
             on_time_stop_bonus_s: diff(5),
@@ -2514,6 +2652,7 @@ mod tests {
 
     fn rules(course: Vec<CourseEvent>, limits: Vec<CourseEvent>) -> Rules {
         let mut r = Rules::new(&tables(), &stage(course, limits), 3, 1, 0).unwrap();
+        r.rebuild_signals();
         r.depart();
         r
     }

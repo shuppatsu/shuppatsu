@@ -95,7 +95,7 @@ impl RulesReport {
 
 /// Engine value of a compared field.
 #[derive(Debug, Clone, Copy)]
-enum Out {
+pub(super) enum Out {
     Int(i64),
     Float(f32),
 }
@@ -103,7 +103,7 @@ enum Out {
 /// Start addresses of each stage's course and limit lists, to turn logged cursors into indices.
 pub type ListBases = Vec<(u32, u32)>;
 
-fn engine_fields(r: &Rules, bases: (u32, u32)) -> Vec<(&'static str, Out)> {
+pub(super) fn engine_fields(r: &Rules, bases: (u32, u32)) -> Vec<(&'static str, Out)> {
     use Out::{Float as F, Int as I};
     let b = |v: bool| I(i64::from(v));
     let (course, limits) = r.event_cursors();
@@ -264,11 +264,11 @@ pub fn print_report(report: &RulesReport) {
 }
 
 /// Paused rows repeat the global tick (only the render list runs); the rules don't step.
-fn paused(t: &Trace, r: usize) -> bool {
+pub(super) fn paused(t: &Trace, r: usize) -> bool {
     r > 0 && t.has("global_tick") && t.get(r, "global_tick") == t.get(r - 1, "global_tick")
 }
 
-fn phase(t: &Trace, r: usize) -> i64 {
+pub(super) fn phase(t: &Trace, r: usize) -> i64 {
     t.get(r, "phase_flags").int().unwrap_or(0)
 }
 
@@ -736,6 +736,7 @@ mod tests {
             stopped_between_s: diff(5),
             horn_missed_s: diff(5),
             repower_s: diff(10),
+            overrun_factor: diff(1),
             horn_bonus_s: diff(3),
             exact_stop_bonus_s: diff(10),
             on_time_stop_bonus_s: diff(5),
@@ -803,6 +804,8 @@ approach_state,stop_count,stop_error_sum,block_index,stat5";
     /// rules of tick k see row k−1's speed/position and row k's notches.
     fn synthetic_trace() -> String {
         let mut e = Rules::new(&tables(), &stage(), 3, 1, 0).unwrap();
+        // The segment setup builds the signals (0x40b970).
+        e.rebuild_signals();
         let mut out = String::from(COLUMNS);
         out.push('\n');
         let (mut speed, mut odo, mut units) = (0.0f32, 0.0f32, 150.0f32);

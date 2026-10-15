@@ -753,11 +753,16 @@ pub fn gradient_at(route: &Route, pos: TrackPos) -> f32 {
 
 /// Heading of the camera's track chord (0x41d160 → 0x850288): `atan2(Δz, Δx)` from the
 /// camera's point to the next one. 0 off the end.
+///
+/// Δz is stored to a float temporary first (0x41d31f `fstp dword [esp+0xc]`, reloaded for
+/// `fpatan` at 0x41d362) while Δx stays on the FPU stack; the rounding of Δz is visible in
+/// the result (oracle: yamate-drive.csv row 6431).
 pub fn heading_at(route: &Route, pos: TrackPos) -> f32 {
     let slot = pos.slot(route);
     match (route.slots.get(slot), route.slots.get(slot + 1)) {
         (Some(a), Some(b)) => {
-            (f64::from(b.z) - f64::from(a.z)).atan2(f64::from(b.x) - f64::from(a.x)) as f32
+            let dz = b.z - a.z;
+            f64::from(dz).atan2(f64::from(b.x) - f64::from(a.x)) as f32
         }
         _ => 0.0,
     }
