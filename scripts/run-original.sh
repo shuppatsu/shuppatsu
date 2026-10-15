@@ -4,7 +4,8 @@
 # and the disc presented by scripts/mount-disc.sh.
 #
 # Usage: scripts/run-original.sh [dengo3k.exe|DengoSetting.exe] [args...]
-# Env:   DDG_WINE_DISPLAY=wayland|desktop   (default: wayland if available, else desktop)
+# Env:   DDG_WINE_DISPLAY=gamescope|wayland|desktop (default: wayland if available, else desktop)
+#        DDG_WINE_WINDOW_W/H                gamescope window size (default 1280x960)
 #        DDG_WINE_DESKTOP=WxH               virtual desktop size for "desktop" (default 640x480)
 #
 # Why: the game calls SetDisplayMode(640x480x16) and creates a 640x480 Z-buffer. Under
@@ -26,11 +27,20 @@ case $mode in
     wine reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d wayland /f >/dev/null
     exec wine "$exe" "$@"
     ;;
+  gamescope)
+    # Nested compositor: a normal desktop window whose inner "screen" is 640x480, so the
+    # game's mode change matches and the output is scaled into the window.
+    wine reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d x11 /f >/dev/null
+    # The dev shell's LD_LIBRARY_PATH breaks gamescope (SDL3 load fails); restore it for Wine only.
+    exec env -u LD_LIBRARY_PATH nix shell nixpkgs#gamescope -c gamescope -w 640 -h 480 \
+      -W "${DDG_WINE_WINDOW_W:-1280}" -H "${DDG_WINE_WINDOW_H:-960}" -- \
+      env LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" wine "$exe" "$@"
+    ;;
   desktop)
     wine reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d x11 /f >/dev/null
     # explorer resolves the program on the Windows search path, not the cwd, so pass the
     # game directory explicitly via start.exe (/d also sets the working directory).
     exec wine explorer "/desktop=dengo3k,${DDG_WINE_DESKTOP:-640x480}" start /wait /d "$bin" "$exe" "$@"
     ;;
-  *) echo "DDG_WINE_DISPLAY must be wayland or desktop" >&2; exit 1 ;;
+  *) echo "DDG_WINE_DISPLAY must be gamescope, wayland or desktop" >&2; exit 1 ;;
 esac
