@@ -2,7 +2,10 @@
 //!
 //! Format specifications with evidence and confidence levels live in `docs/re/`.
 
+pub mod audio;
+pub mod cg;
 pub mod error;
+pub mod exe;
 pub mod lz;
 pub mod part;
 pub mod reader;
@@ -11,5 +14,6 @@ pub mod route;
 pub mod sha256;
 pub mod stages;
 pub mod strings;
+pub mod tex;
 
 pub use error::{FormatError, Result};
