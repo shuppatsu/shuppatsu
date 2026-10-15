@@ -39,6 +39,12 @@ pub fn render_to_ppm(
     renderer.upload_pages(&device, &queue, &scene.library.pages);
     let mut frame = ddg_render::FrameGeometry::default();
     scene.compose(&mut frame, pos, false);
+    eprintln!(
+        "frame at engine index {}: {} triangles, {} missing parts",
+        pos.engine_index,
+        frame.triangle_count(),
+        frame.missing_parts
+    );
     renderer.set_geometry(&device, &queue, &frame);
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
     renderer.render(
