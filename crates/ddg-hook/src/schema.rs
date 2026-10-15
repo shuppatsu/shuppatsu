@@ -1,7 +1,7 @@
 //! Trace schema: which globals of the original exe are logged per tick.
 //!
 //! One field per line: `name address type`, e.g. `speed 0x857234 f32`. `#` starts a comment.
-//! Types: u8 i8 u16 i16 u32 i32 f32 f64.
+//! Types: u8 i8 u16 i16 u32 i32 f32 f64, and `fpucw` (the x87 control word; address ignored).
 
 use std::fmt::Write as _;
 
@@ -15,6 +15,8 @@ pub enum FieldType {
     I32,
     F32,
     F64,
+    /// Not memory: the x87 FPU control word of the game thread at log time (address ignored).
+    FpuCw,
 }
 
 impl FieldType {
@@ -24,6 +26,7 @@ impl FieldType {
             Self::U16 | Self::I16 => 2,
             Self::U32 | Self::I32 | Self::F32 => 4,
             Self::F64 => 8,
+            Self::FpuCw => 2,
         }
     }
 
@@ -37,6 +40,7 @@ impl FieldType {
             "i32" => Self::I32,
             "f32" => Self::F32,
             "f64" => Self::F64,
+            "fpucw" => Self::FpuCw,
             _ => return None,
         })
     }
@@ -48,6 +52,7 @@ impl FieldType {
             Self::U8 => write!(out, "{}", b[0]),
             Self::I8 => write!(out, "{}", b[0] as i8),
             Self::U16 => write!(out, "{}", u16::from_le_bytes([b[0], b[1]])),
+            Self::FpuCw => write!(out, "{:04x}", u16::from_le_bytes([b[0], b[1]])),
             Self::I16 => write!(out, "{}", i16::from_le_bytes([b[0], b[1]])),
             Self::U32 => write!(out, "{}", u32::from_le_bytes([b[0], b[1], b[2], b[3]])),
             Self::I32 => write!(out, "{}", i32::from_le_bytes([b[0], b[1], b[2], b[3]])),
@@ -66,8 +71,18 @@ impl FieldType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Field {
     pub name: String,
-    pub address: u32,
+    pub address: Address,
     pub ty: FieldType,
+}
+
+/// Where a field lives.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Address {
+    /// A global at a virtual address of the exe.
+    Global(u32),
+    /// An offset into the physics task object (the task in list 2 whose update function is
+    /// 0x422c20; docs/re/physics.md §8). Written `task+0x38`.
+    PhysicsTask(u32),
 }
 
 /// Parses a schema file. Errors name the offending line.
@@ -82,8 +97,14 @@ pub fn parse(text: &str) -> Result<Vec<Field>, String> {
         let [name, addr, ty] = parts[..] else {
             return Err(format!("line {}: expected `name address type`", n + 1));
         };
-        let address = u32::from_str_radix(addr.trim_start_matches("0x"), 16)
-            .map_err(|e| format!("line {}: address {addr}: {e}", n + 1))?;
+        let hex = |h: &str| {
+            u32::from_str_radix(h.trim_start_matches("0x"), 16)
+                .map_err(|e| format!("line {}: address {addr}: {e}", n + 1))
+        };
+        let address = match addr.strip_prefix("task+") {
+            Some(off) => Address::PhysicsTask(hex(off)?),
+            None => Address::Global(hex(addr)?),
+        };
         let ty =
             FieldType::parse(ty).ok_or_else(|| format!("line {}: unknown type {ty}", n + 1))?;
         fields.push(Field {
@@ -113,7 +134,11 @@ mod tests {
     fn parses_and_formats() {
         let f = parse("# comment\nspeed 0x857234 f32\nnotch 829d00 i32 # trailing\n").unwrap();
         assert_eq!(f.len(), 2);
-        assert_eq!(f[0].address, 0x857234);
+        assert_eq!(f[0].address, Address::Global(0x857234));
+        assert_eq!(
+            parse("fade task+0x38 f32").unwrap()[0].address,
+            Address::PhysicsTask(0x38)
+        );
         assert_eq!(f[1].ty, FieldType::I32);
         assert_eq!(header(&f), "hook_tick,speed,notch");
         let mut s = String::new();

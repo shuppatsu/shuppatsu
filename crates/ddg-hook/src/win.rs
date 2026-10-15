@@ -11,7 +11,7 @@
 //! - `DDG_HOOK_INPUTS`: optional input script (see `script.rs`).
 //! - `DDG_HOOK_LOG`: optional diagnostics log.
 
-use crate::schema::{self, Field};
+use crate::schema::{self, Address, Field};
 use crate::script::Script;
 use std::ffi::c_void;
 use std::fs::File;
@@ -42,6 +42,9 @@ const PHASE_FLAGS: u32 = 0x855ff8;
 /// Phase flag bit set while the driving loop runs (main-loop.md §5, likely).
 const PHASE_DRIVING: u32 = 0x200;
 const POWER_NOTCH: u32 = 0x829d00;
+/// Task list 2 (head, tail, disabled; main-loop.md §2) and the physics task's update function.
+const TASK_LIST_2: u32 = 0x84c198;
+const PHYSICS_UPDATE: u32 = 0x422c20;
 const BRAKE_NOTCH: u32 = 0x829d04;
 
 static ORIGINAL_PEEK: AtomicUsize = AtomicUsize::new(0);
@@ -77,6 +80,37 @@ impl HookState {
         // above); the loader maps the whole image readable, and these are plain data globals.
         unsafe { std::ptr::copy_nonoverlapping(va as usize as *const u8, out.as_mut_ptr(), len) };
         Some(out)
+    }
+
+    /// Reads `len` bytes of a heap object (a task allocated by the game). Only used for
+    /// pointers found by walking the game's own task list.
+    fn read_heap(&self, addr: u32, len: usize) -> Option<Vec<u8>> {
+        if addr < 0x10000 {
+            return None;
+        }
+        let mut out = vec![0u8; len];
+        // SAFETY: `addr` comes from the game's live task list (see `find_physics_task`), i.e. a
+        // malloc'd task object of at least 0x30 + task data bytes; we read on the game thread,
+        // so the list cannot change concurrently. Offsets come from docs/re/physics.md §8.
+        unsafe { std::ptr::copy_nonoverlapping(addr as usize as *const u8, out.as_mut_ptr(), len) };
+        Some(out)
+    }
+
+    /// Walks task list 2 for the task whose update function is the physics task's.
+    fn find_physics_task(&self) -> Option<u32> {
+        let mut node = self.read_u32(TASK_LIST_2)?;
+        for _ in 0..1024 {
+            if node == 0 {
+                return None;
+            }
+            let update = self.read_heap(node + 8, 4)?;
+            if u32::from_le_bytes([update[0], update[1], update[2], update[3]]) == PHYSICS_UPDATE {
+                return Some(node);
+            }
+            let next = self.read_heap(node + 4, 4)?;
+            node = u32::from_le_bytes([next[0], next[1], next[2], next[3]]);
+        }
+        None
     }
 
     fn read_u32(&self, va: u32) -> Option<u32> {
@@ -122,11 +156,21 @@ impl HookState {
             self.write_i32(BRAKE_NOTCH, brake);
         }
         if self.trace.is_some() {
+            let physics_task = self.find_physics_task();
             let mut row = String::new();
             row.push_str(&self.driving_tick.map_or(-1, i64::from).to_string());
             for f in &self.fields {
                 row.push(',');
-                match self.read(f.address, f.ty.size()) {
+                let value = if f.ty == schema::FieldType::FpuCw {
+                    Some(fpu_control_word().to_le_bytes().to_vec())
+                } else {
+                    match f.address {
+                        Address::Global(va) => self.read(va, f.ty.size()),
+                        Address::PhysicsTask(off) => physics_task
+                            .and_then(|t| self.read_heap(t.wrapping_add(off), f.ty.size())),
+                    }
+                };
+                match value {
                     Some(b) => f.ty.format(&b, &mut row),
                     None => row.push('?'),
                 }
@@ -140,6 +184,15 @@ impl HookState {
             }
         }
     }
+}
+
+/// The x87 control word of the current thread (precision bits 8–9: 00 = 24-bit, 10 = 53-bit,
+/// 11 = 64-bit), to settle the physics precision question (physics.md).
+fn fpu_control_word() -> u16 {
+    let mut cw: u16 = 0;
+    // SAFETY: `fnstcw` only stores the control word to the given memory; no other state changes.
+    unsafe { std::arch::asm!("fnstcw [{}]", in(reg) &mut cw, options(nostack)) };
+    cw
 }
 
 unsafe extern "system" fn peek_message_hook(
