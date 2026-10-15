@@ -22,7 +22,9 @@ commands:
                                   write PNG/WAV from $DDG_DATA_DIR to out/export (default)
                                   what: textures | tilemaps | audio | models | routes | all
   check [-v]                      Phase 2 exit check: every file in $DDG_DATA_DIR parsed or documented
-  trace-replay <trace.csv> [-v]   replay an oracle trace through the engine physics and compare";
+  trace-replay <trace.csv> [-v] [--rules]
+                                  replay an oracle trace through the engine physics (or, with
+                                  --rules, the game rules) and compare";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -46,11 +48,13 @@ fn main() -> Result<()> {
         "export" => run_export(&args[1..]),
         "trace-replay" => {
             let dirs = export::GameDirs::from_env()?;
-            let ok = trace::replay_physics(
-                &path(1)?,
-                &dirs.bin.join("dengo3k.exe"),
-                args.get(2).is_some_and(|a| a == "-v"),
-            )?;
+            let flag = |f: &str| args.iter().skip(2).any(|a| a == f);
+            let exe = dirs.bin.join("dengo3k.exe");
+            let ok = if flag("--rules") {
+                trace::rules::replay_rules(&path(1)?, &exe, flag("-v"))?
+            } else {
+                trace::replay_physics(&path(1)?, &exe, flag("-v"))?
+            };
             if ok { Ok(()) } else { bail!("trace mismatch") }
         }
         "check" => {

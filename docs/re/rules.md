@@ -86,8 +86,11 @@ keeps transferring time. The engine models them as `Phase::Holding`.
   starting at 0) moves pending time into the remaining time **one second every third tick**
   (`counter % 3 == 2`, 0x4100b2): positive → `+1` (cap 999, sound 0x26), negative → `−1`
   (sound 0x27; at 0 the unit is dropped). The digits blink while `remaining ≤ 14`. **confirmed**
-* **Game over**: after the rule functions, `if remaining ≤ 0` the stage ends (0x40857b): the
-  pending change is discarded (`0x856d7c = 0`), a continue is offered unless it was the final
+* **Game over**: after the rule functions, `if remaining ≤ 0` the stage ends (0x40857b) and
+  `0x855ff8` gets 0x10 (the train coasts to a stop under 0x210). The HUD keeps transferring for
+  the 20-tick wait; only then is the rest of the pending change discarded (`0x856d7c = 0` at
+  0x4085d0). **confirmed** (oracle: hilly-drive.csv still shows pending −1 on the game-over row
+  and the HUD draining it 2 rows later). A continue is offered unless it was the final
   station. Remaining time can also hit 0 by derailment (§8). Between stations,
   `remaining < 1` at the station result also ends the run (0x40d340), unless the station was the
   last one (then the run is cleared). **confirmed**
@@ -287,7 +290,7 @@ stats (`0x857020`), the early accumulator and the clock skew, and `0x8570b8 += 1
 | 1 / 2 | sound `a` / station announcement `a` | presentation | confirmed |
 | 3 | horn | `a = 1`: whistle sign, horn (held) required within `b` m (odometer deadline `0x856d6a`, an **i16**), else −0x45a810 s and stat 10 += 2. `a = 0`: horn bonus zone of `b` m: pressing the horn gives `max(1, trunc(0x45a950 × min(1, metres_left × 0.04)))` s. Other `a`: sign only | confirmed |
 | 4 / 5 / 6 | speed limit | §5 (course variant: `c` = enforcement offset) | confirmed |
-| 7 | derail speed | sound 0xe, `0x856cf4 = a`, derailment speed `0x84c424 = b` km/h (default 1000, 210 in the bonus section) | confirmed |
+| 7 | derail speed | sound 0xe, `0x856cf4 = a`, ATC / derailment speed `0x84c424 = b` km/h (default **999** = 0x4479c000, 210 in the bonus section; oracle: 999) | confirmed |
 | 8 | obstacle stop | only if armed by a scripted signal kind 1 and not used yet: bell, stop target `odo + a·1.25 − 5`; the clock stops; reaching it forces v = 0; when stopped, ~36 ticks of scripted recovery, wet rails | confirmed (code), hold length guess |
 | 9, 13, 17, 23 | HUD/screen effects | presentation | likely |
 | 10 / 11 | no-power section | 10 enters (`0x856fba = 1`), any power → 2; 11 exits: still 1 → **+0x45ad10 s**. Stopping inside costs 10 s | confirmed (name **guess**: AC/DC dead section, only Akita/Ōu stages have bonuses) |
@@ -305,9 +308,28 @@ stats (`0x857020`), the early accumulator and the clock skew, and `0x8570b8 += 1
   approach. **confirmed** (code); the intent of the `% 4` is unclear.
 * **Derailment** (train task 0x422e51): `speed > (0x84c424 + 3) × 0.27777777` sets the remaining
   time to 0. **confirmed**
-* **False start**: the departure task (0x4133c5) trips the ATS if power is applied in the
-  countdown window; the pre-departure loop then charges 0x45a6d0 s (kind 9) and stat 8 += 2.
-  **confirmed**
+* **Departure task** (update 0x413370, created per segment; counter task+0x34 from 0 in the
+  segment setup tick, offset task+0x38 = 180 at station 0 of stages 0–2 and 17–19, else 0):
+  * **False start**: counter in (32, offset+200), power > 0, ATS idle → ATS = 1, stat 8 += 2, and a
+    70-tick freeze (task+0x50) during which the counter holds at 199. The pre-departure loop then
+    turns ATS 1 into 2 and charges 0x45a6d0 s (kind 9); leaving the wait resets the ATS to 0.
+  * **Brake released**: every tick with counter ≥ offset+160 and applied brake (`0x856cfa`) = 0
+    counts in task+0x40; at counter = offset+200, if any → **stat 2 += 1**.
+  * At counter ≥ offset+201 the wait ends (`0x800` cleared); the task itself ends once the train
+    moves at ≥ 0.04 m/s.
+  **confirmed** (code 0x4133c5–0x413790; oracle hilly-drive.csv: 381 waiting rows at offset 180,
+  stat 2 = 1 at counter 380, a false start with ATS = 2 on the last waiting row of the continue).
+* **Ride comfort** (train task, after the physics step; inputs `TrainReadout`):
+  * jolt: remaining > 0, ATS ≤ 1, no obstacle, spec jolt limit (+0x38) ≤ `0x84c3f8` and
+    ≤ `0x84c420` → stat 3 += 1. **confirmed** (oracle: stat 3 matches).
+  * notch slam: speed > 0, `0x8571f8` > 150, and |`0x84c3ec`| ≥ 5 with last brake ≤ 8, or B8 from
+    below 8 under 12 m/s → `0x8571f8` = 0, stat 11 += 2. `0x8571f8`: 100 at segment start,
+    +1 per driving tick up to 200 (0x40cc04), 0 under ATS emergency or obstacle. **confirmed**
+    (code; not exercised by the trace).
+  * accelerating through 95 % of the spec top speed (+0x14) → stat 0 += 2. **confirmed** (code; not
+    exercised).
+  * EB applications also count the B9 the game forces at run start (input_force_notches(0, 9)):
+    `0x8571e0` = 1 already on the first waiting row. **likely** (oracle)
 
 ## 9. Statistics, grades and ranking
 
@@ -318,7 +340,7 @@ Not on stage 2 station 24. **confirmed**
 |---|---|
 | 0 | ride comfort (train task 0x423587) |
 | 1 | \|lateness\| in s at each stop/pass |
-| 2 | 0x4136fd (result screen) |
+| 2 | brake released before departure +1 (departure task 0x4136fd) |
 | 3 | re-power +5; comfort +1 (0x4233d4) |
 | 4 | EB penalty +6, EB in approach +2 |
 | 5 | overspeed +5 |
@@ -329,8 +351,8 @@ Not on stage 2 station 24. **confirmed**
 | 10 | horn missed +2 |
 | 11 | brake jerk (train task 0x4234d9 / 0x423536) +2 |
 
-Categories 0, 3 (+1) and 11 come from the physics task's comfort checks and are left to the physics
-module (`Rules::add_stat`).
+Categories 0, 3 (+1) and 11 come from the train task's comfort checks; the rules compute them from
+the physics readout passed to `Rules::end_tick` (§8).
 
 **Grade** (0x40dfd0), five parts, `div(x) = trunc(x / (continues + 0.2))` when continues > 0:
 `M = clamp(P − continues/3, 1, 20)` with progress `P = (station+1)/stations × 21` (stage 1 before
@@ -408,13 +430,22 @@ Sum `0x856c88` (0–100). **Ranking value** (0x4080d0 → 0x41e8d0):
 | 0x856fe1[] | u8 | station marks |
 | 0x855ff8 | u32 | phase flags (0x200 driving, 0x800 pre-departure, 2 stage active) |
 
+Added for the rules replay (`ddg-tools trace-replay <csv> --rules`, `crates/ddg-tools/src/trace/rules.rs`):
+`buttons_held` 0x48c428 u32, `buttons_pressed` 0x48c42c u32, `track_class_ahead` 0x857202 i16,
+`stat0`..`stat11` 0x857050.. i32, and `units_to_stop` 0x8500c8 f32 in rules.schema. The HUD
+transfer counter is not loggable (no global, not the physics task); the replay infers its phase
+from the first ±1 s transfer in each stretch. Blocks are not logged; the replay rebuilds them at
+each segment start and checks `block_index` / `aspect`.
+
 Hook points for event-level traces: 0x415080 (every time message: kind, seconds), 0x4122c0
 (pending change), 0x411500 (signal shown), 0x40dd60 (stats).
 
 ## 12. Engine notes and approximations
 
-* `Rules::tick` follows the order of §1. Inputs are the values the original loop sees before this
-  tick's physics; the train-task part runs at the end of the tick with the same speed.
+* `Rules::step` runs the rule functions of §1 (inputs as the loop sees them before this tick's
+  physics); then the caller steps the physics and calls `Rules::end_tick(readout)` for the train
+  task's rule parts, the departure task and the HUD transfer (`Rules::tick` = both, without a
+  readout). The pre-departure wait is ended by the departure task, not by the caller.
 * The blocking sequences are modelled as holds of the documented length. The arrival is split into
   `Holding`(80, forced stop only) → `Draining` (until pending = 0) → evaluation → `Holding`(31/101)
   → `Arrived`. The exact number of `Task_Tick`s around 0x407ff0 and the obstacle sequence are
@@ -431,11 +462,40 @@ Hook points for event-level traces: 0x415080 (every time message: kind, seconds)
 
 ## 13. Open questions
 
-* Oracle-check everything above, especially the hold lengths, the HUD counter phase at departure,
-  and the EB `% 4` rule.
+* Oracle coverage so far (§14): stations reached by stopping, the arrival evaluation and result
+  deductions, the approach state, EB penalty, weather, obstacle, notch slam and 95 % checks, the
+  clock skew and continues past a stop are not yet exercised. The hold lengths and the EB `% 4`
+  rule still need a trace.
 * The horn deadline `0x856d6a` is an i16: with an odometer above 32 767 m a whistle sign would
   expire immediately. No whistle sign lies that far in the shipped data (only the Akita bonus
   section beyond 32 km), so it is latent.
 * Meaning of kinds 18/19 (`0x84c400`) and of display variant `0x8570c2`.
 * Difficulty names for columns 0–3.
-* Stat 2 source (0x4136fd) and the comfort counters belong to the physics/HUD agents.
+
+## 14. Oracle replay (hilly-drive.csv)
+
+`ddg-tools trace-replay <csv> --rules` (`crates/ddg-tools/src/trace/rules.rs`) drives the engine
+from the logged inputs (row k: notches, buttons, tunnel class; row k−1: speed, odometer,
+`units_to_stop × 10`) from the first row of each pre-departure wait, and compares 65 rule globals
+per tick (integers exactly, floats bit for bit). The HUD transfer phase is inferred from the first
+visible transfer. A stretch ends when the engine arrives or the game ends.
+
+Result on `hilly-drive.csv` (stage 0, two waits + driving, ending in time over; the continue):
+**2 stretches, 6911 ticks, 0 mismatches in all 65 fields.** Fixes the trace required:
+
+| Fix | Evidence | Conf. |
+|---|---|---|
+| ATC/derail default 999 km/h, not 1000 (0x4479c000) | `derail_kmh` = 999 on every row | confirmed |
+| Pending time is not discarded on the game-over tick | pending −1 on row 7540, drained by the HUD at 7542 | confirmed |
+| Departure task: wait length, false start, stat 2 | 381 waiting rows; stat 2 at the 380th; ATS 2 at row 8162 | confirmed |
+| Jolt statistic (stat 3 += 1) from the physics readout | stat 3 matches on all rows | confirmed |
+| `0x857094` (pass streak) is an i16; `0x857096` is a separate turnout flag | logged i32 read 65536 when passing a turnout | confirmed |
+
+Fields that never changed in this trace (so only their initial value is checked): approach state
+and speed, stop count / error sum / streak, EB-in-approach, re-power, forced stop, obstacle,
+weather, clock skew, display variant, horn state (no whistle sign reached), ATS confirmation
+(the chime start never left −1), stats 0, 4, 6, 9, 10, 11. Exercised: lateness drain, pass
+stations and the on-time pass streak, signal blocks and aspects (3 values), restriction counter,
+repeaters, speed limits with a violation, signal overspeed → ATS bell → emergency brake →
+red-signal recovery, no-power section, early-running accumulator, false start, departure brake
+release, jolt, game over.

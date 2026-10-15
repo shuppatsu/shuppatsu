@@ -66,8 +66,29 @@ const SIGNAL_HINT_MPS: f32 = 1.1;
 /// 0x422e51) zeroes the remaining time.
 const DERAIL_SLACK_KMH: f64 = 3.0;
 const DERAIL_FACTOR: f64 = 0.277_777_77;
-/// Default derailment speed 1000 km/h (0x4479c000, 0x40b970), i.e. none.
-const DERAIL_NONE_KMH: f32 = 1000.0;
+/// Default ATC / derailment speed: 0x4479c000 = 999.0 km/h (0x40b970), i.e. none. Oracle:
+/// `derail_kmh` reads 999 (hilly-drive.csv).
+const DERAIL_NONE_KMH: f32 = 999.0;
+/// Jolt / notch-slam cooldown `0x8571f8`: 100 at segment start (0x40cf40), +1 per driving tick up
+/// to 200 (0x40cc04), a slam needs > 150 (0x42349e).
+const COOLDOWN_START: i32 = 100;
+const COOLDOWN_MAX: i32 = 200;
+const COOLDOWN_READY: i32 = 150;
+/// Notch slam: brake history delta of 5 notches (0x423494); B8 from below under 12 m/s
+/// (double 12.0 at 0x469770).
+const SLAM_DELTA: i32 = 5;
+const SLAM_B8_MPS: f64 = 12.0;
+/// 95 % of the top speed (double 0.95 at 0x4726a8, 0x423564).
+const TOP_SPEED_SHARE: f64 = 0.95;
+/// Departure task (0x413370): window and timings relative to the task counter.
+const DEPART_FALSE_START_FROM: i32 = 0x20;
+const DEPART_RELEASE_FROM: i32 = 0xa0;
+const DEPART_CHECK_AT: i32 = 200;
+const DEPART_AT: i32 = 0xc9;
+const DEPART_FREEZE: i32 = 0x46;
+const DEPART_HOLD_AT: i32 = 0xc7;
+/// The task ends once the train moves at ≥ 0.04 m/s (double at 0x4594d8, 0x413723).
+const DEPART_MOVING_MPS: f64 = 0.04;
 /// Maximum remaining time: 0x3e7 (0x410104).
 const MAX_REMAINING_S: i32 = 999;
 /// Block array size: 0x856dc0..0x856fa8 holds 40 records of 12 bytes (0x40bfd0).
@@ -447,6 +468,27 @@ pub struct StationResult {
     pub outcome: StationOutcome,
 }
 
+/// What the train task (0x422c20) computed this tick, for the rule checks it contains (ride
+/// comfort statistics). Pass it to [`Rules::end_tick`] after the physics step.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct TrainReadout {
+    /// Speed after this tick's physics, m/s (new `0x857234`).
+    pub speed_after: f32,
+    /// Speed lost over the last tick (`0x84c3f8`).
+    pub decel_prev_tick: f32,
+    /// Brake deceleration per tick (`0x84c420`).
+    pub brake_decel: f32,
+    /// Brake notch change over three ticks (`0x84c3ec`).
+    pub brake_delta: i32,
+    /// Brake notch the physics applied after its overrides (task+0x64 at the end of the tick,
+    /// also `0x856cfa`).
+    pub brake_applied: i32,
+    /// Train spec +0x38: jolt limit.
+    pub jolt_limit: f32,
+    /// Train spec +0x14: top speed, km/h.
+    pub top_speed_kmh: f32,
+}
+
 /// Per-tick output.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct TickOutput {
@@ -607,8 +649,9 @@ pub struct Rules {
     /// Re-power during the approach (`0x8571f6`) and its excuse (`0x857238`).
     pub repowered: i16,
     pub repower_excused: i16,
-    prev_power: i32,
-    prev_brake: i32,
+    /// Notches the train task saw last tick (task +0x60 / +0x64).
+    pub prev_power: i32,
+    pub prev_brake: i32,
     input_power: i32,
     input_brake: i32,
     /// Ticks stopped away from a station (`0x8571ec`).
@@ -628,6 +671,15 @@ pub struct Rules {
     pub weather_level: i32,
     pub weather_ticks: i32,
     pub wet_rails: bool,
+    /// Notch-slam cooldown (`0x8571f8`).
+    pub jolt_cooldown: i32,
+    /// Departure task (0x413370): counter (task+0x34), offset (+0x38), false-start freeze
+    /// (+0x50), brake-released ticks (+0x40); `departure_done` = `0x800` cleared.
+    pub departure_counter: i32,
+    pub departure_base: i32,
+    pub departure_freeze: i32,
+    pub departure_released: i32,
+    pub departure_done: bool,
 
     /// Last arrival lateness, s (`0x856fc0`).
     pub late_s: i32,
@@ -746,6 +798,12 @@ impl Rules {
             obstacle_used: false,
             obstacle_odo: 0.0,
             derail_kmh: DERAIL_NONE_KMH,
+            jolt_cooldown: COOLDOWN_START,
+            departure_counter: 0,
+            departure_base: 0,
+            departure_freeze: 0,
+            departure_released: 0,
+            departure_done: false,
             weather_on: false,
             weather_level: 0,
             weather_ticks: 0,
@@ -866,6 +924,53 @@ impl Rules {
         self.repeater_m = -1;
         self.obstacle_armed = false;
         self.late_s = 0;
+        self.jolt_cooldown = COOLDOWN_START;
+        self.reset_departure();
+    }
+
+    /// A new departure task (created per segment by 0x4124f0): the offset is 180 ticks at the
+    /// first station of stages 0–2 and 17–19, else 0 (0x412fad).
+    fn reset_departure(&mut self) {
+        self.departure_counter = 0;
+        self.departure_freeze = 0;
+        self.departure_released = 0;
+        self.departure_done = false;
+        let long = (self.stage <= 2 || self.stage >= 17) && self.station == 0;
+        self.departure_base = if long { 0xb4 } else { 0 };
+    }
+
+    /// One update of the departure task (0x413370), inside `Task_Tick` after the train task.
+    fn departure_task(&mut self, speed_after: f32, brake_applied: i32) {
+        let c = self.departure_counter;
+        let base = self.departure_base;
+        if c > DEPART_FALSE_START_FROM
+            && c < base + DEPART_CHECK_AT
+            && self.input_power > 0
+            && self.ats == 0
+        {
+            self.ats = 1;
+            self.departure_freeze = DEPART_FREEZE;
+            self.stat(8, 2);
+        }
+        if c == base + DEPART_CHECK_AT && self.departure_released > 0 {
+            // Brake released during the last 40 ticks of the countdown (0x4136fd).
+            self.stat(2, 1);
+        }
+        if c >= base + DEPART_AT {
+            self.departure_done = true;
+            if f64::from(speed_after) >= DEPART_MOVING_MPS {
+                return;
+            }
+        }
+        if self.departure_freeze > 0 {
+            self.departure_freeze -= 1;
+        }
+        if !(self.departure_freeze > 0 && self.departure_counter == DEPART_HOLD_AT) {
+            self.departure_counter += 1;
+        }
+        if self.departure_counter >= base + DEPART_RELEASE_FROM && brake_applied == 0 {
+            self.departure_released += 1;
+        }
     }
 
     // ----------------------------------------------------------------------------------------
@@ -915,7 +1020,7 @@ impl Rules {
 
     /// The part of the player-train task (0x422c20, run inside `Task_Tick` after the rules)
     /// that feeds the rules: EB counters, re-power detection and derailment.
-    fn train_task_tick(&mut self, out: &mut TickOutput) {
+    fn train_task_tick(&mut self, out: &mut TickOutput, train: Option<&TrainReadout>) {
         let speed = self.speed_mps;
         let mut brake = self.input_brake;
         let mut power = self.input_power;
@@ -950,8 +1055,55 @@ impl Rules {
                 self.repowered += 1;
             }
         }
+        if self.ats >= 4 || self.obstacle > 0 {
+            self.jolt_cooldown = 0;
+        }
+        if let Some(t) = train {
+            self.comfort_checks(t, speed);
+            brake = t.brake_applied;
+        }
         self.prev_brake = brake;
         self.prev_power = power;
+    }
+
+    /// Ride-comfort statistics of the train task (0x4233a1..0x42358a, physics.md §7). `old` is
+    /// the speed before this tick's physics step; task+0x64 still holds last tick's brake here.
+    fn comfort_checks(&mut self, t: &TrainReadout, old: f32) {
+        // Jolt: both decelerations at or above the train's jolt limit.
+        if self.remaining_s > 0
+            && self.ats <= 1
+            && self.obstacle == 0
+            && t.jolt_limit <= t.decel_prev_tick
+            && t.jolt_limit <= t.brake_decel
+        {
+            self.stat(3, 1);
+        }
+        // Notch slams (the coast flags 0x410 are clear while driving).
+        if old > 0.0 {
+            if t.brake_delta.abs() >= SLAM_DELTA
+                && self.jolt_cooldown > COOLDOWN_READY
+                && self.prev_brake <= 8
+            {
+                self.jolt_cooldown = 0;
+                self.stat(11, 2);
+            }
+            if t.brake_applied == 8
+                && self.prev_brake < 8
+                && f64::from(old) < SLAM_B8_MPS
+                && self.jolt_cooldown > COOLDOWN_READY
+            {
+                self.jolt_cooldown = 0;
+                self.stat(11, 2);
+            }
+        }
+        // Accelerating through 95 % of the top speed.
+        let threshold = f64::from(t.top_speed_kmh) * KMH_TO_MPS * TOP_SPEED_SHARE;
+        if old < t.speed_after
+            && f64::from(t.speed_after) >= threshold
+            && f64::from(old) < threshold
+        {
+            self.stat(0, 2);
+        }
     }
 
     fn stage_active(&self) -> bool {
@@ -1624,6 +1776,9 @@ impl Rules {
             self.time(out, TimeReason::EmergencyBrake, s);
             self.stat(4, 6);
         }
+        if self.jolt_cooldown < COOLDOWN_MAX {
+            self.jolt_cooldown += 1;
+        }
         if self.obstacle & 0xf == 1 {
             self.obstacle += 1;
         }
@@ -1893,27 +2048,37 @@ impl Rules {
     // Public driving API
     // ----------------------------------------------------------------------------------------
 
-    /// One tick before departure (the `0x800` wait in 0x4080d0): the clock runs, a false start
-    /// reported by [`Rules::false_start`] costs time.
+    /// One tick before departure (the `0x800` wait in 0x4080d0): the clock runs, the departure
+    /// task counts down (false start, brake release) and ends the wait. Same as [`Rules::tick`].
     pub fn pre_departure_tick(&mut self, input: &TickInput) -> TickOutput {
-        let mut out = TickOutput::default();
-        self.input_power = input.power;
-        self.input_brake = input.brake;
-        self.speed_mps = input.speed_mps;
+        self.tick(input)
+    }
+
+    /// The pre-departure loop body (0x4084xx): clock, false-start penalty.
+    fn pre_departure_step(&mut self, out: &mut TickOutput) {
         self.clock += 1;
         if self.ats == 1 {
             self.ats = 2;
             let s = self.table(&self.tables.false_start_s);
-            self.time(&mut out, TimeReason::FalseStart, s);
+            self.time(out, TimeReason::FalseStart, s);
         }
-        self.train_task_tick(&mut out);
-        self.hud_tick();
-        out
     }
 
     /// Indices of the next course event and limit event (`0x857088`, `0x8571fc` as list indices).
     pub fn event_cursors(&self) -> (usize, usize) {
         (self.course_cursor, self.limit_cursor)
+    }
+
+    /// Moves the event cursors (to resume a run mid-way, e.g. from an oracle trace).
+    pub fn set_event_cursors(&mut self, course: usize, limits: usize) {
+        self.course_cursor = course.min(self.course.len());
+        self.limit_cursor = limits.min(self.limits.len());
+    }
+
+    /// Rebuilds the signal blocks of the current segment from the current clock, early
+    /// accumulator and aspect (0x40b970), as done at segment start.
+    pub fn rebuild_signals(&mut self) {
+        self.build_blocks();
     }
 
     /// Power applied while the doors were closing (task at 0x4133c5).
@@ -1932,8 +2097,22 @@ impl Rules {
     }
 
     /// One iteration of the driving loop.
+    /// One tick: [`Rules::step`] then [`Rules::end_tick`] without a physics readout (the
+    /// ride-comfort statistics are then skipped).
     pub fn tick(&mut self, input: &TickInput) -> TickOutput {
+        let mut out = self.step(input);
+        self.end_tick(&mut out, None);
+        out
+    }
+
+    /// The rule part of one tick (the loop body of 0x4080d0 before `Task_Tick`). Run the
+    /// physics afterwards, then [`Rules::end_tick`].
+    pub fn step(&mut self, input: &TickInput) -> TickOutput {
         let mut out = TickOutput::default();
+        if self.phase == Phase::PreDeparture && self.departure_done {
+            // The 0x800 wait ended in the last `Task_Tick`: 0x857206 = 0, 0x8570d4 = −1.
+            self.depart();
+        }
         self.input_power = input.power;
         self.input_brake = input.brake;
         self.speed_mps = input.speed_mps;
@@ -1963,12 +2142,23 @@ impl Rules {
                     self.evaluate_stop(&mut out);
                 }
             }
-            Phase::PreDeparture | Phase::Arrived | Phase::GameOver | Phase::Cleared => {}
+            Phase::PreDeparture => self.pre_departure_step(&mut out),
+            Phase::Arrived | Phase::GameOver | Phase::Cleared => {}
         }
         out.emergency_brake = self.ats >= 4;
-        self.train_task_tick(&mut out);
-        self.hud_tick();
         out
+    }
+
+    /// The rule parts of `Task_Tick` after the physics step: the train task's counters and
+    /// comfort checks, the departure task, the HUD time transfer.
+    pub fn end_tick(&mut self, out: &mut TickOutput, train: Option<&TrainReadout>) {
+        self.train_task_tick(out, train);
+        if self.phase == Phase::PreDeparture && !self.departure_done {
+            let speed = train.map_or(self.speed_mps, |t| t.speed_after);
+            let brake = train.map_or(self.input_brake, |t| t.brake_applied);
+            self.departure_task(speed, brake);
+        }
+        self.hud_tick();
     }
 
     fn drive(&mut self, out: &mut TickOutput, input: &TickInput) {
@@ -1993,8 +2183,8 @@ impl Rules {
     }
 
     fn game_over(&mut self, out: &mut TickOutput) {
-        // 0x40859d: the pending change is discarded.
-        self.pending_s = 0;
+        // 0x40859d: the HUD keeps draining for 20 more ticks; 0x4085d0 then discards the rest of
+        // the pending change (oracle: pending still −1 on the game-over row, hilly-drive.csv).
         self.phase = Phase::GameOver;
         out.events.push(RuleEvent::GameOver);
     }

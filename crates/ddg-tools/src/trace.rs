@@ -12,6 +12,8 @@ use ddg_formats::exe::Exe;
 use std::collections::HashMap;
 use std::path::Path;
 
+pub mod rules;
+
 /// One logged value.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Value {
@@ -55,6 +57,11 @@ pub struct Trace {
 impl Trace {
     pub fn load(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path).with_context(|| path.display().to_string())?;
+        Self::parse(&text)
+    }
+
+    /// Parses CSV text (header line, then one row per tick).
+    pub fn parse(text: &str) -> Result<Self> {
         let mut lines = text.lines();
         let header = lines.next().context("empty trace")?;
         let columns = header
@@ -69,6 +76,11 @@ impl Trace {
         Ok(Self { columns, rows })
     }
 
+    /// Whether the trace has a column.
+    pub fn has(&self, name: &str) -> bool {
+        self.columns.contains_key(name)
+    }
+
     pub fn get(&self, row: usize, name: &str) -> Value {
         self.columns
             .get(name)
@@ -76,13 +88,13 @@ impl Trace {
             .unwrap_or(Value::Missing)
     }
 
-    fn f(&self, row: usize, name: &str) -> Result<f32> {
+    pub(crate) fn f(&self, row: usize, name: &str) -> Result<f32> {
         self.get(row, name)
             .f32()
             .with_context(|| format!("row {row}: column {name} missing"))
     }
 
-    fn i(&self, row: usize, name: &str) -> Result<i64> {
+    pub(crate) fn i(&self, row: usize, name: &str) -> Result<i64> {
         self.get(row, name)
             .int()
             .with_context(|| format!("row {row}: column {name} missing"))
@@ -235,6 +247,13 @@ pub fn replay(
             .int()
             .is_some_and(|p| p & DRIVING != 0)
     };
+    // Time over (0x10 set by the stage loop, physics.md §4.1) ends with one more logged tick where
+    // 0x10 is clear but 0x200 still set; the original's physics leaves the train untouched on it
+    // (hilly-drive trace: P5 at rest stays at 0). Treat that tick as the end of the stretch.
+    let coast_released = |r: usize| {
+        let flags = |r: usize| t.get(r, "phase_flags").int().unwrap_or(0);
+        r > 0 && flags(r - 1) & 0x10 != 0 && flags(r) & 0x10 == 0
+    };
     let mut report = Report::default();
     let mut r = 0;
     while r < t.rows.len() {
@@ -245,7 +264,7 @@ pub fn replay(
         let mut state = state_from_row(t, r, tables)?;
         let spec = tables.specs[state.train_type];
         let start = r;
-        while r + 1 < t.rows.len() && driving(r + 1) {
+        while r + 1 < t.rows.len() && driving(r + 1) && !coast_released(r + 1) {
             // Row r+1 was logged at the end of the tick being replayed but before its input poll,
             // so its notches are the ones the physics used, and the driving-loop globals
             // (gradient, flags, limits, clock) were set before the physics ran. Only the heading
