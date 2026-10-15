@@ -81,7 +81,9 @@
         GHIDRA_HOME = "${pkgs.ghidra}/lib/ghidra";
         # The original game needs a Japanese locale (ANSI code page 932) under Wine; the host
         # system may only ship en_US, so use the full glibc locale set.
+        # nixpkgs glibc prefers the versioned variable, which NixOS sets to the system archive.
         LOCALE_ARCHIVE = "${pkgs.glibcLocales}/lib/locale/locale-archive";
+        LOCALE_ARCHIVE_2_27 = "${pkgs.glibcLocales}/lib/locale/locale-archive";
 
         shellHook = ''
           export DDG_DATA_DIR="''${DDG_DATA_DIR:-$PWD/data/extracted}"
