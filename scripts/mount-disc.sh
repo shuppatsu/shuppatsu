@@ -22,10 +22,14 @@ if ! cdemu status >/dev/null 2>&1; then
   for _ in $(seq 30); do cdemu status >/dev/null 2>&1 && break; sleep 1; done
 fi
 
-cdemu unload 0 >/dev/null 2>&1 || true
-cdemu load 0 "$image"
-sleep 2
 dev=$(ls /dev/sr* | head -1)
+if ! cdemu status | grep -qF "$image"; then
+  # Swap images: unmount first, the daemon refuses to unload a busy device.
+  findmnt -n "$dev" >/dev/null && udisksctl unmount -b "$dev"
+  cdemu unload 0 >/dev/null 2>&1 || true
+  cdemu load 0 "$image"
+  sleep 2
+fi
 findmnt -n "$dev" >/dev/null || udisksctl mount -b "$dev"
 mnt=$(findmnt -n -o TARGET "$dev")
 
