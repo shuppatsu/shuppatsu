@@ -6,6 +6,7 @@ pub mod audio;
 pub mod cg;
 pub mod error;
 pub mod exe;
+pub mod hud;
 pub mod lz;
 pub mod part;
 pub mod reader;

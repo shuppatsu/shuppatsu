@@ -209,3 +209,45 @@ fn stage_tables_read_and_agree_with_routes() {
     assert!(checked > 100);
     assert!(worst <= 5.0, "worst {worst} m");
 }
+
+// ---- Driving-HUD tables (docs/re/hud.md) ----
+
+#[test]
+fn hud_tables_read_and_point_at_tilemaps() {
+    use ddg_formats::{cg, exe::Exe, hud::HudTables};
+    let dir = require_data!();
+    let exe_data = exe_bytes(&dir);
+    let exe = Exe::parse(&exe_data).unwrap();
+    let t = HudTables::read(&exe).unwrap();
+    assert_eq!(t.mode_sizes[1], (640, 480));
+    // 43 static slot placements; the first is the current-time label (hud.md §2).
+    assert_eq!(t.layout.len(), 43);
+    let first = t.layout[0].at_640();
+    assert_eq!((first.slot, first.x, first.y), (10, 66, 56));
+    let dist = t.slot(0x5a).unwrap().at_640();
+    assert_eq!((dist.x, dist.y, dist.layer), (496, 408, 3));
+    // Every sprite id must name a tbl.rom tilemap.
+    let maps = cg::parse_tbl(&std::fs::read(dir.join("tbl.rom")).unwrap()).unwrap();
+    let ids = t
+        .time_digits
+        .iter()
+        .chain(&t.clock_digits)
+        .chain(&t.clock_colon_digits)
+        .chain(&t.distance_digits)
+        .chain(&t.brake_sprites)
+        .chain(&t.mascon_sprites)
+        .copied()
+        .chain(
+            t.station_names[5..]
+                .iter()
+                .flat_map(|s| [s.plain, s.highlighted]),
+        );
+    for id in ids {
+        assert!((id as usize) < maps.len(), "sprite {id:#x}");
+    }
+    assert_eq!(t.brake_sprites[9], t.brake_sprites[10]);
+    assert_eq!(t.stage_station_ids.len(), 20);
+    assert!(t.stage_station_ids.iter().all(|s| s.len() >= 2));
+    // Seven-segment "8" lights all segments.
+    assert_eq!(t.segment_masks[8], 0x7f);
+}
