@@ -5,9 +5,8 @@
 #
 # Usage: scripts/run-original.sh [dengo3k.exe|DengoSetting.exe] [args...]
 # Env:   DDG_WINE_DISPLAY=gamescope|wayland|desktop (default: wayland if available, else desktop)
-#          gamescope is EXPERIMENTAL: windowed, but the picture can stop updating because
-#          gamescope drops wined3d-GL presents that reuse the same buffer ("same buffer
-#          committed twice"). The game itself keeps running.
+#          gamescope = windowed. The game ignores the window-manager close button (KWin then
+#          reports it as frozen); quit from the in-game menu or run `wineserver -k`.
 #        DDG_WINE_WINDOW_W/H                gamescope window size (default 1280x960)
 #        DDG_WINE_DESKTOP=WxH               virtual desktop size for "desktop" (default 640x480)
 #
