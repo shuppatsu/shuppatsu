@@ -230,7 +230,7 @@ Limit events (0x485850, kinds 4/5/6; course events can carry the same kinds) —
 ### 7.1 Approach
 
 * `0x856d74` = target station stops (timetable field 3). `0x856d9a` approach state: 1 when the
-  distance drops below field 6 (and the speed in km/h is latched in `0x856d8c`), 2 next tick,
+  distance drops below field 6 (and the speed in km/h is latched in `0x856d8c`, which is **never reset**: 0x40cf40 clears 0x856d88, not 0x856d8c; confirmed, stops-drive.csv carries 78.28 km/h into the next segment), 2 next tick,
   3 below 80 % of field 6, 4 when overrun by > 20 m (not at the final station). **confirmed**
 * **Re-power** (train task 0x422eb3): during the approach (`0x856d9a > 0`), raising the power
   notch while no ATS, or any power once in state ≥ 3, sets `0x8571f6` (once) and stat 3 += 5.
@@ -255,9 +255,12 @@ Let `d` = distance rounded to metres half away from zero (`0x85722c`), `tol` = 0
   no-power section costs 10 s once. **confirmed**
 * **At the station** (`d ≤ tol`, overrun allowed): the stop is accepted.
   1. If past field 8: −20 s (message only at the final station), 80 ticks hold, stop error + 20.
-  2. Wait until the pending time is 0.
-  3. Stop error sum `0x856fa4 += |dist|`, stop count `0x856fc8 += 1`, `late = clock/30 −
-     sched/30` (stat 1 += |late|), early accumulator.
+  2. Wait until the pending time is 0 (0x407ff0: loop while pending ≠ 0, then one more
+     `Task_Tick`).
+  3. Stop error sum `0x856fa4 += |dist|`, stop count `0x856fc8 += 1`, ATS reset; then one
+     `Task_Tick`; then `late = clock/30 − sched/30` (stat 1 += |late|), early accumulator. So
+     the lateness lands one tick after the stop count (**confirmed**, stops-drive.csv rows
+     4138/4139).
   4. **Clean stop** = `d == 0` (|dist| < 0.5 m) and no EB in the approach and no EB held and no
      un-excused re-power. On time (`|late| < 3`): **+0x45aa90 + streak** (`0x8570c0`), mark 2;
      otherwise **+0x45ab30**, mark 1. Not clean: streak 0. 100 / 30 ticks hold.
@@ -447,9 +450,11 @@ Hook points for event-level traces: 0x415080 (every time message: kind, seconds)
   task's rule parts, the departure task and the HUD transfer (`Rules::tick` = both, without a
   readout). The pre-departure wait is ended by the departure task, not by the caller.
 * The blocking sequences are modelled as holds of the documented length. The arrival is split into
-  `Holding`(80, forced stop only) → `Draining` (until pending = 0) → evaluation → `Holding`(31/101)
-  → `Arrived`. The exact number of `Task_Tick`s around 0x407ff0 and the obstacle sequence are
-  **likely/guess**.
+  `Holding`(80, forced stop only) → `Draining` (until pending = 0; the tick that finds it 0 is
+  0x407ff0's extra `Task_Tick`) → `Evaluating(1)` (stop error, count) → `Evaluating(2)`
+  (lateness, bonus) → `Holding`(100/30) → `Arrived`. Evaluation timing is **confirmed** by
+  stops-drive.csv (pending was 0 at arrival); the drain with pending ≠ 0, the forced-stop hold and
+  the obstacle sequence are **likely/guess**.
 * `finish_station` counts the remaining pending time in before the result deductions (the HUD
   keeps draining it during the result screen).
 * The signal HUD de-duplication is keyed on `(aspect, display mode, variant)`; the original keys
@@ -462,10 +467,12 @@ Hook points for event-level traces: 0x415080 (every time message: kind, seconds)
 
 ## 13. Open questions
 
-* Oracle coverage so far (§14): stations reached by stopping, the arrival evaluation and result
-  deductions, the approach state, EB penalty, weather, obstacle, notch slam and 95 % checks, the
-  clock skew and continues past a stop are not yet exercised. The hold lengths and the EB `% 4`
-  rule still need a trace.
+* Oracle coverage so far: see §14. Still unexercised: clean-stop and on-time bonuses, the stop
+  streak, the exact-stop bonus, the EB penalty (`% 4` rule), the **horn bonus award and the
+  missed-horn penalty** (stops-drive.csv has one bonus zone, horn state 2 at odometer 850–879 m,
+  with no press inside it, and no required whistle sign), the **ATS confirmation** (no ATS
+  acknowledged in time in either trace), forced stop, weather, obstacle, the 95 % check, clock
+  skew, the drain with pending ≠ 0 at arrival, and the hold lengths.
 * The horn deadline `0x856d6a` is an i16: with an odometer above 32 767 m a whistle sign would
   expire immediately. No whistle sign lies that far in the shipped data (only the Akita bonus
   section beyond 32 km), so it is latent.
@@ -499,3 +506,26 @@ stations and the on-time pass streak, signal blocks and aspects (3 values), rest
 repeaters, speed limits with a violation, signal overspeed → ATS bell → emergency brake →
 red-signal recovery, no-power section, early-running accumulator, false start, departure brake
 release, jolt, game over.
+
+### stops-drive.csv
+
+Stage 0, three stretches, 9 277 ticks: stop at station 1 overrunning by 24.6 m (result screen
+deducts it, time runs out, continue), stop at station 2 at 0.17 m (result screen deducts
+20 s), then time over. Both approaches used the EB; the second also re-applied power. Since this trace the replay also checks the **station
+result**: after a stretch ends at the station it runs `finish_station` and compares remaining
+time, stop count / error sum / streak, continues and all statistics with the first row after the
+result screen (`0x855ff8 & 0x40` set, then clear).
+
+Before the fixes: `approach_kmh` 4 770, `last_lateness` 2, `stat1` 2 mismatching values.
+Result: **0 mismatches in all 65 per-tick fields and in the 17 result fields (2 results)**.
+`hilly-drive.csv` still replays with 0 mismatches.
+
+| Fix | Evidence | Conf. |
+|---|---|---|
+| `0x856d8c` (approach speed) is never reset; the replay takes it from the setup row | 78.28 km/h carried into the next segment from row 4595 on | confirmed |
+| Stop evaluation in two parts one `Task_Tick` apart (count/error, then lateness/bonus) | stop count at row 4138, lateness and stat 1 at row 4139 | confirmed |
+
+Now exercised: arrival evaluation (two stops, neither clean), stop error sum and count, the
+result-screen overrun deduction (24 s) and the EB-in-approach deduction and stat 4 += 2, re-power
+in the approach, approach states 2–4, EB-in-approach ticks, notch slam (stat 11) and jolt
+(stat 3), the horn-bonus zone timing (entered and expired, no press). Not exercised: see §13.

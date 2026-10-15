@@ -514,6 +514,9 @@ pub enum Phase {
     },
     /// Waiting for the pending time to drain (0x407ff0), then evaluating the stop.
     Draining,
+    /// Stop evaluation of 0x40a0a0 after the drain: part 1 (stop error, count) and part 2
+    /// (lateness, bonus), one `Task_Tick` apart.
+    Evaluating(u8),
     /// Stopped at the station; call [`Rules::finish_station`].
     Arrived,
     GameOver,
@@ -1109,7 +1112,11 @@ impl Rules {
     fn stage_active(&self) -> bool {
         matches!(
             self.phase,
-            Phase::Driving | Phase::PreDeparture | Phase::Holding { .. } | Phase::Draining
+            Phase::Driving
+                | Phase::PreDeparture
+                | Phase::Holding { .. }
+                | Phase::Draining
+                | Phase::Evaluating(_)
         )
     }
 
@@ -1983,15 +1990,32 @@ impl Rules {
         } else {
             Phase::Draining
         };
+        if self.phase == Phase::Draining {
+            self.drain_check();
+        }
     }
 
-    /// The arrival branch of 0x40a0a0 (part 2, after 0x407ff0).
-    fn evaluate_stop(&mut self, out: &mut TickOutput) {
+    /// 0x407ff0: `while pending != 0 { Task_Tick }` then one more `Task_Tick`. The tick on which
+    /// pending is found at 0 is that extra `Task_Tick`; the evaluation follows on the next one.
+    fn drain_check(&mut self) {
+        if self.pending_s == 0 {
+            self.phase = Phase::Evaluating(1);
+        }
+    }
+
+    /// The arrival branch of 0x40a0a0, part 1 (0x40a5e0..): stop error, stop count, ATS reset.
+    /// Oracle: stop_count rises one row before last_lateness (stops-drive.csv rows 4138/4139).
+    fn settle_stop(&mut self) {
         self.stop_error_sum += self.dist_m.abs();
         self.stops += 1;
         if self.ats > 0 {
             self.ats = 0;
         }
+        self.phase = Phase::Evaluating(2);
+    }
+
+    /// The arrival branch of 0x40a0a0, part 2 (after one more `Task_Tick`): lateness, bonus.
+    fn evaluate_stop(&mut self, out: &mut TickOutput) {
         self.late_s = self.clock / TICKS_PER_SECOND - self.scheduled / TICKS_PER_SECOND;
         let late = self.late_s.abs();
         self.stat(1, late);
@@ -2017,10 +2041,10 @@ impl Rules {
                 self.time(out, TimeReason::CleanStop, s);
                 mark = 1;
             }
-            1 + 100
+            100
         } else {
             self.stop_streak = 0;
-            1 + 30
+            30
         };
         if let Some(m) = self.marks.get_mut(self.station) {
             *m = mark;
@@ -2138,7 +2162,14 @@ impl Rules {
             Phase::Draining => {
                 self.speed_mps = 0.0;
                 out.force_stop = true;
-                if self.pending_s == 0 {
+                self.drain_check();
+            }
+            Phase::Evaluating(part) => {
+                self.speed_mps = 0.0;
+                out.force_stop = true;
+                if part == 1 {
+                    self.settle_stop();
+                } else {
                     self.evaluate_stop(&mut out);
                 }
             }
@@ -2626,7 +2657,10 @@ mod tests {
         r.clock = r.scheduled - 30;
         r.remaining_s = 30;
         r.tick(&input(0.0, 0.004, 2000.0));
-        assert_eq!(r.phase, Phase::Draining);
+        // Nothing pending: the arrival tick is 0x407ff0's extra `Task_Tick`.
+        assert_eq!(r.phase, Phase::Evaluating(1));
+        r.tick(&input(0.0, 0.004, 2000.0));
+        assert_eq!(r.stops, 1, "part 1: stop count and error");
         let out = r.tick(&input(0.0, 0.004, 2000.0));
         assert!(
             out.events

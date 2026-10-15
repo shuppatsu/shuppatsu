@@ -249,7 +249,13 @@ pub fn print_report(report: &RulesReport) {
         .fields
         .iter()
         .filter(|f| f.mismatches == 0)
-        .map(|f| f.name)
+        .map(|f| {
+            if f.name.starts_with("result.") {
+                format!("{}({})", f.name, f.compared)
+            } else {
+                f.name.to_owned()
+            }
+        })
         .collect();
     println!("  exact: {}", exact.join(" "));
     for g in &report.gaps {
@@ -317,14 +323,20 @@ pub fn replay(
             bases,
             verbose,
         };
-        r = replay_stretch(t, &cx, r, &mut report)?;
+        let (next, arrived) = replay_stretch(t, &cx, r, &mut report)?;
+        r = next;
+        if let Some(mut done) = arrived {
+            check_result(t, r, &mut done, &mut report);
+        }
     }
     for f in &report.fields {
-        if !t.has(f.name) && f.name != "phase" {
+        if !t.has(f.name) && f.name != "phase" && !f.name.starts_with("result.") {
             report.gaps.push(format!("{} not logged", f.name));
         }
     }
-    report.fields.retain(|f| t.has(f.name) || f.name == "phase");
+    report
+        .fields
+        .retain(|f| t.has(f.name) || f.name == "phase" || f.name.starts_with("result."));
     Ok(report)
 }
 
@@ -338,7 +350,13 @@ struct Ctx<'a> {
     verbose: bool,
 }
 
-fn replay_stretch(t: &Trace, cx: &Ctx<'_>, s: usize, report: &mut RulesReport) -> Result<usize> {
+/// Returns the next row and, if the engine reached the station, the engine (for the result check).
+fn replay_stretch(
+    t: &Trace,
+    cx: &Ctx<'_>,
+    s: usize,
+    report: &mut RulesReport,
+) -> Result<(usize, Option<Rules>)> {
     let Ctx {
         tables,
         train,
@@ -352,7 +370,7 @@ fn replay_stretch(t: &Trace, cx: &Ctx<'_>, s: usize, report: &mut RulesReport) -
     let data = stages.get(stage).context("stage out of range")?;
     let base = bases.get(stage).copied().unwrap_or((0, 0));
     let Ok(mut e) = Rules::new(tables, data, stage, difficulty, station) else {
-        return Ok(s + 1); // e.g. the final station: nothing to drive
+        return Ok((s + 1, None)); // e.g. the final station: nothing to drive
     };
     sync_from_row(&mut e, t, s, base);
     e.hud_counter = hud_phase(t, s);
@@ -367,7 +385,8 @@ fn replay_stretch(t: &Trace, cx: &Ctx<'_>, s: usize, report: &mut RulesReport) -
             continue;
         }
         if matches!(e.phase, Phase::Arrived | Phase::GameOver | Phase::Cleared) {
-            return Ok(r);
+            let arrived = (e.phase == Phase::Arrived).then_some(e);
+            return Ok((r, arrived));
         }
         let input = tick_input(t, prev, r, report);
         let flags = phase(t, r);
@@ -393,13 +412,13 @@ fn replay_stretch(t: &Trace, cx: &Ctx<'_>, s: usize, report: &mut RulesReport) -
                     "row {r}: original left the driving loop ({flags:#x}), engine still driving"
                 )
             });
-            return Ok(r);
+            return Ok((r, None));
         }
         compare(t, r, &e, base, report, verbose);
         prev = r;
         r += 1;
     }
-    Ok(r)
+    Ok((r, None))
 }
 
 /// The train task's outputs for row `r` (physics columns of the same row).
@@ -416,6 +435,66 @@ fn train_readout(t: &Trace, r: usize, train: Option<&TrainTables>) -> Option<Tra
         jolt_limit: spec.jolt_limit,
         top_speed_kmh: spec.max_speed_kmh(),
     })
+}
+
+/// Station result screen (0x413d90 + task 0x413f30): the engine's `finish_station` against the
+/// first row after the result screen (`0x855ff8 & 0x40` set, then clear again), i.e. after the
+/// deductions and before 0x40d340 moves on.
+fn check_result(t: &Trace, from: usize, e: &mut Rules, report: &mut RulesReport) {
+    const RESULT: i64 = 0x40;
+    let Some(shown) = (from..t.rows.len()).find(|&r| phase(t, r) & RESULT != 0) else {
+        return;
+    };
+    let Some(s) = (shown..t.rows.len()).find(|&r| phase(t, r) & RESULT == 0) else {
+        return;
+    };
+    e.finish_station();
+    const STATS: [&str; 12] = [
+        "stat0", "stat1", "stat2", "stat3", "stat4", "stat5", "stat6", "stat7", "stat8", "stat9",
+        "stat10", "stat11",
+    ];
+    const NAMES: [&str; 12] = [
+        "result.stat0",
+        "result.stat1",
+        "result.stat2",
+        "result.stat3",
+        "result.stat4",
+        "result.stat5",
+        "result.stat6",
+        "result.stat7",
+        "result.stat8",
+        "result.stat9",
+        "result.stat10",
+        "result.stat11",
+    ];
+    let mut ints: Vec<(&'static str, &str, i64)> = vec![
+        (
+            "result.remaining_time",
+            "remaining_time",
+            e.remaining_s.into(),
+        ),
+        ("result.stop_streak", "stop_streak", e.stop_streak.into()),
+        ("result.stop_count", "stop_count", e.stops.into()),
+        ("result.continues", "continues", e.continues.into()),
+    ];
+    for k in 0..12 {
+        ints.push((NAMES[k], STATS[k], e.stats_total[k].into()));
+    }
+    for (name, col, mine) in ints {
+        if let Some(theirs) = t.get(s, col).int() {
+            report.note(name, mine == theirs, || {
+                format!("row {s}: engine {mine} vs original {theirs}")
+            });
+        }
+    }
+    if let Some(theirs) = t.get(s, "stop_error_sum").f32() {
+        let mine = e.stop_error_sum;
+        report.note(
+            "result.stop_error_sum",
+            mine.to_bits() == theirs.to_bits(),
+            || format!("row {s}: engine {mine} vs original {theirs}"),
+        );
+    }
 }
 
 /// The engine state at a segment start, from the logged globals.
@@ -520,6 +599,10 @@ fn sync_from_row(e: &mut Rules, t: &Trace, r: usize, base: (u32, u32)) {
     set_i32(&mut e.late_s, "last_lateness");
     if let Some(v) = f("dist_to_stop") {
         e.dist_m = v;
+    }
+    // 0x856d8c is never reset (0x40cf40 clears 0x856d88): it carries the last approach speed.
+    if let Some(v) = f("approach_kmh") {
+        e.approach_kmh = v;
     }
     if let Some(v) = i("ats_state") {
         e.ats = v as i16;
