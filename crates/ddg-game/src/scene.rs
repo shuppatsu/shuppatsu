@@ -230,7 +230,16 @@ impl RouteScene {
             frame.add_bg_quad(q.xy.map(virtual_to_ndc), q.colours.map(colour));
         };
         if plan.sky_gradient {
-            quad(&bg.sky_quad);
+            // The original's sky starts at virtual y 66, under the cab roof. The viewer has no
+            // cab, so the sky's top edge is raised to the top of the window.
+            let mut sky = bg.sky_quad;
+            let top = sky.xy.iter().map(|p| p[1]).min().unwrap_or(0);
+            for p in &mut sky.xy {
+                if p[1] == top {
+                    p[1] = VIEWER_TOP;
+                }
+            }
+            quad(&sky);
         }
         match plan.ground {
             scene::Ground::None => {}
@@ -239,6 +248,9 @@ impl RouteScene {
         }
     }
 }
+
+/// Virtual y of the window's top edge in the viewer's band mapping (the 3D band starts at 52).
+const VIEWER_TOP: i16 = 52;
 
 /// Maps a 496×400 virtual-screen point to NDC for a viewer whose 3D view fills the window:
 /// the original's 3D band (virtual y 52..400) becomes the full height, and x stretches over the
