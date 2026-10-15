@@ -825,11 +825,26 @@ pub fn scenery(
     ctx: SceneContext,
     walker: &CabWalker,
 ) -> Vec<SceneryInstance> {
-    let engine = walker.pos.engine_index;
-    walker
-        .live
-        .iter()
-        .filter_map(|&n| {
+    scenery_from(
+        route,
+        tables,
+        ctx,
+        walker.pos.engine_index,
+        walker.live.iter().copied(),
+    )
+}
+
+/// [`scenery`] for an explicit live set (e.g. from [`live_at`] over widened intervals) at
+/// engine index `engine`; applies the same exception.
+pub fn scenery_from(
+    route: &Route,
+    tables: &SceneTables,
+    ctx: SceneContext,
+    engine: usize,
+    live: impl IntoIterator<Item = u16>,
+) -> Vec<SceneryInstance> {
+    live.into_iter()
+        .filter_map(|n| {
             let p = route.placements.get(usize::from(n))?;
             if p.part_id == 0x132f
                 && ctx.com == 10

@@ -1,15 +1,14 @@
 //! Headless rendering of a single frame to a PPM file, for automated visual checks.
 
 use anyhow::{Context, Result};
-use ddg_render::{Camera, Renderer};
+use ddg_render::Renderer;
 
-/// Renders `camera` over `world` at `width`×`height` and writes a binary PPM (P6).
+/// Renders the scene at `pos` (`width`×`height`) and writes a binary PPM (P6).
 pub fn render_to_ppm(
-    world: &ddg_render::World,
-    camera: &Camera,
-    width: u32,
-    height: u32,
-    square_pixels: bool,
+    scene: &crate::scene::RouteScene,
+    pos: ddg_formats::scene::TrackPos,
+    (width, height): (u32, u32),
+    configure: impl FnOnce(&mut Renderer),
     path: &std::path::Path,
 ) -> Result<()> {
     let instance =
@@ -36,12 +35,19 @@ pub fn render_to_ppm(
         view_formats: &[],
     });
     let mut renderer = Renderer::new(&device, format);
-    if square_pixels {
-        renderer.projection.stretch = 1.0;
-    }
-    renderer.upload(&device, &queue, world);
+    configure(&mut renderer);
+    renderer.upload_pages(&device, &queue, &scene.library.pages);
+    let mut frame = ddg_render::FrameGeometry::default();
+    scene.compose(&mut frame, pos, false);
+    renderer.set_geometry(&device, &queue, &frame);
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-    renderer.render(&device, &queue, &view, width, height, camera);
+    renderer.render(
+        &device,
+        &queue,
+        &view,
+        (width, height),
+        &scene.cab_camera(pos),
+    );
 
     // Rows must be 256-byte aligned for the copy.
     let row = (width * 4).div_ceil(256) * 256;

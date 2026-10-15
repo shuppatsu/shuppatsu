@@ -75,3 +75,27 @@ fn vs_line(v: LineIn) -> LineOut {
 fn fs_line(in: LineOut) -> @location(0) vec4<f32> {
     return in.colour;
 }
+
+// Background: screen-space gradient quads (sky, ground), drawn first without depth.
+struct BgIn {
+    @location(0) pos: vec2<f32>,
+    @location(1) colour: vec4<f32>,
+};
+
+struct BgOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) colour: vec4<f32>,
+};
+
+@vertex
+fn vs_bg(v: BgIn) -> BgOut {
+    var out: BgOut;
+    out.clip = vec4<f32>(v.pos, 0.0, 1.0);
+    out.colour = v.colour;
+    return out;
+}
+
+@fragment
+fn fs_bg(in: BgOut) -> @location(0) vec4<f32> {
+    return in.colour;
+}

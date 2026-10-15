@@ -1,9 +1,8 @@
-//! wgpu renderer for a [`World`].
+//! wgpu renderer: texture pages are uploaded once; geometry is streamed every frame.
 
 use crate::camera::{Camera, Projection};
-use crate::world::{LineVertex, Vertex, World};
+use crate::world::{BgVertex, FrameGeometry, LineVertex, PageImage, Vertex};
 use glam::Mat4;
-use wgpu::util::DeviceExt;
 
 /// Fog parameters (docs/re/renderer.md §7): linear, eye-space, colour #BFBFBF.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -34,28 +33,80 @@ struct FrameUniform {
     fog: [f32; 4],
 }
 
-struct GpuBatch {
-    bind_group: wgpu::BindGroup,
-    vertices: wgpu::Buffer,
-    indices: wgpu::Buffer,
-    index_count: u32,
+pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+/// A GPU buffer that grows to fit what is written into it.
+struct StreamBuffer {
+    buffer: Option<wgpu::Buffer>,
+    usage: wgpu::BufferUsages,
+    label: &'static str,
 }
 
-pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+impl StreamBuffer {
+    fn new(usage: wgpu::BufferUsages, label: &'static str) -> Self {
+        Self {
+            buffer: None,
+            usage: usage | wgpu::BufferUsages::COPY_DST,
+            label,
+        }
+    }
+
+    fn write(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, bytes: &[u8]) {
+        if bytes.is_empty() {
+            return;
+        }
+        let size = bytes.len() as u64;
+        if self.buffer.as_ref().is_none_or(|b| b.size() < size) {
+            self.buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some(self.label),
+                // Round up so small growth doesn't reallocate every frame.
+                size: size.next_power_of_two().max(256),
+                usage: self.usage,
+                mapped_at_creation: false,
+            }));
+        }
+        queue.write_buffer(self.buffer.as_ref().expect("allocated above"), 0, bytes);
+    }
+
+    fn slice(&self, len: u64) -> Option<wgpu::BufferSlice<'_>> {
+        self.buffer.as_ref().map(|b| b.slice(..len))
+    }
+}
+
+struct PageGpu {
+    bind_group: wgpu::BindGroup,
+    vertices: StreamBuffer,
+    indices: StreamBuffer,
+    index_count: u32,
+}
 
 pub struct Renderer {
     world_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
+    bg_pipeline: wgpu::RenderPipeline,
     frame_buffer: wgpu::Buffer,
     frame_bind: wgpu::BindGroup,
     page_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
-    batches: Vec<GpuBatch>,
-    lines: Option<(wgpu::Buffer, u32)>,
+    pages: Vec<PageGpu>,
+    lines: StreamBuffer,
+    line_count: u32,
+    background: StreamBuffer,
+    background_count: u32,
     depth: Option<(wgpu::TextureView, u32, u32)>,
     pub fog: Fog,
     pub projection: Projection,
     pub show_lines: bool,
+}
+
+fn depth_state(write: bool, compare: wgpu::CompareFunction) -> wgpu::DepthStencilState {
+    wgpu::DepthStencilState {
+        format: DEPTH_FORMAT,
+        depth_write_enabled: Some(write),
+        depth_compare: Some(compare),
+        stencil: wgpu::StencilState::default(),
+        bias: wgpu::DepthBiasState::default(),
+    }
 }
 
 impl Renderer {
@@ -122,92 +173,99 @@ impl Renderer {
             ..Default::default()
         });
 
-        let depth_state = || wgpu::DepthStencilState {
-            format: DEPTH_FORMAT,
-            depth_write_enabled: Some(true),
-            depth_compare: Some(wgpu::CompareFunction::LessEqual),
-            stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState::default(),
+        let pipeline = |label: &str,
+                        layouts: &[Option<&wgpu::BindGroupLayout>],
+                        (vs, fs): (&str, &str),
+                        buffer: wgpu::VertexBufferLayout<'_>,
+                        primitive: wgpu::PrimitiveState,
+                        depth: wgpu::DepthStencilState| {
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some(label),
+                bind_group_layouts: layouts,
+                immediate_size: 0,
+            });
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(label),
+                layout: Some(&layout),
+                vertex: wgpu::VertexState {
+                    module: &shader,
+                    entry_point: Some(vs),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(buffer)],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &shader,
+                    entry_point: Some(fs),
+                    compilation_options: Default::default(),
+                    targets: &[Some(target_format.into())],
+                }),
+                primitive,
+                depth_stencil: Some(depth),
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
         };
-        let world_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("world"),
-            bind_group_layouts: &[Some(&frame_layout), Some(&page_layout)],
-            immediate_size: 0,
-        });
-        let world_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("world"),
-            layout: Some(&world_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<Vertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2],
-                })],
+        let world_pipeline = pipeline(
+            "world",
+            &[Some(&frame_layout), Some(&page_layout)],
+            ("vs_main", "fs_main"),
+            wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<Vertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2],
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                compilation_options: Default::default(),
-                targets: &[Some(target_format.into())],
-            }),
-            // Left-handed space with D3DCULL_CW: visible triangles wind counter-clockwise.
-            primitive: wgpu::PrimitiveState {
+            // Visible faces wind clockwise on screen in this left-handed setup (verified by
+            // rendering: with CCW fronts, rails, platforms and most scenery were culled).
+            wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
+                front_face: wgpu::FrontFace::Cw,
                 cull_mode: Some(wgpu::Face::Back),
                 ..Default::default()
             },
-            depth_stencil: Some(depth_state()),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-        let line_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("lines"),
-            bind_group_layouts: &[Some(&frame_layout)],
-            immediate_size: 0,
-        });
-        let line_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("lines"),
-            layout: Some(&line_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_line"),
-                compilation_options: Default::default(),
-                buffers: &[Some(wgpu::VertexBufferLayout {
-                    array_stride: std::mem::size_of::<LineVertex>() as u64,
-                    step_mode: wgpu::VertexStepMode::Vertex,
-                    attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4],
-                })],
+            depth_state(true, wgpu::CompareFunction::LessEqual),
+        );
+        let line_pipeline = pipeline(
+            "lines",
+            &[Some(&frame_layout)],
+            ("vs_line", "fs_line"),
+            wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<LineVertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4],
             },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_line"),
-                compilation_options: Default::default(),
-                targets: &[Some(target_format.into())],
-            }),
-            primitive: wgpu::PrimitiveState {
+            wgpu::PrimitiveState {
                 topology: wgpu::PrimitiveTopology::LineList,
                 ..Default::default()
             },
-            depth_stencil: Some(depth_state()),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+            depth_state(true, wgpu::CompareFunction::LessEqual),
+        );
+        let bg_pipeline = pipeline(
+            "background",
+            &[],
+            ("vs_bg", "fs_bg"),
+            wgpu::VertexBufferLayout {
+                array_stride: std::mem::size_of::<BgVertex>() as u64,
+                step_mode: wgpu::VertexStepMode::Vertex,
+                attributes: &wgpu::vertex_attr_array![0 => Float32x2, 1 => Float32x4],
+            },
+            wgpu::PrimitiveState::default(),
+            depth_state(false, wgpu::CompareFunction::Always),
+        );
 
         Self {
             world_pipeline,
             line_pipeline,
+            bg_pipeline,
             frame_buffer,
             frame_bind,
             page_layout,
             sampler,
-            batches: Vec::new(),
-            lines: None,
+            pages: Vec::new(),
+            lines: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "lines"),
+            line_count: 0,
+            background: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "background"),
+            background_count: 0,
             depth: None,
             fog: Fog::default(),
             projection: Projection::default(),
@@ -215,86 +273,90 @@ impl Renderer {
         }
     }
 
-    /// Uploads a world, replacing the previous one. Pages without geometry are skipped.
-    pub fn upload(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, world: &World) {
-        self.batches.clear();
-        for (page, batch) in world.pages.iter().zip(&world.batches) {
-            if batch.indices.is_empty() {
-                continue;
-            }
-            let size = wgpu::Extent3d {
-                width: page.width,
-                height: page.height,
-                depth_or_array_layers: 1,
-            };
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("page"),
-                size,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &page.rgba,
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4 * page.width),
-                    rows_per_image: Some(page.height),
-                },
-                size,
-            );
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("page"),
-                layout: &self.page_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&view),
+    /// Uploads texture pages (replacing earlier ones). Page `i` here is batch `i` of every
+    /// [`FrameGeometry`].
+    pub fn upload_pages(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        pages: &[PageImage],
+    ) {
+        self.pages = pages
+            .iter()
+            .map(|page| {
+                let size = wgpu::Extent3d {
+                    width: page.width,
+                    height: page.height,
+                    depth_or_array_layers: 1,
+                };
+                let texture = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("page"),
+                    size,
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                queue.write_texture(
+                    texture.as_image_copy(),
+                    &page.rgba,
+                    wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(4 * page.width),
+                        rows_per_image: Some(page.height),
                     },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler),
-                    },
-                ],
-            });
-            let vertices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("batch vertices"),
-                contents: bytemuck::cast_slice(&batch.vertices),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-            let indices = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("batch indices"),
-                contents: bytemuck::cast_slice(&batch.indices),
-                usage: wgpu::BufferUsages::INDEX,
-            });
-            self.batches.push(GpuBatch {
-                bind_group,
-                vertices,
-                indices,
-                index_count: batch.indices.len() as u32,
-            });
-        }
-        self.lines = (!world.lines.is_empty()).then(|| {
-            let buf = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("lines"),
-                contents: bytemuck::cast_slice(&world.lines),
-                usage: wgpu::BufferUsages::VERTEX,
-            });
-            (buf, world.lines.len() as u32)
-        });
+                    size,
+                );
+                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("page"),
+                    layout: &self.page_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.sampler),
+                        },
+                    ],
+                });
+                PageGpu {
+                    bind_group,
+                    vertices: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "page vertices"),
+                    indices: StreamBuffer::new(wgpu::BufferUsages::INDEX, "page indices"),
+                    index_count: 0,
+                }
+            })
+            .collect();
     }
 
-    fn depth_view(&mut self, device: &wgpu::Device, width: u32, height: u32) -> &wgpu::TextureView {
+    /// Streams this frame's geometry to the GPU.
+    pub fn set_geometry(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        frame: &FrameGeometry,
+    ) {
+        for (page, batch) in self.pages.iter_mut().zip(&frame.batches) {
+            page.index_count = batch.indices.len() as u32;
+            page.vertices
+                .write(device, queue, bytemuck::cast_slice(&batch.vertices));
+            page.indices
+                .write(device, queue, bytemuck::cast_slice(&batch.indices));
+        }
+        self.line_count = frame.lines.len() as u32;
+        self.lines
+            .write(device, queue, bytemuck::cast_slice(&frame.lines));
+        self.background_count = frame.background.len() as u32;
+        self.background
+            .write(device, queue, bytemuck::cast_slice(&frame.background));
+    }
+
+    fn depth_view(&mut self, device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
         let stale = self
             .depth
             .as_ref()
@@ -317,44 +379,40 @@ impl Renderer {
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
             self.depth = Some((view, width, height));
         }
-        &self.depth.as_ref().expect("depth view just created").0
+        self.depth
+            .as_ref()
+            .expect("depth view just created")
+            .0
+            .clone()
     }
 
-    /// Draws the world into `target` (`width`×`height` pixels).
-    #[allow(clippy::too_many_arguments)]
+    /// Draws the current geometry into `target` (`width`×`height` pixels).
     pub fn render(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         target: &wgpu::TextureView,
-        width: u32,
-        height: u32,
+        (width, height): (u32, u32),
         camera: &Camera,
     ) {
         let aspect = width as f32 / height.max(1) as f32;
         let view = camera.view();
         let view_proj: Mat4 = self.projection.matrix(aspect) * view;
         let fog = self.fog;
-        let srgb = |c: f32| c.powf(2.2);
+        let linear = |c: f32| c.powf(2.2);
         let uniform = FrameUniform {
             view_proj: view_proj.to_cols_array_2d(),
             view: view.to_cols_array_2d(),
             fog_colour: [
-                srgb(fog.colour[0]),
-                srgb(fog.colour[1]),
-                srgb(fog.colour[2]),
+                linear(fog.colour[0]),
+                linear(fog.colour[1]),
+                linear(fog.colour[2]),
                 1.0,
             ],
             fog: [fog.start, fog.end, if fog.enabled { 1.0 } else { 0.0 }, 0.0],
         };
         queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&uniform));
-        let clear = wgpu::Color {
-            r: uniform.fog_colour[0] as f64,
-            g: uniform.fog_colour[1] as f64,
-            b: uniform.fog_colour[2] as f64,
-            a: 1.0,
-        };
-        let depth = self.depth_view(device, width, height).clone();
+        let depth = self.depth_view(device, width, height);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("frame"),
         });
@@ -366,7 +424,8 @@ impl Renderer {
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(clear),
+                        // The original clears to black (scene.md §6).
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -382,19 +441,37 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            let bg_bytes = u64::from(self.background_count) * size_of::<BgVertex>() as u64;
+            if self.background_count > 0
+                && let Some(slice) = self.background.slice(bg_bytes)
+            {
+                pass.set_pipeline(&self.bg_pipeline);
+                pass.set_vertex_buffer(0, slice);
+                pass.draw(0..self.background_count, 0..1);
+            }
             pass.set_pipeline(&self.world_pipeline);
             pass.set_bind_group(0, &self.frame_bind, &[]);
-            for b in &self.batches {
-                pass.set_bind_group(1, &b.bind_group, &[]);
-                pass.set_vertex_buffer(0, b.vertices.slice(..));
-                pass.set_index_buffer(b.indices.slice(..), wgpu::IndexFormat::Uint32);
-                pass.draw_indexed(0..b.index_count, 0, 0..1);
+            for page in self.pages.iter().filter(|p| p.index_count > 0) {
+                let (Some(v), Some(i)) = (
+                    page.vertices.buffer.as_ref(),
+                    page.indices.slice(u64::from(page.index_count) * 4),
+                ) else {
+                    continue;
+                };
+                pass.set_bind_group(1, &page.bind_group, &[]);
+                pass.set_vertex_buffer(0, v.slice(..));
+                pass.set_index_buffer(i, wgpu::IndexFormat::Uint32);
+                pass.draw_indexed(0..page.index_count, 0, 0..1);
             }
-            if let (true, Some((buf, count))) = (self.show_lines, &self.lines) {
+            let line_bytes = u64::from(self.line_count) * size_of::<LineVertex>() as u64;
+            if self.show_lines
+                && self.line_count > 0
+                && let Some(slice) = self.lines.slice(line_bytes)
+            {
                 pass.set_pipeline(&self.line_pipeline);
                 pass.set_bind_group(0, &self.frame_bind, &[]);
-                pass.set_vertex_buffer(0, buf.slice(..));
-                pass.draw(0..*count, 0..1);
+                pass.set_vertex_buffer(0, slice);
+                pass.draw(0..self.line_count, 0..1);
             }
         }
         queue.submit([encoder.finish()]);

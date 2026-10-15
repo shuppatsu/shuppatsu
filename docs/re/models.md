@@ -132,14 +132,19 @@ tv = ( h      · (v_part / 256) + v_rect) / 256
 - **Size of a unit:** a train car spans about 650 raw in z. A 20 m car then gives 32 raw ≈ 1 m,
   so 1 world unit ≈ 8 m. That fits fog 1→10 units (≈8–80 m), far plane 32 (≈256 m) and the
   scenery cull radius 10 (renderer.md). **guess**: the route/placement scale (stages/route docs) should confirm it.
-- **Handedness and winding:** the projection is left-handed (renderer.md §4) and CULLMODE =
-  D3DCULL_CW. Clockwise triangles are culled, so faces drawn as visible wind **counter-clockwise
-  on screen**. Data check: of the parts whose edges form a closed, consistently oriented
-  manifold (12), all 12 have a negative signed volume Σ a·(b×c) in the raw coordinates. That is
-  exactly what CCW-from-outside in a left-handed frame produces. **likely**
-  - For a port: keep the index order. Draw with front face = CCW and back-face culling, either in
-    the game's left-handed frame or after converting to right-handed by negating z. The mirror
-    in that conversion keeps the on-screen orientation, so the same rule applies.
+- **Winding (corrected in Phase 3, confirmed by rendering):** in the renderer's left-handed
+  game frame (look-at LH, projection LH), visible faces wind **clockwise on screen**: drawing
+  with front face = CW and back-face culling shows rails, track bed, platforms and walls from
+  the right side, while CCW fronts culled almost all ground-level geometry (the first viewer
+  build showed only the inner faces of far walls). Text on signs reads correctly, so the scene
+  is not mirrored; only the winding rule was wrong. The first draft of this note inferred CCW
+  from the signed volume of 12 closed parts; that sign test assumed the opposite convention.
+  This agrees with the original: D3D judges winding in screen space with y pointing down, and
+  culls CW there (D3DCULL_CW), so visible faces are CCW in y-down screen space, which is CW in
+  wgpu's y-up normalised device coordinates.
+  - For a port: keep the index order; front face = CW, cull back, in the left-handed frame.
+    (The Phase 2 glTF export negates z and reverses the winding, which gives a consistent
+    right-handed mesh either way.)
 - Parts carry no normals, bounding volumes or LOD data. Culling uses object placement
   (renderer.md §10).
 
@@ -161,7 +166,7 @@ tv = ( h      · (v_part / 256) + v_rect) / 256
    the texture page `rect.page`. Use a repeat sampler (nearest filtering for arcade fidelity,
    renderer.md §6).
 3. Discard texels with RGB565 == 0. Depth test and write on. No blending.
-4. Front face CCW, cull back. Apply linear fog per renderer.md §7.
+4. Front face CW, cull back (see the winding note above). Apply linear fog per renderer.md §7.
 
 ## Open questions
 
