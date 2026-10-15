@@ -1,0 +1,483 @@
+//! Data tests for scene assembly (`docs/re/scene.md`). Skip unless `DDG_DATA_DIR` is set.
+
+use ddg_formats::{
+    exe::Exe,
+    rom2::Rom2,
+    route::Route,
+    scene::{self, CabWalker, PieceSource, SceneContext, SceneTables},
+    stages::StageTables,
+};
+use std::collections::{BTreeMap, HashSet};
+use std::path::{Path, PathBuf};
+
+fn install_dir() -> Option<PathBuf> {
+    let root = PathBuf::from(std::env::var_os("DDG_DATA_DIR")?);
+    let dir = root.join("install/Program_Executable_Files");
+    dir.is_dir().then_some(dir)
+}
+
+macro_rules! require_data {
+    () => {
+        match install_dir() {
+            Some(d) => d,
+            None => {
+                eprintln!("skipped: DDG_DATA_DIR not set");
+                return;
+            }
+        }
+    };
+}
+
+/// Case-insensitive lookup in `DATA`.
+fn data_file(dir: &Path, name: &str) -> Vec<u8> {
+    let data = dir.join("DATA");
+    let path = std::fs::read_dir(&data)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .find(|p| {
+            p.file_name()
+                .unwrap()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(name)
+        })
+        .unwrap_or_else(|| panic!("{name} not found"));
+    std::fs::read(path).unwrap()
+}
+
+struct World {
+    stages: StageTables,
+    tables: SceneTables,
+    /// Route and area by COM index.
+    routes: BTreeMap<u32, (Route, usize)>,
+}
+
+fn load(dir: &Path) -> World {
+    let exe_bytes = std::fs::read(dir.join("BIN/dengo3k.exe")).unwrap();
+    let exe = Exe::parse(&exe_bytes).unwrap();
+    let stages = StageTables::read(&exe).unwrap();
+    let mut routes = BTreeMap::new();
+    for stage in &stages.stages {
+        for seg in &stage.segments {
+            routes.entry(seg.com).or_insert_with(|| {
+                let name = stages.com_file(seg.com).unwrap();
+                let route = Route::parse(&data_file(dir, name)).unwrap();
+                (route, stage.area as usize - 1)
+            });
+        }
+    }
+    let max_kind = routes
+        .values()
+        .map(|(r, _)| scene::max_run_kind(r))
+        .max()
+        .unwrap();
+    let tables = SceneTables::read(&exe, max_kind).unwrap();
+    World {
+        stages,
+        tables,
+        routes,
+    }
+}
+
+fn part_ids(dir: &Path, name: &str) -> HashSet<u32> {
+    let data = data_file(dir, name);
+    Rom2::parse(&data)
+        .unwrap()
+        .iter()
+        .map(|e| u32::from(u16::from_le_bytes([e[0], e[1]])))
+        .collect()
+}
+
+fn area_parts(dir: &Path, area: usize) -> HashSet<u32> {
+    let mut ids = part_ids(dir, "partsRC.rom");
+    ids.extend(part_ids(dir, &format!("partsR{}.rom", area + 1)));
+    ids
+}
+
+#[test]
+fn scene_tables_reference_existing_parts() {
+    let dir = require_data!();
+    let w = load(&dir);
+    let t = &w.tables;
+    assert_eq!(t.single_group_pattern, [0, 1, 2, 1]);
+    assert_eq!(t.rail_band_step, [1, 2, 4, 8, 16, 32]);
+    assert_eq!(t.kind_band_step, [1, 1, 2, 4]);
+    for com in 1..16u32 {
+        let h = t.eye_height(0, com);
+        assert!((0.25..0.35).contains(&h), "COM {com}: eye height {h}");
+    }
+    let mut missing = BTreeMap::<(u32, &str), usize>::new();
+    for (&com, (route, area)) in &w.routes {
+        let parts = area_parts(&dir, *area);
+        let mut types = HashSet::new();
+        for p in &route.slots {
+            types.insert(p.track_type());
+        }
+        for &ty in &types {
+            if ty == scene::NO_RAIL {
+                continue;
+            }
+            for group in 0..scene::RAIL_GROUPS {
+                let id = t.areas[*area].rail[group][usize::from(ty)];
+                if !parts.contains(&id) {
+                    *missing.entry((com, "rail")).or_default() += 1;
+                }
+            }
+        }
+        for run in route.buckets.iter().flatten() {
+            match t.kind_parts(*area, run.kind) {
+                Some(ids) => {
+                    for id in ids {
+                        if !parts.contains(&id) {
+                            *missing.entry((com, "kind")).or_default() += 1;
+                        }
+                    }
+                }
+                None => assert!(matches!(run.kind, 1 | 2 | 5 | 6), "kind {}", run.kind),
+            }
+        }
+    }
+    eprintln!("missing part references (com, table) -> count: {missing:?}");
+    assert!(missing.is_empty());
+    // Animated parts and tunnel plugs exist in some route part set.
+    let mut all = part_ids(&dir, "partsRC.rom");
+    for a in 0..scene::AREA_COUNT {
+        all.extend(part_ids(&dir, &format!("partsR{}.rom", a + 1)));
+    }
+    for a in &t.animated {
+        assert!(
+            !a.frames.is_empty() && a.frames.iter().all(|f| all.contains(f)),
+            "{a:?}"
+        );
+    }
+    for list in &t.tunnel_plugs {
+        assert!(list[1..].iter().all(|p| all.contains(p)));
+    }
+    for s in &t.background.sky_sprites {
+        assert!(all.contains(&s.part_id), "{s:?}");
+        assert!(s.repeats > 0 && s.width > 0 && s.height > 0);
+    }
+    // R-index 1..=5 have a sky gradient.
+    for g in &t.background.gradients[0][1..] {
+        assert_ne!(g.sky[0], [0, 0, 0]);
+    }
+}
+
+fn ctx_for(w: &World, com: u32, station: u32) -> SceneContext {
+    SceneContext {
+        area: w.routes[&com].1,
+        com,
+        station,
+    }
+}
+
+/// Walks every route from its first stop to its last, building the track list every 8 points,
+/// and checks that every piece is finite, near the camera and of a known part.
+#[test]
+fn track_instances_stay_near_the_camera_on_every_route() {
+    let dir = require_data!();
+    let w = load(&dir);
+    for (&com, (route, area)) in &w.routes {
+        let parts = area_parts(&dir, *area);
+        let eye_h = w.tables.eye_height(*area, com);
+        let mut walker = CabWalker::at_segment_start(route, 0);
+        walker.advance(route, 0.0);
+        let last_stop = *route.stops.last().unwrap();
+        let (mut frames, mut pieces, mut max_d2, mut by_source) = (0, 0, 0f32, BTreeMap::new());
+        let mut bridges = 0;
+        let mut wide_extra = 0usize;
+        let mut station = 1;
+        while walker.pos().engine_index + 1 < last_stop {
+            let pos = walker.pos();
+            while station < route.stops.len() && route.stops[station] <= pos.engine_index + 1 {
+                station += 1;
+            }
+            let cam = scene::cab_camera(route, pos, eye_h, 0.0);
+            let ctx = ctx_for(&w, com, station as u32);
+            for inst in scene::track_instances(route, &w.tables, ctx, pos, &cam) {
+                let t = inst.transform;
+                assert!(
+                    t.translation.iter().chain(&t.z_axis).all(|v| v.is_finite()),
+                    "COM {com}: {inst:?}"
+                );
+                assert!(parts.contains(&inst.part_id), "COM {com}: {inst:?}");
+                let d = [t.translation[0] - cam.eye[0], t.translation[2] - cam.eye[2]];
+                let d2 = d[0] * d[0] + d[1] * d[1];
+                // A piece whose chord bridges two distant points (a gap between side segments)
+                // is centred far away; the original draws these too (scene.md §2.6).
+                let span = t.z_axis.iter().map(|v| v * v).sum::<f32>().sqrt();
+                if d2 > 1600.0 && span > 3.5 {
+                    bridges += 1;
+                    continue;
+                }
+                max_d2 = max_d2.max(d2);
+                let key = match inst.source {
+                    PieceSource::MainLine { .. } => "main",
+                    PieceSource::Rail { .. } => "rail",
+                    PieceSource::Kind { .. } => "kind",
+                    PieceSource::BufferStop { .. } => "stop",
+                    PieceSource::TunnelPlug => "plug",
+                };
+                *by_source.entry(key).or_insert(0usize) += 1;
+                pieces += 1;
+            }
+            let original = scene::track_instances(route, &w.tables, ctx, pos, &cam).len();
+            let wide = scene::track_instances_wide(route, &w.tables, ctx, pos, &cam, 16).len();
+            assert!(wide >= original);
+            wide_extra += wide - original;
+            let bg = scene::background(route, &w.tables, ctx, pos);
+            if let Some(plug) = bg.tunnel.and_then(|t| t.plug) {
+                assert!(parts.contains(&plug.part_id), "COM {com}: plug {plug:?}");
+            }
+            frames += 1;
+            walker.advance(route, 8.0 * 0.125);
+        }
+        eprintln!(
+            "COM {com:2}: {frames} frames, {:.1} pieces/frame, max XZ distance {:.1}, {bridges} bridge pieces, {:.1} extra wide pieces/frame, {by_source:?}",
+            pieces as f32 / frames as f32,
+            max_d2.sqrt(),
+            wide_extra as f32 / frames as f32
+        );
+        assert!(bridges < 50, "COM {com}: {bridges} bridge pieces");
+        assert!(
+            max_d2.sqrt() < 40.0,
+            "COM {com}: piece {:.1} units away",
+            max_d2.sqrt()
+        );
+    }
+    // Every stage segment maps to a loaded route.
+    for s in &w.stages.stages {
+        for seg in &s.segments {
+            assert!(w.routes.contains_key(&seg.com));
+        }
+    }
+}
+
+/// The live scenery list right after a segment start equals a replay from the start of the
+/// route, i.e. the 300-point run-up loses nothing (checked at every stop).
+#[test]
+fn segment_start_run_up_matches_full_replay() {
+    let dir = require_data!();
+    let w = load(&dir);
+    let mut mismatches = 0;
+    for (&com, (route, _)) in &w.routes {
+        for (s, &stop) in route.stops.iter().enumerate() {
+            let mut start = CabWalker::at_segment_start(route, s);
+            start.advance(route, 0.0);
+            let pos = start.pos();
+            // Full replay from engine index 0.
+            let mut full = CabWalker::at_segment_start(route, 0);
+            full.advance(route, 0.0);
+            let mut steps = 0;
+            while full.pos().engine_index < pos.engine_index && steps < 1_000_000 {
+                full.advance(route, 0.125);
+                steps += 1;
+            }
+            let mut a = start.live().to_vec();
+            let mut b = full.live().to_vec();
+            a.sort_unstable();
+            b.sort_unstable();
+            if a != b && stop > 1 {
+                mismatches += 1;
+                let only_full = b.iter().filter(|x| !a.contains(x)).count();
+                let only_start = a.iter().filter(|x| !b.contains(x)).count();
+                eprintln!(
+                    "COM {com} stop {s}: run-up live {}, full replay {} (only full {only_full}, only run-up {only_start})",
+                    a.len(),
+                    b.len()
+                );
+            }
+        }
+    }
+    eprintln!("{mismatches} stops where the run-up differs from a full replay");
+}
+
+/// Analysis for widescreen (scene.md §5), run with `--ignored --nocapture`: where relative to
+/// the view direction do placements leave the live list, and which side-track slots near the
+/// camera are not in the current draw bucket?
+#[test]
+#[ignore]
+fn widescreen_visibility_report() {
+    let dir = require_data!();
+    let w = load(&dir);
+    // Histograms over |horizontal angle| from the view direction in 10° bins (0..180).
+    let mut removed_at = [0usize; 18];
+    let mut removed_near = [0usize; 18];
+    let mut absent_slots = [0usize; 18];
+    let mut present_slots = [0usize; 18];
+    let mut absent_place = [0usize; 18];
+    let mut live_place = [0usize; 18];
+    let mut live_dist = [0usize; 40];
+    let mut removed_fine = [0usize; 30]; // 1° bins from 20°
+    let (mut never_added, mut placements_total) = (0usize, 0usize);
+    let angle = |cam: &scene::CabCamera, p: [f32; 2]| -> (usize, f32) {
+        let f = cam.forward();
+        let (fx, fz) = (f[0], f[2]);
+        let (dx, dz) = (p[0] - cam.eye[0], p[1] - cam.eye[2]);
+        let d = (dx * dx + dz * dz).sqrt();
+        let c = ((dx * fx + dz * fz) / (d * (fx * fx + fz * fz).sqrt())).clamp(-1.0, 1.0);
+        ((c.acos().to_degrees() / 10.0).min(17.0) as usize, d)
+    };
+    for (&com, (route, area)) in &w.routes {
+        let eye_h = w.tables.eye_height(*area, com);
+        let mut walker = CabWalker::at_segment_start(route, 0);
+        walker.advance(route, 0.0);
+        let last = *route.stops.last().unwrap();
+        eprintln!(
+            "COM {com}: main line {} points, last stop {last}, first stop {}",
+            route.main_line().len(),
+            route.stops[0]
+        );
+        let side_start = route.segments[1..]
+            .iter()
+            .map(|s| s.points.start)
+            .min()
+            .unwrap_or(route.slots.len());
+        let mut prev_live: Vec<u16> = walker.live().to_vec();
+        let added: HashSet<u16> = route
+            .activation_pool
+            .iter()
+            .filter(|v| **v > 0)
+            .map(|v| *v as u16)
+            .collect();
+        placements_total += route.placements.len() - 1;
+        never_added += (1..route.placements.len())
+            .filter(|n| !added.contains(&(*n as u16)))
+            .count();
+        while walker.pos().engine_index + 1 < last {
+            walker.advance(route, 0.125);
+            let pos = walker.pos();
+            let cam = scene::cab_camera(route, pos, eye_h, 0.0);
+            let live = walker.live();
+            for n in prev_live.iter().filter(|n| !live.contains(n)) {
+                let p = route.placements[usize::from(*n)];
+                let (a, d) = angle(&cam, [p.x, p.z]);
+                removed_at[a] += 1;
+                let f = cam.forward();
+                let (dx, dz) = (p.x - cam.eye[0], p.z - cam.eye[2]);
+                let ang = ((dx * f[0] + dz * f[2])
+                    / ((dx * dx + dz * dz).sqrt() * (f[0] * f[0] + f[2] * f[2]).sqrt()))
+                .clamp(-1.0, 1.0)
+                .acos()
+                .to_degrees();
+                if (20.0..50.0).contains(&ang) {
+                    removed_fine[(ang - 20.0) as usize] += 1;
+                }
+                if d < 3.0 {
+                    removed_near[a] += 1;
+                }
+            }
+            prev_live = live.to_vec();
+            if !pos.engine_index.is_multiple_of(16) {
+                continue;
+            }
+            for (n, p) in route.placements.iter().enumerate().skip(1) {
+                let (a, d) = angle(&cam, [p.x, p.z]);
+                if d > 6.0 {
+                    continue;
+                }
+                if live.contains(&(n as u16)) {
+                    live_place[a] += 1;
+                } else {
+                    absent_place[a] += 1;
+                }
+            }
+            for &n in live {
+                let p = route.placements[usize::from(n)];
+                let (_, d) = angle(&cam, [p.x, p.z]);
+                live_dist[(d as usize).min(39)] += 1;
+            }
+            let Some(bucket) = route.buckets.get(pos.engine_index / 4) else {
+                continue;
+            };
+            let covered: HashSet<usize> = bucket.iter().flat_map(|r| r.slots.clone()).collect();
+            for (i, p) in route.slots.iter().enumerate().skip(side_start) {
+                if route.locate(i).is_none() {
+                    continue;
+                }
+                let (a, d) = angle(&cam, [p.x, p.z]);
+                if d > 8.0 {
+                    continue;
+                }
+                if covered.contains(&i) {
+                    present_slots[a] += 1;
+                } else {
+                    absent_slots[a] += 1;
+                }
+            }
+        }
+    }
+    eprintln!("angle bins of 10° from the view direction (0 = straight ahead):");
+    eprintln!("placements removed from live list, any distance: {removed_at:?}");
+    eprintln!("removals by 1° from 20° to 50°: {removed_fine:?}");
+    eprintln!("placements never added: {never_added} of {placements_total}");
+    eprintln!("placements removed within 3 units:              {removed_near:?}");
+    eprintln!("placements within 6 units, live:                {live_place:?}");
+    eprintln!("placements within 6 units, not live:            {absent_place:?}");
+    eprintln!("live placements by distance (1-unit bins):      {live_dist:?}");
+    eprintln!("side slots within 8 units, in current bucket:   {present_slots:?}");
+    eprintln!("side slots within 8 units, not in bucket:       {absent_slots:?}");
+}
+
+/// `live_intervals` reproduces the walker's live list, and widening for a 21:9 Hor+ view moves
+/// the removals that happened at the 4:3 edge (≈ 32°) out to the wide edge.
+#[test]
+fn live_intervals_match_walker_and_widen_past_the_4_3_edge() {
+    let dir = require_data!();
+    let w = load(&dir);
+    // Hor+ at 21:9 keeps the vertical FOV and scales the horizontal tangent by (21/9)/(4/3).
+    let tan_wide = scene::ORIGINAL_TAN_HALF_FOV_X * (21.0 / 9.0) / (4.0 / 3.0);
+    let view = scene::WideView {
+        tan_half_fov_x: tan_wide,
+        original_tan_half_fov_x: scene::ORIGINAL_TAN_HALF_FOV_X,
+        max_extra_points: 160,
+    };
+    let (mut early_before, mut early_after, mut total) = (0usize, 0usize, 0usize);
+    for (route, _) in w.routes.values() {
+        let iv = scene::live_intervals(route);
+        let mut walker = CabWalker::at_segment_start(route, 0);
+        walker.advance(route, 0.0);
+        let last = *route.stops.last().unwrap();
+        while walker.pos().engine_index + 1 < last {
+            let e = walker.pos().engine_index;
+            let mut a: Vec<u16> = walker.live().to_vec();
+            let mut b: Vec<u16> = scene::live_at(&iv, e).collect();
+            a.sort_unstable();
+            b.sort_unstable();
+            assert_eq!(a, b, "engine index {e}");
+            walker.advance(route, 64.0 * 0.125);
+        }
+        let wide = scene::widen_intervals(route, &iv, view, |_| 0.5);
+        let angle_at = |e: usize, n: u16| {
+            let cam = scene::cab_camera(
+                route,
+                scene::TrackPos {
+                    engine_index: e,
+                    t: 0.0,
+                },
+                0.0,
+                0.0,
+            );
+            let p = route.placements[usize::from(n)];
+            let f = cam.forward();
+            let (dx, dz) = (p.x - cam.eye[0], p.z - cam.eye[2]);
+            let along = dx * f[0] + dz * f[2];
+            let lat = (dx * f[2] - dz * f[0]).abs();
+            (along > 0.0).then(|| lat / along)
+        };
+        let (_, max_e) = scene::camera_limits(route);
+        for (before, after) in iv.iter().zip(&wide) {
+            if before.to > max_e {
+                continue;
+            }
+            total += 1;
+            // Removed while its centre is ahead and inside the 21:9 wedge (minus 2° slack).
+            let inside = |t: Option<f32>| t.is_some_and(|t| t.atan() < tan_wide.atan() - 0.035);
+            early_before += usize::from(inside(angle_at(before.to, before.placement)));
+            early_after += usize::from(inside(angle_at(after.to, after.placement)));
+        }
+    }
+    eprintln!(
+        "removals inside the 21:9 view: {early_before} of {total} before widening, {early_after} after"
+    );
+    assert!(early_after * 20 < early_before);
+}

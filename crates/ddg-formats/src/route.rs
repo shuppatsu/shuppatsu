@@ -46,8 +46,9 @@ pub const HEIGHT_SCALE: f32 = 1.0 / 4096.0;
 pub struct TrackPoint {
     pub x: f32,
     pub z: f32,
-    /// Height in 1/4096 world units (before the per-route base height the exe adds). In a
-    /// marker slot this is the segment index instead.
+    /// Height in 1/4096 world units: world y, the same space as placement y (track models use it
+    /// directly; only the camera adds an eye height, see `scene`). In a marker slot this is the
+    /// segment index instead.
     pub height_raw: i16,
     pub flags: u16,
 }

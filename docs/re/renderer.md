@@ -54,7 +54,7 @@ The CD check (`FUN_00425ca0`/`00425bf0`/`00425bc0`) was not looked at.
 | 00432f40 | `Project4ToScreen(out, pts)` | CPU projection of 4 world points into virtual-screen coordinates, using `0x856b80/84` | confirmed |
 | 00401600 | `Sky_DrawPanorama(sprite, view, invView, scroll)` | Background strip scrolled by camera yaw; 3 tiles at −1, 0, +1 | confirmed |
 | 0041dfc0 | `Background_Draw(task, mode)` | Sky panorama + sky gradient quad + ground quad per scene type | confirmed |
-| 0041d400 | `Scenery_DrawIfNear(obj, model)` | Horizontal-distance cull (r² ≤ 100) then draws the model, optionally repeated | confirmed |
+| 0041d400 | `Track_DrawBufferStop(slot, model)` | Horizontal-distance cull (r² ≤ 100), then draws a buffer-stop model n + 1 times along the last chord of a run (scene.md §2.8; earlier named `Scenery_DrawIfNear`) | confirmed |
 | 00436fd0 | `FramePacer_BeginFrame` | Covered in `main-loop.md`. Device-lost handling + `BeginScene` | confirmed |
 | 004370a0 | `Frame_End` | Full-screen viewport, sprite layer, rect layer, `EndScene`, `Gfx_Present` | confirmed |
 | 00436c80 | `Viewport_SetDefault3D` | Virtual viewport centre (248,226), half-size (248,174) | confirmed |
@@ -164,8 +164,9 @@ The CD check (`FUN_00425ca0`/`00425bf0`/`00425bc0`) was not looked at.
 | 0x425680 mode 1 | 45.0° / 75.5° | 1.02 / 1.00 | split view: two viewports |
 | 0x425680 mode 2 | 45.0° | 1.25 | fixed look-at |
 
-  Which of these is the in-cab driving camera has to be confirmed with the oracle hook on `0x84c150`.
-  30°/1.42 is the likely one, because it matches the default 3D viewport (§5).
+  The drive path stores 45.0° at 0x41cb33 (in 0x41cb00, segment start), and nothing else on that
+  path writes 0x84c150. The aspect stays 1.42. So the in-cab view is most likely **45° vertical,
+  aspect 1.42** (scene.md §3). Confirm with the oracle hook on `0x84c150`.
 
 ## 5. Viewport and the 496×400 virtual screen — confirmed
 
@@ -273,15 +274,12 @@ Set once after device creation (pair table built on the stack at 0x42884a), and 
 - There is **no CPU frustum culling in the paths traced here**. D3D clips against the
   projection frustum, which follows the projection aspect. A wider aspect therefore widens the
   clipped frustum automatically (confirmed for the model path).
-- `Scenery_DrawIfNear` (0x41d400): draws only if the horizontal (XZ) distance² from the eye
+- `Track_DrawBufferStop` (0x41d400, buffer stops only, scene.md §2.8): draws only if the horizontal (XZ) distance² from the eye
   (`0x84c11c`, `0x84c124`) is ≤ **100.0** (double at 0x458b38), i.e. radius **10 units**. That
   equals the fog end (10.0). A radial test like this does not depend on aspect (confirmed).
 - Far plane 32.0, near 0.05 (world units; the metre scale is unknown, guess ≈ train-length units).
-- **Open:** where track and scenery sections are selected for drawing (streaming window around
-  the train) was not found in this pass. Candidates are the draw callbacks registered by
-  `0x407640` (`LAB_004076c0`), `0x404f10`, `0x405e80`, `0x406e10`, `0x41d5b0`, `0x41d890`,
-  `0x41d9c0`, `0x41dd40`, `0x41de20`. Any yaw-based visibility window there would need widening
-  for Hor+.
+- Track and scenery selection is resolved in scene.md: precomputed per-point lists, with no
+  runtime yaw test, **but cut to the original 4:3 view**. Hor+ needs the widening of scene.md §5.
 - **Sky panorama** (0x401600) is a 2D strip, not geometry. Its horizontal scroll = yaw/2π
   (1/2π at 0x457738) plus a per-sprite offset. Its on-screen scale uses the viewport half-size
   × `0x856b80/84`. It draws exactly 3 tiles (offset −1, 0, +1; loop bound 1.1 at 0x457710). With
@@ -341,8 +339,8 @@ Draw lists are the 9 task lists at `0x84c180..0x84c1ec`; each task's draw callba
   Decide whether arcade mode reproduces the 7.9 % horizontal stretch (§5); this needs the
   user's decision.
 - The 3D viewport is a band (13 % top strip, virtual y 52..400), not the whole screen.
-- Fog: linear, eye-space 1→10, colour #BFBFBF. Scenery cull: XZ radius 10 around the eye. Both
-  are aspect-independent. The sky panorama tile count and the background fill quads need
+- Fog: linear, eye-space 1→10, colour #BFBFBF. The XZ radius-10 cull applies only to buffer stops.
+  Both are aspect-independent, but the scenery and side-track lists are 4:3-dependent (scene.md §5). The sky panorama tile count and the background fill quads need
   widening.
 - Textures: RGB565 with black = transparent, nearest filtering, no blending; UV unit = 1/256.
 

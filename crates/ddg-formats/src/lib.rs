@@ -11,6 +11,7 @@ pub mod part;
 pub mod reader;
 pub mod rom2;
 pub mod route;
+pub mod scene;
 pub mod sha256;
 pub mod stages;
 pub mod strings;

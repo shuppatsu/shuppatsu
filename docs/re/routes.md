@@ -59,8 +59,9 @@ zero padding is left unparsed in any file.
 | 8 | i16 | height in 1/4096 units (double 1/4096 at 0x458c38); in marker slots: segment index | confirmed |
 | 10 | u16 | flags (§3.4) | confirmed (bits read at 0x407c10, 0x41cfe0, 0x41d890, 0x4078c0) |
 
-The eye height is `height/4096 + base`, where `base` is a per-COM float at `0x469dc4 + com*8`
-(0.26–0.34 units, i.e. 2.6–3.4 m; 10.0 for COM 0) set in 0x41cb00. **likely**
+Track y is `height/4096` with nothing added; placement y is in the same space. The per-COM float at
+`0x469dc4 + com*8` (0.26–0.34 units, 2.6–3.4 m) is the camera's **eye height above the track**,
+not a route base height (scene.md §1, §3). **confirmed**
 
 ### 3.2 Units — confirmed
 
@@ -147,8 +148,9 @@ Stepping **backward** (0x41d060) uses `h6[i+1]` with the signs swapped. The live
 by 0x41dd40 with a ±yaw matrix per object. **confirmed** (code), data: every list value is a
 valid placement index in all 15 files.
 
-So scenery streaming is precomputed per point: there is no runtime visibility test for placements
-beyond the 10-unit radius check in `Scenery_DrawIfNear` (renderer.md §10).
+So scenery streaming is precomputed per point, and there is no runtime visibility test for
+placements at all. The 10-unit radius check (0x41d400) applies only to buffer stops. The lists
+are cut to the original 4:3 view (scene.md §5).
 
 ## 6. Draw buckets (h4): track runs near the camera
 
@@ -185,9 +187,11 @@ fixed band counts (22 single points, then 4, 2, 1, 1, 2 pieces; 0x850120..). Kin
 cross from one side segment into the next (the drawer walks memory), which is why the parser
 works in slots. Farthest run ends are about 18 world units (180 m) from the bucket's point.
 
-Implication for widescreen: track visibility is a **precomputed per-position list**, not a frustum
-test. It is distance-based (the lists include track behind and beside the camera), so it should
-not depend on aspect ratio, but this has to be checked visually at 21:9 in the viewer phase.
+Implication for widescreen: track visibility is a **precomputed per-position list**, not a runtime
+frustum test, but the lists were **cut to the original 4:3 view** (side slots drop out from ≈ 32°
+off the view axis). The same holds for the scenery lists of §5. See scene.md §5 for the
+measurement and the widescreen approach. (Corrected in the Phase 3 scene pass; the earlier text
+guessed "distance-based".)
 
 ## 7. Traffic spawn points (h1) — likely
 
@@ -278,6 +282,6 @@ of the points 4 and 6 ahead. **confirmed** (lookup) / guess (what the sounds are
 - u16 at +2 of a track run; the f32 at +16 is only "likely" a squared distance.
 - Bits 5–12 on 0x2000 / 0xc000 points; bit 12 on turnouts.
 - Timetable fields 4–8; signal aspect encoding; course event kind 3.
-- The per-area rail/model tables (0x486170, 0x486eb0, 0x47c2cc…) map track types and kinds to
-  part ids; they belong to the renderer and are not read yet.
+- The per-area rail/model tables (0x486170, 0x486eb0, 0x47c2cc…) are now read by
+  `scene::SceneTables` (scene.md §2).
 - Station-name array consumer (no code xref found).
