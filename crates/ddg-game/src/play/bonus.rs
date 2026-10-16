@@ -275,33 +275,3 @@ impl Play {
         Some(camera)
     }
 }
-
-impl Play {
-    /// Headless frame of the bonus game.
-    pub(super) fn bonus_shot(&self, out: &std::path::Path) -> Result<()> {
-        let (w, h) = self.opts.size;
-        let filtering = self.opts.texture_filtering;
-        crate::shot::render_to_ppm_with(
-            (w, h),
-            |device, queue, view, format| {
-                let mut r = ddg_render::Renderer::new(device, format);
-                r.texture_filtering = filtering;
-                r.fog.enabled = false;
-                r.band_top = super::HUD_BAND_TOP;
-                r.projection.fov_tenths = FOV_TENTHS;
-                r.upload_pages(device, queue, &self.scene.library.pages);
-                let mut frame = FrameGeometry::default();
-                let mut fx = EffectGeometry::default();
-                let camera =
-                    Self::bonus_compose(&self.drive, &self.scene.library, &mut frame, &mut fx);
-                r.effects = fx;
-                r.set_geometry(device, queue, &frame);
-                if let Some(c) = camera {
-                    r.render(device, queue, view, (w, h), &c);
-                }
-            },
-            Some(&self.canvas),
-            out,
-        )
-    }
-}

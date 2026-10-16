@@ -453,7 +453,7 @@ impl Hud {
     }
 
     /// Palette 4 entries 0xdb..0xef from the three digits of `kmh` (0x416d10 / 0x4350b0).
-    fn segments(&self, kmh: i32, layer: &mut SpriteLayer) {
+    pub fn segments(&self, kmh: i32, layer: &mut SpriteLayer) {
         let v = kmh.clamp(0, 999);
         let digits = [v / 100, v / 10 % 10, v % 10];
         let mut colours = [0u32; 21];

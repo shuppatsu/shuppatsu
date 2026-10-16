@@ -39,6 +39,7 @@ use std::time::{Duration, Instant};
 mod bonus;
 mod demo;
 mod ending;
+mod opening;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -314,6 +315,7 @@ impl Play {
             ending: None,
             ending_tables: None,
             bonus_view: None,
+            opening: None,
             opts,
         };
         play.configure_gpu();
@@ -382,8 +384,8 @@ impl Play {
 
     /// Renders the current frame (cab view and HUD) to a PPM, headless.
     pub fn shot(&self, out: &std::path::Path) -> Result<()> {
-        if self.drive.bonus().is_some() {
-            return self.bonus_shot(out);
+        if self.drive.bonus().is_some() || self.opening.is_some() {
+            return self.custom_shot(out);
         }
         let (texture_filtering, fog, square) = (
             self.opts.texture_filtering,
@@ -634,6 +636,8 @@ pub struct Play {
     ending_tables: Option<ending::EndingTables>,
     /// The bonus game's screen (`play/bonus.rs`) while it runs.
     bonus_view: Option<bonus::BonusView>,
+    /// The attract opening (`play/opening.rs`).
+    opening: Option<opening::Opening>,
 }
 
 impl Play {
@@ -644,6 +648,9 @@ impl Play {
         }
         if self.ending.is_some() {
             return self.ending_tick();
+        }
+        if self.opening.is_some() {
+            return self.opening_tick();
         }
         self.ticks += 1;
         let input = self.menu_input;
@@ -1032,19 +1039,25 @@ impl Play {
         let (width, height) = gpu.size();
         let band_aspect = width as f32 / (height as f32 * (1.0 - HUD_BAND_TOP)).max(1.0);
         let mut camera = self.scene.cab_camera(pos);
-        let bonus = Self::bonus_compose(
+        let custom = Self::custom_view(
             &self.drive,
+            self.opening.as_ref(),
             &self.scene.library,
             &mut self.frame,
             &mut gpu.renderer.effects,
         );
-        gpu.renderer.projection.fov_tenths = if bonus.is_some() {
-            bonus::FOV_TENTHS
-        } else {
-            (DRIVING_FOV_Y_DEG * 10.0) as u16
+        gpu.renderer.projection.fov_tenths = match &custom {
+            Some(v) => v.fov_tenths,
+            None => Self::opening_route_fov(self.opening.as_ref())
+                .unwrap_or((DRIVING_FOV_Y_DEG * 10.0) as u16),
         };
-        if let Some(c) = bonus {
-            camera = c;
+        gpu.renderer.band_top = if custom.as_ref().is_some_and(|v| v.full_screen) {
+            0.0
+        } else {
+            HUD_BAND_TOP
+        };
+        if let Some(v) = custom {
+            camera = v.camera;
             gpu.renderer.fog.enabled = false;
         } else if self.world == WorldView::Cab {
             self.scene.compose(&mut self.frame, pos, false, band_aspect);
@@ -1053,6 +1066,7 @@ impl Play {
             self.weather
                 .compose(&self.scene, &self.drive, band_aspect, fx);
             Self::ending_masks(self.ending.as_ref(), fx);
+            Self::opening_masks(self.opening.as_ref(), fx);
             Self::ending_camera(self.ending.as_ref(), &mut camera);
             gpu.renderer.fog.enabled = self.opts.fog && self.weather.fog();
         } else {

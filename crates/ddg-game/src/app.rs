@@ -334,7 +334,7 @@ impl App {
     }
 
     /// An attract demo drive: attract waits in [`App::demo_attract`] while the run plays.
-    fn start_demo(&mut self, kind: AttractDemo, stage: usize) -> Result<()> {
+    fn start_demo(&mut self, kind: Option<AttractDemo>, stage: usize) -> Result<()> {
         let Screen::Attract(a) = std::mem::replace(&mut self.screen, Screen::Quit) else {
             return Ok(());
         };
@@ -345,10 +345,11 @@ impl App {
             variant: false,
         };
         let mut play = self.start_play(chosen)?;
-        play.start_demo(match kind {
-            AttractDemo::Route => DemoKind::Route,
-            AttractDemo::Lesson => DemoKind::Lesson,
-        })?;
+        match kind {
+            Some(AttractDemo::Route) => play.start_demo(DemoKind::Route)?,
+            Some(AttractDemo::Lesson) => play.start_demo(DemoKind::Lesson)?,
+            None => play.start_opening()?,
+        }
         self.demo_attract = Some(a);
         self.screen = Screen::Play(Box::new(play));
         Ok(())
@@ -400,7 +401,7 @@ impl App {
         let mut sfx = Vec::new();
         let env = self.env();
         let mut next: Option<Next> = None;
-        let mut demo: Option<(AttractDemo, usize)> = None;
+        let mut demo: Option<(Option<AttractDemo>, usize)> = None;
         let mut set_option: Option<(usize, u8)> = None;
         let mut calibrated = None;
         let joy = if matches!(self.screen, Screen::Calibrate(_)) {
@@ -426,7 +427,12 @@ impl App {
                 match step {
                     AttractStep::Running => Screen::Attract(a),
                     AttractStep::Demo { kind, stage } => {
-                        demo = Some((kind, stage));
+                        demo = Some((Some(kind), stage));
+                        Screen::Attract(a)
+                    }
+                    AttractStep::Opening => {
+                        // The opening runs on stage 1's data (AKITA1C in its route part).
+                        demo = Some((None, 1));
                         Screen::Attract(a)
                     }
                     AttractStep::KomachiMovie => {
@@ -725,7 +731,11 @@ impl App {
         let next = match self.demo_attract.take() {
             Some(mut a) => {
                 // The demo task's destroy (0x40e670), then attract's own `Task_Tick`.
-                a.demo_done(p.demo_ended_by_start());
+                if p.in_opening() {
+                    a.opening_done(p.opening_ended_by_start());
+                } else {
+                    a.demo_done(p.demo_ended_by_start());
+                }
                 Screen::Attract(a)
             }
             None => Screen::Wait(

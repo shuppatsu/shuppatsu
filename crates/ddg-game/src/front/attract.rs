@@ -43,6 +43,8 @@ const SLOT_TITLE: usize = 0xf;
 const PAL_TITLE: u8 = 0x17;
 const TITLE_TICKS: i32 = 300;
 const TITLE_CALL_TICK: i32 = 100;
+/// The opening's BGM, released by the title task's destroy 0x403d20.
+const OPENING_MUSIC: u16 = 0x1a1;
 /// Title call (sequence 0x24).
 const SND_TITLE_CALL: u16 = 0x1024;
 /// Palette fades started by 0x4037f0: `0x4367c0(slot, ticks, target)`.
@@ -239,6 +241,8 @@ enum Phase {
     Poster(i32),
     /// The owner runs a demo drive; item n follows.
     Demo(usize),
+    /// The owner runs the opening; the title picture of item n follows.
+    Opening(usize),
 }
 
 /// What the attract tick asks of its owner.
@@ -249,6 +253,8 @@ pub enum AttractStep {
     KomachiMovie,
     /// Go to the title menu.
     Title,
+    /// Run the cold-start opening, then call [`Attract::opening_done`].
+    Opening,
     /// Run a demo drive of `stage`, then call [`Attract::demo_done`].
     Demo {
         kind: DemoKind,
@@ -298,6 +304,18 @@ impl Attract {
     }
 
     /// The demo drive asked for by [`AttractStep::Demo`] has ended, by START or by its time.
+    /// The opening has ended: by START (the walk restarts at the title, which then skips it)
+    /// or into the title picture at once.
+    pub fn opening_done(&mut self, start: bool) {
+        if let Phase::Opening(i) = self.phase {
+            self.phase = if start {
+                Phase::Gap(ABORT_TICKS, RESTART_ITEM)
+            } else {
+                Phase::Item(i)
+            };
+        }
+    }
+
     pub fn demo_done(&mut self, start: bool) {
         if let Phase::Demo(next) = self.phase {
             self.phase = if start {
@@ -348,10 +366,12 @@ impl Attract {
                 };
                 step
             }
-            Phase::Demo(_) => step,
+            Phase::Demo(_) | Phase::Opening(_) => step,
             Phase::Picture(c) => {
                 if input.confirm {
                     sfx.push(Sfx::Play(snd::START));
+                    // Destroy 0x403d20 releases the opening's BGM.
+                    sfx.push(Sfx::Stop(OPENING_MUSIC));
                     super::clear_all(l);
                     self.fades.clear();
                     self.phase = Phase::Leaving(START_TICKS);
@@ -362,6 +382,7 @@ impl Attract {
                 }
                 if c >= TITLE_TICKS - 1 {
                     // The task ends; its destroy 0x403d20 clears the sprites.
+                    sfx.push(Sfx::Stop(OPENING_MUSIC));
                     super::clear_all(l);
                     self.phase = Phase::Gap(1, RESTART_ITEM + 1);
                 } else {
@@ -408,8 +429,13 @@ impl Attract {
                 self.current = i;
                 match f {
                     ITEM_TITLE => {
-                        // The cold-start opening (0x402fb0 chain) is not built: the title
-                        // picture follows at once either way.
+                        if !self.skip_opening {
+                            // The cold-start opening (0x402fb0 chain) first; the owner runs
+                            // it, then the title picture in the same task.
+                            self.skip_opening = true;
+                            self.phase = Phase::Opening(i);
+                            return AttractStep::Opening;
+                        }
                         self.skip_opening = false;
                         super::put(l, SLOT_TITLE, TBL_TITLE, 0, 0, PAL_TITLE, 3);
                         self.fades = t
@@ -626,7 +652,10 @@ mod tests {
         let (s, sfx) = run(&mut a, &t, true);
         assert_eq!(
             (s, sfx),
-            (AttractStep::Running, vec![Sfx::Play(snd::START)])
+            (
+                AttractStep::Running,
+                vec![Sfx::Play(snd::START), Sfx::Stop(OPENING_MUSIC)]
+            )
         );
         assert_eq!(run(&mut a, &t, false).0, AttractStep::Running);
         assert_eq!(run(&mut a, &t, false).0, AttractStep::Title);
@@ -639,11 +668,14 @@ mod tests {
         let mut horns = 0;
         let mut n = 0;
         while !a.showing_title() {
-            horns += run(&mut a, &t, false)
-                .1
+            let (step, sfx) = run(&mut a, &t, false);
+            horns += sfx
                 .iter()
                 .filter(|s| **s == Sfx::Play(SND_LOGO_HORN))
                 .count();
+            if step == AttractStep::Opening {
+                a.opening_done(false);
+            }
             n += 1;
             assert!(n < 1000);
         }
