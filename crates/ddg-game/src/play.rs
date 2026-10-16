@@ -36,6 +36,7 @@ use ddg_render::camera::ORIGINAL_STRETCH;
 use ddg_render::sprites::{CANVAS_H, CANVAS_W, Slot, SpriteBank, SpriteLayer};
 use std::time::{Duration, Instant};
 
+mod bonus;
 mod demo;
 mod ending;
 use winit::application::ApplicationHandler;
@@ -312,6 +313,7 @@ impl Play {
             demo: None,
             ending: None,
             ending_tables: None,
+            bonus_view: None,
             opts,
         };
         play.configure_gpu();
@@ -380,6 +382,9 @@ impl Play {
 
     /// Renders the current frame (cab view and HUD) to a PPM, headless.
     pub fn shot(&self, out: &std::path::Path) -> Result<()> {
+        if self.drive.bonus().is_some() {
+            return self.bonus_shot(out);
+        }
         let (texture_filtering, fog, square) = (
             self.opts.texture_filtering,
             self.opts.fog,
@@ -627,6 +632,8 @@ pub struct Play {
     /// The ending (`play/ending.rs`) and its tables.
     ending: Option<ending::Ending>,
     ending_tables: Option<ending::EndingTables>,
+    /// The bonus game's screen (`play/bonus.rs`) while it runs.
+    bonus_view: Option<bonus::BonusView>,
 }
 
 impl Play {
@@ -717,6 +724,7 @@ impl Play {
         self.weather.apply_to_scene(&mut self.scene);
         self.update_hud(hud_input);
         self.track_meter();
+        self.bonus_present()?;
         Ok(())
     }
 
@@ -1024,7 +1032,21 @@ impl Play {
         let (width, height) = gpu.size();
         let band_aspect = width as f32 / (height as f32 * (1.0 - HUD_BAND_TOP)).max(1.0);
         let mut camera = self.scene.cab_camera(pos);
-        if self.world == WorldView::Cab {
+        let bonus = Self::bonus_compose(
+            &self.drive,
+            &self.scene.library,
+            &mut self.frame,
+            &mut gpu.renderer.effects,
+        );
+        gpu.renderer.projection.fov_tenths = if bonus.is_some() {
+            bonus::FOV_TENTHS
+        } else {
+            (DRIVING_FOV_Y_DEG * 10.0) as u16
+        };
+        if let Some(c) = bonus {
+            camera = c;
+            gpu.renderer.fog.enabled = false;
+        } else if self.world == WorldView::Cab {
             self.scene.compose(&mut self.frame, pos, false, band_aspect);
             self.weather.shake(&mut camera);
             let fx = &mut gpu.renderer.effects;

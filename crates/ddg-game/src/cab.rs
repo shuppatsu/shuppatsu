@@ -74,6 +74,9 @@ pub struct Snap {
     pub coupling: Option<Coupling>,
     /// The last `Vehicle_Set` code of the run (0x410320), `None` = the stage's own.
     pub vehicle_code: Option<u32>,
+    /// The bonus game runs (remaining time and distance panel off: `0x856d1c = 0`,
+    /// `0x856d0c = 0`).
+    pub bonus: bool,
 }
 
 impl Snap {
@@ -117,6 +120,7 @@ impl Snap {
             marks: r.marks.clone(),
             coupling: r.coupling.clone().filter(|_| r.phase == Phase::Coupling),
             vehicle_code: r.vehicle_code,
+            bonus: drive.bonus().is_some(),
         }
     }
 
@@ -367,6 +371,9 @@ impl CabHud {
         if frozen {
             self.clock_freeze -= 1;
         }
+        if s.bonus {
+            self.panel_active = false;
+        }
         let plates = self.departure.plates;
         let state = HudState {
             power: u8::try_from(s.power).unwrap_or(0),
@@ -379,7 +386,8 @@ impl CabHud {
             clocks_visible: self.clocks_visible,
             clocks_frozen: frozen,
             remaining_visible: s.drive_phase != DrivePhase::Cleared
-                && !self.coupling.hides_remaining(s.coupling.as_ref()),
+                && !self.coupling.hides_remaining(s.coupling.as_ref())
+                && !s.bonus,
             panel_active: self.panel_active,
             panel_on: self.panel_on,
             next_is_stop: s.target_stops,

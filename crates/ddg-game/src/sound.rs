@@ -15,6 +15,7 @@ mod stage;
 use anyhow::Result;
 use ddg_audio::{AudioOutput, HornEdge, MixerConfig, SoundBank, SoundSystem, SoundTables};
 use ddg_audio::{TrainSound, TrainTick};
+use ddg_engine::bonus::BonusEvent;
 use ddg_engine::coupling::CouplingEvent;
 use ddg_engine::drive::Drive;
 use ddg_engine::rules::RuleEvent;
@@ -122,6 +123,9 @@ impl Sound {
                 RuleEvent::Coupling(CouplingEvent::Sound(code)) => self.snd.request(code),
                 RuleEvent::Coupling(CouplingEvent::Music(code)) => self.snd.play_ungated(code),
                 RuleEvent::Coupling(CouplingEvent::StopSounds) => self.snd.stop_all(),
+                RuleEvent::Bonus(BonusEvent::Sound(code)) => self.snd.request(code),
+                RuleEvent::Bonus(BonusEvent::Release(code)) => self.snd.release(code),
+                RuleEvent::Bonus(BonusEvent::Music(code)) => self.snd.play_ungated(code),
                 _ => {}
             }
         }

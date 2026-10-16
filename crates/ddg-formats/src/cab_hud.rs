@@ -15,8 +15,9 @@ const WHAT: &str = "cab HUD tables";
 
 /// Stages with HUD rows.
 pub const STAGE_COUNT: usize = 20;
-/// Vehicle rows: 20 stages plus the two bonus-section rows `0x1000 | n` → 20 + n (0x410320).
-pub const VEHICLE_ROWS: usize = 22;
+/// Vehicle rows: 20 stages plus the bonus rows `0x1000 | n` → 20 + n (0x410320): the two
+/// bonus-section rows and the bonus game's EF63 (`0x1002`).
+pub const VEHICLE_ROWS: usize = 23;
 /// Landmark captions (course event 17). 0x410a70 accepts `id < 0x1f`, but the table holds 30
 /// entries (0x466a20..0x466b10, where the strip colours start); id 30 would read colours.
 pub const LANDMARK_COUNT: usize = 30;
