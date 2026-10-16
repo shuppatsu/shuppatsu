@@ -748,15 +748,18 @@ brake_setup = { rect = [0, 30, -1, 3], align = "left", text = "Brake Lever Setup
 1 = "Select: brake lever\nConfirm: A button"    # 選択: ブレーキ・スティック / 決定: A ボタン
 pad = { rect = [0, 8, -1, 4], text = "Select: D-pad ← →\nConfirm: A button" }  # 選択: 方向ボタン左右 (no known descriptor)
 
-# Legend word sheet, 192×160 (options controller page 0x42a820; the descriptors were not found,
-# so these rectangles are guesses except the replay mark, which hud.md §3.16 gives).
+# Legend word sheet, 192×160. Integer keys: the label descriptors 0x47c538..0x47c550 of the
+# menu header 0x42a820 (title, options, controls); the route-select header 0x436210 uses an
+# identical table at 0x47cac4. The key pictures beside them (tbl 0x503, 0x4a6) and the ▲▼ of
+# the legend frame 0x502 stay. Measured lettering: 選択 (3, 9) 42×15 in 64×32; the others
+# from x 2, about 100 px wide, in 192×32.
 [sheet.0x50b]
 replay = { rect = [6, 0, 6, 2], region = [13, 4, 72, 23], style = "plain", text = "Auto" }   # 自動運転 replay mark (slot 0x86, route select); inside its red frame
-select = { rect = [0, 0, 6, 2], text = "Select" }     # 選択
-cancel = { rect = [0, 2, 6, 2], text = "Cancel" }     # キャンセル
-confirm = { rect = [0, 4, 6, 2], text = "OK" }        # 決定
-finish = { rect = [0, 6, 6, 2], text = "Done" }       # おわり
-mode = { rect = [0, 8, 6, 2], text = "Mode" }         # モード切替
+0 = { region = [0, 6, 48, 22], text = "Select" }                      # 選択, under the ↑↓ keys (slot 0x89)
+1 = { region = [0, 4, 108, 26], align = "left", text = "Cancel" }     # キャンセル, beside Esc / B (slot 0x8b)
+2 = { region = [0, 4, 108, 26], align = "left", text = "Confirm" }    # 決定, beside Enter / A (slot 0x8d)
+3 = { region = [0, 4, 108, 26], align = "left", text = "Done" }       # おわり (no caller drawn by the port yet)
+4 = { region = [0, 2, 104, 28], align = "left", text = "Switch Mode" } # モード切替, beside R (route select, train level)
 
 # =============================================================================================
 # Station plates (hud.md §3.7): the English names of the vertical plates, by plate tilemap

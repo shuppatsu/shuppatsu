@@ -94,7 +94,8 @@ from a handful of sheets:
 | tbl 0x4fa / 0x4fb | Options labels and values (selected / normal colouring) | 0x47c584 / 0x47c664 (38 each) |
 | tbl 0x544 | Pause and dialog texts, Yes/No, calibration prompts | 0x48bbb0 (29) |
 | tbl 0x54d | Screen headers (路線選択, 電車選択, メインメニュー, …) | e.g. 0x48c584 |
-| tbl 0x4a6 / 0x503 | Button legends (keyboard / pad glyphs) | 0x47cab0.. |
+| tbl 0x503 / 0x4a6 | Legend key pictures: ↑↓ keys, pad cross, lever (0x503, 3 tiles wide); Esc, Enter, pad A/B/C, R (0x4a6, 2 tiles wide) | 0x47c524.. (menu header), 0x47cab0.. (route select) |
+| tbl 0x50b | Legend words 選択 / キャンセル / 決定 / おわり / モード切替 (rows 0, 2, 4, 6, 8; 選択 4 tiles wide, the rest full width), replay mark 自動運転 (col 6) | 0x47c538 (5), the same five at 0x47cac4 |
 
 Index lists for the option values are at 0x48766c (one pointer per item, first byte = label
 index, then value indices, −1 terminated). A translation layer can key on (sheet, descriptor index).

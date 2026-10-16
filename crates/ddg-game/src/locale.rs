@@ -48,6 +48,9 @@ pub const SHEETS: &[(u16, &[(u32, usize)])] = &[
     (0x54d, &[(0x48c584, 1), (0x48c58a, 1)]),
     // Name-entry legends, keyboard (0x486184) and lever (0x48618a) (§11.2).
     (0x53f, &[(0x486184, 1), (0x48618a, 1)]),
+    // Legend words 選択 / キャンセル / 決定 / おわり / モード切替 of the menu header 0x42a820
+    // (0x47c538, §1.2); the route-select header's table 0x47cac4 holds the same five.
+    (0x50b, &[(0x47c538, 5)]),
 ];
 
 fn sheet_len(tbl: u16) -> Option<usize> {
