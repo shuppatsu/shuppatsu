@@ -213,9 +213,10 @@ impl Play {
     /// Starts a run (`Stage_Run` after the pre-run screens) on the owner's resources. With a
     /// window, the renderer is set up for the cab view here.
     pub fn new(shared: Shared, opts: PlayOptions) -> Result<Self> {
+        let mut opts = opts;
         let Shared {
             data,
-            bank,
+            mut bank,
             mut layer,
             save,
             controls,
@@ -239,13 +240,17 @@ impl Play {
         layer.slots.fill(Slot::CLEAR);
         layer.fans.clear();
         layer.widgets.clear();
-        layer.scale = opts.locale.ui_scale;
-        layer.wide = 0;
         layer.centre_all();
-        if wide_hud(&opts) {
-            let (w, h) = gpu.as_ref().map_or(opts.size, Gpu::size);
-            layer.fit_window(w, h);
-        }
+        let window = gpu.as_ref().map_or(opts.size, Gpu::size);
+        let wide = wide_hud(&opts);
+        crate::presentation::fit_layer(
+            &mut opts.locale,
+            &data,
+            &mut bank,
+            &mut layer,
+            window,
+            wide,
+        )?;
         let canvas = layer.new_canvas();
         Hud::install_palettes(&exe, &mut layer)?;
         // The horn hint names the B button with a joystick in modes 5–6 (`FUN_00433270`).
@@ -262,8 +267,8 @@ impl Play {
             _ => DistanceReadout::Metres,
         };
         // Enhancement `wide_plates`: horizontal plates (kanji + romaji) with a translation drawn
-        // and `ui_scale` 2 and up; Japanese and `ui_scale` 1 keep the original vertical plates.
-        if opts.locale.ui_scale >= 2 && opts.locale.active() && bank.has_label_font() {
+        // and the enhanced HUD layout; Japanese and the original layout keep the vertical plates.
+        if opts.locale.enhanced_hud() && opts.locale.active() && bank.has_label_font() {
             let names = crate::locale::station_plate_names(&opts.locale)?;
             cab.hud
                 .use_horizontal_plates(&bank, &names, opts.locale.ui_scale);
@@ -426,6 +431,12 @@ impl Play {
             self.opts.square_pixels,
         );
         let (w, h) = self.opts.size;
+        let ui_rect = ddg_render::overlay::design_rect(ddg_render::overlay::present_rect(
+            w,
+            h,
+            self.layer.canvas_size(),
+            self.opts.locale.ui_scaling,
+        ));
         if self.world != WorldView::Cab {
             // Station result (scene.md §8): the replay views, or nothing while hidden.
             return crate::shot::render_to_ppm_with(
@@ -447,16 +458,9 @@ impl Play {
                     );
                     r.set_geometry(device, queue, &frame);
                     match &self.result_view {
-                        Some(v) => v.render(
-                            &mut r,
-                            device,
-                            queue,
-                            view,
-                            (w, h),
-                            ddg_render::overlay::canvas_rect(w, h),
-                            square,
-                            1.0,
-                        ),
+                        Some(v) => {
+                            v.render(&mut r, device, queue, view, (w, h), ui_rect, square, 1.0)
+                        }
                         None => crate::shot::clear_black(device, queue, view),
                     }
                 },
@@ -465,7 +469,8 @@ impl Play {
             );
         }
         let mut effects = ddg_render::effects::EffectGeometry::default();
-        let band_aspect = w as f32 / (h as f32 * (1.0 - HUD_BAND_TOP)).max(1.0);
+        let band = self.band_top((w, h));
+        let band_aspect = w as f32 / (h as f32 * (1.0 - band)).max(1.0);
         self.weather
             .compose(&self.scene, &self.drive, band_aspect, &mut effects);
         Self::cab_mask(&self.scene, self.ending.as_ref(), band_aspect, &mut effects);
@@ -479,7 +484,7 @@ impl Play {
                 r.fog.enabled = fog;
                 r.projection.fov_tenths = (DRIVING_FOV_Y_DEG * 10.0) as u16;
                 r.projection.stretch = if square { 1.0 } else { ORIGINAL_STRETCH };
-                r.band_top = HUD_BAND_TOP;
+                r.band_top = band;
                 r.effects = effects;
             },
             Some((&self.canvas, self.layer.canvas_size())),
@@ -515,10 +520,11 @@ impl Play {
     }
 }
 
-/// Enhancement `wide_hud` (docs/re/hud.md §6.4): from `ui_scale` 2 the HUD canvas spans the
-/// window and the driving HUD's groups keep to its edges. `ui_scale` 1 is the original 4:3.
+/// Enhancement `wide_hud` (docs/re/hud.md §6.4): in the enhanced HUD layout the HUD canvas
+/// spans the window and the driving HUD's groups keep to its edges. The original layout is
+/// the 4:3 canvas, centred.
 fn wide_hud(opts: &PlayOptions) -> bool {
-    opts.locale.ui_scale >= 2
+    opts.locale.enhanced_hud()
 }
 
 fn visibility(opts: &PlayOptions) -> Visibility {
@@ -1063,20 +1069,43 @@ impl Play {
         }
     }
 
-    /// Enhancement `wide_hud`: the canvas follows the window's shape; a new size recomposes.
-    fn fit_canvas(&mut self) {
-        let Some((w, h)) = self.gpu.as_ref().map(Gpu::size) else {
-            return;
+    /// The canvas multiple follows the window's height and, with `wide_hud`, the canvas its
+    /// shape (presentation.rs); a new size recomposes.
+    fn fit_canvas(&mut self) -> Result<()> {
+        let Some(window) = self.gpu.as_ref().map(Gpu::size) else {
+            return Ok(());
         };
-        if wide_hud(&self.opts) && self.layer.fit_window(w, h) {
+        let wide = wide_hud(&self.opts);
+        let resized = crate::presentation::fit_layer(
+            &mut self.opts.locale,
+            &self.data,
+            &mut self.bank,
+            &mut self.layer,
+            window,
+            wide,
+        )?;
+        if resized {
             self.canvas = self.layer.new_canvas();
             self.layer.compose(&self.bank, &mut self.canvas);
             self.canvas_dirty = true;
         }
+        Ok(())
+    }
+
+    /// The 3D view's top edge (fraction of the window) under the HUD canvas as presented in
+    /// a `window`: integer scaling can leave bars above and below the canvas.
+    fn band_top(&self, (w, h): (u32, u32)) -> f32 {
+        let rect = ddg_render::overlay::present_rect(
+            w,
+            h,
+            self.layer.canvas_size(),
+            self.opts.locale.ui_scaling,
+        );
+        crate::presentation::band_top(rect, h, HUD_BAND_TOP)
     }
 
     pub fn redraw(&mut self) -> Result<()> {
-        self.fit_canvas();
+        self.fit_canvas()?;
         let now = Instant::now();
         let dt = now - self.last_frame;
         self.last_frame = now;
@@ -1099,11 +1128,15 @@ impl Play {
             self.scene.traffic = self.drive.traffic_poses(alpha);
         }
 
+        let band = self
+            .gpu
+            .as_ref()
+            .map_or(HUD_BAND_TOP, |g| self.band_top(g.size()));
         let Some(gpu) = self.gpu.as_mut() else {
             return Ok(());
         };
         let (width, height) = gpu.size();
-        let band_aspect = width as f32 / (height as f32 * (1.0 - HUD_BAND_TOP)).max(1.0);
+        let band_aspect = width as f32 / (height as f32 * (1.0 - band)).max(1.0);
         let mut camera = self.scene.cab_camera(pos);
         let custom = Self::custom_view(
             &self.drive,
@@ -1120,7 +1153,7 @@ impl Play {
         gpu.renderer.band_top = if custom.as_ref().is_some_and(|v| v.full_screen) {
             0.0
         } else {
-            HUD_BAND_TOP
+            band
         };
         if let Some(v) = custom {
             camera = v.camera;
@@ -1161,7 +1194,12 @@ impl Play {
                 &gpu.queue,
                 &view,
                 (width, height),
-                ddg_render::overlay::canvas_rect(width, height),
+                ddg_render::overlay::design_rect(ddg_render::overlay::present_rect(
+                    width,
+                    height,
+                    self.layer.canvas_size(),
+                    self.opts.locale.ui_scaling,
+                )),
                 self.opts.square_pixels,
                 alpha,
             ),
@@ -1174,11 +1212,12 @@ impl Play {
         if std::mem::take(&mut self.canvas_dirty) || resized {
             gpu.overlay.upload(&gpu.queue, &self.canvas);
         }
+        gpu.overlay.scaling = self.opts.locale.ui_scaling;
         gpu.overlay.render(
             &gpu.device,
             &gpu.queue,
             &view,
-            ddg_render::overlay::canvas_rect_for(width, height, size),
+            gpu.overlay.rect(width, height),
         );
         gpu.window.pre_present_notify();
         gpu.queue.present(frame);

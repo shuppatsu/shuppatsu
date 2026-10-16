@@ -813,6 +813,25 @@ impl App {
             }
         }
         let mut dirty = std::mem::take(&mut self.canvas_dirty);
+        // The canvas multiple follows the window (presentation.rs); menus never widen.
+        if let Some(r) = self.res.as_mut()
+            && let Some(window) = r.gpu.as_ref().map(Gpu::size)
+        {
+            crate::presentation::fit_layer(
+                &mut self.opts.locale,
+                &r.data,
+                &mut r.bank,
+                &mut r.layer,
+                window,
+                false,
+            )?;
+            let (w, h) = r.layer.canvas_size();
+            if self.canvas.len() != w * h * 4 {
+                self.canvas = r.layer.new_canvas();
+                r.layer.compose(&r.bank, &mut self.canvas);
+                dirty = true;
+            }
+        }
         let size = self.canvas_size();
         let Some(gpu) = self.res.as_mut().and_then(|r| r.gpu.as_mut()) else {
             return Ok(());
@@ -830,11 +849,12 @@ impl App {
         if dirty {
             gpu.overlay.upload(&gpu.queue, &self.canvas);
         }
+        gpu.overlay.scaling = self.opts.locale.ui_scaling;
         gpu.overlay.render(
             &gpu.device,
             &gpu.queue,
             &view,
-            ddg_render::overlay::canvas_rect_for(width, height, size),
+            gpu.overlay.rect(width, height),
         );
         gpu.window.pre_present_notify();
         gpu.queue.present(frame);

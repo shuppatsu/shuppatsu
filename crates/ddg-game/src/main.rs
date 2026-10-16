@@ -17,6 +17,7 @@ mod input;
 mod locale;
 mod play;
 mod popups;
+mod presentation;
 mod result_view;
 mod save;
 mod scene;
@@ -66,6 +67,16 @@ options:
   --lang <code>            text-sprite language (default ja = the original art; env DDG_LANG)
   --font <file>            TTF/OTF font for translated text sprites (env DDG_FONT)
   --locale-dir <dir>       extra catalogue directory, <dir>/<lang>.toml (env DDG_LOCALE_DIR)
+  --hud-layout <original|enhanced>
+                           2D layout (env DDG_HUD_LAYOUT; default original = the 4:3 design);
+                           enhanced: driving HUD at the window's edges, wider station plates
+                           (bilingual with a translation)
+  --ui-scaling <smooth|integer|nearest>
+                           how the 2D layer reaches the window (env DDG_UI_SCALING): smooth =
+                           sharp bilinear (default), integer = largest whole multiple, centred,
+                           nearest = plain nearest neighbour (uneven pixels)
+  --ui-scale <1..4>        fixed 2D canvas multiple (640x480 x n; env DDG_UI_SCALE); default:
+                           follows the window height (smooth: ceil(h/480), integer: floor(h/480))
 
 play keys (mode 0): Down/Up power +/-, Right/Left brake +/- (one more press past B8 = EB),
   Space horn, Enter ATS confirm / panel / menu confirm, Esc pause / cancel, Up/Down menu cursor
@@ -163,6 +174,8 @@ fn parse_play_args() -> Result<play::PlayOptions> {
             other => bail!("unknown option {other}\n\n{USAGE}"),
         }
     }
+    opts.locale.fit_height(opts.size.1);
+    shot::set_ui_scaling(opts.locale.ui_scaling);
     Ok(opts)
 }
 
@@ -216,6 +229,8 @@ fn parse_app_args() -> Result<app::AppOptions> {
             other => bail!("unknown option {other}\n\n{USAGE}"),
         }
     }
+    opts.locale.fit_height(opts.size.1);
+    shot::set_ui_scaling(opts.locale.ui_scaling);
     Ok(opts)
 }
 
@@ -272,6 +287,8 @@ fn parse_args() -> Result<Options> {
             other => bail!("unknown option {other}\n\n{USAGE}"),
         }
     }
+    opts.locale.fit_height(opts.size.1);
+    shot::set_ui_scaling(opts.locale.ui_scaling);
     Ok(opts)
 }
 
@@ -323,6 +340,9 @@ use play::HUD_BAND_TOP;
 
 /// The HUD for the viewer, driven by test values (the fly-through speed and a running clock).
 struct HudView {
+    /// For rasterising the translated text again when the canvas multiple changes.
+    data: scene::GameData,
+    locale: locale::LocaleConfig,
     bank: ddg_render::sprites::SpriteBank,
     layer: ddg_render::sprites::SpriteLayer,
     hud: hud::Hud,
@@ -351,6 +371,7 @@ impl HudView {
         hud::Hud::install_palettes(&exe, &mut layer)?;
         let hud = hud::Hud::new(&exe, 0)?;
         hud.create(&mut layer);
+        hud::anchor_slots(&mut layer);
         let state = hud::HudState {
             remaining_s: 30,
             clock: 10 * 108_000 + 30 * 1800,
@@ -368,6 +389,8 @@ impl HudView {
             ..Default::default()
         };
         Ok(Self {
+            data: scene::GameData::from_env()?,
+            locale: locale.clone(),
             bank,
             layer,
             hud,
@@ -375,6 +398,36 @@ impl HudView {
             canvas,
             dirty: true,
         })
+    }
+
+    /// Follows a `window`: the canvas multiple and, in the enhanced layout, its shape.
+    fn fit(&mut self, window: (u32, u32)) -> Result<()> {
+        let wide = self.locale.enhanced_hud();
+        let resized = presentation::fit_layer(
+            &mut self.locale,
+            &self.data,
+            &mut self.bank,
+            &mut self.layer,
+            window,
+            wide,
+        )?;
+        if resized {
+            self.canvas = self.layer.new_canvas();
+            self.layer.compose(&self.bank, &mut self.canvas);
+            self.dirty = true;
+        }
+        Ok(())
+    }
+
+    /// The 3D view's top edge in a `window` (see `Play::band_top`).
+    fn band_top(&self, (w, h): (u32, u32)) -> f32 {
+        let rect = ddg_render::overlay::present_rect(
+            w,
+            h,
+            self.layer.canvas_size(),
+            self.locale.ui_scaling,
+        );
+        presentation::band_top(rect, h, HUD_BAND_TOP)
     }
 
     fn tick(&mut self, speed_kmh: f32, paused: bool) {
@@ -448,10 +501,15 @@ impl App {
         let pos = track_pos(self.prev + (self.cur - self.prev) * alpha);
         let camera = self.scene.cab_camera(pos);
         let t = Instant::now();
-        let band_top = if self.hud.is_some() {
-            HUD_BAND_TOP
-        } else {
-            0.0
+        if let (Some(h), Some(g)) = (self.hud.as_mut(), self.gpu.as_ref())
+            && let Err(e) = h.fit(g.size())
+        {
+            eprintln!("ui: {e:#}");
+        }
+        let band_top = match (&self.hud, &self.gpu) {
+            (Some(h), Some(g)) => h.band_top(g.size()),
+            (Some(_), None) => HUD_BAND_TOP,
+            (None, _) => 0.0,
         };
         let aspect = self.gpu.as_ref().map_or(1.6, |g| {
             g.config.width as f32 / (g.config.height.max(1) as f32 * (1.0 - band_top))
@@ -466,6 +524,9 @@ impl App {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         gpu.renderer.show_lines = self.show_lines;
+        if self.hud.is_some() {
+            gpu.renderer.band_top = band_top;
+        }
         gpu.renderer
             .set_geometry(&gpu.device, &gpu.queue, &self.frame);
         gpu.renderer.render(
@@ -476,15 +537,13 @@ impl App {
             &camera,
         );
         if let Some(h) = self.hud.as_mut() {
-            if std::mem::take(&mut h.dirty) {
+            let resized = gpu.overlay.resize(&gpu.device, h.layer.canvas_size());
+            if std::mem::take(&mut h.dirty) || resized {
                 gpu.overlay.upload(&gpu.queue, &h.canvas);
             }
-            gpu.overlay.render(
-                &gpu.device,
-                &gpu.queue,
-                &view,
-                ddg_render::overlay::canvas_rect(gpu.config.width, gpu.config.height),
-            );
+            gpu.overlay.scaling = h.locale.ui_scaling;
+            let rect = gpu.overlay.rect(gpu.config.width, gpu.config.height);
+            gpu.overlay.render(&gpu.device, &gpu.queue, &view, rect);
         }
         gpu.window.pre_present_notify();
         gpu.queue.present(frame);
@@ -641,15 +700,17 @@ fn main() -> Result<()> {
             None
         };
         if let Some(h) = hud.as_mut() {
+            h.fit(opts.size)?;
             h.tick(opts.speed_kmh, false);
         }
+        let band = hud.as_ref().map_or(HUD_BAND_TOP, |h| h.band_top(opts.size));
         shot::render_to_ppm(
             Some((&scene, track_pos(units))),
             opts.size,
             |r| {
                 configure_renderer(r, &opts);
                 if opts.hud {
-                    r.band_top = HUD_BAND_TOP;
+                    r.band_top = band;
                 }
             },
             hud.as_ref()

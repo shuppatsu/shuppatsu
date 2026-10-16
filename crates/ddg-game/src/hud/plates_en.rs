@@ -1,6 +1,6 @@
 //! Enhancement `wide_plates`: the station plates of the driving HUD as horizontal boxes, with a
-//! translation drawn and from `ui_scale` 2 (docs/localisation.md, "Station plates"). Japanese
-//! and `ui_scale` 1 keep the original vertical plates.
+//! translation drawn and the enhanced HUD layout (docs/localisation.md, "Station plates").
+//! Japanese and the original layout keep the original vertical plates.
 //!
 //! The original shows two tall plates with vertical kanji in the top right (hud.md §3.7). Here
 //! the same corner holds two stacked boxes, "from" on top and "next stop" below with a small
