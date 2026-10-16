@@ -4,6 +4,7 @@
 //! world (scenery, track, background) with the original projection, fog and texturing.
 
 pub mod camera;
+pub mod effects;
 pub mod gpu;
 pub mod mip;
 pub mod overlay;

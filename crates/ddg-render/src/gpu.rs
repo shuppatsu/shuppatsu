@@ -1,6 +1,7 @@
 //! wgpu renderer: texture pages are uploaded once; geometry is streamed every frame.
 
 use crate::camera::{Camera, Projection};
+use crate::effects::EffectGeometry;
 use crate::world::{BgTexVertex, BgVertex, FrameGeometry, LineVertex, PageImage, Vertex};
 use glam::Mat4;
 
@@ -80,6 +81,8 @@ struct PageGpu {
     index_count: u32,
     bg_tex: StreamBuffer,
     bg_tex_count: u32,
+    fx_tex: StreamBuffer,
+    fx_tex_count: u32,
 }
 
 pub struct Renderer {
@@ -97,6 +100,8 @@ pub struct Renderer {
     line_count: u32,
     background: StreamBuffer,
     background_count: u32,
+    fx_flat: StreamBuffer,
+    fx_flat_count: u32,
     depth: Option<(wgpu::TextureView, u32, u32)>,
     pub fog: Fog,
     pub projection: Projection,
@@ -107,6 +112,9 @@ pub struct Renderer {
     /// Enhancement `texture_filtering` (off = the original's nearest sampling, no mipmaps).
     /// Takes effect at the next [`Renderer::upload_pages`].
     pub texture_filtering: bool,
+    /// Screen-space effect quads drawn over the world in the 3D band (weather overlay,
+    /// renderer.md §13). Uploaded by [`Renderer::render`]; empty draws nothing.
+    pub effects: EffectGeometry,
 }
 
 fn depth_state(write: bool, compare: wgpu::CompareFunction) -> wgpu::DepthStencilState {
@@ -303,12 +311,15 @@ impl Renderer {
             line_count: 0,
             background: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "background"),
             background_count: 0,
+            fx_flat: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "effects"),
+            fx_flat_count: 0,
             depth: None,
             fog: Fog::default(),
             projection: Projection::default(),
             show_lines: false,
             band_top: 0.0,
             texture_filtering: false,
+            effects: EffectGeometry::default(),
         }
     }
 
@@ -390,6 +401,8 @@ impl Renderer {
                     index_count: 0,
                     bg_tex: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "page background"),
                     bg_tex_count: 0,
+                    fx_tex: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "page effects"),
+                    fx_tex_count: 0,
                 }
             })
             .collect();
@@ -480,6 +493,7 @@ impl Renderer {
             fog: [fog.start, fog.end, if fog.enabled { 1.0 } else { 0.0 }, 0.0],
         };
         queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&uniform));
+        self.upload_effects(device, queue);
         let depth = self.depth_view(device, width, height);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("frame"),
@@ -553,7 +567,48 @@ impl Renderer {
                 pass.set_vertex_buffer(0, slice);
                 pass.draw(0..self.line_count, 0..1);
             }
+            self.draw_effects(&mut pass);
         }
         queue.submit([encoder.finish()]);
+    }
+
+    /// Streams [`Renderer::effects`] to the GPU.
+    fn upload_effects(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
+        let fx = &self.effects;
+        self.fx_flat_count = fx.flat.len() as u32;
+        self.fx_flat
+            .write(device, queue, bytemuck::cast_slice(&fx.flat));
+        for (i, page) in self.pages.iter_mut().enumerate() {
+            let quads = fx.textured.get(i).map_or(&[][..], Vec::as_slice);
+            page.fx_tex_count = quads.len() as u32;
+            page.fx_tex
+                .write(device, queue, bytemuck::cast_slice(quads));
+        }
+    }
+
+    /// The effect quads, after the world in the same band viewport and with the background
+    /// pipelines (the original's 2D quads keep the Z test and write; renderer.md §13).
+    fn draw_effects(&self, pass: &mut wgpu::RenderPass<'_>) {
+        let flat_bytes = u64::from(self.fx_flat_count) * size_of::<BgVertex>() as u64;
+        if self.fx_flat_count > 0
+            && let Some(slice) = self.fx_flat.slice(flat_bytes)
+        {
+            pass.set_pipeline(&self.bg_pipeline);
+            pass.set_vertex_buffer(0, slice);
+            pass.draw(0..self.fx_flat_count, 0..1);
+        }
+        if self.pages.iter().all(|p| p.fx_tex_count == 0) {
+            return;
+        }
+        pass.set_pipeline(&self.bg_tex_pipeline);
+        pass.set_bind_group(0, &self.frame_bind, &[]);
+        for page in self.pages.iter().filter(|p| p.fx_tex_count > 0) {
+            let bytes = u64::from(page.fx_tex_count) * size_of::<BgTexVertex>() as u64;
+            if let Some(slice) = page.fx_tex.slice(bytes) {
+                pass.set_bind_group(1, &page.bind_group, &[]);
+                pass.set_vertex_buffer(0, slice);
+                pass.draw(0..page.fx_tex_count, 0..1);
+            }
+        }
     }
 }
