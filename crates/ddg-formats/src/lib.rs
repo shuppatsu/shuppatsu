@@ -11,6 +11,7 @@ pub mod hud;
 pub mod lz;
 pub mod part;
 pub mod reader;
+pub mod result_camera;
 pub mod rom2;
 pub mod route;
 pub mod scene;
