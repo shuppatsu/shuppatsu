@@ -126,7 +126,23 @@ pub struct Catalogue {
     /// `[station_plate]`: translated station names by vertical plate tilemap (hud.md §3.7),
     /// shown by the horizontal plate layout (`hud::plates_en`), not as sprite overrides.
     pub station_plates: Vec<(u16, String)>,
+    /// `[caption]`: one-line phrases of the station captions and banners by kind
+    /// ([`CAPTION_KINDS`]), with `{name}` for the station name (docs/localisation.md,
+    /// "Captions and banners").
+    pub captions: Vec<(String, String)>,
 }
+
+/// The `[caption]` keys, by caption kind 0–6 (hud.md §3.13: 出発進行, 出発減速, 出発注意,
+/// 出発警戒, 通過, 停車, none).
+pub const CAPTION_KINDS: [&str; 7] = [
+    "depart_clear",
+    "depart_reduce",
+    "depart_caution",
+    "depart_restrict",
+    "pass",
+    "stop",
+    "name",
+];
 
 impl Catalogue {
     /// `<dir>/<lang>.toml` when a directory is given and the file exists, else the built-in
@@ -160,6 +176,7 @@ impl Catalogue {
         let mut name = None;
         let mut entries = Vec::new();
         let mut station_plates = Vec::new();
+        let mut captions = Vec::new();
         for (section, value) in &root {
             match section.as_str() {
                 "meta" => {
@@ -228,6 +245,18 @@ impl Catalogue {
                         station_plates.push((tbl, s.to_owned()));
                     }
                 }
+                "caption" => {
+                    let t = value.as_table().context("[caption] must be a table")?;
+                    for (k, v) in t {
+                        ensure!(
+                            CAPTION_KINDS.contains(&k.as_str()),
+                            "unknown caption kind {k:?}"
+                        );
+                        let s = v.as_str().with_context(|| format!("caption.{k}"))?;
+                        ensure!(!s.trim().is_empty(), "caption.{k}: empty text");
+                        captions.push((k.clone(), s.to_owned()));
+                    }
+                }
                 _ => bail!("unknown section [{section}]"),
             }
         }
@@ -236,8 +265,52 @@ impl Catalogue {
             name: name.context("meta.name missing")?,
             entries,
             station_plates,
+            captions,
         })
     }
+
+    /// The text of every whole-tilemap entry with a single part, by tilemap id (the station
+    /// names of the name sprites, among others).
+    pub fn tbl_texts(&self) -> HashMap<u16, String> {
+        self.entries
+            .iter()
+            .filter_map(|e| match (&e.key, e.text.parts.as_slice()) {
+                (Key::Tbl { tbl, rect }, [p]) if *rect == SubRect::WHOLE.canonical() => {
+                    Some((*tbl, p.text.clone()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// One-line captions for a translation: phrases by kind and texts by tilemap id.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CaptionPhrases {
+    pub by_kind: [Option<String>; 7],
+    pub tbl_texts: HashMap<u16, String>,
+}
+
+/// The `[caption]` phrases of `cfg`'s catalogue, or `None` unless text overrides are drawn
+/// ([`LocaleConfig::active`]) and the catalogue has them.
+pub fn caption_phrases(cfg: &LocaleConfig) -> Result<Option<CaptionPhrases>> {
+    if !cfg.active() {
+        return Ok(None);
+    }
+    let cat = Catalogue::load(&cfg.lang, cfg.dir.as_deref())?;
+    if cat.captions.is_empty() {
+        return Ok(None);
+    }
+    let mut by_kind: [Option<String>; 7] = Default::default();
+    for (k, v) in cat.captions.iter() {
+        if let Some(i) = CAPTION_KINDS.iter().position(|c| c == k) {
+            by_kind[i] = Some(v.clone());
+        }
+    }
+    Ok(Some(CaptionPhrases {
+        by_kind,
+        tbl_texts: cat.tbl_texts(),
+    }))
 }
 
 /// `0x206` or `518`.
@@ -610,6 +683,13 @@ mod tests {
                 assert!(!p.text.contains('\t'), "{:?}", e.key);
             }
         }
+        // Every caption kind has a one-line phrase naming the station, except kind 6 only
+        // naming it.
+        for k in CAPTION_KINDS {
+            let p = cat.captions.iter().find(|(c, _)| c == k);
+            assert!(p.is_some_and(|(_, t)| t.contains("{name}")), "caption {k}");
+        }
+        assert_eq!(cat.tbl_texts()[&0xe6], "Higashi-Kanagawa");
     }
 
     #[test]
@@ -624,6 +704,7 @@ mod tests {
             "[sheet.0x54d]\nheader = \"a\"",
             "[tbl]\n0x10 = \"\"",
             "[other]\n",
+            "[caption]\nleave = \"{name}\"",
         ] {
             assert!(Catalogue::parse(&format!("{head}{bad}")).is_err(), "{bad}");
         }

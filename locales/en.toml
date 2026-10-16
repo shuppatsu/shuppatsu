@@ -859,3 +859,17 @@ mode = { rect = [0, 8, 6, 2], text = "Mode" }         # モード切替
 0x4f8 = "Motomachi"   # name 87
 0x4f9 = "Kobe"   # name 88
 0x4ca = "Shin-Hanamaki"   # name 89
+
+# =============================================================================================
+# Station captions and banners as one line (hud.md §3.13; docs/localisation.md, "Captions and
+# banners"). The original builds them from three sprites, [name][駅][word]; a translation draws
+# one line instead, at one size, with {name} = the name sprite's text above. By kind: the four
+# departure aspects, 通過, 停車, and the bare name. 駅 ("Stn") is dropped.
+[caption]
+depart_clear = "{name} · Depart: CLEAR!"
+depart_reduce = "{name} · Depart: REDUCE"
+depart_caution = "{name} · Depart: CAUTION"
+depart_restrict = "{name} · Depart: RESTRICT"
+pass = "{name} · Pass"
+stop = "{name} · Stop"
+name = "{name}"

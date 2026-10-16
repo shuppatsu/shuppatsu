@@ -222,6 +222,25 @@ impl CabHud {
         })
     }
 
+    /// Enhancement `one_line_captions`: captions and banners as one translated line. Returns
+    /// false (and keeps the sprites) when the art has no caption sprites.
+    pub fn use_one_line_captions(
+        &mut self,
+        bank: &ddg_render::sprites::SpriteBank,
+        phrases: &crate::locale::CaptionPhrases,
+    ) -> bool {
+        let defs = self.captions.defs();
+        let one =
+            crate::captions::OneLine::new(bank, defs, &phrases.tbl_texts, phrases.by_kind.clone());
+        match one {
+            Some(o) => {
+                self.captions.use_one_line(o);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// `Hud_Create` 0x40f7e0 (stage start and restart): static slots, strip palette.
     pub fn create(&mut self, layer: &mut SpriteLayer) {
         self.hud.create(layer);

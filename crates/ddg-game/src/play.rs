@@ -271,6 +271,12 @@ impl Play {
             cab.hud
                 .use_horizontal_plates(&bank, &names, opts.locale.ui_scale);
         }
+        // Enhancement `one_line_captions` (docs/localisation.md): with a translation drawn.
+        if bank.has_label_font()
+            && let Some(p) = crate::locale::caption_phrases(&opts.locale)?
+        {
+            cab.use_one_line_captions(&bank, &p);
+        }
         cab.create(&mut layer);
         let screen_tables = ScreenTables::read(&exe)?;
         let flow = StageFlow::new(FlowDefs::new(&screen_tables, |tbl| {

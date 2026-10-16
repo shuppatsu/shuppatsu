@@ -5,6 +5,10 @@
 //! * `StationBanner` 0x410720 → task 0x410970: big centred banner, slots 0x39–0x3b.
 //! * `Landmark_Show` 0x410a70 → task 0x410bd0: landmark caption, slot 0x3c.
 //!
+//! With a translation (enhancement `one_line_captions`, docs/localisation.md), a caption or
+//! banner is drawn as one line of text over the group's area instead of its three sprites
+//! ([`OneLine`]); the tasks, their timing and their slots are unchanged.
+//!
 //! One task of each kind at a time; creating one replaces the last (its slots are cleared at
 //! once). A task waits 6 updates, then draws every update (hidden while a time message is up)
 //! until its tick count runs out or, in distance mode (kind flag 0x10; landmarks always), the
@@ -15,7 +19,9 @@
 use crate::slots;
 use ddg_formats::cab_hud::{CabTables, LANDMARK_COUNT, WideSprite};
 use ddg_formats::hud::{HudTables, StationNameSprite};
-use ddg_render::sprites::SpriteLayer;
+use ddg_render::sprites::{Paint, SpriteBank, SpriteLayer, TextStyle};
+use ddg_render::text::Align;
+use std::collections::HashMap;
 
 const SLOT_CAPTION: usize = 0x36;
 const SLOT_BANNER: usize = 0x39;
@@ -53,6 +59,156 @@ const APPROACH_BANNER_Y: i16 = 0xb0;
 pub const DEPARTURE_BANNER_Y: i16 = 0xb8;
 /// Landmark y argument (course event 17, 0x40acd0).
 const LANDMARK_Y: i16 = 0xd0;
+/// Layer and palette of every caption, banner and landmark slot (0x410450 / 0x410720).
+const LAYER: u8 = 3;
+const PALETTE: u8 = 4;
+/// One-line text: the caption's line runs from its x to the same margin on the right; the
+/// banner's line is centred, 40 px from each edge.
+const BANNER_LINE_W: f32 = 560.0;
+/// Latin capital height as a share of the original lettering height (as `ddg_render::text`).
+const LATIN_CAP_OF_LETTERING: f32 = 0.75;
+
+/// The colours and size of one caption set, read from its 駅 sprite.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Look {
+    /// Lettering colour index; for plain art the commonest colour, outlined in the second;
+    /// for art on a box (the banners), the commonest colour that is not the box's.
+    letter: u8,
+    outline: Option<u8>,
+    /// The box colour of boxed art: most of the sprite's edge is opaque.
+    backdrop: Option<u8>,
+    /// Capital height and sprite height, original pixels.
+    cap: f32,
+    height: f32,
+}
+
+impl Look {
+    fn of(bank: &SpriteBank, tbl: i16) -> Option<Self> {
+        let (w, h, px) = bank.art(u16::try_from(tbl).ok()?)?;
+        let mut counts = [0u32; 256];
+        let mut edge = [0u32; 256];
+        let mut edge_n = 0u32;
+        for y in 0..h {
+            for x in 0..w {
+                let v = px[y * w + x];
+                if v != 0 {
+                    counts[usize::from(v)] += 1;
+                }
+                if x == 0 || y == 0 || x == w - 1 || y == h - 1 {
+                    edge[usize::from(v)] += 1;
+                    edge_n += 1;
+                }
+            }
+        }
+        let opaque_edge = edge_n - edge[0];
+        let backdrop = (2 * opaque_edge > edge_n)
+            .then(|| (1..=255u8).max_by_key(|&i| edge[usize::from(i)]))
+            .flatten();
+        let mut ranked: Vec<u8> = (1..=255u8)
+            .filter(|&i| counts[usize::from(i)] > 0 && Some(i) != backdrop)
+            .collect();
+        ranked.sort_by_key(|&i| std::cmp::Reverse(counts[usize::from(i)]));
+        let letter = *ranked.first()?;
+        // The lettering's rows (the box, when there is one, spans them all).
+        let (mut top, mut bottom) = (h, 0);
+        for y in 0..h {
+            if px[y * w..(y + 1) * w].contains(&letter) {
+                top = top.min(y);
+                bottom = bottom.max(y + 1);
+            }
+        }
+        Some(Self {
+            letter,
+            outline: if backdrop.is_some() {
+                None
+            } else {
+                ranked.get(1).copied()
+            },
+            backdrop,
+            cap: bottom.saturating_sub(top) as f32 * LATIN_CAP_OF_LETTERING,
+            height: h as f32,
+        })
+    }
+}
+
+/// Enhancement `one_line_captions`: a caption or banner as one translated line, e.g.
+/// "Higashi-Kanagawa · Stop", at the original lettering's size (smaller only to fit), in the
+/// caption's palette colours with its dark outline.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OneLine {
+    /// Station names by station-name id.
+    names: HashMap<usize, String>,
+    /// Phrases by kind 0–6, `{name}` replaced by the name.
+    phrases: [Option<String>; 7],
+    /// Caption (plain) and banner (highlighted) sets.
+    looks: [Look; 2],
+}
+
+impl OneLine {
+    /// `tbl_texts`: translated texts by tilemap id (the names of the name sprites); `phrases`:
+    /// by kind. `None` when the 駅 sprites have no art.
+    pub fn new(
+        bank: &SpriteBank,
+        defs: &CaptionDefs,
+        tbl_texts: &HashMap<u16, String>,
+        phrases: [Option<String>; 7],
+    ) -> Option<Self> {
+        let names = defs
+            .names
+            .iter()
+            .enumerate()
+            .filter_map(|(id, n)| Some((id, tbl_texts.get(&n.plain)?.clone())))
+            .collect();
+        Some(Self {
+            names,
+            phrases,
+            looks: [
+                Look::of(bank, defs.caption_station)?,
+                Look::of(bank, defs.banner_station)?,
+            ],
+        })
+    }
+
+    /// The line for station `id` and kind `k`; `banner` picks the highlighted set.
+    fn line(
+        &self,
+        id: usize,
+        k: usize,
+        banner: bool,
+        rect: [f32; 4],
+        align: Align,
+    ) -> Option<Line> {
+        let name = self.names.get(&id)?;
+        let text = self.phrases.get(k)?.as_ref()?.replace("{name}", name);
+        let look = self.looks[usize::from(banner)];
+        let [x, y, w, _] = rect;
+        let paint = |index| Paint {
+            palette: PALETTE,
+            index,
+        };
+        // One pixel of margin for an outline; a box keeps the sprite's height.
+        let m = if look.outline.is_some() { 1.0 } else { 0.0 };
+        Some(Line {
+            text,
+            rect: [x - m, y - m, w + 2.0 * m, look.height + 2.0 * m],
+            style: TextStyle {
+                paint: paint(look.letter),
+                cap: Some(look.cap),
+                outline: look.outline.map(paint),
+                backdrop: look.backdrop.map(paint),
+                align,
+            },
+        })
+    }
+}
+
+/// A one-line caption ready to draw.
+#[derive(Debug, Clone, PartialEq)]
+struct Line {
+    text: String,
+    rect: [f32; 4],
+    style: TextStyle,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Until {
@@ -65,12 +221,14 @@ enum Until {
     Cancelled,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct Task {
     delay: i32,
     until: Until,
     /// Images of the task's slots (name, 駅, word); −1 = none.
     images: [i16; 3],
+    /// The one-line text drawn instead of the images ([`OneLine`]).
+    line: Option<Line>,
 }
 
 impl Task {
@@ -87,7 +245,17 @@ impl Task {
             delay: DELAY,
             until,
             images,
+            line: None,
         }
+    }
+
+    /// The task shows `line` instead of its sprites (which stay empty).
+    fn with_line(mut self, line: Option<Line>) -> Self {
+        if line.is_some() {
+            self.images = [-1; 3];
+        }
+        self.line = line;
+        self
     }
 
     /// One update: draws into `slots`, returns false when the task ends.
@@ -105,6 +273,9 @@ impl Task {
         }
         for (i, &slot) in slots.iter().enumerate() {
             slots::image(layer, slot, if hidden { -1 } else { self.images[i] });
+        }
+        if let Some(l) = self.line.as_ref().filter(|_| !hidden) {
+            layer.add_styled_text(LAYER, l.rect, &l.text, l.style);
         }
         let alive = match &mut self.until {
             Until::Ticks(t) => {
@@ -158,6 +329,8 @@ pub struct Captions {
     allowed: bool,
     /// `0x856d68`.
     approach: u8,
+    /// Enhancement `one_line_captions`; `None` draws the original sprites.
+    one_line: Option<OneLine>,
 }
 
 /// What the approach state machine reads (0x40c4e0, after 0x40dad0 of the same tick).
@@ -185,7 +358,17 @@ impl Captions {
             landmark: None,
             allowed: false,
             approach: 0,
+            one_line: None,
         }
+    }
+
+    pub fn defs(&self) -> &CaptionDefs {
+        &self.defs
+    }
+
+    /// Draws captions and banners as one translated line from now on ([`OneLine`]).
+    pub fn use_one_line(&mut self, one_line: OneLine) {
+        self.one_line = Some(one_line);
     }
 
     /// 0x40cf40 (segment reset) and 0x40d620 (station passed): the approach starts over.
@@ -264,7 +447,14 @@ impl Captions {
             self.defs.caption_station,
             self.defs.caption_words.get(k).copied().unwrap_or(-1),
         ];
-        self.caption = Some(Task::new(images, kind, duration, odometer));
+        // Left-aligned from the caption's x, with the same margin on the right.
+        let (fx, fy) = (f32::from(x), f32::from(y));
+        let rect = [fx, fy, 640.0 - 2.0 * fx, 0.0];
+        let line = self
+            .one_line
+            .as_ref()
+            .and_then(|o| o.line(id, k, false, rect, Align::Left));
+        self.caption = Some(Task::new(images, kind, duration, odometer).with_line(line));
         self.allowed = true;
     }
 
@@ -290,8 +480,19 @@ impl Captions {
         // The 駅 width is added unless the kind is 3 (a quirk of 0x410720's test).
         let total = w + word_w + if k != 3 { STATION_WORD_W } else { 0 };
         let origin = self.defs.origin;
-        let mut x = origin.0 + CENTRE_X + CENTRE_HALF - total / 2;
+        let centre = origin.0 + CENTRE_X + CENTRE_HALF;
+        let mut x = centre - total / 2;
         let y = origin.1 + TOP_Y + y;
+        let rect = [
+            f32::from(centre) - BANNER_LINE_W / 2.0,
+            f32::from(y),
+            BANNER_LINE_W,
+            0.0,
+        ];
+        let line = self
+            .one_line
+            .as_ref()
+            .and_then(|o| o.line(id, k, true, rect, Align::Center));
         slots::place(layer, SLOT_BANNER, x, y, 3, 4);
         x += w;
         if k != KIND_NONE {
@@ -304,7 +505,7 @@ impl Captions {
             self.defs.banner_station,
             self.defs.banner_words.get(k).copied().unwrap_or(-1),
         ];
-        self.banner = Some(Task::new(images, kind, duration, odometer));
+        self.banner = Some(Task::new(images, kind, duration, odometer).with_line(line));
         self.allowed = true;
     }
 
@@ -498,6 +699,78 @@ mod tests {
     }
 
     #[test]
+    fn one_line_replaces_the_three_sprites() {
+        use ddg_render::sprites::WidgetKind;
+        let look = Look {
+            letter: 0x1c,
+            outline: Some(0x1d),
+            backdrop: None,
+            cap: 21.0,
+            height: 32.0,
+        };
+        let boxed = Look {
+            outline: None,
+            backdrop: Some(0x30),
+            ..look
+        };
+        let mut phrases: [Option<String>; 7] = Default::default();
+        phrases[KIND_STOP as usize] = Some("{name} · Stop".into());
+        let mut c = Captions::new(defs());
+        c.use_one_line(OneLine {
+            names: [(1, "Higashi-Kanagawa".to_owned())].into_iter().collect(),
+            phrases,
+            looks: [look, boxed],
+        });
+        let mut layer = SpriteLayer::default();
+        c.caption(&mut layer, 1, DISTANCE | KIND_STOP, 20, 0.0);
+        let text = |l: &SpriteLayer| {
+            l.widgets.iter().find_map(|w| match &w.kind {
+                WidgetKind::Text { text, style } => Some((text.clone(), w.rect, *style)),
+                _ => None,
+            })
+        };
+        // Same timing: nothing for six updates, then the line; the sprites stay empty.
+        for _ in 0..6 {
+            layer.reset_transient();
+            c.update(&mut layer, false, 0.0);
+            assert!(text(&layer).is_none());
+        }
+        layer.reset_transient();
+        c.update(&mut layer, false, 0.0);
+        let (t, rect, style) = text(&layer).unwrap();
+        assert_eq!(t, "Higashi-Kanagawa · Stop");
+        assert_eq!(rect, [79.0, 111.0, 482.0, 34.0]);
+        assert_eq!(style.align, Align::Left);
+        assert_eq!((style.paint.index, style.cap), (0x1c, Some(21.0)));
+        assert_eq!(style.outline.map(|p| p.index), Some(0x1d));
+        for s in SLOT_CAPTION..SLOT_CAPTION + 3 {
+            assert_eq!(layer.slots[s].tilemap, -1);
+        }
+        // Hidden under a time message.
+        layer.reset_transient();
+        c.update(&mut layer, true, 0.0);
+        assert!(text(&layer).is_none());
+        // The banner: centred, on its box; a kind without a phrase keeps the sprites.
+        c.banner(&mut layer, 1, DISTANCE | KIND_STOP, 100, 0xb0, 0.0);
+        c.banner(&mut layer, 1, DISTANCE | KIND_PASS, 100, 0xb0, 0.0);
+        for _ in 0..7 {
+            layer.reset_transient();
+            c.update(&mut layer, false, 0.0);
+        }
+        assert_eq!(layer.slots[SLOT_BANNER].tilemap, 0x200);
+        c.banner(&mut layer, 1, DISTANCE | KIND_STOP, 100, 0xb0, 0.0);
+        c.caption = None;
+        for _ in 0..7 {
+            layer.reset_transient();
+            c.update(&mut layer, false, 0.0);
+        }
+        let (_, rect, style) = text(&layer).unwrap();
+        assert_eq!(rect, [40.0, 216.0, 560.0, 32.0]);
+        assert_eq!(style.backdrop.map(|p| p.index), Some(0x30));
+        assert_eq!(layer.slots[SLOT_BANNER].tilemap, -1);
+    }
+
+    #[test]
     fn approach_creates_caption_banner_caption() {
         let mut c = Captions::new(defs());
         let mut layer = SpriteLayer::default();
@@ -507,7 +780,7 @@ mod tests {
         assert_eq!(c.approach, 1);
         // The caption lasts until f5 + 150 = 450 m from the stop: 550 m from here.
         assert_eq!(
-            c.caption.unwrap().until,
+            c.caption.as_ref().unwrap().until,
             Until::Distance {
                 start: 0,
                 metres: 550
