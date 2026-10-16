@@ -217,12 +217,13 @@ Null-terminated list of 15 entries, each run in turn until bit 4 of `DAT_00855ff
 for START (`FUN_00401dc0`). Pressing START ends attract. In the arcade build (`DAT_008573e0 == 0`) a coin
 is also needed:
 `0x402e60` (screen 0x15 via `FUN_0040ed90`), `0x402880` (title logo task, chooses graphics by resolution mode),
-`0x402e80`, `0x404e10` (ranking, can chain into the Komachi movie `FUN_00429110`),
+`0x402e80` (opening and title picture), `0x404e10` (the Komachi-movie check; not a ranking),
 `0x40e450` (choose demo route from the bitmask `DAT_008500b0`, rotating with the attract counter `DAT_008573c8`),
 `0x40e4b0` (demo drive), `0x40e6c0` (screen 5), `0x403f40` ×4, `0x403da0`, `0x40e6e0`.
 `Attract_DemoDrive` creates a list-4 task (update `0x40e630`) that calls `FUN_0040dad0` and `FUN_0040b710` once per tick
-for at most 1600 ticks (≈53 s) and increments `DAT_008570b0`. The train is driven by replay playback
-(likely: see §7).
+for at most 1600 ticks (≈53 s) and increments `DAT_008570b0`. The train is driven by the train task's
+replay mode on the exe table 0x467b20, not by `REPLAY.DAT` (confirmed; menus.md §2, which has the full
+walk).
 
 ### Title menu (`TitleMenu_Run` @ 0042a1c0) — confirmed values, likely meanings
 It creates the menu task `FUN_0042b210` and waits until `DAT_00816834 != -1`.

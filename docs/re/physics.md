@@ -101,8 +101,8 @@ types (top speed 250–330).
 
 Per stage × difficulty (`[stage·4 + difficulty]`, difficulty = settings value 0x829d10), set by
 0x40d040: gradient scale **0x459b90 → 0x84c404** and curve scale **0x459a50 → 0x84c42c**
-(1.0–1.3). Traction scale 0x84c3f4 and brake scale 0x84c438 are 1.0 (only the ending sequence's
-train, 0x4240d0, resets them, also to 1.0).
+(1.0–1.3). Traction scale 0x84c3f4 and brake scale 0x84c438 are 1.0 (only the bonus game's
+physics task, 0x4240d0, resets them, also to 1.0; menus.md §12.1).
 
 `0x471f88` (21 × 8 i32) is the rail-joint sound table (period in metres, click offsets); not physics.
 
@@ -379,8 +379,9 @@ sequence, weather, the power-cut fade, the ATC trip.
 
 * Precision on real Windows (§2): Wine runs in double precision.
 * 0x857084 (brake load) is 0 in the rows checked; are other values used anywhere?
-* Attract/demo mode 2 (scripted notches at 0x467b20/0x46857c) and the ending train (0x4240d0)
-  are not implemented.
+* ~~Attract/demo mode 2 and the ending train~~: the replay mode (task+0x74 = 2, one input byte
+  per update from 0x467b20 / 0x46857c) is `ddg_engine::demo`; 0x4240d0 is the bonus game's
+  physics task (`ddg_engine::bonus`), not an ending train (menus.md §2.4, §12.1).
 * Which settings value 0x829d10 holds (difficulty-like; stage tables are indexed by it).
 
 ## Decision: numeric reference (user, 2026-10-15)

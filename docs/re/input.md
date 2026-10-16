@@ -26,7 +26,7 @@ inferred from usage. **guess** means it's a plausible reading that needs an expe
 | 0x004332a0 | `input_is_one_handle` | True for mode 3 or 5 | confirmed |
 | 0x004332c0 | `input_force_notches(p, b)` | Sets power/brake unless analog levers are active (the game calls it with (0, 9) = EB at run start) | confirmed |
 | 0x00434a00 | `controller_calibration_screen` | Settings menu entry 4 ("ADJUSTMENT"). Samples 6 mascon and 10 brake positions, writes `joystick.dat` | confirmed |
-| 0x00434940 | `ff_play_jolt` | Sets the FF effect gain from the setting (3333/6666/10000) and Start(1). No callers found (wrapper 0x433260 also has none) | likely dead |
+| 0x00434940 | `ff_play_jolt` | Sets the FF effect gain from the setting (3333/6666/10000) and Start(1). Called through 0x433260 by the bonus game (0x41b810, 0x4241d0; menus.md §12.1) | confirmed |
 | 0x00434ed0 | `settings_load` | Reads `eeprom.dat` (0x35a bytes → 0x856020). Clamps mode to 0 if there's no joystick | confirmed |
 | 0x00434f50 | `settings_save` | Writes `eeprom.dat` | confirmed |
 | 0x0042a130 | `pump_messages_and_poll` | PeekMessage/Dispatch, then `input_poll` (unless 0x816984≠0 and 0x81696c=0), then audio update | confirmed |
@@ -313,8 +313,8 @@ physics consumes the input at the same frame cadence.
    found).
 2. Mode 6 reads button 2 for pause, but the INF declares only 2 buttons. Does DGOC44.DLL report a third
    (START)? This needs the driver or a real device.
-3. Is the FF effect ever triggered? 0x433260/0x434940 have no static callers. Check for
-   indirect calls at runtime.
+3. ~~Is the FF effect ever triggered?~~ Yes: 0x433260 is called by the bonus game (0x41b810 on
+   contact, 0x4241d0 on the rail joints). The port has no force feedback.
 4. Frame rate (ms per poll) is outside this note.
 5. What does the J-key/0x829d16 path do, and should it be kept?
 

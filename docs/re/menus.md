@@ -24,7 +24,7 @@ English gloss is given where it helps; no screen text exists as character string
 | 0x42abb0 / 0x42ac00 / 0x42ad10 | `OptionsControl_*` | Value page for item 0 (control mode), with controller legend 0x42a820 | confirmed |
 | 0x42afa0 / 0x42b020 / 0x42b180 | `OptionsValue_*` | Value page for items 1–5 | confirmed |
 | 0x42a3f0 / 0x42a460 | `Options_Get` / `Options_Set` | Read / write the six settings | confirmed |
-| 0x41f5e0 / 0x41f910 / 0x41fc60 / 0x41fd00 | `Records_Create` / `_Update` / `_Draw` / `_Destroy` | Ranking viewer (title item 2 and attract) | confirmed |
+| 0x41f5e0 / 0x41f910 / 0x41fc60 / 0x41fd00 | `Records_Create` / `_Update` / `_Draw` / `_Destroy` | Ranking viewer (title item 2) | confirmed |
 | 0x41e520 | `Ranking_FromEeprom` | Unpacks the eeprom ranking into the display table; sets `0x8500b0 = 0x3f9da` | confirmed |
 | 0x41e670 | `Ranking_ToEeprom` | Packs one ranking table back into the eeprom mirror | confirmed |
 | 0x41e7a0 / 0x41e4c0 | `Name_Filter` / `Name_Replace` | Replaces names from three lists with a per-route default | confirmed |
@@ -44,9 +44,11 @@ English gloss is given where it helps; no screen text exists as character string
 | 0x415ab0 / 0x415ba0 / 0x415e80 | `Continue_*` | Continue countdown | confirmed |
 | 0x4149d0 / 0x414b70 / 0x415050 | `ReportCard_*` | 運転評価 five-part grade screen | confirmed |
 | 0x415f00 / 0x416270 / 0x4162a0 | `RunEnd_*` | 運転中止 / 運転終了 banner | confirmed |
-| 0x41b540 / 0x41b810 / 0x41c2e0 | `BonusGame_*` | Coupling bonus game (EF63) | likely (purpose from art) |
-| 0x4040a0 | `Ending_Run` | Ending after clearing a 4–5 star stage | guess (contents not traced) |
-| 0x402700 | `Attract_Run` | Attract sequencer over 0x484e30 (main-loop.md §5) | confirmed |
+| 0x41b540 / 0x41b810 / 0x41c2e0 | `BonusGame_*` | EF63 coupling bonus game (§12.1); physics task 0x4240d0 / 0x4241d0 | confirmed |
+| 0x4093c0 | `Coupling_Run` | In-cab coupling minigame (rules.md §7.5) | confirmed |
+| 0x4040a0 / 0x404110 / 0x404920 | `Ending_Run` / `_Full` / `_Plain` | Staff roll after clearing a stage of difficulty above 3 (§12.2); tasks 0x4042b0, 0x404a80 | confirmed |
+| 0x402700 | `Attract_Run` | Attract sequencer over 0x484e30 (§2.1) | confirmed |
+| 0x402880 / 0x402e80 / 0x40e4b0 / 0x40e6e0 / 0x403f40 / 0x403da0 | `Attract_Logo` / `_Title` / `_DemoRoute` / `_DemoLesson` / `_Photo` / `_Poster` | Attract items (§2.2–§2.5) | confirmed |
 | 0x401910 | `Credits_Init` | Sets `0x8573e0 = 1` (free play) | confirmed |
 | 0x41fda0 | `Sfx_Play` | Plays a sound code if sound is on (`0x816ae8`); bit 0x1000 → jingle sequence 0x41fdd0 | confirmed |
 | 0x430100 / 0x430130 | `Snd_Play` / `Snd_Stop` | Thread message 0x464 / 0x465 (wrappers 0x42ff20 play, 0x420630/0x420650 stop) | confirmed |
@@ -128,40 +130,148 @@ Input words are active-low (input.md §6); "pressed" = the edge word `0x48c42c`.
 
 ## 2. Boot, attract, press START
 
-* Attract: `Attract_Run` 0x402700 walks the table at 0x484e30 (main-loop.md §5): 0x402e60,
-  0x402880 (a logo that picks its sprites from the difficulty bits of 0x829d10), 0x402e80
-  (title), 0x404e10 (Komachi check, below), 0x40e450 (demo route), 0x40e4b0 (demo drive),
-  0x40e6c0, 0x403f40 ×4, 0x403da0, 0x40e6e0. An item runs while it keeps `0x855ff8 & 4` set; one
-  `Task_Tick` follows each item; the end of the table clears the sprites and runs 3 ticks.
-  **confirmed** (0x402700; most items not traced)
-* START is the menu-confirm edge 0x1000 (free play). Pressed while the title picture shows
-  (`0x855ffc & 0x20`, set by 0x4037f0): sound 0x1e and `Attract_Run` returns, so the title menu
-  comes next. Pressed during any other item: `0x855ffc |= 0x10` and the walk restarts at item 2
-  (the title). **confirmed** (0x402700)
-* Item 2, 0x402e80: with `0x855ffc & 0x10` (back from a menu cancel, a quit, a declined exit) it
-  goes straight to 0x4037f0: tbl 0x410 (0x411 in res mode 2) full screen at (x0, y0), palette
-  0x17; palettes 0x17 / 0x16 / 0x15 fade in from black over 0x40 / 0x50 / 0x50 ticks towards the
-  palette data at 0x48b290 / 0x488e90 / 0x488290 (task 0x4367c0 → 0x436820: each channel ×
-  `(n − remaining) / n`, truncated, the last tick an exact copy); the title call 0x1024 at tick
-  100; the item ends after 300 ticks. Without 0x10 (cold start, after a run that was not quit)
-  it first plays a 3D opening fly-by (0x402fb0 → 0x403080 → 0x4031d0 with logo tbl 0x198, PRESS
-  START tbl 0x123, BGM 0x1a1, route-1 scenery). **confirmed** (the fly-by itself not traced)
-* Item 3, 0x404e10, is **not** the ranking: it calls 0x404cf0, which returns 1 when every
-  select stage of the five route-select groups has a clear mark on its route
-  (`0x85635a[stage +0x1c]`), and then plays the Komachi movie `FUN_00429110`. That is the only
-  reachable caller of the movie (§3). **confirmed** Where attract shows the records viewer
-  (`0x855ffc & 8` clear, §5) is not traced.
-* Demo route (0x40e450): collects the routes 0–12 whose bit is set in `0x8500b0` (→ 1, 3, 4, 6, 7,
-  8, 11, 12) and takes entry `attract_counter (0x8573c8) mod 8` (the count of collected routes).
-  **confirmed** (objdump; corrected from 9 entries).
-* The arcade "insert coin / press START" machinery is disabled on PC: `Credits_Init` 0x401910 (called
-  unconditionally from `Game_Init`) sets `0x8573e0 = 1`, and every credit routine (0x401dc0,
-  0x401e40, 0x401ef0, 0x401f40) returns at once when it is set. **confirmed**
+### 2.1 The walk — confirmed (0x402700)
+
+`Attract_Run` 0x402700 walks the null-terminated table 0x484e30. An item creates a task (list 4)
+and sets `0x855ff8 & 4`; the walk runs `Task_Tick` while the bit stays set, then one more
+`Task_Tick`, then the next item. Items that only call a loader clear the bit at once and cost
+that one tick. At the end of the table the sprites are cleared (0x431790(0)), three ticks run,
+the walk counter `0x8573c8` goes up by one and the walk starts again at **item 0**.
+
+| # | Item | What it is | Length |
+|---|---|---|---|
+| 0 | 0x402e60 | `stage_assets_load(0x15)`: area 2 plus partsTR2 / partsTR9 (the opening's sets) | instant |
+| 1 | 0x402880 | TAITO logo with two locomotives (§2.2) | ≈ 470 ticks |
+| 2 | 0x402e80 | the title: the cold-start opening (§2.3) unless `0x855ffc & 0x10`, then the title picture 0x4037f0 | 566 + 301 |
+| 3 | 0x404e10 | the Komachi-movie check (below) | instant |
+| 4 | 0x40e450 | picks the demo route (below) and loads its assets | instant |
+| 5 | 0x40e4b0 | demo drive on it (§2.4) | 1600 |
+| 6 | 0x40e6c0 | `stage_assets_load(5)` | instant |
+| 7–10 | 0x403f40 ×4 | a photo each (§2.5) | 102 each |
+| 11 | 0x403da0 | a poster (§2.5) | 202 |
+| 12 | 0x40e6e0 | the stage-5 lesson demo (§2.4) | 3250 |
+
+The records viewer is **not** an attract item: the only caller of 0x41f5e0 is the title menu
+(0x42a1c0).
+
+**START** is the confirm edge `0x48c42c & 0x1000` (free play, `0x8573e0 = 1`; 0x401dc0 then
+returns 1). While an item runs, the walk tests START unless the item handles it itself
+(`0x855ffc & 0x100`, the logo only): START clears `0x855ff8 & 4`, the item's task dies in the
+next `Task_Tick`, the walk counter goes up, and then
+* with the title picture up (`0x855ffc & 0x20`, set by 0x4037f0): sound 0x1e and `Attract_Run`
+  returns, the title menu follows;
+* otherwise `0x855ffc |= 0x10`, one `Task_Tick`, and the walk restarts at item 2, whose title
+  then skips the opening.
+Cancel (`0x2000`) during the title picture sets `0x48de00`, which nothing reads. **confirmed**
+
+* Item 3, 0x404e10, calls 0x404cf0, which returns 1 when every select stage of the five
+  route-select groups has a clear mark on its route (`0x85635a[stage +0x1c]`), and then plays the
+  Komachi movie `FUN_00429110`, its only reachable caller (§3). **confirmed**
+* Item 4, 0x40e450, collects the routes 0–12 whose bit is set in `0x8500b0` (`0x3f9da` from
+  0x41e520: routes 1, 3, 4, 6, 7, 8, 11, 12) and takes entry `0x8573c8 mod 8`. **confirmed**
+* The arcade "insert coin / press START" machinery is disabled on PC: `Credits_Init` 0x401910
+  (called unconditionally from `Game_Init`) sets `0x8573e0 = 1`, and every credit routine
+  (0x401dc0, 0x401e40, 0x401ef0, 0x401f40) returns at once when it is set. **confirmed**
 * `PressStart` 0x4122d0 (`Game_MainFlow` after the title): places a cabinet picture (tbl 0x246
   "スタートボタンを押して下さい", 0x247, 0x15, 0x14, 0x1b, 0x38, 0x22 at the table 0x463f18) and
   its update returns 0 on the first tick when `0x8573e0 != 0`. **On PC it lasts one tick.** In
   the arcade build it blinks 0x246 every 15 ticks and plays 0xe9 every 200 ticks until START.
   **confirmed**
+* After a run `Stage_Run` sets `0x855ffc |= 0x10` only on the quit path (0x408b72), so attract
+  starts from item 0 (with the opening) after a game over or a clear, and from the title picture
+  after a quit, a menu cancel or a declined exit. **confirmed**
+
+### 2.2 The logo item 0x402880 (task 0x402a70) — confirmed
+
+Slots 0x11 / 0x12 = two locomotives at (0x280, 0x13e) / (0x300, 0x13e), palette 4; slot 0xd =
+TAITO tbl 0x160 at (0x380, 0x66), palette 0xb (res modes 0/1; 0x161 / 0x162 and other locomotive
+art for modes 3 / 2). Locomotive k shows bit k of the difficulty `0x829d10`: tbl 0x433 (bit 0)
+or 0x436 (bit 1) from a stack table, so the pair spells the difficulty in binary. Sets
+`0x855ffc |= 0x100` (START handled by the item). With A = locomotive width 0x4579c0[r] (128),
+B = logo width 0x4579e0[r] (208), W = screen width 0x48c1e0[r], C = (W − B)/2, y = 0x457a00[r]
+(318) for the locomotives and 0x457a10[r] (102) for the logo, x = 5·counter:
+
+| State | Motion | Ends |
+|---|---|---|
+| 0 | the three slide in from the right: loco 0 at W − x, loco 1 +A, logo +2A | x ≥ 2A − C + W (136 ticks) |
+| 1 | pause | counter > 0x13; sound 0x2a |
+| 2 | the locomotives leave to the left (C − A − x) | x ≥ C |
+| 3 | the logo alone at C, locomotives parked at (0x800, 0x13e) | counter > 0x3b |
+| 4 | the locomotives come back from the left (x − A) | x ≥ C; sound 0x2a |
+| 5 | pause | counter > 0x13 |
+| 6 | all three slide off to the right (C + x − 2A …) | x ≥ 2A − C + W |
+| 7 | | counter > 4: the item ends |
+
+START before state 3 jumps to state 3 (counter 0, not counted that update); START after state 3
+sets `0x855ffc |= 0x10` and ends the item, so the title skips the opening. Destroy 0x402e00
+clears the slots and both flags.
+
+### 2.3 The cold-start opening (item 2, 0x402e80 → 0x403750) — confirmed (code)
+
+One task in list 4 whose update moves through seven functions; each switches with the counter
+reset, and the next function first runs on the next tick. 0x425dc0, 0x431eb0 and 0x4317d0 are
+no-ops on PC (arcade VRAM preloads). The create also runs `0x40eed0(2, 0)` (palette 3 for area
+2, plus one `Task_Tick`, so phase A's first update happens inside the create), BGM 0x1a1,
+render mode `0x84c128 = 2`, slot 0x26 placed at (0x170, 0x154).
+
+| Phase | Function | Updates | Content |
+|---|---|---|---|
+| A | 0x402fb0 | 145 | render mode 2 (whole 496×400 screen, eye (0.5, 0.13, −2.488), target (−1.041, 0.08, 2.551), 45°): draw 0x403920 = backdrop gradient 0x4692e0 (palette 3 index 1 → 255: sky (213,213,238) to ground (200,200,200)), black rect bars 0–40 and 440–480 px, the track bed 0x2f83 at the origin and the Komachi consist (`*0x4573dc` = 0x450f58, 28-byte records `{part[5], offset, spacing}`) at (0.15, −0.2, t + 0.5·L − offset); t from 10.0, −0.04 per update (f64 0x458ac0); update 2 sets the draw callback and slot 0x10 = tbl 0x198 (platform photo) at (96, 56), palette 0x11 |
+| B | 0x403080 | 57 | black 3D; slot 0x26 = tbl 0x123 (3000番台 badge); slot 0x10 at (80, 124): frames 0x457a20[0..5] (0x439–0x43d), palette 0xe, the first for 20 updates, then each new frame starts with one update in palette 0x14 (all white: `0x436c20(0x14, 0xffffff)`) at counts 20, 26, 32, 40 |
+| C | 0x4031d0 | 94 | as A with t from 7.0, −0.1953125 per update (0x458ac8): the train rushes past |
+| D | 0x4032a0 | 57 | as B with frames 0x457a20[5..10] (0x43e–0x442); at its end `0x408080(1, 24)` (Morioka on AKITA1C), FOV 30°, the camera jumps 150 units |
+| E | 0x403420 | 89 | render mode 0 on the route, black bars x 0–64 and 576–640 and the bottom band (268–400 virtual); update 0: `0x406e10(spawn 2, flags 0x11, 270 km/h, 0, model 7)` (an E3 set; rear bogie 12 points back instead of 10) and v = 0.1852 units/tick (f32 0x3e3da512); then +0.0038892 per update (0x458ae0) up to 0.51 (0x458ad8); speed readout 0x416f50(`trunc(v · 0.5 · 1079.913607)`), slot 0x75 = tbl 0x53 at (64, 112) and the 7-segment palette entries; at its end list 5 is killed |
+| F | 0x403540 | 91 | white studio (`0x40eed0(8)`, palette 3 all white): the platform set 0x2df3, the 489 car 0x327a at z40 and the EF63 pair 0x2df2 at z20 and z20 + 3.9 (x −1.5); three camera keys (counts 0, 20, 40) with FOV 16°, 12°, 22°; from count 41 z20 and z40 −0.15 per update and slot 0x10 = tbl 0x443 (3000番台 scroller) at (20c − 1376, 140), palette 0xe |
+| G | 0x403750 | 33 | black 3D; slot 0x10 at (80, 124), palette 0xe: 0x457a20[10..12] for counts 0–2, 0x2c2 to 23, 0x2c3 (the navigator girl's salute and wink) to 31; then the title picture 0x4037f0 in the same task |
+
+566 updates before the title picture. BGM 0x1a1 plays on through the title picture; the title
+task's destroy 0x403d20 kills list 5, releases 0x1a1, clears the sprites and the flags. START
+during the opening ends the task the same way (no title picture; the walk restarts at item 2).
+
+### 2.4 Demo drives (0x40e4b0, 0x40e6e0) — confirmed
+
+Both build a stage run without the stage loop: `0x40d040(0)`, the plates of station 0 and of the
+first stopping station (0x40f780), the running sounds, `0x408080(stage, 0)`, the HUD
+(0x40f7e0), the train task in its **replay mode** (`0x4229c0(stage, 2 or 3)` → task+0x74 = 2,
+table pointer task+0x88), 0x40dad0, the signal blocks (0x40b970), `0x856fb0 = 30`, the distance
+panel and the clocks on, and the attract overlay 0x4023b0: slot 6 = 0x25a "スタートボタンで運転開始
+/ PUSH ENTER KEY" at (0xe0, 0xac) and slot 8 = 0x25b "一日乗車券 FREE PLAY" at (0xf0, 0xc4),
+shown in the first / third 30-tick quarter of every 120, and slot 0x26 = 0x123 at
+(0x4579a0, 0x4579b0)[r] every update (in the arcade build 0x253 / 0x251).
+
+The demo's notches: every train-task update reads one byte of the table, `brake << 4 | horn << 3
+| power` (0x422c71). The end test always looks at 0x467b20 (`cmp byte [edi+0x467b20], 0xff`),
+which holds no 0xff within either demo's length, so neither table wraps. The demo inputs are
+**not** `REPLAY.DAT` / CReplayEvent (input.md §7, the player's recordings).
+
+* **Route demo** 0x40e4b0 (task 0x40e630, list 4): the route item 4 picked, table 0x467b20
+  (2652 bytes), the GMQ logo 0x402590 (slot 7 at (0x457980, 0x457990)[r], palette 0xb, frame
+  `[0x304, 0x305 ×3, 0x306, 0x307 ×3][0x84c3dc % 12]`, 0x84c3dc counting the rail-joint clicks of
+  the train task), the departure lamp lit (`0x434fb0(1)`). Each update while the counter is below
+  0x640 (1600): 0x40dad0, 0x40b710 (AI-train events), clock +1.
+* **Lesson demo** 0x40e6e0 (task 0x40e860): stage 5, table 0x46857c, the course events replaced
+  by the list 0x459338 (`0x857088`; hints 1, 2, 14, 4, 12, 13, 11 and two speed limits). Each
+  update while the counter is below 0xcb2 (3250): at count 30 hint 0 (180 ticks) and
+  `Signal_Show(4, 2, 150, 0)` (a red starting signal), at 160 `Signal_Show(aspect | 0x100, 2, 0,
+  10)`, at 200 the lamp on and hint 9 (90 ticks); then 0x40dad0, 0x40acd0, 0x40c010, 0x40b780 and
+  clock +1. No ATS and no AI-train events.
+
+The destroy 0x40e670 kills lists 2, 3 and 4, stops all sound, clears the sprites and the flags.
+
+### 2.5 Photos and poster — confirmed
+
+* 0x403f40 (task 0x404030): `{tbl, w, h}` i16 × 35 at 0x4578ac, entry `0x8573cc mod 35`
+  (`0x8573cc` then +1), slot 0x10 centred on (320, 240), palette 7; the task runs 102 updates.
+* 0x403da0 (task 0x403ec0): `{tbl, palette}` i16 × 2 at 0x4578a0 by the parity of `0x8573c8`
+  (0x412 / palette 26, 0x40f / palette 13), full screen in slot 0xf at (x0, y0), and slot 7 =
+  tbl 0x122 (the line list) at (0x196, 0xf0) or (0x34, 0x78), palette 4; 202 updates.
+
+### 2.6 The title picture 0x4037f0 — confirmed
+
+Tbl 0x410 (0x411 in res mode 2) full screen at (x0, y0), palette 0x17; palettes 0x17 / 0x16 /
+0x15 fade in from black over 0x40 / 0x50 / 0x50 ticks towards the palette data at 0x48b290 /
+0x488e90 / 0x488290 (task 0x4367c0 → 0x436820: each channel × `(n − remaining) / n`, truncated,
+the last tick an exact copy); the title call 0x1024 at tick 100; the item ends after 300 ticks.
 
 ## 3. Title menu (0x42a1c0, task 0x42b210)
 
@@ -563,18 +673,106 @@ show the art lining up with these positions.
 * Quit from pause: straight back to the title, no report.
 * Replay playback runs skip the report/ranking (`0x42e910 ≠ 0`).
 
-## 12. Bonus game and ending
+## 12. Bonus game, coupling minigame and ending
 
-* **Bonus game** 0x41b540: started inside the station loop at station `0x459e10[route]` when no
-  continue was used (routes 3: st 5, 4: 4, 6: 9, 10: 8, 11: 5, 12–15: 10, 16: 9; 99 = none).
-  Art: ボーナスゲーム tbl 0x2d8, instruction "時間内に衝撃なく列車を連結せよ" 0x2d9, shock meter
-  0x2da (EF63), 0x2db, 連結成功 0x2dc / 連結失敗 0x2dd, 準備/開始 0x2de/0x2df; time limit 474 ticks
-  drawn with 0x417040; stops all sound, scripted camera. Waits on `0x855ff8 & 0x4000`. Route 6
-  then branches on 0x40e350 (≥ 4 → an extra section with flag 0x2000000). **likely** (task
-  internals 0x41b810 not traced; rules.md mentions its penalty/bonus tables 0x45a4f0/0x45ac70).
-* **Ending** 0x4040a0: 0x404920 or 0x404110 depending on `0x855ff8 & 0x40000000` (set from
-  registry option bit 0x10), waits on `0x855ff8 & 8`, then kills lists 4, 5 and 7. **guess**
-  (staff roll; not traced).
+The in-cab coupling minigame of stages 2 and 17–19 (0x4093c0) and the stage-1 bonus section are
+rules: rules.md §7.5.
+
+### 12.1 Bonus game (EF63) 0x41b540 / 0x41b810 / 0x41c2e0 — confirmed (code)
+
+**When.** `Stage_Run`, after a station result and 0x40d340, when `0x856d78 == 0x459e10[stage]`
+(i16[20]: stage 3 → 5, 4 → 4, 6 → 9, 10 → 8, 11 → 5, 12–15 → 10, 16 → 9, else 99) and no
+continue was used: `0x40ee50(0x14)` (the TR sets of row 0x14: partsTR9), `0x430160` (stop all
+sounds), `BonusGame_Create`, `0x407a00(1)` (the replay recorder takes the bonus as pseudo-station
+0xff), wait on `0x855ff8 & 0x4000`, `0x407ab0()`. Then stage 6 checks the marks of stations 1–d78
+(`0x40e350(1, d78)`): four or more load set 0x16 and set `0x855ff8 |= 0x2000000` and traffic
+mask state `0x857216 = 2`; stages 10 and 12–15 reload with variant 1, the others with 0.
+
+**What.** The player drives a pair of EF63 locomotives onto a standing 489-series car in a set
+of its own (draw 0x41c3c0: mask 0x486160, white backdrop 0x4692e0, parts 0x2df3 at the origin,
+0x327a at (−1.5, 0, car z), 0x2df2 at (−1.5, 0, pair z) and again 3.9 units behind; FOV 45°,
+aspect 1.28). The route is not drawn (list 5 died at the arrival). `Vehicle_Set(0x1002)`: the
+plate 信越本線EF63 (row 22) and picture 0x69. Timer 474 ticks (`0x417040`), remaining time and
+distance panel off (`0x856d1c = 0`, `0x856d0c = 0`).
+
+**Physics task** 0x4240d0 / 0x4241d0 (list 2, before the bonus task): train type 16, the
+player's notches of the previous tick, no gradient, curve or traction fade, the brake cylinder
+easing at 1.15 × its rate (0x4726e0), the usual resistances and brake force, no top-speed cap;
+the EF63 horn (sound 3) on the horn button. The speed is `0x84c43c`.
+
+**Bonus task** (counter `+0x38`, one update per tick):
+* updates 1–60: nothing (black 3D); at 60 BGM 0x19a, the draw callback, slot 0x36 = needle 0x2db
+  at (0x4696ac[r] + 248, 0x4696bc[r]), slot 0x37 = meter 0x2da at (0x46968c[r], 0x46969c[r]),
+  slot 0x38 = 0x2d8 ボーナスゲーム at (160, 172);
+* intro while `+0x38 ≤ 0xd2` (speed held at 0): at 0x50 the instruction 0x2d9 at (136, 172), at
+  0xb4 0x2de 準備, at 0xd2 0x2df 開始 (272, 172) and sound 1; from 120 the camera moves from key 0
+  towards key 2 (`t = (n − 120) × 0.0266…`, keys 0x4693c8: 5 × `{cx, cz, r_eye, r_target,
+  y_eye, y_target, angle}`, eye `(sin(a + π)·r_e + cx, y_e, cos(a + π)·r_e + cz)`, target
+  `(sin a·r_t + cx, y_t, cos a·r_t + cz)`);
+* play: the instruction goes at 0xf0; before contact the pair moves `v × 0.00666666` units per
+  tick (1 unit = 5 m) from z 4.4, the timer counts down; the gap is `z + 0.4` (24 m at the start),
+  shown as `trunc(gap × 5)` m (header tbl 0x58 at (88, 38), digits 0x465540 from x 112, y 70),
+  the camera between keys 3 and 2;
+* contact (gap < 0): shock `S = trunc(min(v, 5.5556) × 0.18 × 216 + 248)`; `S ≤ 328` (below
+  7.5 km/h) → 連結成功 0x2dc at (240, 164), else 連結失敗 0x2dd and sound 0x1b; sound 0x2a either
+  way; the needle sweeps 2 px per tick to S; the pair slides on (−0.0004 per tick), then the car
+  recoils (≤ 0.01 units); the camera turns from key 3 to key 4;
+* time-out (timer 0 before contact): 0x2dd at (240, 200), 時間切れ 0x252 at (232, 240), sound
+  0x11;
+* 28 updates after settling: points `P = min((328 − S)/8 + 1, 10)` (0 and sound 0x11 when too
+  hard, else the jingle 0x199) and `TimeMsg_Show(0x103, P)`: P bonus seconds; 30 updates later
+  the prize picture (0x25d 玄米弁当 for 10, 0x25c 峠の釜めし for 1–9) at (0x46966c[r],
+  0x46967c[r]), palette 15; 90 updates later the task ends.
+
+Destroy 0x41c2e0: the stage's vehicle again, the slots cleared, flag 0x4000 cleared, FOV 30°.
+The derail pose table 0x4695f4, `0x8502e0` and 0x41c540's tables have no reader on PC.
+
+### 12.2 Ending 0x4040a0 — confirmed (code)
+
+`Stage_Run` on a clear, after the report card and the clear mark: registry option bit 0x08
+clears `0x855ff8 & 0x40000000`, 0x10 sets it; `0x40eed0(area)`; if the stage difficulty
+`0x4656c4[stage]` is above 3 (stages 1, 2, 6, 7, 12, 14, 16): `0x855ffc |= 0x800` and
+`Ending_Run(full = !(0x855ff8 & 0x40000000))` (rules.md §7.5 for who sets the bit). It runs the
+full ending 0x404110 (task 0x4042b0, list 4) or the plain one 0x404920 (task 0x404a80, list 3),
+waits on `0x855ff8 & 8`, kills lists 5, 4 and 7, two ticks; then the ranking follows.
+
+**Credits** (both): text tables 0x45811c / 0x457a5c, 0x30-byte records of four 12-byte
+sub-records (one per resolution mode) `{tbl (0 blank, −1 end), x, y, fade kind, n, duration}`.
+A group of n records shows in slots 0x6e+ (palette 0x17, layer 3; y − 8 in the plain table) for
+the first record's duration; the palette fades in over 24 updates from the title palette data
+(kind 4 → 0x488290, kind 11 → 0x488e90) and out over the last 24. A blank record closes the
+letterbox masks: `h = trunc((1 − count/duration) × C)`, top `94 + h`, bottom `base − h` (full: C
+100, base 288; plain: 90, 268). The masks are depth-0 black quads over the 3D (0x486160 top,
+0x486ec4 bottom, virtual y 0–94 and 268/276/288–400). Credits: 電車でGO!2 高速編 STAFF, the staff
+names, JR東日本企画, 北越急行, おぎのや, Stack Lab, then GM R&D SECT#2 and TAITO.
+
+**Full ending** (BGM 0x1a2, render mode 3: eye 0.04 and target 0.06 units lower than the cab
+camera): t from −200; 0x408080(stage, 0), masks 94 / 276. While t < 0 the camera departs at
++0.3 km/h per tick (to 60 km/h). Then every 160 updates the next timetable row with `f4 ≠ −1`
+(so stage 1 shows stations 1–8 and 25): update 0 closes the masks (194 / 188) and kills list 5;
+update 1 places the camera at the previous station (`0x408080`) and jumps it `J` m in one tick
+(`v = J × 0.1 × 1081.081`; stop: `J = to_next − 100`, pass: `to_next − f5`); update 2 opens the
+masks (94 / 288) and sets the approach (stop: v = 21620/160, a = −21620/160² per tick, to stop
+at the mark; pass: f5 m per 160 ticks, +0.2 per tick), the station plate (0x417ab0: name
+`0x4665c4[id]`, 駅, 通過 0x6c / 停車 0x6e at y 16, centred) and the clock panel (0x417410:
+label 0x20a–0x20d at (X+64, 48), scheduled time in the orange digits 0x465d8c, the run's time
+from the arrival record `0x8570e8` in yellow 0x465dd0 or orange when 30 ticks late, and for a
+stop the stop error `trunc(dist × 100)` in cm below 100 or m). After the last station the final
+shot of `0x4587dc[stage]` (9 × i32: station, jump m, camera km/h, spawn, speed, param, decel,
+flags, model): the camera at that station, an AI train spawned (`0x404f10(spawn, flags | 5,
+speed, param, model)`; model 8 for stage 2 with train type 0xe), then the camera moving
+backwards at `cam` km/h ahead of the oncoming train, braking by `decel × 0.1` per tick from t =
+4040. List 5 dies at t = 4340; the task ends at t = 4590.
+
+**Plain ending** (BGM 0x19f, render mode 0): t from −160, the camera departs station 0 and
+accelerates +0.1 km/h per tick to 110; list 5 dies at t = 3540, the task ends at 4010. Its
+destroy releases 0x1a2 instead of 0x19f (a game bug; Stage_Run's stop-all ends it).
+
+**Skip.** Enter or Esc ends either from its 11th update (`t > −190` / `t > −150`).
+
+**Not the ending:** 0x4240d0 is the bonus game's physics task (§12.1), not an ending train
+(physics.md corrected). The stage intro 0x4091a0 (called by 0x408ec0 before stages 1, 5–8,
+11–15, 18) is a pre-run fly-by, not part of the ending.
 
 ## 13. Save data
 
@@ -655,11 +853,19 @@ listed above, BGM 0x19e on the title / options / route select, and the attract t
 
 Approximated or left out:
 
-* Attract: only the title picture (item 2's 0x4037f0 branch) and item 3's Komachi check run; the
-  other items, including the cold-start 3D fly-by, take no time, so attract shows the title
-  picture in a loop. The Komachi movie is postponed (decision D2): its trigger is logged. After
-  every run attract restarts at item 2 (the original does that only after a quit; after a game
-  over or a clear it starts at item 0, which is not built anyway).
+* Attract walks its whole table: the logo, the cold-start opening, the title picture, the demo
+  drives (`play/demo.rs`: a `Play` on `Drive::start_demo` with the overlay), the photos and the
+  poster, with the walk and photo counters kept across walks. The opening is `play/opening.rs`
+  on a stage-1 `Play`. Approximated: the opening's E3 spawn uses the normal spawner (rear bogie
+  10 points back, not 12) and the render-mode-2 aspect 1.25 and the studio aspects are not
+  modelled (the port's projection stretch is used); the GMQ logo of the route demo animates on
+  the rail-joint clicks of the sound module, so it stands still without sound (headless). The
+  Komachi movie is postponed (decision D2): its trigger is logged.
+* The ending (`play/ending.rs`) and the bonus game (`ddg_engine::bonus`, `play/bonus.rs`) run in
+  the end-of-run flow and between stations. Approximated: the registry ending bits, the bonus
+  game's force feedback and motor-pitch sounds, the bonus aspect 1.28; the bonus game is not
+  recorded for replays (`REPLAY.DAT` is not implemented). `ddg-game play <stage> --ending
+  full|plain` starts with the ending to check it.
 * Replays (`REPLAY.DAT`) are not implemented: R toggles the flag, no row ever shows the 自動運転
   mark, and leaving the select switches the flag off (what 0x436640 does without a replay).
 * Select stage 20 runs route 10 with its own clear mark (+0x34e) and the departure-board
@@ -689,8 +895,10 @@ Approximated or left out:
    with the ranking page) and what 0x428990(0x70, 0x7070) does exactly; the port does not dim.
 10. Whether the A-button/horn end of the ranking page and the confirm of the name entry can
     collide with a key still held from the report card (both read edges, so probably not).
-5. Attract items 0x402e60, 0x402e80, 0x40e6c0, 0x403f40, 0x403da0, 0x40e6e0, the ending
-   (0x404110/0x404920) and the bonus-game internals (0x41b810) were not traced.
+5. Attract, the opening, the demos, the bonus game and the ending are read from code (§2, §12);
+   none of it has been compared with the running game. Worth a trace: the opening's +150-unit
+   camera jump at the hand-off, the bonus game's timings (0x41b810 +0x20/+0x34/+0x38/+0x44,
+   `0x84c43c`) and one full ending (0x4042b0 +0x3c/+0x44/+0x74 and the mask words).
 6. Sound code meanings (0xd, 0x13, 0x16–0x18, 0x23, 0x2d, 0x195, 0xf7–0xfe, jingles 0x1000–0x1004,
    BGM 0x19d/0x19e) are from context only; map them with the audio notes.
 7. `ExitConfirm_Run` return value: Ghidra lost it; confirm that はい = 1.
