@@ -646,11 +646,14 @@ name = "English"
 # Title menu items (0x47c778), 512×96 each: the big katakana only; the number on the left and
 # the small Latin subtitle stay.
 [sheet.0x513]
-0 = { region = [88, 8, 408, 64], text = "Arcade Mode" }        # アーケードモード
-1 = { region = [88, 8, 408, 64], text = "Game Settings" }      # ゲーム設定
-2 = { region = [88, 8, 408, 64], text = "Rankings" }           # ランキングを見る
-3 = { region = [88, 8, 408, 64], text = "Quit Game" }          # ゲーム終了
-4 = { region = [88, 8, 408, 64], text = "Controller Setup" }   # 専用コントローラー設定 (input mode 6)
+# Decided layout (user, option B): the big Japanese title becomes English and the small
+# English subtitle in the bottom right becomes the Japanese title, mirroring the original's
+# bilingual items. The subtitle text needs a font with Japanese glyphs (or a fallback one).
+0 = { parts = [{ region = [88, 8, 408, 64], text = "Arcade Mode" }, { region = [296, 75, 202, 16], align = "right", text = "アーケードモード" }] }
+1 = { parts = [{ region = [88, 8, 408, 64], text = "Game Settings" }, { region = [296, 75, 202, 16], align = "right", text = "ゲーム設定" }] }
+2 = { parts = [{ region = [88, 8, 408, 64], text = "Rankings" }, { region = [296, 75, 202, 16], align = "right", text = "ランキングを見る" }] }
+3 = { parts = [{ region = [88, 8, 408, 64], text = "Quit Game" }, { region = [296, 75, 202, 16], align = "right", text = "ゲーム終了" }] }
+4 = { parts = [{ region = [88, 8, 408, 64], text = "Controller Setup" }, { region = [296, 75, 202, 16], align = "right", text = "専用コントローラー設定" }] }   # input mode 6
 
 # Options labels and values (0x47c584), selected colouring. Labels 192×32, values 240×32
 # (10–13 are 32×32).
