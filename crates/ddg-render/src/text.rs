@@ -26,6 +26,8 @@ pub enum TextError {
         path: std::path::PathBuf,
         source: std::io::Error,
     },
+    #[error("no font given")]
+    NoFont,
 }
 
 /// A source sub-rectangle in 16-px tiles, as in a slot or a 6-byte descriptor: `w`/`h` ≤ 0 mean
@@ -148,13 +150,15 @@ pub trait GlyphSource {
     }
 }
 
-/// A TrueType/OpenType font through fontdue.
-pub struct FontGlyphs(fontdue::Font);
+/// TrueType/OpenType fonts through fontdue: the first is the primary font (metrics, and every
+/// glyph it has); later ones fill in characters it lacks. A character no font has is drawn
+/// without its macron (ō → o) rather than as a missing-glyph box.
+pub struct FontGlyphs(Vec<fontdue::Font>);
 
 impl FontGlyphs {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, TextError> {
         fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default())
-            .map(Self)
+            .map(|f| Self(vec![f]))
             .map_err(TextError::Font)
     }
 
@@ -165,18 +169,69 @@ impl FontGlyphs {
         })?;
         Self::from_bytes(&bytes)
     }
+
+    /// Adds `other`'s fonts as fallbacks after this one's.
+    pub fn with_fallback(mut self, other: Self) -> Self {
+        self.0.extend(other.0);
+        self
+    }
+
+    /// Loads several font files, the first being the primary.
+    pub fn load_all(paths: &[std::path::PathBuf]) -> Result<Self, TextError> {
+        let mut fonts = Vec::new();
+        for p in paths {
+            fonts.extend(Self::load(p)?.0);
+        }
+        if fonts.is_empty() {
+            return Err(TextError::NoFont);
+        }
+        Ok(Self(fonts))
+    }
+
+    /// The font and character to draw `ch` with.
+    fn pick(&self, ch: char) -> (&fontdue::Font, char) {
+        let has = |c: char| self.0.iter().find(|f| f.lookup_glyph_index(c) != 0);
+        if let Some(f) = has(ch) {
+            return (f, ch);
+        }
+        let plain = strip_macron(ch);
+        if plain != ch
+            && let Some(f) = has(plain)
+        {
+            return (f, plain);
+        }
+        (&self.0[0], ch)
+    }
+}
+
+/// The base vowel of a Hepburn macron vowel (ā ē ī ō ū and capitals); other characters as is.
+fn strip_macron(ch: char) -> char {
+    match ch {
+        'ā' => 'a',
+        'ē' => 'e',
+        'ī' => 'i',
+        'ō' => 'o',
+        'ū' => 'u',
+        'Ā' => 'A',
+        'Ē' => 'E',
+        'Ī' => 'I',
+        'Ō' => 'O',
+        'Ū' => 'U',
+        c => c,
+    }
 }
 
 impl GlyphSource for FontGlyphs {
     fn vertical_metrics(&self, px: f32) -> (f32, f32) {
-        match self.0.horizontal_line_metrics(px) {
+        match self.0[0].horizontal_line_metrics(px) {
             Some(m) => (m.ascent, m.descent),
             None => (px * 0.8, -px * 0.2),
         }
     }
 
     fn glyph(&self, ch: char, px: f32) -> Glyph {
-        let (m, coverage) = self.0.rasterize(ch, px);
+        let (font, ch) = self.pick(ch);
+        let (m, coverage) = font.rasterize(ch, px);
         Glyph {
             advance: m.advance_width,
             xmin: m.xmin,
@@ -188,14 +243,19 @@ impl GlyphSource for FontGlyphs {
     }
 
     fn advance(&self, ch: char, px: f32) -> f32 {
-        self.0.metrics(ch, px).advance_width
+        let (font, ch) = self.pick(ch);
+        font.metrics(ch, px).advance_width
     }
 }
 
 /// Inner padding in pixels, room for the outline.
 const PAD: usize = 1;
-/// Largest and smallest font sizes tried, in pixels.
-const MAX_PX: f32 = 64.0;
+/// Latin capital height as a share of the original (kanji) lettering height: kanji fill the
+/// em square, capitals about three quarters of it, so the two read as the same size.
+const LATIN_CAP_OF_LETTERING: f32 = 0.75;
+
+/// Largest and smallest font sizes tried, in pixels (the largest allows UI scale 4).
+const MAX_PX: f32 = 256.0;
 const MIN_PX: f32 = 4.0;
 
 /// Rasterises `text` into a `w × h` coverage mask (row-major, 0..=255), fitted: the largest
@@ -209,9 +269,25 @@ pub fn rasterise(
     vertical: bool,
     glyphs: &dyn GlyphSource,
 ) -> Vec<u8> {
+    rasterise_sized(text, w, h, align, vertical, glyphs, None)
+}
+
+/// [`rasterise`] at a wanted size: `cap_px` is the height of a capital letter in pixels (set
+/// from the original lettering, so neighbouring labels keep the original's type sizes). The
+/// text is made smaller only when it would not fit; `None` fills the box. The ink, not the
+/// font's ascent and descent, is centred vertically, so tall glyphs are never cut off.
+pub fn rasterise_sized(
+    text: &str,
+    w: usize,
+    h: usize,
+    align: Align,
+    vertical: bool,
+    glyphs: &dyn GlyphSource,
+    cap_px: Option<f32>,
+) -> Vec<u8> {
     if vertical {
         // Lay out in the rotated frame, then turn it clockwise.
-        let src = rasterise(text, h, w, align, false, glyphs);
+        let src = rasterise_sized(text, h, w, align, false, glyphs, cap_px);
         let mut out = vec![0u8; w * h];
         for sy in 0..w {
             for sx in 0..h {
@@ -232,6 +308,27 @@ pub fn rasterise(
         let (a, d) = glyphs.vertical_metrics(px);
         a - d
     };
+    // Ink extent (top, bottom) relative to the first baseline, lines `line_h` apart.
+    let ink = |px: f32| {
+        let lh = line_h(px);
+        let (mut top, mut bottom) = (f32::MAX, f32::MIN);
+        for (i, line) in lines.iter().enumerate() {
+            let base = lh * i as f32;
+            for ch in line.chars() {
+                let g = glyphs.glyph(ch, px);
+                if g.height == 0 {
+                    continue;
+                }
+                top = top.min(base - (g.ymin + g.height as i32) as f32);
+                bottom = bottom.max(base - g.ymin as f32);
+            }
+        }
+        if top > bottom {
+            (0.0, 0.0)
+        } else {
+            (top, bottom)
+        }
+    };
     // Metrics scale linearly, so solve at a reference size, then step down until it fits
     // (hinting and rounding are not linear).
     let reference = 32.0;
@@ -245,15 +342,24 @@ pub fn rasterise(
         MAX_PX
     };
     let by_h = ah * reference / (line_h(reference) * lines.len() as f32).max(1.0);
-    let mut px = by_w.min(by_h).clamp(MIN_PX, MAX_PX);
-    while px > MIN_PX
-        && (lines.iter().any(|l| width_at(l, px) > aw) || line_h(px) * lines.len() as f32 > ah)
-    {
+    let mut px = by_w.min(by_h);
+    if let Some(cap) = cap_px {
+        let h_ref = glyphs.glyph('H', 100.0).height as f32;
+        if h_ref > 0.0 {
+            px = px.min(cap * 100.0 / h_ref);
+        }
+    }
+    px = px.clamp(MIN_PX, MAX_PX);
+    let fits = |px: f32| {
+        let (t, b) = ink(px);
+        lines.iter().all(|l| width_at(l, px) <= aw) && b - t <= ah
+    };
+    while px > MIN_PX && !fits(px) {
         px = (px - 0.5).max(MIN_PX);
     }
-    let (ascent, _) = glyphs.vertical_metrics(px);
     let lh = line_h(px);
-    let top = PAD as f32 + (ah - lh * lines.len() as f32) / 2.0;
+    let (top, bottom) = ink(px);
+    let shift = PAD as f32 + (ah - (bottom - top)) / 2.0 - top;
     for (i, line) in lines.iter().enumerate() {
         let lw = width_at(line, px);
         let mut pen = PAD as f32
@@ -262,7 +368,7 @@ pub fn rasterise(
                 Align::Center => (aw - lw) / 2.0,
                 Align::Right => aw - lw,
             };
-        let baseline = (top + lh * i as f32 + ascent).round() as i32;
+        let baseline = (shift + lh * i as f32).round() as i32;
         for ch in line.chars() {
             let g = glyphs.glyph(ch, px);
             let gx = pen.round() as i32 + g.xmin;
@@ -425,21 +531,47 @@ fn render_part(
         Style::Plain => false,
         Style::Auto => edge_opaque as f32 > BOXED_EDGE * edge_n as f32,
     };
+    // The backdrop is the commonest value along the region's edge per 2×2 parity class
+    // (a plate's face is one colour; a caption band's dither alternates colours or
+    // transparency).
+    let pattern: [u8; 4] = std::array::from_fn(|c| {
+        (0..=255u8)
+            .max_by_key(|&i| class[c][usize::from(i)])
+            .unwrap_or(0)
+    });
+    // The original lettering's extent across the reading direction sets the English size, so
+    // labels keep the original's type sizes instead of each filling its own box.
+    let lettering = |px: usize, py: usize| {
+        let v = region_art(px, py);
+        v != 0 && (!boxed || v != pattern[parity(px, py)])
+    };
+    let (mut lo, mut hi) = (usize::MAX, 0);
+    for py in 0..h {
+        for px in 0..w {
+            if lettering(px, py) {
+                let k = if part.vertical { px } else { py };
+                lo = lo.min(k);
+                hi = hi.max(k);
+            }
+        }
+    }
     // The output is `scale` times finer than the art; art lookups use original pixels.
     let s = scale;
     let (sw, sh) = (w * s, h * s);
-    let coverage = rasterise(&part.text, sw, sh, part.align, part.vertical, glyphs);
+    let cap_px = (lo <= hi).then(|| (hi - lo + 1) as f32 * LATIN_CAP_OF_LETTERING * s as f32);
+    let coverage = rasterise_sized(
+        &part.text,
+        sw,
+        sh,
+        part.align,
+        part.vertical,
+        glyphs,
+        cap_px,
+    );
     let mut base = vec![0u8; sw * sh];
     let fg = if boxed {
-        // The backdrop is the commonest value along the region's edge per 2×2 parity class
-        // (a plate's face is one colour; a caption band's dither alternates colours or
-        // transparency). Every opaque pixel is repainted with it, which erases the old
-        // lettering and keeps the box shape (transparent corners stay transparent).
-        let pattern: [u8; 4] = std::array::from_fn(|c| {
-            (0..=255u8)
-                .max_by_key(|&i| class[c][usize::from(i)])
-                .unwrap_or(0)
-        });
+        // Every opaque pixel is repainted with the backdrop, which erases the old lettering and
+        // keeps the box shape (transparent corners stay transparent).
         for py in 0..sh {
             for px in 0..sw {
                 let (ax, ay) = (px / s, py / s);
@@ -565,6 +697,35 @@ pub(crate) mod tests {
                 coverage: vec![255; width * height],
             }
         }
+    }
+
+    #[test]
+    fn sized_text_keeps_its_cap_height_and_centres_the_ink() {
+        // Stub capitals are 0.7·px + 2 tall: a 14-px cap gives 15 ink rows, not the box height.
+        let (w, h) = (100, 60);
+        let m = rasterise_sized("Hi", w, h, Align::Center, false, &BoxGlyphs, Some(14.0));
+        let rows: Vec<usize> = (0..h)
+            .filter(|y| m[y * w..][..w].iter().any(|&c| c > 0))
+            .collect();
+        assert_eq!(rows.len(), 15);
+        let top = rows[0];
+        assert!((21..=23).contains(&top), "ink starts at row {top}");
+        // Without a size the text fills the box (up to the width limit).
+        let full = rasterise("Hi", w, h, Align::Center, false, &BoxGlyphs);
+        let full_rows = (0..h)
+            .filter(|y| full[y * w..][..w].iter().any(|&c| c > 0))
+            .count();
+        assert!(full_rows > 30);
+        // A size too big for the box shrinks to fit; nothing is cut off.
+        let big = rasterise_sized("Hi", w, 20, Align::Center, false, &BoxGlyphs, Some(40.0));
+        assert!(big[..w].iter().all(|&c| c == 0) && big[19 * w..].iter().all(|&c| c == 0));
+    }
+
+    #[test]
+    fn macrons_fall_back_to_the_plain_vowel() {
+        assert_eq!(strip_macron('ō'), 'o');
+        assert_eq!(strip_macron('Ū'), 'U');
+        assert_eq!(strip_macron('x'), 'x');
     }
 
     #[test]

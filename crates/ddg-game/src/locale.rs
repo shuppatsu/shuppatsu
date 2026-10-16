@@ -417,7 +417,8 @@ impl Locale {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocaleConfig {
     pub lang: String,
-    /// A TTF/OTF font file. No font ships with the project.
+    /// TTF/OTF font files, `:`-separated like `PATH`: the primary font, then fallbacks for
+    /// characters it lacks. No font ships with the project.
     pub font: Option<PathBuf>,
     /// Extra catalogue directory (`<dir>/<lang>.toml` overrides the built-in one).
     pub dir: Option<PathBuf>,
@@ -504,7 +505,9 @@ pub fn install(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Resu
     };
     let sheets = SheetTables::read(exe)?;
     let locale = Locale::load(&cfg.lang, cfg.dir.as_deref(), &sheets)?;
-    let font = FontGlyphs::load(font_path)?;
+    // A `:`-separated list (`;` on Windows), like PATH: the primary font, then fallbacks.
+    let paths: Vec<PathBuf> = std::env::split_paths(font_path).collect();
+    let font = FontGlyphs::load_all(&paths)?;
     let overlay = TextOverlay::build_scaled(bank, locale.overrides(), &font, cfg.ui_scale);
     let n = overlay.len();
     bank.set_text(Some(overlay));
