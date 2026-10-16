@@ -36,6 +36,8 @@ use ddg_engine::rules::StationOutcome;
 use ddg_render::sprites::{Slot, SpriteLayer};
 
 const RESULT_AFTER_ARRIVED_TICKS: u32 = 5;
+/// `TaskList_KillAll(0x84c1bc)` runs after the third of them (0x4080d0).
+const DRIVE_KILLED_AFTER_ARRIVED_TICKS: u32 = 3;
 const CONTINUE_AFTER_GAME_OVER_TICKS: u32 = 22;
 const REPORT_AFTER_NO_CONTINUE_OFFERED: u32 = 2;
 const CONTINUE_AFTER_STATION_GAME_OVER: u32 = 1;
@@ -108,6 +110,17 @@ impl FlowDefs {
             ranking: RankingDefs::new(t),
         }
     }
+}
+
+/// What the 3D layer shows, by [`StageFlow::world_view`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorldView {
+    /// The cab view of the drive task.
+    Cab,
+    /// No 3D task: the band is black under the HUD.
+    Hidden,
+    /// The station result's replay views ([`crate::result_view::ResultView`]).
+    ResultReplay,
 }
 
 enum State {
@@ -192,6 +205,21 @@ impl StageFlow {
                 | State::Leaving(_)
                 | State::Over
         )
+    }
+
+    /// What the 3D layer shows (scene.md §8). `Stage_Run` kills the drive's task list after
+    /// the third tick ending in `Arrived`, so the cab view is gone for the last two of them and
+    /// the result's first tick; the replay camera exists from countdown 94 until the tick the
+    /// result closes, and the cab returns with the next segment.
+    pub fn world_view(&self) -> WorldView {
+        match &self.state {
+            State::Run { arrived, .. } if *arrived > DRIVE_KILLED_AFTER_ARRIVED_TICKS => {
+                WorldView::Hidden
+            }
+            State::Result(s) if s.replay_shown() => WorldView::ResultReplay,
+            State::Result(_) | State::AfterResult { .. } => WorldView::Hidden,
+            _ => WorldView::Cab,
+        }
     }
 
     /// The remaining time the HUD shows while the result has deducted but the rules have not.
@@ -524,6 +552,28 @@ mod tests {
         assert_eq!((n, a), (5 + 207 + 1, Action::FinishStation));
         f.station_finished(StationOutcome::Continue, true);
         assert!(matches!(f.state, State::Run { arrived: 0, .. }));
+    }
+
+    #[test]
+    fn world_view_around_a_station_result() {
+        let mut f = StageFlow::new(defs());
+        let mut sfx = Vec::new();
+        let o = obs(DrivePhase::Arrived);
+        let views: Vec<WorldView> = (0..5 + 207 + 1)
+            .map(|_| {
+                f.after_tick(&o, &NONE, &mut sfx);
+                f.world_view()
+            })
+            .collect();
+        use WorldView::*;
+        // Cab for 3 Arrived ticks, hidden for 2 more and the result's first tick; the replay
+        // from countdown 94 until the tick the result closes.
+        assert_eq!(
+            views[..7],
+            [Cab, Cab, Cab, Hidden, Hidden, Hidden, ResultReplay]
+        );
+        assert_eq!(views[5 + 205], ResultReplay);
+        assert_eq!(views[5 + 206..], [Hidden, Hidden]);
     }
 
     #[test]

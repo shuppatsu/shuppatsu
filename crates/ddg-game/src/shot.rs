@@ -12,6 +12,40 @@ pub fn render_to_ppm(
     hud: Option<&[u8]>,
     path: &std::path::Path,
 ) -> Result<()> {
+    render_to_ppm_with(
+        (width, height),
+        |device, queue, view, format| match scene {
+            Some((scene, pos)) => {
+                let mut renderer = Renderer::new(device, format);
+                configure(&mut renderer);
+                renderer.upload_pages(device, queue, &scene.library.pages);
+                let mut frame = ddg_render::FrameGeometry::default();
+                let band = (height as f32 * (1.0 - renderer.band_top)).max(1.0);
+                scene.compose(&mut frame, pos, false, width as f32 / band);
+                eprintln!(
+                    "frame at engine index {}: {} triangles, {} missing parts",
+                    pos.engine_index,
+                    frame.triangle_count(),
+                    frame.missing_parts
+                );
+                renderer.set_geometry(device, queue, &frame);
+                renderer.render(device, queue, view, (width, height), &scene.cab_camera(pos));
+            }
+            None => clear_black(device, queue, view),
+        },
+        hud,
+        path,
+    )
+}
+
+/// Renders one frame with `draw` (device, queue, target view, target format) and the canvas
+/// over it, and writes a binary PPM (P6).
+pub fn render_to_ppm_with(
+    (width, height): (u32, u32),
+    draw: impl FnOnce(&wgpu::Device, &wgpu::Queue, &wgpu::TextureView, wgpu::TextureFormat),
+    hud: Option<&[u8]>,
+    path: &std::path::Path,
+) -> Result<()> {
     let instance =
         wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
     let adapter = crate::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -36,30 +70,7 @@ pub fn render_to_ppm(
         view_formats: &[],
     });
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-    if let Some((scene, pos)) = scene {
-        let mut renderer = Renderer::new(&device, format);
-        configure(&mut renderer);
-        renderer.upload_pages(&device, &queue, &scene.library.pages);
-        let mut frame = ddg_render::FrameGeometry::default();
-        let band = (height as f32 * (1.0 - renderer.band_top)).max(1.0);
-        scene.compose(&mut frame, pos, false, width as f32 / band);
-        eprintln!(
-            "frame at engine index {}: {} triangles, {} missing parts",
-            pos.engine_index,
-            frame.triangle_count(),
-            frame.missing_parts
-        );
-        renderer.set_geometry(&device, &queue, &frame);
-        renderer.render(
-            &device,
-            &queue,
-            &view,
-            (width, height),
-            &scene.cab_camera(pos),
-        );
-    } else {
-        clear_black(&device, &queue, &view);
-    }
+    draw(&device, &queue, &view, format);
     if let Some(canvas) = hud {
         let overlay = ddg_render::overlay::Overlay::new(&device, format);
         overlay.upload(&queue, canvas);

@@ -11,9 +11,10 @@ use crate::cab::{CabHud, Snap, TickInput};
 use crate::gamepad::{Controls, PadOptions};
 use crate::hud::{DistanceReadout, Hud, Speedometer};
 use crate::input::ButtonState;
+use crate::result_view::{ResultView, ResultViewInput};
 use crate::save::Save;
 use crate::scene::{GameData, RouteScene, Visibility};
-use crate::screens::flow::{Action, FlowDefs, Observation, StageFlow};
+use crate::screens::flow::{Action, FlowDefs, Observation, StageFlow, WorldView};
 use crate::screens::pause::PauseResult;
 use crate::screens::ranking::RankingRequest;
 use crate::screens::result::ResultInput;
@@ -25,6 +26,7 @@ use ddg_engine::drive::{Drive, DrivePhase, DriverInput, LoadError};
 use ddg_engine::physics::TrainTables;
 use ddg_engine::rules::RuleTables;
 use ddg_formats::exe::Exe;
+use ddg_formats::result_camera::ResultTables;
 use ddg_formats::route::UNITS_PER_POINT;
 use ddg_formats::scene::{DRIVING_FOV_Y_DEG, TrackPos};
 use ddg_formats::stages::StageTables;
@@ -87,6 +89,7 @@ struct Tables {
     train: TrainTables,
     rules: RuleTables,
     stages: StageTables,
+    result: ResultTables,
 }
 
 fn start_drive(tables: &Tables, opts: &PlayOptions, station: usize) -> Result<Drive> {
@@ -213,6 +216,7 @@ impl Play {
             train: TrainTables::read(&exe)?,
             rules: RuleTables::read(&exe)?,
             stages: StageTables::read(&exe)?,
+            result: ResultTables::read(&exe)?,
         };
         let tolerance_m = tables
             .rules
@@ -293,6 +297,8 @@ impl Play {
             save,
             meter_m: 0.0,
             weather: crate::weather::Weather::new(&exe, opts.stage)?,
+            result_view: None,
+            world: WorldView::Cab,
             opts,
         };
         play.configure_gpu();
@@ -361,6 +367,44 @@ impl Play {
             self.opts.square_pixels,
         );
         let (w, h) = self.opts.size;
+        if self.world != WorldView::Cab {
+            // Station result (scene.md §8): the replay views, or nothing while hidden.
+            return crate::shot::render_to_ppm_with(
+                self.opts.size,
+                |device, queue, view, format| {
+                    let mut r = ddg_render::Renderer::new(device, format);
+                    r.texture_filtering = texture_filtering;
+                    r.fog.enabled = false;
+                    r.upload_pages(device, queue, &self.scene.library.pages);
+                    let mut frame = FrameGeometry::default();
+                    match &self.result_view {
+                        Some(v) => v.compose(&mut frame, &self.scene.library, 1.0),
+                        None => frame.clear(&self.scene.library),
+                    }
+                    eprintln!(
+                        "result replay: {} triangles, {} missing parts",
+                        frame.triangle_count(),
+                        frame.missing_parts
+                    );
+                    r.set_geometry(device, queue, &frame);
+                    match &self.result_view {
+                        Some(v) => v.render(
+                            &mut r,
+                            device,
+                            queue,
+                            view,
+                            (w, h),
+                            ddg_render::overlay::canvas_rect(w, h),
+                            square,
+                            1.0,
+                        ),
+                        None => crate::shot::clear_black(device, queue, view),
+                    }
+                },
+                Some(&self.canvas),
+                out,
+            );
+        }
         let mut effects = ddg_render::effects::EffectGeometry::default();
         let band_aspect = w as f32 / (h as f32 * (1.0 - HUD_BAND_TOP)).max(1.0);
         self.weather
@@ -553,6 +597,9 @@ pub struct Play {
     /// start, kept over continues).
     meter_m: f32,
     weather: crate::weather::Weather,
+    /// The station result's replay (scene.md §8) and what the 3D layer shows.
+    result_view: Option<ResultView>,
+    world: WorldView,
 }
 
 impl Play {
@@ -627,6 +674,7 @@ impl Play {
         if self.drive.com() != self.scene_com {
             self.reload_scene()?;
         }
+        self.update_world();
         self.weather.tick(&self.drive, hud_input.segment_started);
         self.weather.apply_to_scene(&mut self.scene);
         self.update_hud(hud_input);
@@ -643,6 +691,33 @@ impl Play {
         if shown {
             self.meter_m += self.drive.train().speed * METER_SCALE as f32;
         }
+    }
+
+    /// The station result's replay camera: created at result countdown 94 (0x419730), one
+    /// update per tick after that (0x41a010), gone when the result closes (scene.md §8).
+    fn update_world(&mut self) {
+        self.world = self.flow.world_view();
+        if self.world != WorldView::ResultReplay {
+            self.result_view = None;
+            return;
+        }
+        if let Some(v) = self.result_view.as_mut() {
+            v.tick();
+            return;
+        }
+        let r = self.drive.rules();
+        let field7 = self.drive.next_station().1.map_or(0, |row| row.params[3]);
+        self.result_view = Some(ResultView::new(
+            &self.tables.result,
+            &self.tables.stages.train_models,
+            ResultViewInput {
+                stage: r.stage().0,
+                station: r.station,
+                field7,
+                train_type: self.drive.train().train_type,
+                record: &r.stop_record,
+            },
+        ));
     }
 
     /// The end of `Stage_Run` after the report card (0x4080d0, menus.md §11.4): the clear mark,
@@ -895,13 +970,23 @@ impl Play {
         };
         let (width, height) = gpu.size();
         let band_aspect = width as f32 / (height as f32 * (1.0 - HUD_BAND_TOP)).max(1.0);
-        self.scene.compose(&mut self.frame, pos, false, band_aspect);
         let mut camera = self.scene.cab_camera(pos);
-        self.weather.shake(&mut camera);
-        let fx = &mut gpu.renderer.effects;
-        self.weather
-            .compose(&self.scene, &self.drive, band_aspect, fx);
-        gpu.renderer.fog.enabled = self.opts.fog && self.weather.fog();
+        if self.world == WorldView::Cab {
+            self.scene.compose(&mut self.frame, pos, false, band_aspect);
+            self.weather.shake(&mut camera);
+            let fx = &mut gpu.renderer.effects;
+            self.weather
+                .compose(&self.scene, &self.drive, band_aspect, fx);
+            gpu.renderer.fog.enabled = self.opts.fog && self.weather.fog();
+        } else {
+            // The drive's task list (scenery, traffic, weather, fog) is gone at a station result.
+            match &self.result_view {
+                Some(v) => v.compose(&mut self.frame, &self.scene.library, alpha),
+                None => self.frame.clear(&self.scene.library),
+            }
+            gpu.renderer.effects = Default::default();
+            gpu.renderer.fog.enabled = false;
+        }
         let Some(frame) = gpu.acquire() else {
             return Ok(());
         };
@@ -910,8 +995,21 @@ impl Play {
             .create_view(&wgpu::TextureViewDescriptor::default());
         gpu.renderer
             .set_geometry(&gpu.device, &gpu.queue, &self.frame);
-        gpu.renderer
-            .render(&gpu.device, &gpu.queue, &view, (width, height), &camera);
+        match &self.result_view {
+            Some(v) if self.world == WorldView::ResultReplay => v.render(
+                &mut gpu.renderer,
+                &gpu.device,
+                &gpu.queue,
+                &view,
+                (width, height),
+                ddg_render::overlay::canvas_rect(width, height),
+                self.opts.square_pixels,
+                alpha,
+            ),
+            _ => gpu
+                .renderer
+                .render(&gpu.device, &gpu.queue, &view, (width, height), &camera),
+        }
         if std::mem::take(&mut self.canvas_dirty) {
             gpu.overlay.upload(&gpu.queue, &self.canvas);
         }

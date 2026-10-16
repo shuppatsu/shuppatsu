@@ -202,6 +202,11 @@ impl StationResultScreen {
         self.remaining_after
     }
 
+    /// The replay camera (0x419730) has been created: from countdown 94 on.
+    pub fn replay_shown(&self) -> bool {
+        self.countdown <= COUNTDOWN_LAYOUT
+    }
+
     pub fn slots(&self) -> &SlotSet {
         &self.slots
     }

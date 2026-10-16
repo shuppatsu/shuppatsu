@@ -14,6 +14,7 @@ mod hud;
 mod input;
 mod locale;
 mod play;
+mod result_view;
 mod popups;
 mod save;
 mod scene;
