@@ -46,6 +46,10 @@ pub struct PlayOptions {
     pub stable_track_variants: bool,
     pub texture_filtering: bool,
     pub fog: bool,
+    /// Scripted notches: `tick notch brake` lines, held from each tick on (the oracle's format).
+    pub inputs: Option<std::path::PathBuf>,
+    /// Headless: run this many ticks, render one frame with the HUD to a PPM and exit.
+    pub shot: Option<(u64, std::path::PathBuf)>,
 }
 
 pub fn run(opts: PlayOptions) -> Result<()> {
@@ -92,12 +96,17 @@ pub fn run(opts: PlayOptions) -> Result<()> {
     let mut layer = SpriteLayer::default();
     Hud::install_palettes(&exe, &mut layer)?;
     let hud = Hud::new(&exe, opts.stage)?;
+    let popups = crate::popups::Popups::new(&exe, opts.stage)?;
     hud.create(&mut layer);
 
     let visibility = visibility(&opts);
     let scene = load_scene(&data, drive.com_name(), visibility, &opts)?;
-    let event_loop = EventLoop::new()?;
-    event_loop.set_control_flow(ControlFlow::Poll);
+    let script = match &opts.inputs {
+        Some(p) => Some(parse_script(
+            &std::fs::read_to_string(p).with_context(|| p.display().to_string())?,
+        )?),
+        None => None,
+    };
     let now = Instant::now();
     let mut app = Play {
         scene_com: drive.com(),
@@ -109,6 +118,7 @@ pub fn run(opts: PlayOptions) -> Result<()> {
         latched: DriverInput::default(),
         down: [false; 256],
         hud,
+        popups,
         layer,
         bank,
         canvas: vec![0; CANVAS_W * CANVAS_H * 4],
@@ -125,8 +135,38 @@ pub fn run(opts: PlayOptions) -> Result<()> {
         last_frame: now,
         title_at: now,
         error: None,
+        script,
         opts,
     };
+    if let Some((ticks, out)) = app.opts.shot.clone() {
+        while app.drive.tick_count() < ticks {
+            app.tick()?;
+        }
+        let band_top = HUD_BAND_TOP;
+        let (texture_filtering, fog, square) = (
+            app.opts.texture_filtering,
+            app.opts.fog,
+            app.opts.square_pixels,
+        );
+        crate::shot::render_to_ppm(
+            &app.scene,
+            app.drive.pos(),
+            app.opts.size,
+            |r| {
+                r.texture_filtering = texture_filtering;
+                r.fog.enabled = fog;
+                r.projection.fov_tenths = (DRIVING_FOV_Y_DEG * 10.0) as u16;
+                r.projection.stretch = if square { 1.0 } else { ORIGINAL_STRETCH };
+                r.band_top = band_top;
+            },
+            Some(&app.canvas),
+            &out,
+        )?;
+        eprintln!("wrote {} at tick {ticks}", out.display());
+        return Ok(());
+    }
+    let event_loop = EventLoop::new()?;
+    event_loop.set_control_flow(ControlFlow::Poll);
     event_loop.run_app(&mut app)?;
     match app.error {
         Some(e) => Err(e),
@@ -164,6 +204,24 @@ fn load_scene(
     Ok(scene)
 }
 
+/// Parses `tick notch brake` lines (`#` comments), ticks counted from the start of the run.
+fn parse_script(text: &str) -> Result<Vec<(u64, u8, u8)>> {
+    let mut steps = Vec::new();
+    for (n, line) in text.lines().enumerate() {
+        let line = line.split('#').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let v: Vec<&str> = line.split_whitespace().collect();
+        let [t, p, b] = v[..] else {
+            anyhow::bail!("line {}: expected `tick notch brake`", n + 1);
+        };
+        steps.push((t.parse()?, p.parse()?, b.parse()?));
+    }
+    steps.sort_by_key(|s| s.0);
+    Ok(steps)
+}
+
 /// Track units from the main-line origin.
 fn units(p: TrackPos) -> f32 {
     p.engine_index as f32 * UNITS_PER_POINT + p.t
@@ -190,6 +248,7 @@ struct Play {
     /// Keys down now, by DirectInput scan code.
     down: [bool; 256],
     hud: Hud,
+    popups: crate::popups::Popups,
     layer: SpriteLayer,
     bank: SpriteBank,
     canvas: Vec<u8>,
@@ -210,6 +269,7 @@ struct Play {
     last_frame: Instant,
     title_at: Instant,
     error: Option<anyhow::Error>,
+    script: Option<Vec<(u64, u8, u8)>>,
 }
 
 impl Play {
@@ -217,6 +277,7 @@ impl Play {
         let out = self.drive.tick(self.latched);
         self.interpolate = !out.segment_started;
         if out.segment_started {
+            self.popups.clear();
             // Digital modes force P0 / EB at each station start (0x4332c0, input.md §4.1).
             self.keyboard.reset_levers();
         }
@@ -224,6 +285,11 @@ impl Play {
         // message, 0x40dad0); log only what changed.
         for e in out.events.iter().filter(|e| !self.last_events.contains(e)) {
             eprintln!("[{}] {e:?}", self.drive.tick_count());
+        }
+        let odometer = self.drive.train().odometer;
+        let variant = self.drive.rules().signal_variant;
+        for e in &out.events {
+            self.popups.event(e, odometer, variant);
         }
         self.last_events = out.events;
 
@@ -237,6 +303,13 @@ impl Play {
             horn_pressed: buttons.horn_pressed,
             confirm_pressed: buttons.confirm_pressed,
         };
+        if let Some(script) = &self.script {
+            let next = self.drive.tick_count();
+            if let Some(&(_, p, b)) = script.iter().rev().find(|s| s.0 <= next) {
+                self.latched.power = p;
+                self.latched.brake = b;
+            }
+        }
         self.flow(buttons)?;
 
         if self.drive.com() != self.scene_com {
@@ -305,6 +378,12 @@ impl Play {
         };
         self.layer.reset_transient();
         self.hud.update(&state, &mut self.layer);
+        self.popups.update(
+            &mut self.layer,
+            train.odometer,
+            rules.clock,
+            buttons.horn_held,
+        );
         self.layer.compose(&self.bank, &mut self.canvas);
         self.canvas_dirty = true;
     }

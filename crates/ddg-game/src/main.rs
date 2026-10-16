@@ -6,6 +6,7 @@
 mod hud;
 mod input;
 mod play;
+mod popups;
 mod scene;
 mod shot;
 mod window;
@@ -26,6 +27,7 @@ use winit::window::WindowId;
 
 const USAGE: &str = "\
 usage: ddg-game play <stage 0..19> [--difficulty <0..>] [--station <n>] [--keys <0..3>] [options]
+                     [--inputs <script>] [--shot <ticks>:<file.ppm>]
        ddg-game view <route.com> [options]
        ddg-game shot <route.com> --at <metres> --out <file.ppm> [options]
 
@@ -89,6 +91,8 @@ fn parse_play_args() -> Result<play::PlayOptions> {
         stable_track_variants: false,
         texture_filtering: false,
         fog: false,
+        inputs: None,
+        shot: None,
     };
     let mut rest = args[1..].iter();
     while let Some(a) = rest.next() {
@@ -101,6 +105,12 @@ fn parse_play_args() -> Result<play::PlayOptions> {
             "--difficulty" => opts.difficulty = value("a number")?.parse()?,
             "--station" => opts.station = value("a number")?.parse()?,
             "--keys" => opts.keyboard_mode = value("a mode")?.parse()?,
+            "--inputs" => opts.inputs = Some(value("a file")?.into()),
+            "--shot" => {
+                let s = value("TICKS:FILE")?;
+                let (t, f) = s.split_once(':').context("--shot needs TICKS:FILE")?;
+                opts.shot = Some((t.parse()?, f.into()));
+            }
             "--size" => {
                 let s = value("WxH")?;
                 let (w, h) = s.split_once('x').context("--size needs WxH")?;
