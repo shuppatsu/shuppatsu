@@ -471,9 +471,9 @@ impl Play {
         let mut effects = ddg_render::effects::EffectGeometry::default();
         let band = self.band_top((w, h));
         let band_aspect = w as f32 / (h as f32 * (1.0 - band)).max(1.0);
+        Self::cab_mask(&self.scene, self.ending.as_ref(), band_aspect, &mut effects);
         self.weather
             .compose(&self.scene, &self.drive, band_aspect, &mut effects);
-        Self::cab_mask(&self.scene, self.ending.as_ref(), band_aspect, &mut effects);
         Self::ending_masks(self.ending.as_ref(), &mut effects);
         let fog = fog && self.weather.fog();
         crate::shot::render_to_ppm(
@@ -1172,10 +1172,10 @@ impl Play {
             self.scene.compose(&mut self.frame, pos, false, band_aspect);
             self.weather.shake(&mut camera);
             let fx = &mut gpu.renderer.effects;
-            self.weather
-                .compose(&self.scene, &self.drive, band_aspect, fx);
             fx.clear();
             Self::cab_mask(&self.scene, self.ending.as_ref(), band_aspect, fx);
+            self.weather
+                .compose(&self.scene, &self.drive, band_aspect, fx);
             Self::ending_masks(self.ending.as_ref(), fx);
             Self::opening_masks(
                 self.opening.as_ref(),
