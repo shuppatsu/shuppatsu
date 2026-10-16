@@ -713,11 +713,12 @@ fn render_part(
             .find(|i| !pattern.contains(i))
             .unwrap_or(second)
     } else {
-        if part.outline && second != dominant {
+        let (fill, outline) = plain_colours(&region_art, w, h).unwrap_or((dominant, second));
+        if part.outline && outline != fill {
             // One original pixel thick at any scale.
-            dilate(&coverage, sw, sh, s, 128, |i| base[i] = second);
+            dilate(&coverage, sw, sh, s, 128, |i| base[i] = outline);
         }
-        dominant
+        fill
     };
     Some(RenderedPart {
         region: [(x * s) as u16, (y * s) as u16, sw as u16, sh as u16],
@@ -725,6 +726,44 @@ fn render_part(
         coverage,
         fg,
     })
+}
+
+/// The fill and outline colours of plain lettering in a `w × h` region: the fill is the
+/// commonest colour of the interior pixels (all four neighbours opaque), the outline the
+/// commonest other colour of the pixels next to transparency. Counting all pixels instead gets
+/// thin lettering with a thick outline backwards (秒: the outline outnumbers the strokes).
+/// `None` without interior pixels (one-pixel lettering).
+fn plain_colours(art: &impl Fn(usize, usize) -> u8, w: usize, h: usize) -> Option<(u8, u8)> {
+    let opaque = |x: isize, y: isize| {
+        (0..w as isize).contains(&x)
+            && (0..h as isize).contains(&y)
+            && art(x as usize, y as usize) != 0
+    };
+    let (mut inner, mut rim) = ([0u32; 256], [0u32; 256]);
+    for y in 0..h {
+        for x in 0..w {
+            let v = art(x, y);
+            if v == 0 {
+                continue;
+            }
+            let (xi, yi) = (x as isize, y as isize);
+            let enclosed = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+                .iter()
+                .all(|&(dx, dy)| opaque(xi + dx, yi + dy));
+            if enclosed {
+                inner[usize::from(v)] += 1;
+            } else {
+                rim[usize::from(v)] += 1;
+            }
+        }
+    }
+    let commonest = |c: &[u32; 256], not: u8| {
+        (1..=255u8)
+            .filter(|&i| i != not && c[usize::from(i)] > 0)
+            .max_by_key(|&i| c[usize::from(i)])
+    };
+    let fill = commonest(&inner, 0)?;
+    Some((fill, commonest(&rim, fill).unwrap_or(fill)))
 }
 
 /// Calls `f` with the index of every pixel of a `w × h` mask within `r` pixels (a square) of a
@@ -938,6 +977,36 @@ pub(crate) mod tests {
                 .iter()
                 .all(|&(x, y)| (20..60).contains(&x) && (10..30).contains(&y))
         );
+    }
+
+    #[test]
+    fn thin_lettering_keeps_its_fill_inside_a_thick_outline() {
+        // A 2-px stroke of 5 in a 1-px outline of 6: the outline is the commoner colour.
+        let (w, h) = (24, 12);
+        let art: Vec<u8> = (0..w * h)
+            .map(|i| {
+                let (x, y) = (i % w, i / w);
+                if (3..21).contains(&x) && (3..7).contains(&y) {
+                    if (4..20).contains(&x) && (4..6).contains(&y) {
+                        5
+                    } else {
+                        6
+                    }
+                } else {
+                    0
+                }
+            })
+            .collect();
+        assert!(art.iter().filter(|&&v| v == 6).count() > art.iter().filter(|&&v| v == 5).count());
+        let part = TextPart {
+            text: "sec".into(),
+            style: Style::Plain,
+            outline: true,
+            ..TextPart::default()
+        };
+        let p = render_part(&part, &art, w, h, &BoxGlyphs, 1).unwrap();
+        assert_eq!(p.fg, 5);
+        assert!(p.base.contains(&6));
     }
 
     #[test]
