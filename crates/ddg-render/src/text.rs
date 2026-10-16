@@ -253,6 +253,25 @@ const PAD: usize = 1;
 /// Latin capital height as a share of the original (kanji) lettering height: kanji fill the
 /// em square, capitals about three quarters of it, so the two read as the same size.
 const LATIN_CAP_OF_LETTERING: f32 = 0.75;
+/// Japanese text replacing Latin lettering (the menu subtitles): a full-height kanji as tall as
+/// the original lettering plus its outline (the measured extent excludes the 1-px outline rows).
+const CJK_OF_LETTERING: f32 = 1.25;
+
+/// Whether `text` is mostly Japanese (kana, kanji, full-width forms), which is sized by a kanji
+/// instead of a Latin capital.
+fn is_cjk(text: &str) -> bool {
+    let (cjk, other) = text
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .fold((0, 0), |(a, b), c| {
+            if c as u32 >= 0x3000 {
+                (a + 1, b)
+            } else {
+                (a, b + 1)
+            }
+        });
+    cjk > other
+}
 
 /// Largest and smallest font sizes tried, in pixels (the largest allows UI scale 4).
 const MAX_PX: f32 = 256.0;
@@ -272,7 +291,8 @@ pub fn rasterise(
     rasterise_sized(text, w, h, align, vertical, glyphs, None)
 }
 
-/// [`rasterise`] at a wanted size: `cap_px` is the height of a capital letter in pixels (set
+/// [`rasterise`] at a wanted size: `cap_px` is the height of a capital letter (of a kanji for
+/// Japanese text) in pixels (set
 /// from the original lettering, so neighbouring labels keep the original's type sizes). The
 /// text is made smaller only when it would not fit; `None` fills the box. The ink, not the
 /// font's ascent and descent, is centred vertically, so tall glyphs are never cut off.
@@ -341,10 +361,20 @@ pub fn rasterise_sized(
     } else {
         MAX_PX
     };
-    let by_h = ah * reference / (line_h(reference) * lines.len() as f32).max(1.0);
+    // Height limit: Latin text by the font's line height, which keeps the approved sizes;
+    // Japanese text by its ink, because CJK fonts' tall ascent and descent would cap kanji well
+    // below what fits.
+    let by_h = if is_cjk(text) {
+        let (ink_top, ink_bottom) = ink(reference);
+        ah * reference / (ink_bottom - ink_top).max(1.0)
+    } else {
+        ah * reference / (line_h(reference) * lines.len() as f32).max(1.0)
+    };
     let mut px = by_w.min(by_h);
     if let Some(cap) = cap_px {
-        let h_ref = glyphs.glyph('H', 100.0).height as f32;
+        // The reference glyph: a Latin capital, or a full-height kanji for Japanese text.
+        let reference_char = if is_cjk(text) { '国' } else { 'H' };
+        let h_ref = glyphs.glyph(reference_char, 100.0).height as f32;
         if h_ref > 0.0 {
             px = px.min(cap * 100.0 / h_ref);
         }
@@ -558,7 +588,12 @@ fn render_part(
     // The output is `scale` times finer than the art; art lookups use original pixels.
     let s = scale;
     let (sw, sh) = (w * s, h * s);
-    let cap_px = (lo <= hi).then(|| (hi - lo + 1) as f32 * LATIN_CAP_OF_LETTERING * s as f32);
+    let share = if is_cjk(&part.text) {
+        CJK_OF_LETTERING
+    } else {
+        LATIN_CAP_OF_LETTERING
+    };
+    let cap_px = (lo <= hi).then(|| (hi - lo + 1) as f32 * share * s as f32);
     let coverage = rasterise_sized(
         &part.text,
         sw,
