@@ -768,6 +768,47 @@ mod tests {
         }
     }
 
+    #[test]
+    fn grouped_parts_share_the_smallest_size() {
+        use crate::text::{Style, SubRect, TextOverlay, TextOverride, TextPart, tests::BoxGlyphs};
+        let b = bank(3);
+        // Two words in the two halves of one 16×16 sprite, as in a callout cell.
+        let parts = |group: Option<&str>| TextOverride {
+            parts: ["Off", "Accelerate"]
+                .iter()
+                .enumerate()
+                .map(|(i, t)| TextPart {
+                    region: Some([0, 8 * i as u16, 16, 8]),
+                    text: (*t).into(),
+                    style: Style::Plain,
+                    group: group.map(Into::into),
+                    ..TextPart::default()
+                })
+                .collect(),
+        };
+        // Inked rows of each part's coverage.
+        let rows = |o: &TextOverride| -> Vec<usize> {
+            let overlay = TextOverlay::build_scaled(&b, [(0, SubRect::WHOLE, o)], &BoxGlyphs, 4);
+            overlay
+                .get(&(0, (0, 0, 1, 1)))
+                .unwrap()
+                .iter()
+                .map(|p| {
+                    let w = usize::from(p.region[2]);
+                    p.coverage
+                        .chunks(w)
+                        .filter(|r| r.iter().any(|&c| c > 0))
+                        .count()
+                })
+                .collect()
+        };
+        let alone = rows(&parts(None));
+        assert!(alone[0] > alone[1], "{alone:?}");
+        let grouped = rows(&parts(Some("cell")));
+        assert_eq!(grouped[0], grouped[1]);
+        assert_eq!(grouped[1], alone[1]);
+    }
+
     fn palette() -> Palette {
         let mut p = [0u32; 256];
         p[1] = 0x00_ff_00_00; // B=0, R=0, G=0xff (bytes B, R, G)

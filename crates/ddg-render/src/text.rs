@@ -135,6 +135,9 @@ pub struct TextPart {
     /// Lines this many font sizes apart instead of the font's line height (two lines in a
     /// tight caption band).
     pub line_height: Option<f32>,
+    /// Parts of one override with the same group are drawn at one size: the smallest any of
+    /// them fits at (the words of one callout cell).
+    pub group: Option<String>,
 }
 
 /// The replacement for one sprite.
@@ -337,9 +340,26 @@ pub fn rasterise_spaced(
     cap_px: Option<f32>,
     line_em: Option<f32>,
 ) -> Vec<u8> {
+    rasterise_fit(text, w, h, align, vertical, glyphs, cap_px, line_em, None).0
+}
+
+/// [`rasterise_spaced`] at most `max_px` font pixels; also returns the font size it used, so
+/// several texts can be drawn at one size (the smallest of their fitted sizes).
+#[allow(clippy::too_many_arguments)]
+pub fn rasterise_fit(
+    text: &str,
+    w: usize,
+    h: usize,
+    align: Align,
+    vertical: bool,
+    glyphs: &dyn GlyphSource,
+    cap_px: Option<f32>,
+    line_em: Option<f32>,
+    max_px: Option<f32>,
+) -> (Vec<u8>, f32) {
     if vertical {
         // Lay out in the rotated frame, then turn it clockwise.
-        let src = rasterise_spaced(text, h, w, align, false, glyphs, cap_px, line_em);
+        let (src, px) = rasterise_fit(text, h, w, align, false, glyphs, cap_px, line_em, max_px);
         let mut out = vec![0u8; w * h];
         for sy in 0..w {
             for sx in 0..h {
@@ -347,12 +367,12 @@ pub fn rasterise_spaced(
                 out[sx * w + (w - 1 - sy)] = src[sy * h + sx];
             }
         }
-        return out;
+        return (out, px);
     }
     let mut out = vec![0u8; w * h];
     let lines: Vec<&str> = text.lines().collect();
     if lines.is_empty() || w <= 2 * PAD || h <= 2 * PAD {
-        return out;
+        return (out, 0.0);
     }
     let (aw, ah) = ((w - 2 * PAD) as f32, (h - 2 * PAD) as f32);
     let width_at = |line: &str, px: f32| line.chars().map(|c| glyphs.advance(c, px)).sum::<f32>();
@@ -414,6 +434,9 @@ pub fn rasterise_spaced(
             px = px.min(cap * 100.0 / h_ref);
         }
     }
+    if let Some(m) = max_px {
+        px = px.min(m);
+    }
     px = px.clamp(MIN_PX, MAX_PX);
     let fits = |px: f32| {
         let (t, b) = ink(px);
@@ -455,7 +478,7 @@ pub fn rasterise_spaced(
             pen += g.advance;
         }
     }
-    out
+    (out, px)
 }
 
 /// A part ready to draw: palette indices per pixel, so any palette can colour it.
@@ -519,10 +542,34 @@ impl TextOverlay {
             };
             let art = bank.render_rect(tbl, r);
             let (pw, ph) = (usize::from(r.2) * TILE_SIZE, usize::from(r.3) * TILE_SIZE);
+            // Each part fitted on its own; then the parts of a group again, at the smallest
+            // size any of them got.
+            let fitted: Vec<Option<(RenderedPart, f32)>> = o
+                .parts
+                .iter()
+                .map(|p| render_part_at(p, &art, pw, ph, glyphs, scale, None))
+                .collect();
+            let mut smallest: HashMap<&str, f32> = HashMap::new();
+            for (p, f) in o.parts.iter().zip(&fitted) {
+                if let (Some(g), Some((_, px))) = (p.group.as_deref(), f) {
+                    let e = smallest.entry(g).or_insert(f32::MAX);
+                    *e = e.min(*px);
+                }
+            }
             let rendered = o
                 .parts
                 .iter()
-                .filter_map(|p| render_part(p, &art, pw, ph, glyphs, scale))
+                .zip(fitted)
+                .filter_map(|(p, f)| {
+                    let (part, px) = f?;
+                    match p.group.as_deref().map(|g| smallest[g]) {
+                        Some(min) if min < px => {
+                            render_part_at(p, &art, pw, ph, glyphs, scale, Some(min))
+                                .map(|(r, _)| r)
+                        }
+                        _ => Some(part),
+                    }
+                })
                 .collect::<Vec<_>>();
             if !rendered.is_empty() {
                 parts.insert((tbl, r), rendered);
@@ -548,6 +595,7 @@ impl TextOverlay {
     }
 }
 
+#[cfg(test)]
 fn render_part(
     part: &TextPart,
     art: &[u8],
@@ -556,6 +604,19 @@ fn render_part(
     glyphs: &dyn GlyphSource,
     scale: usize,
 ) -> Option<RenderedPart> {
+    render_part_at(part, art, art_w, art_h, glyphs, scale, None).map(|(r, _)| r)
+}
+
+/// One part, its text at most `max_px` font pixels; also returns the font size used.
+fn render_part_at(
+    part: &TextPart,
+    art: &[u8],
+    art_w: usize,
+    art_h: usize,
+    glyphs: &dyn GlyphSource,
+    scale: usize,
+    max_px: Option<f32>,
+) -> Option<(RenderedPart, f32)> {
     let [x, y, w, h] = part.region.unwrap_or([0, 0, art_w as u16, art_h as u16]);
     // Clip the region to the sprite.
     let (x, y) = (usize::from(x), usize::from(y));
@@ -665,7 +726,7 @@ fn render_part(
     // would leave it well short of the original lettering's height).
     let one_line = !part.text.contains('\n');
     let line_em = part.line_height.or(one_line.then_some(1.0));
-    let laid = rasterise_spaced(
+    let (laid, px) = rasterise_fit(
         &part.text,
         lw,
         lh,
@@ -674,6 +735,7 @@ fn render_part(
         glyphs,
         cap_px,
         line_em,
+        max_px,
     );
     let mut coverage = vec![0u8; sw * sh];
     for row in 0..lh {
@@ -720,12 +782,13 @@ fn render_part(
         }
         fill
     };
-    Some(RenderedPart {
+    let rendered = RenderedPart {
         region: [(x * s) as u16, (y * s) as u16, sw as u16, sh as u16],
         base,
         coverage,
         fg,
-    })
+    };
+    Some((rendered, px))
 }
 
 /// The fill and outline colours of plain lettering in a `w × h` region: the fill is the

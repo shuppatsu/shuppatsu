@@ -454,6 +454,11 @@ fn apply_option(p: &mut TextPart, k: &str, v: &toml::Value) -> Result<()> {
         }
         "vertical" => p.vertical = v.as_bool().context("vertical must be a boolean")?,
         "outline" => p.outline = v.as_bool().context("outline must be a boolean")?,
+        "group" => {
+            let g = v.as_str().context("group must be a string")?;
+            ensure!(!g.is_empty(), "empty group");
+            p.group = Some(g.to_owned());
+        }
         "line_height" => {
             let em = v
                 .as_float()
