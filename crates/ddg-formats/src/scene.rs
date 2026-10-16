@@ -1996,19 +1996,72 @@ fn widen_quad(xy: &mut [[f32; 2]; 4], uv: &mut [[f32; 2]; 4], x_range: [f32; 2])
     }
 }
 
+/// Four 2D corners (positions or UVs) of a background quad.
+type Corners = [[f32; 2]; 4];
+
+/// Covers `x_range` with mirrored copies of a quad, side by side: the copy at index `k` (0 =
+/// the quad itself) spans `[lo + k·w, lo + (k + 1)·w]` and reverses its UVs horizontally for
+/// odd `k`, so the picture continues seamlessly across every seam. Each copy is cut to
+/// `x_range`. The UVs stay inside the quad's own range, unlike [`widen_quad`].
+fn mirror_tiles(xy: Corners, uv: Corners, x_range: [f32; 2]) -> Vec<(Corners, Corners)> {
+    let lo = xy.iter().map(|p| p[0]).fold(f32::INFINITY, f32::min);
+    let hi = xy.iter().map(|p| p[0]).fold(f32::NEG_INFINITY, f32::max);
+    let w = hi - lo;
+    if w <= 0.0 || x_range[0] >= x_range[1] {
+        return Vec::new();
+    }
+    // UV of corner `i`'s horizontal edge at fraction `t` (0 = left end, 1 = right end).
+    let edge_uv = |i: usize, t: f32| -> [f32; 2] {
+        let row = |left: bool| {
+            (0..4)
+                .find(|&j| xy[j][1] == xy[i][1] && (xy[j][0] == lo) == left)
+                .map_or(uv[i], |j| uv[j])
+        };
+        let (a, b) = (row(true), row(false));
+        [0, 1].map(|c| a[c] + (b[c] - a[c]) * t)
+    };
+    let first = ((x_range[0] - lo) / w).floor() as i32;
+    let last = ((x_range[1] - lo) / w).ceil() as i32 - 1;
+    (first..=last)
+        .filter_map(|k| {
+            let start = lo + k as f32 * w;
+            let (a, b) = (start.max(x_range[0]), (start + w).min(x_range[1]));
+            if a >= b {
+                return None;
+            }
+            let source_t = |x: f32| {
+                let s = (x - start) / w;
+                if k.rem_euclid(2) == 0 { s } else { 1.0 - s }
+            };
+            let mut out_xy = xy;
+            let mut out_uv = uv;
+            for i in 0..4 {
+                let x = if xy[i][0] == lo { a } else { b };
+                out_xy[i][0] = x;
+                out_uv[i] = edge_uv(i, source_t(x));
+            }
+            Some((out_xy, out_uv))
+        })
+        .collect()
+}
+
 /// The textured ground quad of a [`Ground::Textured`] layer (0x41dfc0 → 0x432da0), widened to
-/// `x_range` (`[0, 496]` = original). `tex` is [`SpriteTexture::from_group`] of the layer's
-/// part. Returns `None` for the other ground kinds.
+/// `x_range` (`[0, 496]` = original, one quad). `tex` is [`SpriteTexture::from_group`] of the
+/// layer's part. Empty for the other ground kinds.
 ///
 /// With `screen_uv` the UVs are the sky-gradient quad's corners shifted left by 4 (0x41cb00):
 /// `u = y/16`, `v = x/16` page units, so the page repeats every 16 virtual units and is turned
-/// 90° on screen. It does not scroll.
+/// 90° on screen. It does not scroll; widening extends the tiling (one quad).
+///
+/// Otherwise the part's own UVs stretch one texture rect over 0..496 (area 3's water). Its
+/// neighbours on the atlas page are other textures, so widening adds mirrored copies of the
+/// quad beyond 0 and 496 instead of extrapolating the UVs out of the rect (scene.md §6.5).
 pub fn ground_quad(
     bg: &BackgroundTables,
     ground: &Ground,
     tex: &SpriteTexture,
     x_range: [f32; 2],
-) -> Option<TexQuad2d> {
+) -> Vec<TexQuad2d> {
     let Ground::Textured {
         xy,
         screen_uv,
@@ -2016,26 +2069,31 @@ pub fn ground_quad(
         ..
     } = *ground
     else {
-        return None;
+        return Vec::new();
     };
-    let mut uv = if screen_uv {
-        let raw = bg.sky_quad.xy.map(|[x, y]| [y << 4, x << 4]);
-        SpriteTexture {
-            rect_id: tex.rect_id,
-            uv: raw,
-        }
-        .page_uv()
-    } else {
-        tex.page_uv()
-    };
-    let mut xy = xy.map(|p| p.map(f32::from));
-    widen_quad(&mut xy, &mut uv, x_range);
-    Some(TexQuad2d {
+    let quad = |(xy, uv)| TexQuad2d {
         xy,
         uv,
         rect_id: tex.rect_id,
         depth,
-    })
+    };
+    let xy = xy.map(|p| p.map(f32::from));
+    if screen_uv {
+        let raw = bg.sky_quad.xy.map(|[x, y]| [y << 4, x << 4]);
+        let mut uv = SpriteTexture {
+            rect_id: tex.rect_id,
+            uv: raw,
+        }
+        .page_uv();
+        let mut xy = xy;
+        widen_quad(&mut xy, &mut uv, x_range);
+        vec![quad((xy, uv))]
+    } else {
+        mirror_tiles(xy, tex.page_uv(), x_range)
+            .into_iter()
+            .map(quad)
+            .collect()
+    }
 }
 
 /// Clip helper of 0x432f40 (0x432f10): y on the line through `a` and `b`, evaluated at
@@ -2697,28 +2755,67 @@ mod tests {
             depth: BACKGROUND_DEPTH,
         };
         let tex = plain_texture();
-        let q = ground_quad(&bg, &g, &tex, [0.0, 496.0]).unwrap();
+        let [q] = ground_quad(&bg, &g, &tex, [0.0, 496.0])[..] else {
+            panic!("one quad");
+        };
         assert_eq!(q.xy[2], [496.0, 415.0]);
         // u = sky y / 16, v = sky x / 16.
         assert_eq!(q.uv[0], [66.0 / 16.0, 0.0]);
         assert_eq!(q.uv[2], [235.0 / 16.0, 31.0]);
         assert_eq!(q.depth, BACKGROUND_DEPTH);
         // Widened: x and v extend linearly, u stays.
-        let w = ground_quad(&bg, &g, &tex, [-100.0, 596.0]).unwrap();
+        let [w] = ground_quad(&bg, &g, &tex, [-100.0, 596.0])[..] else {
+            panic!("one quad");
+        };
         assert_eq!(w.xy[0], [-100.0, 235.0]);
         assert!((w.uv[0][1] + 100.0 / 16.0).abs() < 1e-5);
         assert!((w.uv[1][1] - 596.0 / 16.0).abs() < 1e-5);
         assert_eq!(w.uv[0][0], q.uv[0][0]);
-        // The part's own UVs otherwise.
+        assert!(ground_quad(&bg, &Ground::None, &tex, [0.0, 496.0]).is_empty());
+    }
+
+    #[test]
+    fn own_uv_ground_widens_with_mirrored_copies() {
+        let bg = background_tables();
         let own = Ground::Textured {
             xy: bg.ground_quad.xy,
             part_id: GROUND_PART_AREA3,
             screen_uv: false,
             depth: BACKGROUND_DEPTH,
         };
-        let q = ground_quad(&bg, &own, &tex, [0.0, 496.0]).unwrap();
-        assert_eq!(q.uv[2], [0.25, 0.25]);
-        assert!(ground_quad(&bg, &Ground::None, &tex, [0.0, 496.0]).is_none());
+        let tex = plain_texture();
+        // Original width: the part's own UVs, unchanged.
+        let [q] = ground_quad(&bg, &own, &tex, [0.0, 496.0])[..] else {
+            panic!("one quad");
+        };
+        assert_eq!(
+            q.xy,
+            [[0.0, 235.0], [496.0, 235.0], [496.0, 415.0], [0.0, 415.0]]
+        );
+        assert_eq!(q.uv, tex.page_uv());
+        // Wider: mirrored copies left and right, every UV inside the rect, seams continuous.
+        let [l, m, r] = ground_quad(&bg, &own, &tex, [-100.0, 596.0])[..] else {
+            panic!("three quads");
+        };
+        assert_eq!(m, q);
+        assert!(
+            [l, r]
+                .iter()
+                .flat_map(|t| t.uv)
+                .flatten()
+                .all(|c| (0.0..=0.25).contains(&c))
+        );
+        assert_eq!([l.xy[0][0], l.xy[1][0]], [-100.0, 0.0]);
+        assert_eq!([r.xy[0][0], r.xy[1][0]], [496.0, 596.0]);
+        // Seams: the copy's edge at 0 / 496 shows the same texels as the quad's edge there.
+        assert_eq!(l.uv[1], q.uv[0]);
+        assert_eq!(l.uv[2], q.uv[3]);
+        assert_eq!(r.uv[0], q.uv[1]);
+        assert_eq!(r.uv[3], q.uv[2]);
+        // 100 units past the edge mirrors the texel 100 units inside it.
+        let inside = 100.0 / 496.0 * 0.25;
+        assert!((l.uv[0][1] - inside).abs() < 1e-6);
+        assert!((r.uv[1][1] - (0.25 - inside)).abs() < 1e-6);
     }
 
     #[test]

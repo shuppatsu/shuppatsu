@@ -313,10 +313,10 @@ impl RouteScene {
                 GROUND_FLAT_DEPTH,
             ),
             g @ scene::Ground::Textured { part_id, depth, .. } => {
-                if let Some((page, tex)) = sprite(*part_id)
-                    && let Some(q) = scene::ground_quad(bg, g, &tex, x_range)
-                {
-                    frame.add_bg_tex_quad(page, to_ndc(q.xy), q.uv, *depth);
+                if let Some((page, tex)) = sprite(*part_id) {
+                    for q in scene::ground_quad(bg, g, &tex, x_range) {
+                        frame.add_bg_tex_quad(page, to_ndc(q.xy), q.uv, *depth);
+                    }
                 }
             }
         }

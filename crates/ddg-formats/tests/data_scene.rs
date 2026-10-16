@@ -607,8 +607,24 @@ fn background_quads_resolve_and_cover_the_view() {
                 screen_uv,
                 depth: scene::BACKGROUND_DEPTH,
             };
-            let q = scene::ground_quad(bg, &g, &tex, wide.x_range()).unwrap();
-            assert!(q.uv.iter().chain(&q.xy).flatten().all(|v| v.is_finite()));
+            let quads = scene::ground_quad(bg, &g, &tex, wide.x_range());
+            assert!(!quads.is_empty());
+            for q in &quads {
+                assert!(q.uv.iter().chain(&q.xy).flatten().all(|v| v.is_finite()));
+            }
+            if !screen_uv {
+                // The part's own UVs never leave its rect on the atlas page.
+                let own = tex.page_uv();
+                for c in 0..2 {
+                    let lo = own.iter().map(|p| p[c]).fold(f32::INFINITY, f32::min);
+                    let hi = own.iter().map(|p| p[c]).fold(f32::NEG_INFINITY, f32::max);
+                    let inside = |p: [f32; 2]| p[c] >= lo - 1e-6 && p[c] <= hi + 1e-6;
+                    assert!(
+                        quads.iter().flat_map(|q| q.uv).all(inside),
+                        "part {part:#x}"
+                    );
+                }
+            }
         }
     }
     eprintln!(
