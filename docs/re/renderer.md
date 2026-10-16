@@ -472,10 +472,13 @@ render task's border quads (0x425680), the viewer camera preset (0x41c3c0) and t
   16:10 the snow ends at the 4:3 edges and shape 2's arm stops at x = 496. Widening the snow
   layers (and spawning drops) over the visible Hor+ range, and interpolating the wiper angle at
   high refresh rates, would be enhancements (not implemented).
-- **Rules gap (not in this module).** The rules start the event only at the stage start and by
-  course event 0x15 (only stages 0 and 3 have one). The station-based starts (0x40d620 when the
-  global tick counter is divisible by 3, 0x40d340 by 4), which are how the rain stages
-  (from_station 5 or 7) get their weather, are not modelled, so rain never starts in the port yet.
+- **Station-based starts.** Besides the stage start and course event 0x15, the rules start the
+  weather in 0x40d620 (passing a station; global tick counter `0x84c494 % 3 == 0`, dry rails if
+  the track class ahead is a tunnel) and 0x40d340 (next segment; `% 4 == 0`), at or past
+  `0x459cf8[stage]` with enough remaining time (`0x459d20`). `Drive` models the counter (set
+  from the app's tick count at the stage start, +1 per tick; exact against all three traces).
+  **confirmed** (code); not yet seen in a trace (the traces are of stage 0, whose first weather
+  station is 99).
 
 ## Implications for the port (Hor+)
 

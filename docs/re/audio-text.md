@@ -695,5 +695,5 @@ request.
     its 0x2c / 0x1a sounds and of the restarted train sounds.
 15. Whether a task created during the loop body gets its first update in the same `Task_Tick`
     (assumed for 0x420470, 0x411240 and `NaviAnim`; it shifts their sounds by one tick).
-16. Scripted-signal recoveries with a passing train (0x404f10 animation; sounds 8, 1, 4) and the
-    AI-train sounds of 0x40b710 / 0x406420 are not modelled (no traffic in the engine).
+16. ~~Passing-train and AI-train sounds~~: modelled, see traffic.md §5 (codes 0x33, 0x1028, and
+    8 / 1 + 4 for the scripted recovery's passing train).

@@ -185,8 +185,8 @@ same (0x40d620). At segment start, if no restriction carries over:
 
 When stopped (|v| ≤ 0.0001) with the ATS in emergency (`0x857206 ≥ 4`) or aspect 4, and not at
 the station (short by more than the tolerance, or a passing station): all signals turn green,
-signal limit cleared, notches forced to P0/B9, **60 ticks** standstill (or 30 + a passing-train
-animation of 200/300/360 ticks for scripted signals), the HUD shows a green, then 10 ticks. If
+signal limit cleared, notches forced to P0/B9, **60 ticks** standstill (after a scripted "train
+ahead" signal and no ATS: 30 ticks, then 60, or 200/300/360 while a train passes; traffic.md §6.1), the HUD shows a green, then 10 ticks. If
 no signal is in sight ahead, re-powering during the station approach is excused (`0x857238 = 1`).
 **confirmed** (structure), hold lengths **likely**.
 

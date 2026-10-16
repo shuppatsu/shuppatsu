@@ -774,8 +774,7 @@ renderer.md §13, confirmed). None of the HUD elements in §3 use them.
     shot). The flow should wait for `CabHud`'s time-up to finish.
 11. Phase flag `0x855ff8 & 0x100`, which also hides captions, banners and landmarks: its
     setter is not identified; the port ignores it.
-12. `0x85744c = 4` at approach state 3 → 4 on stopping stations (the 3D signal shows red at the
-    platform): a scene matter, not wired to the renderer yet.
+12. ~~`0x85744c` and the 3D signals~~: wired (`Rules::signal_model`, traffic.md §7).
 13. The ATC panel (§3.6) and rows 20/21 of the vehicle table are implemented but unreachable:
     the engine does not model the bonus sections that call `Vehicle_Set(0x1000 | n)`.
 14. The handling-error hint (slots 0x2e/0x2f) counts ticks only in the train task's driving

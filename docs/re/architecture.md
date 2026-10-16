@@ -189,6 +189,7 @@ autorun launcher, README, and the Cd2 CD-check DLLs).
 | `audio` | effect.rom (u8 PCM, loop points), bgm.rom (s16 stereo) | audio-text.md |
 | `route` | .COM track geometry (1.25 m per point), segment graph, stops, placements, visibility, traffic spawns | routes.md |
 | `stages` | per-stage tables read from the exe: area, trains, segments, timetables, course/limit/traffic events, station names | routes.md |
+| `traffic` | AI-train model table 0x457358 (car lists, LOD parts, spacing) | traffic.md |
 | `exe` | VA → bytes for tables in the user's exe | (code) |
 
 `ddg-tools export textures|tilemaps|audio|models|routes|all` writes PNG/WAV/glTF into `out/export`.
