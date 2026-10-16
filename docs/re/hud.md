@@ -275,7 +275,8 @@ hidden).
 Option byte `0x856354` (eeprom +0x334, settings item 4): 0 = none, 1 = analog, 2 = digital.
 Drawn by `Cab_Overlay` 0x434fd0 → 0x4350b0 on every rendered frame while the stage is active
 (`0x855ff8 & 2`), the train is waiting or driving (`& 0xa00`), the debug camera is off
-(`0x84c0f8 == 0`) and the section is not in ATC mode (`0x856d34 ≠ 2`).
+(`0x84c0f8 == 0`) and the section is not in ATC mode (`0x856d34 ≠ 2`). Bit 2 of `0x855ff8` is
+set only by `Stage_Run`, so the attract demos never show it (menus.md §2.4).
 
 * **Analog**: slot 0x81 = dial 0x54a (0–120 km/h, 128×128) at (16, 345), palette 4, layer 3.
   The needle is **not a sprite**: it is a filled triangle in the rect layer (§6.2), colour

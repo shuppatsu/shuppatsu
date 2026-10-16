@@ -259,6 +259,19 @@ which holds no 0xff within either demo's length, so neither table wraps. The dem
 
 The destroy 0x40e670 kills lists 2, 3 and 4, stops all sound, clears the sprites and the flags.
 
+**No speedometer in the demos — confirmed** (code, and a Wine capture of the original with no
+`eeprom.dat`: `out/orig_opening/f144.png`). Both creators set `0x855ff8 |= 0x204` (0x40e530,
+0x40e75d) and the destroy 0x40e670 clears 0x204 again; the only writes of bit 2, "stage run", in
+the disassembly are `Stage_Run`'s `mov 0x855ff8, 2` at 0x4081dd and 0x408b48. `Cab_Overlay`
+0x434fd0 draws the speedometer only with bit 2 and `& 0xa00`, else it clears slot 0x81 (`0x829d18` is 0), so the demos show no dial
+whatever the option. The option itself is not the cause: the default image byte +0x334
+(0x467aa0 + 2) is **1 = analog** (the image there is `00 02 01 02 00`: control 0, vibration 2,
+speed meter 1, distance meter 2 = m, sound 0 = on), and nothing but the options page writes
+0x856354. The port: `Hud::stage_run` (false in `CabHud::demo_setup`) gates the overlay; the
+headless and fresh-install runs take their options from that default image (`save.rs`), a
+demo from the save like a run (`--speedometer` overrides only `ddg-game play`). The cold-start
+opening has bit 2 clear as well, so it shows no dial either (the port draws none there).
+
 ### 2.5 Photos and poster — confirmed
 
 * 0x403f40 (task 0x404030): `{tbl, w, h}` i16 × 35 at 0x4578ac, entry `0x8573cc mod 35`
