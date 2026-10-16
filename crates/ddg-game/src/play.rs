@@ -1,15 +1,18 @@
 //! `ddg-game play`: drive a stage. The simulation is `ddg_engine::drive` at the original's
 //! fixed 33 ms tick; rendering interpolates the camera along the track between the last two
-//! ticks. The stage flow (pause dialogs, station result, continue, report card, run-end banner)
-//! is [`crate::screens::flow::StageFlow`]; there is no title screen yet, so quitting or ending
-//! the run leaves play.
+//! ticks. The stage flow (pause dialogs, station result, continue, report card, ranking and
+//! name entry, run-end banner) is [`crate::screens::flow::StageFlow`]; there is no title screen
+//! yet, so quitting or ending the run leaves play. The save (`eeprom.dat`, rankings and clear
+//! marks) is loaded at start and written when play exits, like the original at shutdown.
 
 use crate::gamepad::{Controls, PadOptions};
 use crate::hud::{Hud, HudState};
 use crate::input::ButtonState;
+use crate::save::Save;
 use crate::scene::{GameData, RouteScene, Visibility};
 use crate::screens::flow::{Action, FlowDefs, Observation, StageFlow};
 use crate::screens::pause::PauseResult;
+use crate::screens::ranking::RankingRequest;
 use crate::screens::result::ResultInput;
 use crate::screens::tables::ScreenTables;
 use crate::screens::{MenuInput, Sfx};
@@ -40,6 +43,11 @@ pub const HUD_BAND_TOP: f32 = 52.0 / 400.0;
 const MIN_WIDE_ASPECT: f32 = 21.0 / 9.0;
 /// Pixels per `tbl.rom` tile.
 const TILE_PX: i16 = 16;
+/// `Hud_Distance` 0x4162c0 adds speed (m/s) × this (f64 at 0x4676f0, ≈ 1/30, used as f32) to
+/// `0x8571f0` each tick the distance meter is shown: metres driven with the meter.
+const METER_SCALE: f64 = f64::from_bits(0x3fa1_1113_4dba_9df6);
+/// The run's PRO flag `0x85723c` is set when `0x8571f0 ≤ 30.0` (f64 at 0x458b90, 0x4080d0).
+const PRO_LIMIT_M: f32 = 30.0;
 
 pub struct PlayOptions {
     pub stage: usize,
@@ -57,8 +65,9 @@ pub struct PlayOptions {
     pub fog: bool,
     pub mute: bool,
     /// Scripted inputs: `tick notch brake` lines (the oracle's format, drive ticks), held from
-    /// each tick on, and `key <tick> <enter|esc|space|up|down>` lines: the key is down for the
-    /// poll at the end of play tick `tick` (play ticks also count paused ticks).
+    /// each tick on, and `key <tick>[-<last>] <enter|esc|space|up|down|left|right>` lines: the
+    /// key is down for the poll at the end of play tick `tick` (through `last`; play ticks also
+    /// count paused ticks).
     pub inputs: Option<std::path::PathBuf>,
     /// Headless: run this many play ticks, render one frame with the HUD to a PPM and exit.
     pub shot: Option<(u64, std::path::PathBuf)>,
@@ -106,6 +115,16 @@ pub fn run(opts: PlayOptions) -> Result<()> {
         rules: RuleTables::read(&exe)?,
         stages: StageTables::read(&exe)?,
     };
+    // Headless shots use the exe's default save and never write one.
+    let save_path = if opts.shot.is_some() {
+        None
+    } else {
+        crate::save::default_path()
+    };
+    let save = Save::open(&exe, save_path)?;
+    if let Some(p) = save.path() {
+        eprintln!("save: {}", p.display());
+    }
     let tolerance_m = tables
         .rules
         .stop_tolerance_m
@@ -180,6 +199,8 @@ pub fn run(opts: PlayOptions) -> Result<()> {
         error: None,
         sound,
         script,
+        save,
+        meter_m: 0.0,
         opts,
     };
     if let Some((ticks, out)) = app.opts.shot.clone() {
@@ -212,9 +233,10 @@ pub fn run(opts: PlayOptions) -> Result<()> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     event_loop.run_app(&mut app)?;
+    let saved = app.save.write().context("writing the save");
     match app.error {
         Some(e) => Err(e),
-        None => Ok(()),
+        None => saved,
     }
 }
 
@@ -265,6 +287,8 @@ fn script_key(name: &str) -> Option<u8> {
         "space" => 0x39,
         "up" => 0xc8,
         "down" => 0xd0,
+        "left" => 0xcb,
+        "right" => 0xcd,
         _ => return None,
     })
 }
@@ -282,7 +306,11 @@ fn parse_script(text: &str) -> Result<Script> {
             ["key", t, k] => {
                 let code =
                     script_key(k).with_context(|| format!("line {}: unknown key {k}", n + 1))?;
-                s.keys.push((t.parse()?, code));
+                // `key <from>-<to> name` holds the key over a range of ticks.
+                let (from, to) = t.split_once('-').unwrap_or((t, t));
+                for tick in from.parse::<u64>()?..=to.parse()? {
+                    s.keys.push((tick, code));
+                }
             }
             [t, p, b] => s.notches.push((t.parse()?, p.parse()?, b.parse()?)),
             _ => anyhow::bail!(
@@ -351,6 +379,10 @@ struct Play {
     error: Option<anyhow::Error>,
     sound: Option<crate::sound::Sound>,
     script: Script,
+    save: Save,
+    /// Metres driven with the distance meter shown (`0x8571f0`; reset by 0x40d040 at a run
+    /// start, kept over continues).
+    meter_m: f32,
 }
 
 impl Play {
@@ -412,8 +444,10 @@ impl Play {
         // The input poll at the end of `Task_Tick`: next tick's controls.
         let buttons = self.poll();
         let obs = self.observation();
-        if let Some(action) = self.flow.after_tick(&obs, &input, &mut sfx) {
-            self.act(action)?;
+        match self.flow.after_tick(&obs, &input, &mut sfx) {
+            Some(Action::Ranking { cleared }) => self.start_ranking(cleared, &mut sfx),
+            Some(action) => self.act(action)?,
+            None => {}
         }
         self.play(&sfx);
 
@@ -421,7 +455,44 @@ impl Play {
             self.reload_scene()?;
         }
         self.update_hud(buttons);
+        self.track_meter();
         Ok(())
+    }
+
+    /// The distance-meter odometer of `Hud_Distance` 0x4162c0: runs while the HUD's distance
+    /// panel is active and shown (not the "Professional" plate) and the distance option is on.
+    fn track_meter(&mut self) {
+        let shown = self.flow.hud_visible()
+            && self.drive.phase() == DrivePhase::Driving
+            && self.panel_on
+            && self.save.eeprom.options().distance_meter != 0;
+        if shown {
+            self.meter_m += self.drive.train().speed * METER_SCALE as f32;
+        }
+    }
+
+    /// The end of `Stage_Run` after the report card (0x4080d0, menus.md §11.4): the clear mark,
+    /// then the ranking insert with the run's value and PRO flag.
+    fn start_ranking(&mut self, cleared: bool, sfx: &mut Vec<Sfx>) {
+        let r = self.drive.rules();
+        let (stage, _) = r.stage();
+        if cleared {
+            self.save.eeprom.raise_clear_mark(stage, r.continues);
+        }
+        let score = r.ranking_score(cleared);
+        let pro = self.meter_m <= PRO_LIMIT_M;
+        eprintln!(
+            "[play tick {}] ranking value {score}, PRO {pro} ({:.1} m with the meter shown)",
+            self.ticks, self.meter_m
+        );
+        let req = RankingRequest {
+            route: stage,
+            score,
+            pro,
+            power: self.controls.power(),
+            rankings: &self.save.rankings,
+        };
+        self.flow.start_ranking(Some(&req), sfx);
     }
 
     /// Polls the controls and latches the next tick's driver input and menu edges.
@@ -435,9 +506,13 @@ impl Play {
             |c| down[usize::from(c)] || keys.iter().any(|&(t, k)| t == tick && k == c),
             shift_allowed,
         );
-        // Analog-lever modes: dialog cursors follow the power notch (menus.md §1.4).
-        let notch = self.controls.is_analog().then(|| self.controls.power());
-        self.menu_input = MenuInput::from_pressed(buttons.word.pressed, notch);
+        // Analog-lever modes: dialog cursors follow the power notch (menus.md §1.4), the
+        // name-entry wheel the brake notch.
+        let levers = self
+            .controls
+            .is_analog()
+            .then(|| (self.controls.power(), self.controls.brake()));
+        self.menu_input = MenuInput::from_word(&buttons.word, levers);
         self.latched = DriverInput {
             power: self.controls.power(),
             brake: self.controls.brake(),
@@ -518,6 +593,7 @@ impl Play {
                 self.popups.clear();
                 self.controls.reset_levers();
                 self.panel_on = true;
+                self.meter_m = 0.0;
                 self.interpolate = false;
                 self.flow.reset();
                 self.layer.slots.fill(Slot::CLEAR);
@@ -526,12 +602,20 @@ impl Play {
                     self.reload_scene()?;
                 }
             }
-            Action::Ranking { cleared } => {
-                // Ranking insert and name entry (menus.md §11.2) are not built yet.
-                eprintln!(
-                    "ranking value {} (not entered)",
-                    self.drive.rules().ranking_score(cleared)
-                );
+            // Answered in `tick`, which has the sound list.
+            Action::Ranking { .. } => {}
+            Action::RankingDone {
+                table,
+                rows,
+                commit,
+            } => {
+                if let Some(t) = self.save.rankings.get_mut(table) {
+                    *t = rows;
+                }
+                if commit {
+                    self.save.commit_table(table);
+                }
+                eprintln!("ranking table {table} updated (packed into the save: {commit})");
             }
             Action::Quit | Action::RunOver => {
                 if let Some(s) = self.sound.as_mut() {

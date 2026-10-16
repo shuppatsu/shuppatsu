@@ -8,6 +8,7 @@ mod hud;
 mod input;
 mod play;
 mod popups;
+mod save;
 mod scene;
 mod screens;
 mod shot;

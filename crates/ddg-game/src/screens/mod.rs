@@ -1,5 +1,5 @@
 //! Stage-flow screens (docs/re/menus.md §8–§11): pause dialogs, the station result, the continue
-//! countdown, the report card and the run-end banner, plus [`flow::StageFlow`], which sequences
+//! countdown, the report card, the ranking insert with name entry and the run-end banner, plus [`flow::StageFlow`], which sequences
 //! them around a [`ddg_engine::drive::Drive`] run with the original's tick gaps.
 //!
 //! Every screen is a pure state machine: one `tick` per 33 ms `Task_Tick` with the button edges
@@ -9,6 +9,7 @@
 pub mod continue_screen;
 pub mod flow;
 pub mod pause;
+pub mod ranking;
 pub mod report;
 pub mod result;
 pub mod run_end;
@@ -32,15 +33,23 @@ pub struct MenuInput {
     pub down: bool,
     /// 0x100: horn (Space).
     pub horn: bool,
+    /// 0x100000: the driving A button (Enter in keyboard modes); ends the ranking page.
+    pub a: bool,
+    /// Held bits 4 / 8 (`0x48c428`): left / right, for the name-entry wheel.
+    pub left_held: bool,
+    pub right_held: bool,
     /// Analog-lever modes: the power notch, which the dialog cursor follows (menus.md §1.4).
     pub notch: Option<u8>,
+    /// Analog-lever modes: the brake notch (`0x829d04`), the name-entry wheel speed.
+    pub brake: Option<u8>,
 }
 
 impl MenuInput {
-    /// The edges of a pressed word (`ButtonWord::pressed`, set bit = pressed).
-    pub fn from_pressed(pressed: u32, notch: Option<u8>) -> Self {
+    /// The edges and held bits of a button word (set bit = pressed / held) and, in analog-lever
+    /// modes, the (power, brake) notches.
+    pub fn from_word(word: &crate::input::ButtonWord, levers: Option<(u8, u8)>) -> Self {
         use crate::input::bits;
-        let on = |b: u32| pressed & b != 0;
+        let on = |b: u32| word.pressed & b != 0;
         Self {
             confirm: on(bits::MENU_CONFIRM),
             cancel: on(bits::CANCEL),
@@ -48,7 +57,11 @@ impl MenuInput {
             up: on(bits::UP_PULSE),
             down: on(bits::DOWN_PULSE),
             horn: on(bits::HORN),
-            notch,
+            a: on(bits::A),
+            left_held: word.held & bits::LEFT != 0,
+            right_held: word.held & bits::RIGHT != 0,
+            notch: levers.map(|l| l.0),
+            brake: levers.map(|l| l.1),
         }
     }
 
@@ -59,7 +72,11 @@ impl MenuInput {
         up: false,
         down: false,
         horn: false,
+        a: false,
+        left_held: false,
+        right_held: false,
         notch: None,
+        brake: None,
     };
 }
 

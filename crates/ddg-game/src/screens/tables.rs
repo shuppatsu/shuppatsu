@@ -94,6 +94,7 @@ pub struct ScreenTables {
     pub dialog_quit: Dialog,
     pub dialog_retry: Dialog,
     pub dialog_text: Vec<TextDesc>,
+    pub ranking: super::ranking::RankingTables,
 }
 
 impl ScreenTables {
@@ -149,6 +150,7 @@ impl ScreenTables {
             dialog_quit: dialog(exe, DIALOG_QUIT)?,
             dialog_retry: dialog(exe, DIALOG_RETRY)?,
             dialog_text,
+            ranking: super::ranking::RankingTables::read(exe)?,
         };
         for d in [&t.dialog_main, &t.dialog_quit, &t.dialog_retry] {
             let max = d.items.iter().copied().max().unwrap_or(0);
@@ -183,9 +185,15 @@ const REPORT_TOTAL: usize = 5 * REPORT_ROW_STRIDE;
 const REPORT_SLOTS: usize = REPORT_TOTAL + 4;
 
 fn report_layout(exe: &Exe<'_>) -> Result<Vec<Placement>> {
-    let r = exe.reader_at(REPORT_LAYOUT, 10 * REPORT_LAYOUT_MAX, WHAT)?;
+    placement_list(exe, REPORT_LAYOUT, REPORT_LAYOUT_MAX)
+}
+
+/// A list of single-mode placements `{x, y, layer, palette, slot}` (10 bytes each), x = −1
+/// terminated, at most `max` records.
+pub(crate) fn placement_list(exe: &Exe<'_>, va: u32, max: usize) -> Result<Vec<Placement>> {
+    let r = exe.reader_at(va, 10 * max, WHAT)?;
     let mut out = Vec::new();
-    for i in 0..REPORT_LAYOUT_MAX {
+    for i in 0..max {
         let o = 10 * i;
         let x = r.i16(o)?;
         if x == -1 {
@@ -199,7 +207,7 @@ fn report_layout(exe: &Exe<'_>) -> Result<Vec<Placement>> {
             slot: r.i16(o + 8)?,
         });
     }
-    anyhow::bail!("report-card layout at {REPORT_LAYOUT:#x} has no terminator")
+    anyhow::bail!("placement list at {va:#x} has no terminator")
 }
 
 fn dialog(exe: &Exe<'_>, va: u32) -> Result<Dialog> {

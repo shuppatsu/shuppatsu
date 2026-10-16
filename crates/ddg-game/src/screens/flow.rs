@@ -16,16 +16,21 @@
 //! * Report card: four ticks after the continue screen declined (0x408839, 0x40883e, 0x4088ac
 //!   and the one after the task lists are killed), three after the last `finish_station`, two
 //!   after the continue point when none is offered.
-//! * Ranking (hook) and run-end banner follow the report card with no tick between; two ticks
-//!   after the banner the stage returns to the title.
+//! * Ranking: the report card ends with [`Action::Ranking`] and the game answers with
+//!   [`StageFlow::start_ranking`] in the same tick. 0x41e8d0 creates the name-entry task
+//!   between `Task_Tick`s, so its first update is the next tick. The run-end banner is created
+//!   in the tick the name entry ends, or at once when there is none; two ticks after the banner
+//!   the stage returns to the title.
 
 use super::continue_screen::{ContinueDefs, ContinueScreen};
 use super::pause::{PauseDefs, PauseMenu, PauseResult};
+use super::ranking::{NameEntry, RankingDefs, RankingRequest};
 use super::report::{ReportCard, ReportDefs};
 use super::result::{ResultDefs, ResultInput, StationResultScreen};
 use super::run_end::{RunEndBanner, RunEndDefs, RunEndInput};
 use super::tables::ScreenTables;
 use super::{MenuInput, Sfx};
+use crate::save::Table;
 use ddg_engine::drive::DrivePhase;
 use ddg_engine::rules::StationOutcome;
 use ddg_render::sprites::{Slot, SpriteLayer};
@@ -64,9 +69,17 @@ pub enum Action {
     Restart,
     /// Pause → 運転中止: back to the title (no title screen yet: leave play).
     Quit,
-    /// Ranking insert and name entry would run here (menus.md §11.2, not built); the ranking
-    /// value is `Rules::ranking_score(cleared)`.
+    /// The report card is over: raise the clear mark if `cleared`, then call
+    /// [`StageFlow::start_ranking`] with the ranking value `Rules::ranking_score(cleared)`
+    /// (menus.md §11.4).
     Ranking { cleared: bool },
+    /// The name entry ended: `rows` replace the in-memory ranking `table`; with `commit` the
+    /// name was completed and the table is packed into the eeprom mirror (0x41e670).
+    RankingDone {
+        table: usize,
+        rows: Table,
+        commit: bool,
+    },
     /// The run is over; back to the title.
     RunOver,
 }
@@ -78,6 +91,7 @@ pub struct FlowDefs {
     pub continue_: ContinueDefs,
     pub report: ReportDefs,
     pub run_end: RunEndDefs,
+    pub ranking: RankingDefs,
 }
 
 impl FlowDefs {
@@ -88,6 +102,7 @@ impl FlowDefs {
             continue_: ContinueDefs::new(t),
             report: ReportDefs::new(t),
             run_end: RunEndDefs::new(t),
+            ranking: RankingDefs::new(t),
         }
     }
 }
@@ -113,6 +128,12 @@ enum State {
     Report {
         card: Box<ReportCard>,
         cleared: bool,
+    },
+    /// Waiting for [`StageFlow::start_ranking`], with the banner's inputs.
+    RankingPending(RunEndInput),
+    Ranking {
+        entry: Box<NameEntry>,
+        banner: RunEndInput,
     },
     RunEnd(Box<RunEndBanner>),
     Leaving(u32),
@@ -161,7 +182,12 @@ impl StageFlow {
     pub fn hud_visible(&self) -> bool {
         !matches!(
             self.state,
-            State::Report { .. } | State::RunEnd(_) | State::Leaving(_) | State::Over
+            State::Report { .. }
+                | State::RankingPending(_)
+                | State::Ranking { .. }
+                | State::RunEnd(_)
+                | State::Leaving(_)
+                | State::Over
         )
     }
 
@@ -282,19 +308,32 @@ impl StageFlow {
                     return None;
                 }
                 let cleared = *cleared;
-                let banner = RunEndBanner::new(
-                    self.defs.run_end,
-                    RunEndInput {
-                        cleared,
-                        stage: obs.stage,
-                        stage_kind: obs.stage_kind,
-                        grade: card.total(),
-                        continues: obs.continues,
-                    },
-                    sfx,
-                );
-                self.state = State::RunEnd(Box::new(banner));
+                self.state = State::RankingPending(RunEndInput {
+                    cleared,
+                    stage: obs.stage,
+                    stage_kind: obs.stage_kind,
+                    grade: card.total(),
+                    continues: obs.continues,
+                });
                 Some(Action::Ranking { cleared })
+            }
+            // The game did not answer `Action::Ranking`: no ranking.
+            State::RankingPending(_) => {
+                self.start_ranking(None, sfx);
+                None
+            }
+            State::Ranking { entry, banner } => {
+                if entry.tick(input, sfx) {
+                    return None;
+                }
+                let done = Action::RankingDone {
+                    table: entry.table(),
+                    rows: *entry.rows(),
+                    commit: entry.committed(),
+                };
+                let banner = RunEndBanner::new(self.defs.run_end, *banner, sfx);
+                self.state = State::RunEnd(Box::new(banner));
+                Some(done)
             }
             State::RunEnd(b) => {
                 if !b.tick(input) {
@@ -312,6 +351,22 @@ impl StageFlow {
             }
             State::Over => None,
         }
+    }
+
+    /// The answer to [`Action::Ranking`] (0x41e8d0): the name entry when the route has a
+    /// ranking and the value makes the top ten, else the run-end banner at once.
+    pub fn start_ranking(&mut self, req: Option<&RankingRequest<'_>>, sfx: &mut Vec<Sfx>) {
+        let State::RankingPending(banner) = self.state else {
+            return;
+        };
+        let entry = req.and_then(|r| NameEntry::new(self.defs.ranking.clone(), r));
+        self.state = match entry {
+            Some(entry) => State::Ranking {
+                entry: Box::new(entry),
+                banner,
+            },
+            None => State::RunEnd(Box::new(RunEndBanner::new(self.defs.run_end, banner, sfx))),
+        };
     }
 
     /// `Drive::finish_station` returned `outcome` (0x40d340).
@@ -353,6 +408,11 @@ impl StageFlow {
             State::Continue(c) => c.slots(),
             State::Report { card, .. } => card.slots(),
             State::RunEnd(b) => b.slots(),
+            State::Ranking { entry, .. } => {
+                entry.draw(layer);
+                self.drawn = entry.slots().indices().collect();
+                return;
+            }
             _ => return,
         };
         slots.draw(layer);
@@ -409,6 +469,10 @@ mod tests {
                 origin: (0, 0),
                 message_pos: (304, 344),
                 girl_pos: (384, 48),
+            },
+            ranking: RankingDefs {
+                t: crate::screens::ranking::tests::tables(),
+                time_digits: [0; 10],
             },
         }
     }
@@ -480,9 +544,43 @@ mod tests {
             (22 + 430 + 4 + 281, Action::Ranking { cleared: false })
         );
         assert!(!f.hud_visible());
+        f.start_ranking(None, &mut Vec::new());
         let (n, a) = until_action(&mut f, &o, |_| NONE);
         assert_eq!((n, a), (151 + 2, Action::RunOver));
         assert!(f.over());
+    }
+
+    #[test]
+    fn name_entry_between_report_and_banner() {
+        use crate::save::{ROWS, Row};
+        let mut f = StageFlow::new(defs());
+        f.station_finished(StationOutcome::Cleared, false);
+        let o = obs(DrivePhase::Cleared);
+        let (_, a) = until_action(&mut f, &o, |_| NONE);
+        assert_eq!(a, Action::Ranking { cleared: true });
+        let rankings = vec![[Row::EMPTY; ROWS]; 13];
+        let req = RankingRequest {
+            route: 1,
+            score: 500,
+            pro: true,
+            power: 0,
+            rankings: &rankings,
+        };
+        f.start_ranking(Some(&req), &mut Vec::new());
+        // Time-out after 930 ticks, then the page's 151.
+        let (n, a) = until_action(&mut f, &o, |_| NONE);
+        let Action::RankingDone {
+            table,
+            rows,
+            commit,
+        } = a
+        else {
+            panic!("{a:?}");
+        };
+        assert_eq!((n, table, commit), (930 + 151, 3, false));
+        assert_eq!((rows[0].score, rows[0].pro), (500, true));
+        let (n, a) = until_action(&mut f, &o, |_| NONE);
+        assert_eq!((n, a), (151 + 2, Action::RunOver));
     }
 
     #[test]
