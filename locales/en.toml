@@ -394,10 +394,10 @@ name = "English"
 # ---------------------------------------------------------------------------------------------
 # Route select (menus.md §6.1)
 
-0x124 = "Kantō Lines"                # 関東路線 group header, 160×48
-0x125 = "Kansai Lines"               # 関西路線
-0x126 = "Hokuriku Lines"             # 北陸路線
-0x127 = "Tōhoku Lines"               # 東北路線
+0x124 = { text = "Kantō Lines", shared_group = "route.lines" }                # 関東路線 group header, 160×48
+0x125 = { text = "Kansai Lines", shared_group = "route.lines" }               # 関西路線
+0x126 = { text = "Hokuriku Lines", shared_group = "route.lines" }             # 北陸路線
+0x127 = { text = "Tōhoku Lines", shared_group = "route.lines" }               # 東北路線
 0x30f = "Difficulty"                 # 難易度, 64×16
 0x314 = "Beginner"                   # 初級 rank badge (1–2 stars), 64×32
 0x315 = "Intermediate"               # 中級 (3)
@@ -709,78 +709,79 @@ name = "English"
 # Decided layout (user, option B): the big Japanese title becomes English and the small
 # English subtitle in the bottom right becomes the Japanese title, mirroring the original's
 # bilingual items. The subtitle text needs a font with Japanese glyphs (or a fallback one).
-0 = { parts = [{ region = [88, 8, 408, 64], text = "Arcade Mode" }, { region = [296, 75, 202, 16], align = "right", text = "アーケードモード" }] }
-1 = { parts = [{ region = [88, 8, 408, 64], text = "Game Settings" }, { region = [296, 75, 202, 16], align = "right", text = "ゲーム設定" }] }
-2 = { parts = [{ region = [88, 8, 408, 64], text = "Rankings" }, { region = [296, 75, 202, 16], align = "right", text = "ランキングを見る" }] }
-3 = { parts = [{ region = [88, 8, 408, 64], text = "Quit Game" }, { region = [296, 75, 202, 16], align = "right", text = "ゲーム終了" }] }
-4 = { parts = [{ region = [88, 8, 408, 64], text = "Controller Setup" }, { region = [296, 75, 202, 16], align = "right", text = "専用コントローラー設定" }] }   # input mode 6
+0 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", text = "Arcade Mode" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "アーケードモード" }] }
+1 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", text = "Game Settings" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "ゲーム設定" }] }
+2 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", text = "Rankings" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "ランキングを見る" }] }
+3 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", text = "Quit Game" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "ゲーム終了" }] }
+4 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", text = "Controller Setup" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "専用コントローラー設定" }] }   # input mode 6
 
 # Options labels and values (0x47c584), selected colouring. Labels 192×32, values 240×32
-# (10–13 are 32×32).
+# (10–13 are 32×32). Labels 0–5 and the values shown in the list or on the control
+# page (not the 32-px vibration values) each share one size (`shared_group`).
 [sheet.0x4fa]
-0 = { text = "Controls", align = "left" }                       # コントロール
-1 = { text = "Difficulty", align = "left" }                     # 難易度
-2 = { text = "Vibration", align = "left" }                      # 振動
-3 = { text = "Sound", align = "left" }                          # サウンド
-4 = { text = "Speedometer", align = "left" }                    # 速度メーター
-5 = { text = "Distance meter", align = "left" }                 # 距離メーター
-6 = { text = "Easy", align = "left" }                           # イージー
-7 = { text = "Normal", align = "left" }                         # ノーマル
-8 = { text = "Hard", align = "left" }                           # ハード
-9 = { text = "Very Hard", align = "left" }                      # ベリーハード
+0 = { text = "Controls", align = "left", shared_group = "options.labels" }                       # コントロール
+1 = { text = "Difficulty", align = "left", shared_group = "options.labels" }                     # 難易度
+2 = { text = "Vibration", align = "left", shared_group = "options.labels" }                      # 振動
+3 = { text = "Sound", align = "left", shared_group = "options.labels" }                          # サウンド
+4 = { text = "Speedometer", align = "left", shared_group = "options.labels" }                    # 速度メーター
+5 = { text = "Distance meter", align = "left", shared_group = "options.labels" }                 # 距離メーター
+6 = { text = "Easy", align = "left", shared_group = "options.values" }                           # イージー
+7 = { text = "Normal", align = "left", shared_group = "options.values" }                         # ノーマル
+8 = { text = "Hard", align = "left", shared_group = "options.values" }                           # ハード
+9 = { text = "Very Hard", align = "left", shared_group = "options.values" }                      # ベリーハード
 10 = { text = "Off", align = "left" }                           # 切 (vibration)
 11 = { text = "Low", align = "left" }                           # 弱
 12 = { text = "Mid", align = "left" }                           # 並
 13 = { text = "High", align = "left" }                          # 強
-14 = { text = "On", align = "left" }                            # オン
-15 = { text = "Off", align = "left" }                           # オフ
-16 = { text = "Hidden", align = "left" }                        # 非表示
-17 = { text = "cm", align = "left" }                            # cm表示
-18 = { text = "m", align = "left" }                             # m表示
-19 = { text = "Big digital", align = "left" }                   # デカデジ
+14 = { text = "On", align = "left", shared_group = "options.values" }                            # オン
+15 = { text = "Off", align = "left", shared_group = "options.values" }                           # オフ
+16 = { text = "Hidden", align = "left", shared_group = "options.values" }                        # 非表示
+17 = { text = "cm", align = "left", shared_group = "options.values" }                            # cm表示
+18 = { text = "m", align = "left", shared_group = "options.values" }                             # m表示
+19 = { text = "Big digital", align = "left", shared_group = "options.values" }                   # デカデジ
 20 = { text = "Load", align = "left" }                          # ロードする (in no item list)
 21 = { text = "Save", align = "left" }                          # セーブする (in no item list)
-22 = { text = "Keyboard A", align = "left" }                    # キーボード A
-23 = { text = "Keyboard B", align = "left" }
-24 = { text = "Keyboard C", align = "left" }
-25 = { text = "Keyboard D", align = "left" }
-26 = { text = "Gamepad", align = "left" }                       # ジョイパッド
-27 = { text = "Joystick", align = "left" }                      # ジョイスティック
-28 = { text = "DDG controller", align = "left" }                # 専用コントローラ
+22 = { text = "Keyboard A", align = "left", shared_group = "options.values" }                    # キーボード A
+23 = { text = "Keyboard B", align = "left", shared_group = "options.values" }
+24 = { text = "Keyboard C", align = "left", shared_group = "options.values" }
+25 = { text = "Keyboard D", align = "left", shared_group = "options.values" }
+26 = { text = "Gamepad", align = "left", shared_group = "options.values" }                       # ジョイパッド
+27 = { text = "Joystick", align = "left", shared_group = "options.values" }                      # ジョイスティック
+28 = { text = "DDG controller", align = "left", shared_group = "options.values" }                # 専用コントローラ
 29 = { text = "Port A, socket 1", align = "left" }              # ポートA拡張ソケット1 (console leftover)
 31 = { text = "Port B, socket 1", align = "left" }              # ポートB拡張ソケット1 (console leftover)
 
 # The same, normal colouring (0x47c664).
 [sheet.0x4fb]
-0 = { text = "Controls", align = "left" }
-1 = { text = "Difficulty", align = "left" }
-2 = { text = "Vibration", align = "left" }
-3 = { text = "Sound", align = "left" }
-4 = { text = "Speedometer", align = "left" }
-5 = { text = "Distance meter", align = "left" }
-6 = { text = "Easy", align = "left" }
-7 = { text = "Normal", align = "left" }
-8 = { text = "Hard", align = "left" }
-9 = { text = "Very Hard", align = "left" }
+0 = { text = "Controls", align = "left", shared_group = "options.labels" }
+1 = { text = "Difficulty", align = "left", shared_group = "options.labels" }
+2 = { text = "Vibration", align = "left", shared_group = "options.labels" }
+3 = { text = "Sound", align = "left", shared_group = "options.labels" }
+4 = { text = "Speedometer", align = "left", shared_group = "options.labels" }
+5 = { text = "Distance meter", align = "left", shared_group = "options.labels" }
+6 = { text = "Easy", align = "left", shared_group = "options.values" }
+7 = { text = "Normal", align = "left", shared_group = "options.values" }
+8 = { text = "Hard", align = "left", shared_group = "options.values" }
+9 = { text = "Very Hard", align = "left", shared_group = "options.values" }
 10 = { text = "Off", align = "left" }
 11 = { text = "Low", align = "left" }
 12 = { text = "Mid", align = "left" }
 13 = { text = "High", align = "left" }
-14 = { text = "On", align = "left" }
-15 = { text = "Off", align = "left" }
-16 = { text = "Hidden", align = "left" }
-17 = { text = "cm", align = "left" }
-18 = { text = "m", align = "left" }
-19 = { text = "Big digital", align = "left" }
+14 = { text = "On", align = "left", shared_group = "options.values" }
+15 = { text = "Off", align = "left", shared_group = "options.values" }
+16 = { text = "Hidden", align = "left", shared_group = "options.values" }
+17 = { text = "cm", align = "left", shared_group = "options.values" }
+18 = { text = "m", align = "left", shared_group = "options.values" }
+19 = { text = "Big digital", align = "left", shared_group = "options.values" }
 20 = { text = "Load", align = "left" }
 21 = { text = "Save", align = "left" }
-22 = { text = "Keyboard A", align = "left" }
-23 = { text = "Keyboard B", align = "left" }
-24 = { text = "Keyboard C", align = "left" }
-25 = { text = "Keyboard D", align = "left" }
-26 = { text = "Gamepad", align = "left" }
-27 = { text = "Joystick", align = "left" }
-28 = { text = "DDG controller", align = "left" }
+22 = { text = "Keyboard A", align = "left", shared_group = "options.values" }
+23 = { text = "Keyboard B", align = "left", shared_group = "options.values" }
+24 = { text = "Keyboard C", align = "left", shared_group = "options.values" }
+25 = { text = "Keyboard D", align = "left", shared_group = "options.values" }
+26 = { text = "Gamepad", align = "left", shared_group = "options.values" }
+27 = { text = "Joystick", align = "left", shared_group = "options.values" }
+28 = { text = "DDG controller", align = "left", shared_group = "options.values" }
 29 = { text = "Port A, socket 1", align = "left" }
 31 = { text = "Port B, socket 1", align = "left" }
 

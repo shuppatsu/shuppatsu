@@ -46,6 +46,7 @@ Values are a string, or a table with `text` and options:
 | `outline` | Plain style: 1-px outline in the art's second colour (default on). |
 | `backdrop` | Boxed style: `art` (default, the backdrop as drawn) or `solid` (the backdrop's opaque colour fills the transparent half of a dither too, so the text never sits on the dither; the signal captions). |
 | `group` | Parts of one entry with the same group name are drawn at one size, the smallest any of them fits at (the words of one callout cell). |
+| `shared_group` | The same across entries: every part with this name, in any entry of any sheet or tilemap, is drawn at the smallest size any of them fits at (the items of one menu list: the title items `title.items`, the options labels and values, the route select's line names). Names are global, so they carry a screen prefix. |
 | `line_height` | Lines this many font sizes apart instead of the font's own line height (e.g. `1.1` for two lines in the signals' caption band). |
 
 `\n` breaks lines; the font size is fitted to the rectangle. Comments in `en.toml` give each
