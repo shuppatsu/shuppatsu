@@ -92,6 +92,8 @@ pub struct RouteScene {
     pub gradient_fade: Option<(usize, u32)>,
     /// Skip the panorama sprites (`0x8502ac == 0` while it snows; 0x41dfc0, renderer.md §13).
     pub hide_panorama: bool,
+    /// AI-train cars to draw this frame ([`ddg_engine::drive::Drive::traffic_poses`]).
+    pub traffic: Vec<ddg_engine::traffic::CarPose>,
 }
 
 impl RouteScene {
@@ -164,6 +166,7 @@ impl RouteScene {
             gradient_variant: 0,
             gradient_fade: None,
             hide_panorama: false,
+            traffic: Vec::new(),
         })
     }
 
@@ -215,6 +218,7 @@ impl RouteScene {
             let m = Mat4::from_cols_array(&s.transform.to_cols_array());
             frame.add_instance(&self.library, s.part_id, &m);
         }
+        crate::traffic::add_cars(self, frame, pos, &self.traffic);
 
         if show_lines {
             for (i, seg) in self.route.segments.iter().enumerate() {

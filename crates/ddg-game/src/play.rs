@@ -430,6 +430,7 @@ fn load_scene(
     let t = Instant::now();
     let mut scene = RouteScene::load(data, com, visibility)?;
     scene.stable_track_variants = opts.stable_track_variants;
+    crate::traffic::load_stage_trains(&mut scene, data, opts.stage)?;
     eprintln!("{com}: loaded in {:.2?}", t.elapsed());
     Ok(scene)
 }
@@ -577,6 +578,7 @@ impl Play {
 
         let before = crate::sound::Before::of(&self.drive);
         let out = self.drive.tick(self.latched);
+        self.scene.traffic = self.drive.traffic_poses(1.0);
         if let Some(s) = self.sound.as_mut() {
             s.events(&out.events);
             s.after_tick(
@@ -875,6 +877,9 @@ impl Play {
         } else {
             self.drive.pos()
         };
+        if self.interpolate && !self.flow.paused() {
+            self.scene.traffic = self.drive.traffic_poses(alpha);
+        }
 
         let Some(gpu) = self.gpu.as_mut() else {
             return Ok(());

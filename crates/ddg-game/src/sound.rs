@@ -17,6 +17,7 @@ use ddg_audio::{AudioOutput, HornEdge, MixerConfig, SoundBank, SoundSystem, Soun
 use ddg_audio::{TrainSound, TrainTick};
 use ddg_engine::drive::Drive;
 use ddg_engine::rules::RuleEvent;
+use ddg_engine::traffic::TrafficSound;
 use ddg_formats::exe::Exe;
 use stage::{Snap, StageSound, StageTables, TickInfo};
 use std::path::Path;
@@ -171,7 +172,23 @@ impl Sound {
         );
 
         p.stage.task_part(&mut self.snd, &p.train, &info);
+        // The car tasks' draw step runs in the render list, after the task lists.
+        self.traffic(drive.traffic_sounds());
         self.snd.frame();
+        self.flush();
+    }
+
+    /// The AI-train sounds of a tick ([`Drive::traffic_sounds`], docs/re/traffic.md §5): passing
+    /// cars (0x33), row 0x43's sequence (0x1028) and the scripted stop's passing train (8, 1,
+    /// 4). [`Sound::after_tick`] plays the drive's own; for other sources call it before
+    /// that tick's `after_tick`.
+    pub fn traffic(&mut self, sounds: &[TrafficSound]) {
+        for s in sounds {
+            match *s {
+                TrafficSound::Play(code) => self.snd.request(code),
+                TrafficSound::Release(code) => self.snd.release(code),
+            }
+        }
         self.flush();
     }
 

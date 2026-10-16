@@ -21,6 +21,7 @@ mod screens;
 mod shot;
 mod slots;
 mod sound;
+mod traffic;
 mod weather;
 mod window;
 
