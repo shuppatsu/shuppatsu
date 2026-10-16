@@ -325,7 +325,7 @@ before `EndScene`:
 `Gfx_RestoreSurfaces`) and calls `BeginScene`. Then, by view mode `DAT_0084c128`:
 
 - 0: default viewport, projection, look-at, all draw lists.
-- 1: two viewports.
+- 1: two viewports. Used only by the station-result replay (scene.md §8).
 - 2: fixed camera.
 - 3: debug free camera, moved with inputs `0x48c42c` bits.
 

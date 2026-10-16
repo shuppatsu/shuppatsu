@@ -416,8 +416,11 @@ Created after the arrival wait (rules.md §7.3 gives the deductions). Timing and
 * The result camera preset 0x419730 is not a simple camera change: it creates a task
   (update 0x41a010, destroy 0x41a470) that picks one of four scripted views from the timetable
   row field +0x40 (camera constants 0x84c100–0x84c144, curve tables 0x469454–0x469514, a
-  per-stage spline 0x45735c by 0x4596e0) and rebuilds 121 heights at 0x850300; the monitor frame
-  tbl 0x25e is drawn around it. **Open:** not traced or built; the port keeps the cab view.
+  per-stage car list 0x45735c by 0x4596e0) and, after an overrun of 10 m or more, replaces the
+  stop-distance record at 0x850300 with a made-up 121-sample approach. It is a replay of the
+  last 4 s of the approach in a platform set at the origin, in two viewports (orbit view right,
+  platform monitor inside the frame tbl 0x25e); the route is not drawn. Traced and built:
+  scene.md §8. **confirmed** (code)
 * **Finding for rules.md §7.3:** the overrun deduction shown and charged is `metres ×
   0x856fb8`, where `0x856fb8 = 0x459910[stage][difficulty]` (i16, values 1–3, set in 0x40d040),
   not always 1 s per metre. The banner names the factor (m×1秒 / m×2秒 / m×3秒 = tbl

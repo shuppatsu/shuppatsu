@@ -455,7 +455,121 @@ width it returns exactly the 3 original tiles.
   `PaletteFade`, `palette_fade`, `PALETTE_FADE_TICKS`.
 - `SceneContext { area, com, station }` feeds the hard-coded exceptions.
 
-## 8. Open questions
+## 8. Station-result replay (0x419730 / 0x41a010 / 0x41a470)
+
+At each station stop the result screen (menus.md §9) does not keep the cab view. It shows a
+**replay of the last 4 s of the approach in a small platform set at the world origin**, in two
+viewports. Code: `ddg_engine::stop_replay`, `ddg_formats::result_camera`,
+`crates/ddg-game/src/result_view.rs`.
+
+### 8.1 What is drawn — confirmed (code) / confirmed (port screenshots look right; no Wine comparison yet)
+
+- **The route is gone.** `Stage_Run` (0x4080d0, arrival branch) calls `TaskList_KillAll(0x84c1bc)`
+  before the two `Task_Tick`s that precede `StationResult_Create` (0x413d90). List 5 holds the
+  drive task (track, scenery, background, 0x41cb00), the AI-train tasks, the weather overlay
+  (0x424740, 0x424f20) and the fog task (0x425070, whose destroy calls `Gfx_SetFog(0)`). So no
+  track, scenery, sky, traffic, weather or fog is drawn until the next segment start.
+- **Platform set.** The camera task's draw callback 0x41a470 draws, at the identity matrix,
+  one part chosen by timetable field 7 of the arrival station (`row + 0x40`, 0x419a30):
+  0 / other → part **0x1e**, 1 → **0x23**, 2 → **0x21**, 3 → **0x22** (all in `partsRC`). The
+  parts are a short platform with passengers, the stop-position arrow and the distance marks.
+- **The player's train, from outside.** The direction-1 car list of the train-model table
+  (0x457358, traffic.md; the pointer read is `0x45735c[row·3]`) for `row = 0x4596e0[stage]`
+  (i32[20]: 11 11 11 15 14 39 39 40 41 42 1 1 26 25 24 35 0 11 11 11). The lead car's origin
+  is at `(0, 0, z0)` with `z0 = dist × −0.1 − 0x4696cc[train type]` (dist = replayed distance
+  to the stop in m, positive = short; `0x4696cc` f32[20], e.g. 0.98 for type 2, 1.02/1.04/1.24…);
+  each car adds its spacing (car record +24, ≤ 0) before it is drawn, so the train runs along
+  +z and stops with its head near the arrow. LOD by the car origin's z (doubles 0x469780 …
+  0x458c00): z < −24 or ≥ 2.5 not drawn; [−24,−18) LOD 4, [−18,−12) 3, [−12,−6) 2, [−6,−3) 1,
+  [−3,2.5) 0; then |x| > 4/8/12 adds 1/2/3 and |x| > 16 skips (x is always 0 here).
+- **Coupling stations** (stages 0–2 at segment-start station 23, stages 17–19 at station 15;
+  0x419894): rows 12 (lead) / 13 (lead "after"), offset 1.07 (0x3f88f5c3). If course event 12
+  (0x40acd0) set `0x855ff8 & 0x8000000` or `& 0x10000000`, a waiting train is drawn too (rows
+  17/18 or 20/21: its last two cars at LOD 0, from `z = spacing/2` forwards) and the whole record
+  is shifted by +40 m (0x4594b0), so the player's train comes in from further back. The "after"
+  lists switch in when the record shows a standstill (sample < 0.01) for more than 29 / 39 draws,
+  counted from `task+0x1cc` = −9999 (0 if `0x855ff8 & 0x40000`). After the coupling (station >
+  23) the lead row is 8 (train type 14) or 7 (type 12); other types leave `+0x1d0` unset.
+  **confirmed** (code); not exercised: the port's engine has no course event 12 yet.
+
+### 8.2 The record — confirmed (code)
+
+0x409fc0 (rules step 3, driving ticks only) writes `0x85708c` (distance to the stop) into the
+400-entry f32 ring `0x850300` at index `0x850a80` while `dist ≤ 50` (0x4594c8) and the target
+stops (`0x856d74 == 1`); during an obstacle stop (`0x856d80 ≥ 1`) it writes `0x856dac − odometer`
+and advances only while that is ≤ 200 (0x4594b8); otherwise it rewinds (`0x850a80 = 0`,
+wrapped flag `0x850a78 = 0`). The camera picks the last 120 samples (`(head + 280) % 400` when
+wrapped), or `0..head` when fewer. **Overrun replacement:** when the last sample is ≤ −10 m
+(0x459538) the camera overwrites samples 0..=120 with a made-up approach: from 20 m
+(0x459558), step `2(|d|+20)/120` shrinking by `2(|d|+20)/14400` per sample (0x469768,
+0x469760), ending about `|d|` m past the stop; it then plays 120 of them.
+
+### 8.3 Timing — confirmed (code) / likely (task-list order)
+
+| Tick (ending in) | 3D layer |
+|---|---|
+| `Arrived` 1–3 | cab view |
+| `Arrived` 4–5, result tick 1 (countdown 95) | nothing (black under the HUD) |
+| result tick 2 (countdown 94) | camera task created; rendered at once with sample 0 |
+| each later tick | 0x41a010: one sample per tick (camera and train), holding the last |
+| the tick the result closes | the result's destroy clears `0x855ff8 & 0x40`; the camera task, later in list 3, sees it in the same pass: `0x84c128 = 0`, task ends — black |
+| after `finish_station` / 0x40d340 | next segment, cab view again |
+
+Tasks are appended at the list tail (0x425260) and `TaskList_Run` (0x425320) reads `next`
+before calling an update, so the camera created by the result's update first runs on the next
+tick (likely: assumes no task was appended to list 3 after the result).
+
+### 8.4 Viewports, cameras, projection — confirmed (code)
+
+`0x84c128 = 1` selects render mode 1 of 0x425680 (renderer.md §12), two passes over all draw lists:
+
+| View | Viewport (virtual 496×400: centre, half) | Pixels at 640×480 | FOV | Aspect | Eye / target |
+|---|---|---|---|---|---|
+| Orbit | (336,240), (160,156) — 0x425897 | (226.5,100.8)–(640,475.2) | 45.0° (0x43e10000) | 1.02 (0x3f828f5c) | `0x84c11c` / `0x84c10c`, roll 0x84c118 = 0 |
+| Monitor | (90,240), (76,80) — 0x425934 | (18.1,192)–(214.2,384) | 75.5° (0x443cc000) | 1.0 | `0x84c100` / `0x84c13c`, roll 0x84c148 = 0 |
+
+The monitor frame sprite (tbl 0x25e at (16,192), slot 0x57) surrounds the monitor view; the
+result's text rows are sprites over the orbit view. Viewports are the 3D only; outside them the
+frame stays the clear colour (black). The port positions both relative to the 640×480 canvas
+rectangle and keeps the original's non-square projection (aspect after the 4.12 round trip,
+stretched to the pixel shape) unless `square_pixels`.
+
+**Monitor camera** (fixed per platform part, 0x419a4c..0x419b1a): part 0x1e / 0x21 eye
+(0.6, 0.3, 0.732) → target (−0.643, −0.32, −1.607) (also the init pose of 0x4254b0); part 0x23
+eye (−0.438, 0.3, 0.589) → (0.626, −0.52, −2.184); part 0x22 eye (0.470, 0.29, 0.610) →
+(−0.834, −0.52, −2.103). A platform ITV view down the train's side.
+
+**Orbit camera** (0x41a010, also once at creation): `v = sample × −0.1` (units past the stop).
+Keys are 7 f32 (centre x, centre z, eye radius, target radius, eye y, target y, angle); sets at
+0x469454 (parts 0x1e/0x21/0x22) and 0x4694c4 (part 0x23), three keys each: *short*, *at the stop*,
+*past*. If `v ≥ 0.1`: `t = (min(v,1.3) − 0.1)/1.2`, lerp *stop → past*; else
+`t = −clamp(v,−1.6,0) × 0.625`, lerp *stop → short*. Then
+`eye = (sin(a+π)·r_eye + cx, y_eye, cos(a+π)·r_eye + cz)`,
+`target = (sin a·r_target + cx, y_target, cos a·r_target + cz)`. Normal set:
+
+| Key | cx | cz | r_eye | r_target | y_eye | y_target | angle |
+|---|---|---|---|---|---|---|---|
+| short (16 m) | −0.66 | 0.15 | 1.10 | 2.5 | 0.5 | −0.60 | 2.496 |
+| stop | −0.66 | 0.15 | 0.51 | 2.5 | 0.5 | −0.52 | 1.920 |
+| past (13 m) | −0.66 | 0.15 | 1.33 | 2.5 | 0.6 | −0.50 | 1.169 |
+
+(The 0x4694a8 row between the sets has no reader here.) `0x41c750` copies the stop key and
+the FOV to 0x8502c0.. for another reader (not traced).
+
+### 8.5 Port
+
+Faithful: everything above except the items below. **Approximated / differs:**
+- The record is copied, not rewritten in place (the original's later results could see the
+  shifted or made-up samples if nothing new was recorded; never in normal play).
+- High refresh rates interpolate the replayed distance between ticks (standard render
+  interpolation; the original steps at 30 Hz).
+- The coupling flags are always clear (no course event 12 in the engine): the coupling
+  stations show rows 12/13 without the waiting train or the 40 m shift.
+- The "after" list counter counts ticks instead of drawn frames (equal at 30 fps).
+- After a time-out at a station (continue screen) the port shows the cab view again; the
+  original's 3D layer stays empty until a segment starts (not traced further).
+
+## 9. Open questions
 
 - The winding/handedness conflict with models.md §6: verify in the viewer (one quad of a
   known part, front face CCW with `look_at_rh`).
@@ -470,3 +584,8 @@ width it returns exactly the 3 original tiles.
   resolved in renderer.md §13.
 - Panorama and ground: compare `sky_quads` / `ground_quad` with Wine screenshots (tile phase,
   vertical offset, corner/UV orientation against the bottom-up page rows).
+- Station-result replay (§8): compare with a Wine screenshot of a result (viewport placement,
+  monitor pose, the train's stop offset `0x4696cc`); whether the camera task really first
+  updates on the tick after its creation; what course event 12 / 0x40e350 decide for the
+  coupling flags, what sets `0x855ff8 & 0x40000` (the "after" car lists), and who reads the
+  copy at 0x8502c0 (0x41c750).
