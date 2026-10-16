@@ -155,11 +155,11 @@ name = "English"
 # 出 = starting signal (the plate is behind the caption band, so the caption names it).
 
 # Emergency-stop signal 緊急停止 (NaviAnim(0)), five flash frames.
-0x44b = { region = [0, 102, 96, 34], text = "Emergency\nSTOP" }
-0x44c = { region = [0, 102, 96, 34], text = "Emergency\nSTOP" }
-0x44d = { region = [0, 102, 96, 34], text = "Emergency\nSTOP" }
-0x44e = { region = [0, 102, 96, 34], text = "Emergency\nSTOP" }
-0x44f = { region = [0, 102, 96, 34], text = "Emergency\nSTOP" }
+0x44b = { region = [0, 102, 96, 34], text = "Emergency\nStop" }
+0x44c = { region = [0, 102, 96, 34], text = "Emergency\nStop" }
+0x44d = { region = [0, 102, 96, 34], text = "Emergency\nStop" }
+0x44e = { region = [0, 102, 96, 34], text = "Emergency\nStop" }
+0x44f = { region = [0, 102, 96, 34], text = "Emergency\nStop" }
 # Three-lamp set (no stage uses it, hud.md §3.9).
 0x450 = { region = [0, 104, 96, 24], text = "Clear" }                     # 進行信号
 0x451 = { region = [0, 102, 96, 42], text = "Clear\nhome" }               # 進行信号 場
