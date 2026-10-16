@@ -27,7 +27,10 @@ English gloss is given where it helps; no screen text exists as character string
 | 0x41f5e0 / 0x41f910 / 0x41fc60 / 0x41fd00 | `Records_Create` / `_Update` / `_Draw` / `_Destroy` | Ranking viewer (title item 2 and attract) | confirmed |
 | 0x41e520 | `Ranking_FromEeprom` | Unpacks the eeprom ranking into the display table; sets `0x8500b0 = 0x3f9da` | confirmed |
 | 0x41e670 | `Ranking_ToEeprom` | Packs one ranking table back into the eeprom mirror | confirmed |
-| 0x41e7a0 / 0x41e4c0 | `Name_Filter` / `Name_Replace` | Replaces names from three lists with a per-route default | likely |
+| 0x41e7a0 / 0x41e4c0 | `Name_Filter` / `Name_Replace` | Replaces names from three lists with a per-route default | confirmed |
+| 0x418ef0 | `Eeprom_CheckDefaults` | Copies the default image (0x467768/0x467790/0x467aa0) when the 2-byte magic differs | confirmed |
+| 0x41e720 / 0x418e70 | `Ranking_Reset` | Restores the default ranking tables (debug paths) | confirmed |
+| 0x418930 | `Eeprom_Checksums` | Writes the (always 0) checksum words +0x20/+0x330 | confirmed |
 | 0x41e8d0 / 0x41ebe0 / 0x41f5a0 | `NameEntry_Create` / `_Update` / `_Destroy` | Inserts the score, name entry, then the ranking page | confirmed |
 | 0x434a00 | `ControllerAdjust_Run` | Calibration screen (input.md §5) | confirmed |
 | 0x4122d0 / 0x4123c0 / 0x412490 | `PressStart_*` | Arcade "press START" screen; a no-op on PC | confirmed |
@@ -275,7 +278,11 @@ Two levels in one task (`+0x30` level, `+0x38` cursor, `+0x34` item count, `+0x4
   (`0x46bbe8[r] ≠ −1`) minus 11, 18, 19 (which share a table with 10 and 17).
 * What *is* stored per route is the **clear mark** `0x85635a[route]` (eeprom +0x33a, 20 bytes),
   written by `Stage_Run` after a clear: 3 = cleared without a continue, 2 = 1–3 continues,
-  1 = 4 or more continues; only ever raised. Route select shows it as the star tbl 0x54b with
+  1 = 4 or more continues; only ever raised. It is written right after the report card of a
+  clear, before the ending and the name entry (§11.4). For select stage 20 (route 10 with
+  `0x48ddf0 = 1`) `Stage_Run` sets `0x8570a4 = 0x14` around the write, so that variant's mark is
+  a 21st byte at `0x85635a + 20` = eeprom **+0x34e**, then restores route 10. **confirmed**
+  (0x4080d0). Route select shows it as the star tbl 0x54b with
   sub-row `(3 − mark)·2` (three star colours). The attract code 0x404cf0 also tests it
   (**guess**: to pick a demo stage the player has not cleared).
 
@@ -401,29 +408,87 @@ Created after the arrival wait (rules.md §7.3 gives the deductions). Timing and
 
 ### 11.2 Ranking insert and name entry 0x41e8d0 — confirmed
 
-* Ranking value (rules.md §9) capped at 9999; the run's "PRO" flag `0x85723c` is 1 when the
-  distance driven with the distance meter shown (`0x8571f0`, accumulated by the HUD at
-  speed/30 per tick) is ≤ 30 m, i.e. the run was driven essentially without the meter
-  (likely meaning). Routes with no ranking table (`0x46bbe8[r] = −1`: 0, 2, 5) skip this screen.
+Implemented in `crates/ddg-game/src/screens/ranking.rs` (tables read from the exe) and wired by
+`screens/flow.rs` / `play.rs`; headless shots of stage 1 (time-out run, value 70 → rank 6)
+show the art lining up with these positions.
+
+* Ranking value (rules.md §9) capped at 9999. Routes with no ranking table
+  (`0x46bbe8[r] = −1`: 0, 2, 5) skip this screen.
+* **PRO flag** `0x85723c`: cleared at a run start (0x40d040, together with `0x8571f0`), set by
+  `Stage_Run` after the station loop when `0x8571f0 ≤ 30.0` (f64 at 0x458b90). `0x8571f0` is
+  accumulated only by `Hud_Distance` 0x4162c0, on the path where the distance panel is drawn
+  (panel active `0x856d0c == 1`, panel on `0x856c70 == 1`, option `0x856355 ≠ 0`):
+  `+= 0x857234 × (f64 0x4676f0 ≈ 1/30)`, and `0x857234` is the speed in m/s, so it is **metres
+  driven with the distance meter shown**. The flag therefore marks a run driven (almost) entirely
+  with the 停止位置 meter hidden, i.e. with the "Professional" plate tbl 0x2c7 showing; the badge
+  on the ranking page is tbl 0x2c8. **confirmed** (code), meaning **likely** (not seen in a run).
+  It survives continues (0x40d040 is not called on a continue).
 * Insert position: first row whose score is lower, or equal with a lower PRO flag; not in the
-  top 10 → skip. Rows below shift down; the new row gets name `0xb ×4` (blank) and the score.
-* Name entry page: rank label `0x46bcd8[rank]`, headers tbl 0x41d (80,72), 0x41c (288,324),
-  0x30 (112,392), 0x34 ×2 (80,360)/(496,360), slot 0x6d = legend descriptor 0x486184 (keyboard)
-  or 0x48618a (lever); BGM 0x19d. A **59-symbol wheel** (`0x46bd30[0..58]`: 0–9, 10 = "00",
-  11 = blank, A–Z, `. - ! ? /`, train-class abbreviations DD DF ED EF HK and katakana pairs,
-  系, 形, 57 = ← (delete), 58 = 終 (end)) scrolls horizontally at y 360, 32 px per symbol; the
-  current symbol is enlarged at (304,352). Entered letters show at x = 272 + 32k, y 252.
-  * Keyboard/pad: hold left (held bit 4) / right (8) to scroll, accelerating 2 → 4 → 8 → 16 px/tick
-    after 5/10/15 ticks; confirm (0x1000) takes the symbol.
-  * Analog lever: the brake notch sets the scroll speed (B0 −16 … N/B4–6 stop … B10 +16 px/tick);
-    raising the power notch from N takes the symbol.
-  * Sounds: 0x15 per symbol passed, 0x17 letter, 0x25 delete, 0x1d done.
-  * Done when 4 letters are in or 終 is taken (rest blank); timeout **930 ticks** (31 s), shown by
-    the HUD timer routine 0x417040. Then 30 ticks, the name filter 0x41e7a0 (three 4-character
-    lists at 0x46bf64/0x46bf88/0x46bf94; a match is replaced by the route's default name at
-    0x46bf14), and `Ranking_ToEeprom`.
-* Ranking page: as §5 for this route, the new row blinking every 4 ticks, 150 ticks; confirm (Enter)
-  or horn ends it early. Destroy clears `0x2000`, stops BGM 0x19d.
+  top 10 → skip (a tie with row 10 does not enter). Rows below shift down with their PRO flags;
+  the new row gets name `0xb ×4` (blank), the score and the run's flag. **confirmed**
+* Task fields: +0x30 counter, +0x34 page (0 entry, 1 ranking), +0x38 route, +0x3c symbol,
+  +0x40 letters entered, +0x44 done tick (99999 = not done), +0x48 rank, +0x4c wheel offset,
+  +0x50 table, +0x54 previous power notch, +0x56 lever-take flag, +0x58 hold counter.
+* Name entry page (first update, counter 0): placements `0x46bec4` (`{x, y, layer, pal, slot}`,
+  −1 terminated: slot 0x6b (80,124), 0x6c, timer digits 0x18–0x1b at (240..360, 84) layer 2
+  palette 5, label slot 0x1c at (256,60)); slot 0x1c = tbl 0x261 (持ち時間), slot 0x6b =
+  `0x46bcd8[rank]` (a train picture with four letter boxes: 0x419 ranks 1–3, 0x41a ranks 4–9,
+  0x41b rank 10), then 0x4316e0 with palette 4 layer 3: 0x6c = 0x41d 乗務記録 (80,72), 0xc =
+  0x41c selection frame (288,324), 0xf = 0x30 (112,392), 0x10/0x11 = 0x34 (80,360)/(496,360)
+  (black covers at the wheel ends), BGM 0x19d (0x42ff20). Every tick: slot 0x6d = legend
+  descriptor 0x486184 (keyboard/pad) or 0x48618a (analog lever) at (408,60).
+* The **59-symbol wheel** (`0x46bd30[0..58]`: 0–9, 10 = "00", 11 = blank, A–Z, `. - ! ? /`,
+  train-class abbreviations and katakana pairs, 系, 形, 57 = ← (delete), 58 = 終 (end)):
+  * Keyboard/pad (input modes without the analog lever): left held (held bit 4) checked first:
+    the hold counter goes −1, −2, … (reset to 0 first if positive) and the offset moves −2 px for
+    counts −1..−4, −4 for −5..−9, −8 for −10..−14, −16 from −15; right held (bit 8) the same
+    upwards. Neither: the counter resets and a non-zero offset keeps moving **2 px/tick in its
+    own direction** until the step completes, so a tap always ends one whole symbol further.
+  * Analog lever (0x433270 ≠ 0): `0x829d04` (brake) 0 → −16, 1 → −8, 2 → −4, 3 → −2, 4–6 like no
+    key, 7 → +2, 8 → +4, 9 → +8, 10 → +16 px/tick.
+  * Wrap: offset ≥ 32 → −32 and symbol −1 (0 → 58); offset < −31 → +32 and symbol +1 (58 → 0);
+    either plays 0x15. So left/brake-released brings the following symbols in from the right.
+  * Take: confirm (pressed 0x1000), or in analog modes the power notch rising from 0
+    (`+0x54 == 0 && 0x829d00 > 0`). 終: sound 0x1d, the remaining letters blank, done; ←: sound
+    0x25 (also with nothing to delete), last letter blanked; else sound 0x17, letter stored, done
+    at the fourth (sound 0x1d). Done = done tick `counter + 30`, the filter, then
+    `Ranking_ToEeprom` 0x41e670. Input is ignored once done.
+  * Drawing (every tick): letters slots 0x55–0x58 at (272 + 32k, 252), blank for positions not
+    yet entered. Previous symbols: slots 0x45–0x4b, `x = off + 192 − 32i`, drawn at
+    `x + 64 (+ trunc(off·0.5) for i = 0 when off > 0)`, y 360, only while `x ≥ 16` (an
+    off-screen slot keeps its last image and position). Next symbols: slots 0x4d–0x53,
+    `x = off + 288 + 32i`, at `x + 64 (+ trunc(off·0.5) for i = 0 when off < 0)` while
+    `x ≤ 464`. Current symbol slot 0xd at (304,352) when `off = 0`, else
+    `(304 − trunc(off·−1.5), 360)` (f64 0.5 at 0x457730, −1.5 at 0x458c08): at rest the current
+    symbol sits 8 px higher in the frame with 48 px gaps either side (not a larger sprite).
+  * Timer 0x417040(930 − counter): `s = t/30`, `t%30 < 26` → digits `0x4653d4[...]` on
+    0x18–0x1a, 26–27 → mask 0x40b ×3, 28–29 → 0x40c ×3; slot 0x1b = 0x40e (秒). No blanking of
+    leading zeros.
+  * Page change when the counter reaches **930** (31 s) or the done tick: page 1, counter 0,
+    the filter again. **On a time-out `Ranking_ToEeprom` is not called**: the row (with the letters
+    entered so far, filtered) exists only in the unpacked table `0x84fca0` until some later
+    completed entry on the same table packs it, and is lost at exit otherwise.
+* Name filter 0x41e7a0 (then `Name_Replace` 0x41e4c0 writes `0x46bf14[route]`, 4 bytes): list
+  `0x46bf64` = exact matches (blank ×4, KKKK, the three single-blank variants, `SEX ` / ` SEX`);
+  list `0x46bf88` = match when symbols 1–3 are equal and symbol 0 **differs** from the entry's
+  (entries start with 0x3c, no symbol, so in effect `?KKK`, `?SEX`); list `0x46bf94` = match
+  when symbols 0–2 are equal and symbol 3 differs (`KKK?`, and `SEX` + anything but Y — the
+  `SEXY` entry itself passes). **confirmed** (objdump of the compares).
+* Ranking page (page 1), first update: placements `0x46be54` (headers 0x67/0x68 at (80,40) and
+  (320,40), column titles 0x6c–0x71), slot 0x6b hidden, 0x67/0x68 = `0x46bc10[route]` /
+  `0x46bc64[route]` (line and series), column titles tbl 0x413, 0x415–0x418, 0x414; all 80 cells
+  (slots 0xd–0x5c, 8 per row at `0x46be42` x = 144 176 208 240 360 392 424 472, y 92 + 32·row)
+  set to the blank symbol; PRO badge slots 0x5d+row placed at (cell 3 x + 32, y). The draw
+  callback becomes 0x41fc60 (black rect-layer bars x 0–80 and 560–640, adjusted by the screen
+  offset bytes +0x338/+0x339) and the 3D layer is dimmed (0x428990(0x70, 0x7070)).
+* Each tick while the counter < 140: cell `u` (row `u/8`, column `u%8`) appears at counter `u`:
+  for 16 ticks it alternates tbl `0x46be1c`/`0x46be20` (0x274/0x275), then shows the symbol of
+  the unpacked byte (name 0–3, score digits 4–7, leading zeros shown); with column 3 the row's
+  badge slot gets tbl 0x2c8 or −1. The new row's rank label `0x46bd04[rank]` (slot 0xc at
+  (96, row y)) is shown when `(counter/4)` is odd, hidden otherwise.
+* The page ends when the counter passes **150** or on the A button (0x100000, Enter in keyboard
+  modes) or the horn (0x100). Destroy 0x41f5a0: undim, reset every non-keep sprite slot,
+  clear `0x2000`, stop BGM 0x19d, clear `0x855ffc & 0x1000`. **confirmed**
 
 ### 11.3 Run-end banner 0x415f00 — confirmed
 
@@ -463,7 +528,28 @@ Created after the arrival wait (rules.md §7.3 gives the deductions). Timing and
 ### 13.1 `eeprom.dat` (0x35a bytes, mirror at 0x856020) — confirmed unless noted
 
 Loaded at startup (0x434ed0, then `Ranking_FromEeprom`), **saved only at exit** (0x434f50 from
-`WinMain`'s shutdown path). No header or version; a short read leaves the defaults in memory.
+`WinMain`'s shutdown path). No header or version. `fopen("eeprom.dat")` + `fread(0x35a)`; only a
+full read sets the difficulty (`+6 >> 14`), unpacks the rankings and resets a control mode > 3
+when no joystick is present (`0x8298a4 == 0`).
+
+**First boot / defaults — confirmed.** After the load, the boot sequence 0x40e910 calls 0x418ef0,
+which compares the first **two bytes** of the mirror with the default image (0x418eb0, a memcmp)
+and on a mismatch copies the whole default image in three pieces: `0x467768` → +0x00..+0x22
+(starts with the magic `"CG"`), `0x467790` → +0x22..+0x332 (the 13 default ranking tables),
+`0x467aa0` → +0x332..+0x35a (options: control 0, vibration 2, speed meter 1, distance meter 2,
+sound 0; no clear marks). So a missing file (mirror still zero) or a foreign one gets the
+defaults; a short file with the right magic keeps its partial bytes over zeros. The same ranking
+table is restored alone by 0x418e70 / 0x41e720 (debug/test-mode resets, callers 0x4021f3 and
+0x4223d2). The default tables are each sorted by score; table 3 (route 1) is 124, 113, 100, 90,
+77, 64, 54, 41, 28, 18 with name `E3系 `. `crates/ddg-game/src/save.rs` reads the image from the
+exe at runtime.
+
+The checksum words +0x20 and +0x330 are rewritten by 0x418930 after every pack; its sum routine
+0x425dc0 is `xor eax,eax; ret`, so both are always 0 on PC. **confirmed**
+
+Our port keeps the file byte-compatible and stores it at `$XDG_CONFIG_HOME/ddg/eeprom.dat`
+(else `~/.config/ddg/`, `%APPDATA%\ddg\` on Windows); headless shots use the defaults and never
+write.
 
 | File off | VA | Content |
 |---|---|---|
@@ -478,13 +564,13 @@ Loaded at startup (0x434ed0, then `Ranking_FromEeprom`), **saved only at exit** 
 | +0x335 | 0x856355 | distance meter 0 hidden / 1 cm / 2 m |
 | +0x336 | 0x856356 | sound on/off; bytes +0x338/+0x339 are an x/y screen offset (`0x856358/59`, renderer.md §11) — likely |
 | +0x33a | 0x85635a | clear marks, 1 byte per route 0–19 (§6.3) |
-| +0x34e–0x359 | | unknown |
+| +0x34e | 0x85636e | clear mark of select stage 20 (route-10 variant, §6.3) |
+| +0x34f–0x359 | | unknown (0 in the defaults) |
 
 Ranking tables per route (`0x46bbe8`, i16 per route): 0:−1, 1:3, 2:−1, 3:10, 4:11, 5:−1, 6:0,
 7:4, 8:5, 9:5, 10:7, 11:7, 12:9, 13:8, 14:2, 15:12, 16:1, 17:6, 18:6, 19:6. In memory the tables
 are unpacked to `0x84fca0 + 0x50·table + 8·row` (4 name bytes + 4 decimal digits) and
-`0x84fc00 + 10·table + row` (PRO flag). Where the default (first-boot) ranking comes from was not
-found (open question).
+`0x84fc00 + 10·table + row` (PRO flag). The defaults come from the exe (above).
 
 ### 13.2 Other stores
 
@@ -503,9 +589,15 @@ found (open question).
    0): is it really reachable as a fifth group, and why stage 2 four times? Stage 19 (route 19) is
    in no group. Needs a run of the original.
 2. `0x855ae8` (subtracted from 640 in route-select and title x positions): its value per mode.
-3. Default ranking contents on first boot (no `eeprom.dat`): not located.
-4. The exact meaning of the PRO flag threshold (`0x8571f0 ≤ 30.0`, accumulated only while the
-   distance meter is drawn): verify with a run with the meter on and off.
+3. ~~Default ranking contents on first boot~~: resolved, the image at 0x467768/0x467790/0x467aa0
+   copied by 0x418ef0 when the magic differs (§13.1).
+4. The PRO flag (`0x8571f0 ≤ 30.0`, metres driven with the distance meter drawn, §11.2): the
+   code is clear; that it is meant as "driven with the Professional plate" is still to be seen
+   in a run with the meter on and off.
+9. Whether the name-entry art really leaves the 3D view undimmed (the dim 0x428990 only comes
+   with the ranking page) and what 0x428990(0x70, 0x7070) does exactly; the port does not dim.
+10. Whether the A-button/horn end of the ranking page and the confirm of the name entry can
+    collide with a key still held from the report card (both read edges, so probably not).
 5. Attract items 0x402e60, 0x402e80, 0x40e6c0, 0x403f40, 0x403da0, 0x40e6e0, the ending
    (0x404110/0x404920) and the bonus-game internals (0x41b810) were not traced.
 6. Sound code meanings (0xd, 0x13, 0x16–0x18, 0x23, 0x2d, 0x195, 0xf7–0xfe, jingles 0x1000–0x1004,
