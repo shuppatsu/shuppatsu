@@ -155,46 +155,46 @@ name = "English"
 # 出 = starting signal (the plate is behind the caption band, so the caption names it).
 
 # Emergency-stop signal 緊急停止 (NaviAnim(0)), five flash frames.
-0x44b = { region = [0, 102, 96, 34], text = "EMERGENCY\nSTOP" }
-0x44c = { region = [0, 102, 96, 34], text = "EMERGENCY\nSTOP" }
-0x44d = { region = [0, 102, 96, 34], text = "EMERGENCY\nSTOP" }
-0x44e = { region = [0, 102, 96, 34], text = "EMERGENCY\nSTOP" }
-0x44f = { region = [0, 102, 96, 34], text = "EMERGENCY\nSTOP" }
+0x44b = { region = [0, 102, 96, 34], text = "Emergency\nSTOP" }
+0x44c = { region = [0, 102, 96, 34], text = "Emergency\nSTOP" }
+0x44d = { region = [0, 102, 96, 34], text = "Emergency\nSTOP" }
+0x44e = { region = [0, 102, 96, 34], text = "Emergency\nSTOP" }
+0x44f = { region = [0, 102, 96, 34], text = "Emergency\nSTOP" }
 # Three-lamp set (no stage uses it, hud.md §3.9).
 0x450 = { region = [0, 104, 96, 24], text = "Clear" }                     # 進行信号
-0x451 = { region = [0, 102, 96, 42], text = "CLEAR\nhome" }               # 進行信号 場
-0x452 = { region = [0, 102, 96, 42], text = "CLEAR\nstarting" }           # 進行信号 出
-0x453 = { region = [0, 97, 96, 47], text = "CAUTION\n45 km/h" }           # 注意信号 速度45
-0x454 = { region = [0, 97, 96, 47], text = "CAUTION 45\nhome" }
-0x455 = { region = [0, 97, 96, 47], text = "CAUTION 45\nstarting" }
+0x451 = { region = [0, 102, 96, 42], text = "Clear\nhome" }               # 進行信号 場
+0x452 = { region = [0, 102, 96, 42], text = "Clear\nstarting" }           # 進行信号 出
+0x453 = { region = [0, 97, 96, 47], text = "Caution\n45 km/h" }           # 注意信号 速度45
+0x454 = { region = [0, 97, 96, 47], text = "Caution 45\nhome" }
+0x455 = { region = [0, 97, 96, 47], text = "Caution 45\nstarting" }
 0x456 = { region = [0, 104, 96, 24], text = "Stop" }                      # 停止信号
-0x457 = { region = [0, 102, 96, 42], text = "STOP\nhome" }
-0x458 = { region = [0, 102, 96, 42], text = "STOP\nstarting" }
+0x457 = { region = [0, 102, 96, 42], text = "Stop\nhome" }
+0x458 = { region = [0, 102, 96, 42], text = "Stop\nstarting" }
 # Four-lamp set (all stages).
 0x470 = { region = [0, 112, 96, 24], text = "Stop" }                      # 停止信号
-0x471 = { region = [0, 104, 96, 40], text = "STOP\nhome" }
-0x472 = { region = [0, 104, 96, 40], text = "STOP\nstarting" }
-0x473 = { region = [0, 97, 96, 47], text = "RESTRICTED\n25 km/h" }        # 警戒信号 速度25
-0x474 = { region = [0, 97, 96, 47], text = "RESTRICT 25\nhome" }
-0x475 = { region = [0, 97, 96, 47], text = "RESTRICT 25\nstarting" }
-0x476 = { region = [0, 97, 96, 47], text = "CAUTION\n45 km/h" }           # 注意信号 速度45
-0x477 = { region = [0, 97, 96, 47], text = "CAUTION 45\nhome" }
-0x478 = { region = [0, 97, 96, 47], text = "CAUTION 45\nstarting" }
-0x479 = { region = [0, 97, 96, 47], text = "REDUCE\n70 km/h" }            # 減速信号 速度70
-0x47a = { region = [0, 97, 96, 47], text = "REDUCE 70\nhome" }
-0x47b = { region = [0, 97, 96, 47], text = "REDUCE 70\nstarting" }
+0x471 = { region = [0, 104, 96, 40], text = "Stop\nhome" }
+0x472 = { region = [0, 104, 96, 40], text = "Stop\nstarting" }
+0x473 = { region = [0, 97, 96, 47], text = "Restricted\n25 km/h" }        # 警戒信号 速度25
+0x474 = { region = [0, 97, 96, 47], text = "Restrict 25\nhome" }
+0x475 = { region = [0, 97, 96, 47], text = "Restrict 25\nstarting" }
+0x476 = { region = [0, 97, 96, 47], text = "Caution\n45 km/h" }           # 注意信号 速度45
+0x477 = { region = [0, 97, 96, 47], text = "Caution 45\nhome" }
+0x478 = { region = [0, 97, 96, 47], text = "Caution 45\nstarting" }
+0x479 = { region = [0, 97, 96, 47], text = "Reduce\n70 km/h" }            # 減速信号 速度70
+0x47a = { region = [0, 97, 96, 47], text = "Reduce 70\nhome" }
+0x47b = { region = [0, 97, 96, 47], text = "Reduce 70\nstarting" }
 0x47c = { region = [0, 112, 96, 24], text = "Clear" }                     # 進行信号
-0x47d = { region = [0, 104, 96, 40], text = "CLEAR\nhome" }
-0x47e = { region = [0, 104, 96, 40], text = "CLEAR\nstarting" }
+0x47d = { region = [0, 104, 96, 40], text = "Clear\nhome" }
+0x47e = { region = [0, 104, 96, 40], text = "Clear\nstarting" }
 0x47f = { region = [0, 118, 96, 26], text = "High-Speed" }                # 高速進行 (stages 7–9)
 # Repeater signals 中継信号.
-0x480 = { region = [0, 97, 96, 47], text = "STOP\nrepeater" }             # 停止
-0x481 = { region = [0, 97, 96, 47], text = "LIMIT\nrepeater" }            # 制限
-0x482 = { region = [0, 97, 96, 47], text = "LIMIT 25\nrepeater" }         # 制限25km/h
-0x483 = { region = [0, 97, 96, 47], text = "LIMIT 45\nrepeater" }         # 制限45km/h
-0x484 = { region = [0, 97, 96, 47], text = "LIMIT 70\nrepeater" }         # 制限70km/h
-0x485 = { region = [0, 97, 96, 47], text = "CLEAR\nrepeater" }            # 進行
-0x486 = { region = [0, 97, 96, 47], text = "HIGH-SPEED\nrepeater" }       # 高速進行
+0x480 = { region = [0, 97, 96, 47], text = "Stop\nrepeater" }             # 停止
+0x481 = { region = [0, 97, 96, 47], text = "Limit\nrepeater" }            # 制限
+0x482 = { region = [0, 97, 96, 47], text = "Limit 25\nrepeater" }         # 制限25km/h
+0x483 = { region = [0, 97, 96, 47], text = "Limit 45\nrepeater" }         # 制限45km/h
+0x484 = { region = [0, 97, 96, 47], text = "Limit 70\nrepeater" }         # 制限70km/h
+0x485 = { region = [0, 97, 96, 47], text = "Clear\nrepeater" }            # 進行
+0x486 = { region = [0, 97, 96, 47], text = "High-Speed\nrepeater" }       # 高速進行
 
 # ---------------------------------------------------------------------------------------------
 # Signs (hud.md §3.10), 96×96: the caption under the sign (lettering on transparency).
@@ -238,14 +238,14 @@ name = "English"
 0x6d = "Pass"                        # 通過 banner
 0x6e = "Stop"                        # 停車 plain, 64×32
 0x6f = "Stop"                        # 停車 banner
-0x6a = "Depart: CLEAR!"              # 出発進行 plain, 112×32
-0x6b = "Depart: CLEAR!"              # 出発進行 banner
-0x11c = "Depart: REDUCE"             # 出発減速 plain, 112×32
-0x11d = "Depart: REDUCE"             # 出発減速 banner
-0x11e = "Depart: CAUTION"            # 出発注意 plain
-0x11f = "Depart: CAUTION"            # 出発注意 banner
-0x120 = "Depart: RESTRICT"           # 出発警戒 plain
-0x121 = "Depart: RESTRICT"           # 出発警戒 banner
+0x6a = "Depart: Clear!"              # 出発進行 plain, 112×32
+0x6b = "Depart: Clear!"              # 出発進行 banner
+0x11c = "Depart: Reduce"             # 出発減速 plain, 112×32
+0x11d = "Depart: Reduce"             # 出発減速 banner
+0x11e = "Depart: Caution"            # 出発注意 plain
+0x11f = "Depart: Caution"            # 出発注意 banner
+0x120 = "Depart: Restrict"           # 出発警戒 plain
+0x121 = "Depart: Restrict"           # 出発警戒 banner
 
 # Landmark captions (hud.md §3.13, 0x466a20), white plates, 2 tiles high.
 0x222 = "Akita Depot"                # 秋田車両基地
@@ -352,7 +352,7 @@ name = "English"
 0x3fd = { region = [8, 20, 176, 84], text = "A railfan's\ndream run!" }     # 鉄ちゃん感動です! grade 100
 0x3fb = { region = [8, 20, 176, 84], text = "Superb\ndriving!" }            # 素晴らしい運転でした! grade ≥ 90
 # Not traced (likely unused on PC):
-0x24c = "Hazard avoided: PASS!"      # 危険回避合格!, 224×32
+0x24c = "Hazard avoided: Pass!"      # 危険回避合格!, 224×32
 0x24e = "Accident"                   # 事故, 192×64
 0x24f = { parts = [{ region = [0, 0, 192, 64], text = "Accident" }, { region = [0, 64, 192, 32], text = "Too fast!" }] }  # 事故 速度の出し過ぎ, 192×96
 
@@ -866,10 +866,10 @@ mode = { rect = [0, 8, 6, 2], text = "Mode" }         # モード切替
 # one line instead, at one size, with {name} = the name sprite's text above. By kind: the four
 # departure aspects, 通過, 停車, and the bare name. 駅 ("Stn") is dropped.
 [caption]
-depart_clear = "{name} · Depart: CLEAR!"
-depart_reduce = "{name} · Depart: REDUCE"
-depart_caution = "{name} · Depart: CAUTION"
-depart_restrict = "{name} · Depart: RESTRICT"
+depart_clear = "{name} · Depart: Clear!"
+depart_reduce = "{name} · Depart: Reduce"
+depart_caution = "{name} · Depart: Caution"
+depart_restrict = "{name} · Depart: Restrict"
 pass = "{name} · Pass"
 stop = "{name} · Stop"
 name = "{name}"
