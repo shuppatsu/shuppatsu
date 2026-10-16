@@ -306,6 +306,83 @@ Reaching the last station clears the stage regardless of the remaining time. A c
 (0x40d930) rewinds to the last **stopping** station, resets the remaining time, the per-continue
 stats (`0x857020`), the early accumulator and the clock skew, and `0x8570b8 += 1`. **confirmed**
 
+### 7.5 Stage endings, the stage-1 bonus section and the coupling minigame — confirmed (code)
+
+Which leg is the last is `0x8570ae`. 0x40d340 (after a stop) and 0x40d620 (after a pass) set it
+from the timetable (`row[d78+2].time == −1`) and then **override** it for fixed legs: stage 1 at
+`d78 == 7`, stage 2 at `0x17`, stages 17–19 at `0xf`, and (0x40d340 only) stage 10 at 7. So
+stage 1 normally ends at station 8, stage 2 at 24 and stage 10 at 8 even though their timetables
+go on (stage 1's rows 9–23 are never driven). 0x40d040 sets the flag to 0; 0x40d930 (continue)
+leaves it alone (the port recomputes it with the overrides, equivalent for every rewind target).
+
+The stop handler 0x40a0a0, after the marks, decides per stage. "Perfect" means
+`0x85722c == 0`, `0x856da8 == 0` (after the stage-kind-1 reset), `0x856d64 == 0`,
+`0x8571f6 == 0x857238` and no continue (`0x8570b8 == 0`):
+
+| Stage, `d78` | Perfect | Otherwise |
+|---|---|---|
+| 1, 7 | `0x8570ae = 0`, `0x855ff8 \|= 0x20000000` (bonus section), no caption | caption 0x20f + 120 ticks, the stage clears |
+| 2, 0x17 | coupling minigame; success → `Vehicle_Set(0x1000)` + train type 0xe when bit 0x8000000 is set, else `Vehicle_Set(0x1001)` + type 0xc, `0x8570ae = 0`, 30 ticks; failure → `\|= 0x40000000`, final | `0x8570ae = 1`, bits 0x18000000 cleared, caption + 120 ticks |
+| 17–19, 0xf | coupling minigame, then always `\|= 0x40000000` and final (the result only gives the bonus seconds) | final |
+| 10, 7 | — | marks of stations 1–8 (`0x40e350(1, 8)`) ≥ 15 or select stage 20 (`0x48ddf0`) → `0x8570ae = 0` (on to 17), else final |
+
+0x40d340 at stage 1, `d78 == 7`: without bit 0x20000000 it sets `0x8570ae = 1` and
+`0x40000000` and **does not** advance `d78`. With it, it jumps to the **bonus section**:
+`d78 = 0x18`, odometer `0x857004 = row[24].pos − row[0].pos`, clock `0x8570b0 = row[24].time`
+(+0x2b2 dwell after), course cursor `0x857088` and AI-train cursor `0x856d90` skipped to
+station ≥ 24 (**not** the limit cursor `0x8571fc`, so a limit record of stations 8–23 blocks
+the limit list for the rest of the run), `Vehicle_Set(0x1001)` (E3 cab, ATC speedometer,
+hud.md §3.6), train type `0x84c3fc = 0xc` (280 km/h; the stage's own type 16 tops out at
+135), weather off (`0x857230 = −1`, `0x84c3a0 = 0`). The common path then makes 24 → 25 the
+final leg (9.7 km, ATC limits from course event 7). Bit 0x20000000 is cleared on every
+0x40d340. The train task reads `0x84c3fc` every tick (0x422c20), so the new type acts at once.
+
+Course event 12 (0x40acd0) picks the waiting set before the coupling station: marks so far
+(`0x40e350(0, d78)`) < 13 → `0x855ff8 |= 0x10000000`, else `|= 0x8000000`; it also places the
+set's model (0x406c50, presentation).
+
+`0x855ff8 & 0x40000000` chooses the ending (menus.md §12): 0x404110 when clear, 0x404920 when
+set. Besides the cases above it is set when the stage clears with a continue used, out of time,
+after running into the forced-stop point (`0x8570b4`), and on stage 2 when it clears before 25
+(`d78 < 0x19`). Registry option bits 0x08 / 0x10 force it clear / set (Stage_Run).
+
+**Coupling minigame** `Coupling_Run` 0x4093c0 (blocking, one `Task_Tick` per step):
+
+* Setup: distance panel off (`0x856d0c = 0`), timer 0x709 ticks (0x417040), caption tbl 0x2d8
+  ボーナスゲーム (slot 0x33, 70 ticks); 10 ticks; BGM 0x19a; sprites slots 0x3f–0x4b at the
+  per-resolution table 0x458fd0 (8 bytes × 4 resolutions per slot, palette 4, layer 3; slots
+  0x45–0x4a = tbl 0x17c, 0x17d, 0x17e, 0x181, 0x182, 0x183, slot 0x40 = digit 0); 80 ticks;
+  caption 0x2d9 時間内に衝撃なく列車を連結せよ (80 ticks); `0x857238 = 1`; 180 ticks with
+  sounds 0x11, 0x34, 0x3f, 0x40, 0x36, 0x3f at 15, 30, 60, 70, 130, 175. Then `0x200` is set:
+  the player drives.
+* Each driving tick: `0x85708c = 0x8500c8 × 10`, 0x409fc0 (forced stop on the previous
+  `0x85722c`, stop record), `+= 40.0` (f64 0x4594b0; the coupler is 40 m past the stop mark),
+  `0x85722c = trunc`, clamp at 0. Horn while stopped before moving: +3 points; stopping
+  (`|v| < 0.0001`) between 4.5 and 6.5 m: sound 0x3a, +5, and a horn after that: +2; moving
+  forfeits the pending horn points. Calls 0x38, 0x11, 0x39 at 8, 7, 6.5 m; 0x3b, 0x3c, 0x3d at
+  3, 2, 1 m (passing 4.3 m skips the mark). Warning 0x37 / 0x3f every 90 ticks while ≥ 9 m or
+  waiting at the mark. HUD: slots 0x3f/0x40 speed km/h (tbl 0x172 + digit, tens hidden below
+  10), slots 0x41–0x43 + 0x171 the distance (`dd.d` from 10 m, `d.dd` below, from 17 m, tbl
+  0x167 + digit), slot 0x47 = 0x17e at ≥ 10 m else blinking 0x180 (`(t/10)` odd), slot 0x49
+  x = base − 272 + min(272, trunc(16 · dist)).
+* At 0 m: v < 0.5 km/h (f64 0.1389 at 0x459450) → too weak: 0x180 + 連結失敗 0x2dd, sound
+  0x2b, hint 0xf (90 ticks), 100 ticks, returns −1. v ≤ 2.5 km/h (0x459448) → coupled:
+  `points += 10 − trunc((v − 0.1389) × 18.18)` (≥ 1 in all), 0x17f + 連結成功 0x2dc, sound
+  0x2a, jolt 0x40e370(−0.0005), `0x855ff8 |= 0x40000`, then 200 ticks (sounds 0x13, 0x10, 0xe,
+  0x3e at 40, 58, 65, 95; coupler frame `0x857244 = 1` at 60; at 120 the time message
+  `0x415080(0x103, points)` = ボーナス + points seconds), returns 1. Faster → too fast: 連結失敗,
+  sounds 0x2b, 0x2f, jolt −0.004, 20 ticks, returns 0. Timer at 0 → `0x857244 = 1`, 20 ticks,
+  returns 0. A final `Task_Tick` follows; `0x85708c` / `0x85722c` are restored.
+* Maximum bonus 3 + 5 + 2 + 10 = 20 s.
+
+Port: `ddg_engine::coupling` (state machine), `Rules::stage_ending_at_stop`,
+`Rules::coupling_step`, `Rules::next_segment` / `enter_bonus_section`, `Phase::Coupling`
+(`Drive` keeps the physics driving while `Coupling::driving`), `Rules::vehicle_code` /
+`train_type` applied by `Drive::sync_train_type`, `Rules::full_ending`. The 0x8000000 /
+0x10000000 bits are `Rules::coupling_partner` (2 / 1). The autopilot soak drives stage 1
+through the bonus section and couples on stages 2 and 17–19 (`tests/autopilot.rs`).
+Not traced in the original: no oracle run has reached these legs.
+
 ## 8. Other rule events
 
 | Kind | Course event | Effect | Conf. |
@@ -318,7 +395,7 @@ stats (`0x857020`), the early accumulator and the clock skew, and `0x8570b8 += 1
 | 8 | obstacle stop | only if armed by a scripted signal kind 1 and not used yet: bell, stop target `odo + a·1.25 − 5`; the clock stops; reaching it forces v = 0; when stopped, ~36 ticks of scripted recovery, wet rails | confirmed (code), hold length guess |
 | 9, 13, 17, 23 | HUD/screen effects | presentation | likely |
 | 10 / 11 | no-power section | 10 enters (`0x856fba = 1`), any power → 2; 11 exits: still 1 → **+0x45ad10 s**. Stopping inside costs 10 s | confirmed (name **guess**: AC/DC dead section, only Akita/Ōu stages have bonuses) |
-| 12 | scenery train event | presentation | likely |
+| 12 | coupling set | picks the waiting set by the marks so far (§7.5) and places its model | confirmed |
 | 14 / 15 / 16 | repeater, display variant | §4.3 | likely |
 | 18 / 19 | `0x84c400 = 1 / 0` | flange-squeal / departure-sound flag, read by the train sounds (audio-text.md §10) | likely |
 | 20 | `0x857224 = a` | message shown at the next green | confirmed |
@@ -510,8 +587,8 @@ Hook points for event-level traces: 0x415080 (every time message: kind, seconds)
   `HintShown { id, ticks: 0, distance_m: 220 }` and clears it. This includes the departure call
   and both recoveries.
 * Not modelled: hint messages other than the green-signal hint (0x40c4e0 tail, 0x422990), the station-approach HUD state
-  `0x856d68`, scripted weather start at a segment change (needs the global frame counter % 4),
-  special stage endings (stages 1, 2, 10, 17–19 at fixed stations), the Komachi section display.
+  `0x856d68`, the presentation of the coupling
+  set (0x406c50). The stage endings, the bonus section and the coupling minigame are in §7.5.
 * x87 extended-precision intermediates are computed in f64 then stored to f32 where the original
   stores; rare double-rounding differences are possible.
 
