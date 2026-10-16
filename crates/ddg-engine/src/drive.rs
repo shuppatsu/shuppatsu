@@ -152,6 +152,12 @@ const ARRIVAL_ODOMETER_TICK: u32 = 2;
 const TUNNEL_CLASS: i16 = 3;
 /// The track sound lookup probes the point this far ahead of the camera point (0x407c10).
 const CLASS_PROBE_AHEAD: usize = 4;
+/// The three probes of the ambient track sounds, in points from the camera point
+/// (`local_c = {-0x10, 4, 0x18}` in 0x407c10).
+const SOUND_PROBES: [isize; 3] = [-16, 4, 24];
+/// The turnout test reads the flags of the point this far ahead (0x407c10: index
+/// `0x8502a4·3 + 0x12` dwords = point + 6, field +10).
+const TURNOUT_PROBE_AHEAD: usize = 6;
 /// Track units → metres (double 10.0 at 0x458b88, 0x40dad0).
 const METRES_PER_UNIT: f64 = 10.0;
 
@@ -189,6 +195,13 @@ pub struct Drive {
     gradient: f32,
     heading: f32,
     track_class_ahead: i16,
+    /// Presentation only (sound): the classes at the three ambient probes (`0x857200[3]`),
+    /// the turnout latch `0x857096` and its rising edge `0x856d96`, and the tick of the last
+    /// lookup. None of it feeds the simulation.
+    track_classes: [i16; 3],
+    on_turnout: bool,
+    turnout_entered: bool,
+    lookup_tick: Option<u64>,
     /// The game ended while driving: the train coasts (flags 0x210) until the continue screen.
     coasting: bool,
     /// Ticks since the game over / the arrival.
@@ -268,6 +281,10 @@ impl Drive {
             gradient: 0.0,
             heading,
             track_class_ahead: 0,
+            track_classes: [0; 3],
+            on_turnout: false,
+            turnout_entered: false,
+            lookup_tick: None,
             coasting: false,
             game_over_ticks: 0,
             arrived_ticks: 0,
@@ -405,6 +422,21 @@ impl Drive {
     /// Track sound class four points ahead (0x857202): 1–3 ambient sound classes, 3 = tunnel.
     pub fn track_class_ahead(&self) -> i16 {
         self.track_class_ahead
+    }
+
+    /// The ambient-sound track classes 16 points behind, 4 ahead and 24 ahead of the camera
+    /// point (`0x857200[3]`), if this tick ran the track lookup 0x407c10 (driving-loop ticks
+    /// only). A probe before the route start reads 0 (the original reads whatever precedes its
+    /// point array); one past the end reads 0 like [`Drive::track_class_ahead`].
+    pub fn track_classes(&self) -> Option<[i16; 3]> {
+        (self.lookup_tick == Some(self.tick_count)).then_some(self.track_classes)
+    }
+
+    /// Whether this tick's track lookup found the point 6 ahead to be the first point of a
+    /// turnout (`0x856d96`, rising edge of `0x857096`); the train task then starts the
+    /// turnout clatter (0x4205c0). Presentation only.
+    pub fn turnout_entered(&self) -> bool {
+        self.lookup_tick == Some(self.tick_count) && self.turnout_entered
     }
 
     /// Index of the next station (the target), and its timetable row.
@@ -571,6 +603,28 @@ impl Drive {
                     .unwrap_or(0),
             )
         });
+        // Presentation-only part of the same lookup (sound).
+        let slot = pos.slot(&self.route);
+        let class_at = |at: Option<usize>| {
+            at.and_then(|i| self.route.slots.get(i)).map_or(0, |p| {
+                i16::from(
+                    self.stage_data
+                        .track_sounds
+                        .get(usize::from(p.track_type()))
+                        .copied()
+                        .unwrap_or(0),
+                )
+            })
+        };
+        self.track_classes = SOUND_PROBES.map(|d| class_at(slot.checked_add_signed(d)));
+        let on = self
+            .route
+            .slots
+            .get(slot + TURNOUT_PROBE_AHEAD)
+            .is_some_and(|p| p.is_turnout());
+        self.turnout_entered = on && !self.on_turnout;
+        self.on_turnout = on;
+        self.lookup_tick = Some(self.tick_count);
     }
 
     /// 0x41c820 + the leg-distance reset of 0x40d620, when the rules passed a station.
