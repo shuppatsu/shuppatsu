@@ -138,6 +138,10 @@ pub struct TextPart {
     /// Parts of one override with the same group are drawn at one size: the smallest any of
     /// them fits at (the words of one callout cell).
     pub group: Option<String>,
+    /// Parts with the same shared group in any override (other entries and tilemaps too) are
+    /// drawn at one size: the smallest any of them fits at (the items of one menu list,
+    /// which are separate entries of a string sheet or separate tilemaps).
+    pub shared_group: Option<String>,
 }
 
 /// The replacement for one sprite.
@@ -532,47 +536,77 @@ impl TextOverlay {
         scale: usize,
     ) -> Self {
         let scale = scale.max(1);
-        let mut parts = HashMap::new();
-        for (tbl, rect, o) in overrides {
-            let Some(map) = bank.tilemaps.get(usize::from(tbl)) else {
-                continue;
-            };
-            let Some(r) = rect.resolve(map.width, map.height) else {
-                continue;
-            };
-            let art = bank.render_rect(tbl, r);
-            let (pw, ph) = (usize::from(r.2) * TILE_SIZE, usize::from(r.3) * TILE_SIZE);
-            // Each part fitted on its own; then the parts of a group again, at the smallest
-            // size any of them got.
-            let fitted: Vec<Option<(RenderedPart, f32)>> = o
-                .parts
-                .iter()
-                .map(|p| render_part_at(p, &art, pw, ph, glyphs, scale, None))
-                .collect();
-            let mut smallest: HashMap<&str, f32> = HashMap::new();
-            for (p, f) in o.parts.iter().zip(&fitted) {
-                if let (Some(g), Some((_, px))) = (p.group.as_deref(), f) {
-                    let e = smallest.entry(g).or_insert(f32::MAX);
-                    *e = e.min(*px);
+        // Every part fitted on its own first.
+        struct Entry<'a> {
+            tbl: u16,
+            rect: (u8, u8, u8, u8),
+            o: &'a TextOverride,
+            art: Vec<u8>,
+            size: (usize, usize),
+            fitted: Vec<Option<(RenderedPart, f32)>>,
+        }
+        let entries: Vec<Entry<'a>> = overrides
+            .into_iter()
+            .filter_map(|(tbl, rect, o)| {
+                let map = bank.tilemaps.get(usize::from(tbl))?;
+                let r = rect.resolve(map.width, map.height)?;
+                let art = bank.render_rect(tbl, r);
+                let (pw, ph) = (usize::from(r.2) * TILE_SIZE, usize::from(r.3) * TILE_SIZE);
+                let fitted = o
+                    .parts
+                    .iter()
+                    .map(|p| render_part_at(p, &art, pw, ph, glyphs, scale, None))
+                    .collect();
+                Some(Entry {
+                    tbl,
+                    rect: r,
+                    o,
+                    art,
+                    size: (pw, ph),
+                    fitted,
+                })
+            })
+            .collect();
+        // The smallest fitted size of each shared group (across entries and tilemaps).
+        let mut shared_min: HashMap<&str, f32> = HashMap::new();
+        for e in &entries {
+            for (p, f) in e.o.parts.iter().zip(&e.fitted) {
+                if let (Some(g), Some((_, px))) = (p.shared_group.as_deref(), f) {
+                    let m = shared_min.entry(g).or_insert(f32::MAX);
+                    *m = m.min(*px);
                 }
             }
-            let rendered = o
-                .parts
-                .iter()
-                .zip(fitted)
-                .filter_map(|(p, f)| {
-                    let (part, px) = f?;
-                    match p.group.as_deref().map(|g| smallest[g]) {
-                        Some(min) if min < px => {
-                            render_part_at(p, &art, pw, ph, glyphs, scale, Some(min))
-                                .map(|(r, _)| r)
+        }
+        let mut parts = HashMap::new();
+        for e in entries {
+            // ... and of each group inside the entry.
+            let mut smallest: HashMap<&str, f32> = HashMap::new();
+            for (p, f) in e.o.parts.iter().zip(&e.fitted) {
+                if let (Some(g), Some((_, px))) = (p.group.as_deref(), f) {
+                    let m = smallest.entry(g).or_insert(f32::MAX);
+                    *m = m.min(*px);
+                }
+            }
+            let (pw, ph) = e.size;
+            let rendered =
+                e.o.parts
+                    .iter()
+                    .zip(e.fitted)
+                    .filter_map(|(p, f)| {
+                        let (part, px) = f?;
+                        let group = p.group.as_deref().map(|g| smallest[g]);
+                        let sheet = p.shared_group.as_deref().map(|g| shared_min[g]);
+                        match group.into_iter().chain(sheet).reduce(f32::min) {
+                            Some(min) if min < px => {
+                                render_part_at(p, &e.art, pw, ph, glyphs, scale, Some(min))
+                                    .map(|(r, _)| r)
+                            }
+                            _ => Some(part),
                         }
-                        _ => Some(part),
-                    }
-                })
-                .collect::<Vec<_>>();
+                    })
+                    .collect::<Vec<_>>();
             if !rendered.is_empty() {
-                parts.insert((tbl, r), rendered);
+                parts.insert((e.tbl, e.rect), rendered);
             }
         }
         Self { parts, scale }

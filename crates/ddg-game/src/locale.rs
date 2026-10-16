@@ -459,6 +459,11 @@ fn apply_option(p: &mut TextPart, k: &str, v: &toml::Value) -> Result<()> {
             ensure!(!g.is_empty(), "empty group");
             p.group = Some(g.to_owned());
         }
+        "shared_group" => {
+            let g = v.as_str().context("shared_group must be a string")?;
+            ensure!(!g.is_empty(), "empty shared_group");
+            p.shared_group = Some(g.to_owned());
+        }
         "line_height" => {
             let em = v
                 .as_float()
