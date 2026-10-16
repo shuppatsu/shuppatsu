@@ -176,6 +176,10 @@ pub struct Hud {
     remaining_label: i16,
     pub distance: DistanceReadout,
     pub speedometer: Speedometer,
+    /// A stage run is active (`0x855ff8 & 2`, set only by `Stage_Run` 0x4080d0 at 0x4081dd /
+    /// 0x408b48). The attract demos set 0x204 instead (0x40e530, 0x40e75d), so `Cab_Overlay`
+    /// never draws the speedometer there, whatever the option (menus.md §2.4).
+    pub stage_run: bool,
     /// High-speed readout latch `0x856c84`.
     high_speed: bool,
     /// Cab_Overlay: the last draw was during the wait (`0x829d18`), and the lamp's frames left
@@ -255,6 +259,7 @@ impl Hud {
             remaining_label,
             distance: DistanceReadout::Metres,
             speedometer: Speedometer::Analog,
+            stage_run: true,
             high_speed: false,
             overlay_waiting: false,
             lamp_ticks: 0,
@@ -611,7 +616,7 @@ impl Hud {
     /// speedometer while waiting or driving outside ATC sections, and the cab-signal lamp
     /// while waiting and 30 frames after.
     fn cab_overlay(&mut self, s: &HudState, layer: &mut SpriteLayer) {
-        let active = s.waiting || s.train_driving;
+        let active = self.stage_run && (s.waiting || s.train_driving);
         if !active {
             if self.overlay_waiting {
                 self.speedometer_draw(s, layer);
@@ -807,6 +812,19 @@ mod tests {
         // Digit 8: all seven lit.
         assert!((0..7).all(|k| p.0[SEGMENT_ENTRY + 14 + k] == SEGMENT_LIT));
         assert_eq!(p.0[SEGMENT_ENTRY], SEGMENT_UNLIT);
+    }
+
+    #[test]
+    fn no_speedometer_outside_a_stage_run() {
+        // The attract demos never set `0x855ff8 & 2`: Cab_Overlay clears slot 0x81.
+        let mut h = hud();
+        h.stage_run = false;
+        let mut l = layer();
+        h.update(&state(80.0), &mut l);
+        assert_eq!(l.slots[SLOT_SPEEDO].tilemap, -1);
+        h.stage_run = true;
+        h.update(&state(80.0), &mut l);
+        assert_eq!(l.slots[SLOT_SPEEDO].tilemap, TBL_DIAL);
     }
 
     #[test]

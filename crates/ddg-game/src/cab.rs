@@ -484,6 +484,8 @@ impl CabHud {
     /// `0x856d0c`), the departure lamp `0x829d16` lit by the route demo at once.
     pub fn demo_setup(&mut self, s: &Snap, lamp: bool) {
         self.demo = true;
+        // The demos set `0x855ff8 |= 0x204`, not the stage-run bit 2: no speedometer.
+        self.hud.stage_run = false;
         self.clocks_visible = true;
         self.panel_active = true;
         self.lamp_lit = lamp;
