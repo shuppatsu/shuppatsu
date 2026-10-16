@@ -168,8 +168,10 @@ still covers any language.
 
 Smaller open points:
 
-* Wording style: the catalogue uses upper case for banners and signal captions and sentence
-  case for messages and hints. Railway terms follow JR English usage (Clear, Caution,
+* Wording style (decided): no all-caps text. Labels, headers, menu items, banners and signal
+  captions use title case ("Time Left", "Main Menu"); messages, hints and exclamations use
+  sentence case ("Use the emergency brake!"). Only acronyms and model names stay in capitals
+  (ATS, ATC, OK, HK100). Railway terms follow JR English usage (Clear, Caution,
   Restricted, Reduce, Stop; home/starting/repeater signals; "series" for rolling stock).
 * The time-up advice and hint texts paraphrase the Japanese to fit three short lines.
 * Station names use Hepburn with macrons (Ōmagari, Jingūji) except Tokyo, Osaka and Kobe.
