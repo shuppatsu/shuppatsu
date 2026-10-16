@@ -995,6 +995,15 @@ impl Controls {
         }
     }
 
+    /// Puts the notches back, as the pause menu does on exit (0x42b7f0 restores 0x829d00 /
+    /// 0x829d04). Analog levers follow the next poll anyway.
+    pub fn set_levers(&mut self, power: u8, brake: u8) {
+        match self.joystick.as_mut() {
+            Some((j, _)) => (j.power, j.brake) = (power, brake),
+            None => (self.keyboard.power, self.keyboard.brake) = (power, brake),
+        }
+    }
+
     /// The active joystick mode, if a joystick drives the levers.
     pub fn joy_mode(&self) -> Option<JoyMode> {
         self.joystick.as_ref().map(|(j, _)| j.mode())

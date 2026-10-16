@@ -29,7 +29,8 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::WindowId;
 
 const USAGE: &str = "\
-usage: ddg-game play <stage 0..19> [--difficulty <0..>] [--station <n>] [--keys <0..3>] [options]
+usage: ddg-game play <stage 0..19> [--difficulty <0..>] [--station <n>] [--keys <0..6>] [options]
+                     [--joystick-dat <file>] [--combo <file>]
                      [--inputs <script>] [--shot <ticks>:<file.ppm>]
        ddg-game view <route.com> [options]
        ddg-game shot <route.com> --at <metres> --out <file.ppm> [options]
@@ -87,7 +88,8 @@ fn parse_play_args() -> Result<play::PlayOptions> {
             .context("stage must be a number")?,
         difficulty: 0,
         station: 0,
-        keyboard_mode: 0,
+        control_mode: 0,
+        pad: gamepad::PadOptions::default(),
         size: (1280, 800),
         uncapped: false,
         square_pixels: false,
@@ -109,7 +111,9 @@ fn parse_play_args() -> Result<play::PlayOptions> {
         match a.as_str() {
             "--difficulty" => opts.difficulty = value("a number")?.parse()?,
             "--station" => opts.station = value("a number")?.parse()?,
-            "--keys" => opts.keyboard_mode = value("a mode")?.parse()?,
+            "--keys" => opts.control_mode = value("a mode")?.parse()?,
+            "--joystick-dat" => opts.pad.joystick_dat = Some(value("a file")?.into()),
+            "--combo" => opts.pad.combo_table = Some(value("a file")?.into()),
             "--mute" => opts.mute = true,
             "--inputs" => opts.inputs = Some(value("a file")?.into()),
             "--shot" => {

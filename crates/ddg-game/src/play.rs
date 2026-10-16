@@ -4,8 +4,9 @@
 //! is [`crate::screens::flow::StageFlow`]; there is no title screen yet, so quitting or ending
 //! the run leaves play.
 
+use crate::gamepad::{Controls, PadOptions};
 use crate::hud::{Hud, HudState};
-use crate::input::{Bindings, ButtonState, Keyboard};
+use crate::input::ButtonState;
 use crate::scene::{GameData, RouteScene, Visibility};
 use crate::screens::flow::{Action, FlowDefs, Observation, StageFlow};
 use crate::screens::pause::PauseResult;
@@ -44,7 +45,9 @@ pub struct PlayOptions {
     pub stage: usize,
     pub difficulty: usize,
     pub station: usize,
-    pub keyboard_mode: usize,
+    /// Control mode 0..=6 (0–3 keyboard, 4–6 joystick; input.md §4–§5).
+    pub control_mode: usize,
+    pub pad: PadOptions,
     pub size: (u32, u32),
     pub uncapped: bool,
     pub square_pixels: bool,
@@ -109,8 +112,7 @@ pub fn run(opts: PlayOptions) -> Result<()> {
         .get(opts.stage, opts.difficulty);
     let drive = start_drive(&tables, &opts, opts.station)?;
 
-    let keyboard = Keyboard::new(&Bindings::read(&exe)?, opts.keyboard_mode)
-        .context("keyboard modes are 0..=3")?;
+    let controls = Controls::new(&exe, opts.control_mode, &opts.pad)?;
     let cg_bytes = data.read("cg.rom")?;
     let bank = SpriteBank::new(
         &ddg_formats::cg::CgFile::parse(&cg_bytes)?,
@@ -152,7 +154,7 @@ pub fn run(opts: PlayOptions) -> Result<()> {
         data,
         visibility,
         scene,
-        keyboard,
+        controls,
         latched: DriverInput::default(),
         menu_input: MenuInput::NONE,
         saved_levers: (0, 0),
@@ -314,7 +316,7 @@ struct Play {
     visibility: Visibility,
     scene: RouteScene,
     scene_com: u32,
-    keyboard: Keyboard,
+    controls: Controls,
     /// Controls polled at the end of the last tick (the physics reads them this tick).
     latched: DriverInput,
     /// Button edges of that poll, as the screens' tasks see them this tick.
@@ -368,7 +370,7 @@ impl Play {
             return Ok(());
         }
         if self.flow.try_pause(&input, self.drive.phase(), &mut sfx) {
-            self.saved_levers = (self.keyboard.power, self.keyboard.brake);
+            self.saved_levers = (self.controls.power(), self.controls.brake());
             if let Some(s) = self.sound.as_mut() {
                 s.set_paused(true);
             }
@@ -392,7 +394,7 @@ impl Play {
         if out.segment_started {
             self.popups.clear();
             // Digital modes force P0 / EB at each station start (0x4332c0, input.md §4.1).
-            self.keyboard.reset_levers();
+            self.controls.reset_levers();
         }
         // Some messages are re-raised every tick while their condition holds (the overrun
         // message, 0x40dad0); log only what changed.
@@ -426,13 +428,18 @@ impl Play {
         let down = self.down;
         let tick = self.ticks;
         let keys = &self.script.keys;
-        let buttons = self
-            .keyboard
-            .poll(|c| down[usize::from(c)] || keys.iter().any(|&(t, k)| t == tick && k == c));
-        self.menu_input = MenuInput::from_pressed(buttons.word.pressed, None);
+        // The Shift override is allowed outside driving or while paused (input.md §6).
+        let shift_allowed = self.drive.phase() != DrivePhase::Driving || self.flow.paused();
+        let buttons = self.controls.poll(
+            |c| down[usize::from(c)] || keys.iter().any(|&(t, k)| t == tick && k == c),
+            shift_allowed,
+        );
+        // Analog-lever modes: dialog cursors follow the power notch (menus.md §1.4).
+        let notch = self.controls.is_analog().then(|| self.controls.power());
+        self.menu_input = MenuInput::from_pressed(buttons.word.pressed, notch);
         self.latched = DriverInput {
-            power: self.keyboard.power,
-            brake: self.keyboard.brake,
+            power: self.controls.power(),
+            brake: self.controls.brake(),
             horn_held: buttons.horn_held,
             horn_pressed: buttons.horn_pressed,
             confirm_pressed: buttons.confirm_pressed,
@@ -450,7 +457,8 @@ impl Play {
         if let Some(s) = self.sound.as_mut() {
             s.set_paused(false);
         }
-        (self.keyboard.power, self.keyboard.brake) = self.saved_levers;
+        let (p, b) = self.saved_levers;
+        self.controls.set_levers(p, b);
         if self.script.notches.is_empty() {
             (self.latched.power, self.latched.brake) = self.saved_levers;
         }
@@ -507,7 +515,7 @@ impl Play {
                 // 始発駅に戻る: the route again from station 0, no departure board.
                 self.drive = start_drive(&self.tables, &self.opts, 0)?;
                 self.popups.clear();
-                self.keyboard.reset_levers();
+                self.controls.reset_levers();
                 self.panel_on = true;
                 self.interpolate = false;
                 self.flow.reset();
