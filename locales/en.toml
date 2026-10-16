@@ -93,14 +93,14 @@ name = "English"
 0x1be = "Signal is clear.\nMove the train forward!"   # kind 0 進行信号が現示されています…, 384×64
 # 0x1aa "great!" and 0x1ab "good" are English art.
 0x1ac = { text = "Bonus", style = "plain" }   # kind 3 ボーナス logo (the swoosh goes too), 160×64
-0x1af = "Sudden braking"             # kind 4 急制動 EB penalty, 128×32
-0x1b0 = "Ignored a sign"             # kind 5 標識無視 whistle sign missed, 144×32
+0x1af = "Emergency braking"             # kind 4 急制動 EB penalty, 128×32
+0x1b0 = "Missed whistle sign"             # kind 5 標識無視 whistle sign missed, 144×32
 0x1b1 = "Over the speed limit"       # kind 6 制限速度超過, 192×32
-0x1b2 = "Passed your stop"           # kind 7 停車駅通過, 176×32
-0x1c6 = "Left before the lamp"       # kind 9 知らせ灯確認ミス false start, 256×32
+0x1b2 = "Overran the stop"           # kind 7 停車駅通過, 176×32
+0x1c6 = "False start"       # kind 9 知らせ灯確認ミス false start, 256×32
 0x1c7 = "Hit the buffer stop"        # kind 10 車止め激突, 176×32
-0x1c8 = "Too much horn"              # kind 11 警笛過剰, 144×32
-0x258 = "Dead section cleared"       # kind 12 セクション通過 no-power section bonus, 256×32
+0x1c8 = "Excessive horn"              # kind 11 警笛過剰, 144×32
+0x258 = "Coasted dead section"       # kind 12 セクション通過 no-power section bonus, 256×32
 0x259 = { text = "On Time", style = "plain" } # kind 13 定通 on-time pass logo (the swoosh goes too), 160×64
 0x1c5 = "Stopped short"              # kind 14 停止位置手前です, 256×32
 0x1ce = "Collision!"                 # kind 15 車両激突, 176×32
@@ -128,7 +128,7 @@ name = "English"
 0x142 = { region = [6, 4, 212, 56], text = "The limit applies from\nhere (blinking ends)\nuntil it is lifted." } # id 0xd
 0x143 = { region = [6, 4, 212, 56], text = "The limit is lifted,\nbut keep to the signal's\n70 km/h." }  # id 0xe
 0x144 = { region = [6, 4, 212, 56], text = "You coupled too gently." }                                 # id 0xf
-0x145 = { region = [6, 4, 212, 56], text = "ATC section: enjoy\nthe high-speed run!\nIt's on the house!" } # id 0x10
+0x145 = { region = [6, 4, 212, 56], text = "ATC section: enjoy\nthe high-speed run!\nIt's a bonus!" } # id 0x10
 0x146 = { region = [6, 4, 212, 56], text = "Keep to the timetable\neven at passing stations." }          # id 0x11
 0x147 = { region = [6, 4, 212, 56], text = "Stop in a dead section\nand we can't move.\nHmph!" }         # id 0x12
 0x148 = { region = [6, 4, 212, 56], text = "Please depart." }                                          # id 0x13
@@ -162,46 +162,46 @@ name = "English"
 0x44f = { region = [0, 102, 96, 34], text = "Emergency\nStop" }
 # Three-lamp set (no stage uses it, hud.md §3.9).
 0x450 = { region = [0, 104, 96, 24], text = "Clear" }                     # 進行信号
-0x451 = { region = [0, 102, 96, 42], text = "Clear\nhome" }               # 進行信号 場
-0x452 = { region = [0, 102, 96, 42], text = "Clear\nstarting" }           # 進行信号 出
+0x451 = { region = [0, 102, 96, 42], text = "Clear\nHome" }               # 進行信号 場
+0x452 = { region = [0, 102, 96, 42], text = "Clear\nStarting" }           # 進行信号 出
 0x453 = { region = [0, 97, 96, 47], text = "Caution\n45 km/h" }           # 注意信号 速度45
-0x454 = { region = [0, 97, 96, 47], text = "Caution 45\nhome" }
-0x455 = { region = [0, 97, 96, 47], text = "Caution 45\nstarting" }
+0x454 = { region = [0, 97, 96, 47], text = "Caution 45\nHome" }
+0x455 = { region = [0, 97, 96, 47], text = "Caution 45\nStarting" }
 0x456 = { region = [0, 104, 96, 24], text = "Stop" }                      # 停止信号
-0x457 = { region = [0, 102, 96, 42], text = "Stop\nhome" }
-0x458 = { region = [0, 102, 96, 42], text = "Stop\nstarting" }
+0x457 = { region = [0, 102, 96, 42], text = "Stop\nHome" }
+0x458 = { region = [0, 102, 96, 42], text = "Stop\nStarting" }
 # Four-lamp set (all stages).
 0x470 = { region = [0, 112, 96, 24], text = "Stop" }                      # 停止信号
-0x471 = { region = [0, 104, 96, 40], text = "Stop\nhome" }
-0x472 = { region = [0, 104, 96, 40], text = "Stop\nstarting" }
+0x471 = { region = [0, 104, 96, 40], text = "Stop\nHome" }
+0x472 = { region = [0, 104, 96, 40], text = "Stop\nStarting" }
 0x473 = { region = [0, 97, 96, 47], text = "Restricted\n25 km/h" }        # 警戒信号 速度25
-0x474 = { region = [0, 97, 96, 47], text = "Restrict 25\nhome" }
-0x475 = { region = [0, 97, 96, 47], text = "Restrict 25\nstarting" }
+0x474 = { region = [0, 97, 96, 47], text = "Restricted 25\nHome" }
+0x475 = { region = [0, 97, 96, 47], text = "Restricted 25\nStarting" }
 0x476 = { region = [0, 97, 96, 47], text = "Caution\n45 km/h" }           # 注意信号 速度45
-0x477 = { region = [0, 97, 96, 47], text = "Caution 45\nhome" }
-0x478 = { region = [0, 97, 96, 47], text = "Caution 45\nstarting" }
+0x477 = { region = [0, 97, 96, 47], text = "Caution 45\nHome" }
+0x478 = { region = [0, 97, 96, 47], text = "Caution 45\nStarting" }
 0x479 = { region = [0, 97, 96, 47], text = "Reduce\n70 km/h" }            # 減速信号 速度70
-0x47a = { region = [0, 97, 96, 47], text = "Reduce 70\nhome" }
-0x47b = { region = [0, 97, 96, 47], text = "Reduce 70\nstarting" }
+0x47a = { region = [0, 97, 96, 47], text = "Reduce 70\nHome" }
+0x47b = { region = [0, 97, 96, 47], text = "Reduce 70\nStarting" }
 0x47c = { region = [0, 112, 96, 24], text = "Clear" }                     # 進行信号
-0x47d = { region = [0, 104, 96, 40], text = "Clear\nhome" }
-0x47e = { region = [0, 104, 96, 40], text = "Clear\nstarting" }
+0x47d = { region = [0, 104, 96, 40], text = "Clear\nHome" }
+0x47e = { region = [0, 104, 96, 40], text = "Clear\nStarting" }
 0x47f = { region = [0, 118, 96, 26], text = "High-Speed" }                # 高速進行 (stages 7–9)
 # Repeater signals 中継信号.
-0x480 = { region = [0, 97, 96, 47], text = "Stop\nrepeater" }             # 停止
-0x481 = { region = [0, 97, 96, 47], text = "Limit\nrepeater" }            # 制限
-0x482 = { region = [0, 97, 96, 47], text = "Limit 25\nrepeater" }         # 制限25km/h
-0x483 = { region = [0, 97, 96, 47], text = "Limit 45\nrepeater" }         # 制限45km/h
-0x484 = { region = [0, 97, 96, 47], text = "Limit 70\nrepeater" }         # 制限70km/h
-0x485 = { region = [0, 97, 96, 47], text = "Clear\nrepeater" }            # 進行
-0x486 = { region = [0, 97, 96, 47], text = "High-Speed\nrepeater" }       # 高速進行
+0x480 = { region = [0, 97, 96, 47], text = "Stop\nRepeater" }             # 停止
+0x481 = { region = [0, 97, 96, 47], text = "Limit\nRepeater" }            # 制限
+0x482 = { region = [0, 97, 96, 47], text = "Limit 25\nRepeater" }         # 制限25km/h
+0x483 = { region = [0, 97, 96, 47], text = "Limit 45\nRepeater" }         # 制限45km/h
+0x484 = { region = [0, 97, 96, 47], text = "Limit 70\nRepeater" }         # 制限70km/h
+0x485 = { region = [0, 97, 96, 47], text = "Clear\nRepeater" }            # 進行
+0x486 = { region = [0, 97, 96, 47], text = "High-Speed\nRepeater" }       # 高速進行
 
 # ---------------------------------------------------------------------------------------------
 # Signs (hud.md §3.10), 96×96: the caption under the sign (lettering on transparency).
 
 0x45b = { region = [0, 66, 96, 30], style = "plain", text = "Level" }                      # 勾配なし
-0x45c = { region = [0, 66, 96, 30], style = "plain", text = "Upgrade" }                    # 上り勾配
-0x45d = { region = [0, 66, 96, 30], style = "plain", text = "Downgrade" }                  # 下り勾配
+0x45c = { region = [0, 66, 96, 30], style = "plain", text = "Uphill" }                    # 上り勾配
+0x45d = { region = [0, 66, 96, 30], style = "plain", text = "Downhill" }                  # 下り勾配
 0x45e = { region = [0, 66, 96, 30], style = "plain", text = "Limit" }                      # 速度制限 20
 0x45f = { region = [0, 66, 96, 30], style = "plain", text = "Limit" }                      # 25
 0x460 = { region = [0, 66, 96, 30], style = "plain", text = "Limit" }                      # 30
@@ -320,10 +320,10 @@ name = "English"
 # so only the words are replaced; Latin art (Cm, EXCELLENT!, m×N) stays.
 
 0x1a0 = "Result"                     # 運転評価 header, 176×48
-0x1c9 = { parts = [{ region = [12, 0, 196, 32], text = "Stop point", align = "left" }, { region = [384, 0, 96, 32], text = "Pass!" }] }   # 停止位置 nn Cm 合格!
-0x1a6 = { parts = [{ region = [12, 0, 196, 32], text = "Stop point", align = "left" }, { region = [360, 0, 120, 32], text = "Pass!" }] }   # 停止位置 … 合格!
-0x1cc = { parts = [{ region = [0, 0, 128, 32], text = "Stop point", align = "left" }, { region = [372, 0, 104, 32], text = "Pass!!" }] }   # 停止位置 EXCELLENT! … Cm 合格!!
-0x1c0 = "Re-powered in platform"     # 駅構内再加速 re-power penalty row, 192×32
+0x1c9 = { parts = [{ region = [12, 0, 196, 32], text = "Stop point", align = "left" }, { region = [384, 0, 96, 32], text = "OK!" }] }   # 停止位置 nn Cm 合格!
+0x1a6 = { parts = [{ region = [12, 0, 196, 32], text = "Stop point", align = "left" }, { region = [360, 0, 120, 32], text = "OK!" }] }   # 停止位置 … 合格!
+0x1cc = { parts = [{ region = [0, 0, 128, 32], text = "Stop point", align = "left" }, { region = [372, 0, 104, 32], text = "OK!!" }] }   # 停止位置 EXCELLENT! … Cm 合格!!
+0x1c0 = "Re-powered at station"     # 駅構内再加速 re-power penalty row, 192×32
 0x1c4 = "Penalty"                    # 減点, 64×32
 0x1bf = "sec"                        # 秒, 48×32
 0x1ca = "Emergency stop"             # 非常制動停車 EB row, 192×32
@@ -339,7 +339,7 @@ name = "English"
 0x1a8 = "Early"                      # 早着, 64×32
 0x1cb = "Behind schedule"            # ダイヤ遅れ, 176×32
 0x1c1 = "Entered too fast"           # 駅進入速度超過, 224×32
-0x1c2 = "Pass!"                      # 合格!, 80×32
+0x1c2 = "OK!"                        # 合格!, 80×32
 
 # ---------------------------------------------------------------------------------------------
 # Continue, run end (menus.md §10, §11.3)
@@ -352,7 +352,7 @@ name = "English"
 0x3fd = { region = [8, 20, 176, 84], text = "A railfan's\ndream run!" }     # 鉄ちゃん感動です! grade 100
 0x3fb = { region = [8, 20, 176, 84], text = "Superb\ndriving!" }            # 素晴らしい運転でした! grade ≥ 90
 # Not traced (likely unused on PC):
-0x24c = "Hazard avoided: Pass!"      # 危険回避合格!, 224×32
+0x24c = "Hazard avoided: OK!"      # 危険回避合格!, 224×32
 0x24e = "Accident"                   # 事故, 192×64
 0x24f = { parts = [{ region = [0, 0, 192, 64], text = "Accident" }, { region = [0, 64, 192, 32], text = "Too fast!" }] }  # 事故 速度の出し過ぎ, 192×96
 
