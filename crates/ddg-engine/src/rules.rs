@@ -87,6 +87,12 @@ const DEPART_CHECK_AT: i32 = 200;
 const DEPART_AT: i32 = 0xc9;
 const DEPART_FREEZE: i32 = 0x46;
 const DEPART_HOLD_AT: i32 = 0xc7;
+/// Departure signal (0x413370): red at offset + 100 for 100 ticks (pushes at 0x413612), then
+/// the real aspect at offset + 0xa0 until 10 m travelled (0x413683).
+const DEPART_SIGNAL_RED_AT: i32 = 100;
+const DEPART_SIGNAL_RED_TICKS: i32 = 100;
+const DEPART_SIGNAL_AT: i32 = 0xa0;
+const DEPART_SIGNAL_DISTANCE_M: i32 = 10;
 /// The task ends once the train moves at ≥ 0.04 m/s (double at 0x4594d8, 0x413723).
 const DEPART_MOVING_MPS: f64 = 0.04;
 /// Maximum remaining time: 0x3e7 (0x410104).
@@ -96,6 +102,9 @@ const MAX_BLOCKS: usize = 40;
 /// Ticks at the end of the red-signal / ATS recovery in which 0x40a0a0 no longer zeroes the
 /// speed: 10 `Task_Tick`s after the 60-tick standstill (0x40a548) plus the loop's own.
 pub const RECOVERY_RELEASE_TICKS: u32 = 11;
+/// Hold ticks left when the obstacle recovery shows its green signal: it precedes the final
+/// 30 standstill `Task_Tick`s of 0x40a0a0's obstacle branch and the driving loop's own one.
+const OBSTACLE_SIGNAL_AT: u32 = 31;
 /// Extra standstill after stopping at the final station (0x40aaa5: 0x78 `Task_Tick`s).
 const FINAL_STATION_HOLD: u32 = 0x78;
 /// Sentinel signal position for "no signal" (0xfffffc19 = −999, 0x40b970).
@@ -207,6 +216,9 @@ pub struct RuleTables {
     pub scripted_signals: Vec<ScriptedSignal>,
     /// Signal speeds above the margin for aspects 1, 2, 3 (f32 at 0x45951c, 0x459518, 0x459514).
     pub signal_speed_kmh: [f32; 3],
+    /// 0x466c08: per stage `[three_lamp_set, repeater_set]` (i32 pairs, stride 8), the sprite
+    /// sets `Signal_Show` 0x411500 uses for display variant 1 and for repeaters.
+    pub signal_sets: [[i32; 2]; STAGE_COUNT],
 }
 
 /// Addresses of the early-running threshold tables, in [`RuleTables::early_ticks`] order.
@@ -277,6 +289,11 @@ impl RuleTables {
         }
         let r = exe.reader_at(0x459514, 12, "rule table")?;
         let signal_speed_kmh = [r.f32(8)?, r.f32(4)?, r.f32(0)?];
+        let mut signal_sets = [[0i32; 2]; STAGE_COUNT];
+        let r = exe.reader_at(SIGNAL_SETS_VA, 8 * STAGE_COUNT, "rule table")?;
+        for (i, v) in signal_sets.iter_mut().enumerate() {
+            *v = [r.i32(8 * i)?, r.i32(8 * i + 4)?];
+        }
 
         Ok(Self {
             limit_margin_kmh: t(0x459870)?,
@@ -309,7 +326,192 @@ impl RuleTables {
             scripted_patterns,
             scripted_signals,
             signal_speed_kmh,
+            signal_sets,
         })
+    }
+}
+
+// --------------------------------------------------------------------------------------------
+// Signal sprite (Signal_Show 0x411500 and its task 0x411940), docs/re/hud.md §3.9
+// --------------------------------------------------------------------------------------------
+
+/// Signal sprites, built from immediates on the stack in `Signal_Show` (0x411500) and indexed
+/// `aspect + base`, see [`signal_sprite`]. Verified against the code listing.
+pub const SIGNAL_SPRITES: [u16; 65] = [
+    0x451, 0x454, 0x454, 0x454, 0x457, // home: variant 1 set 0 (3-lamp)
+    0x47d, 0x47a, 0x477, 0x474, 0x471, // home: variant 0, or variant 1 set 1 (4-lamp)
+    0x47f, 0x47a, 0x477, 0x474, 0x471, // home: variant 1 set 2
+    0x452, 0x455, 0x455, 0x455, 0x458, // starting: variant 1 set 0
+    0x47e, 0x47b, 0x478, 0x475, 0x472, // starting: variant 0 / set 1
+    0x47f, 0x47b, 0x478, 0x475, 0x472, // starting: variant 1 set 2
+    0x450, 0x453, 0x453, 0x453, 0x456, // block: variant 1 set 0
+    0x47c, 0x479, 0x476, 0x473, 0x470, // block: variant 0 / set 1
+    0x47f, 0x479, 0x476, 0x473, 0x470, // block: variant 1 set 2
+    0x485, 0x484, 0x483, 0x482, 0x480, // repeater set 0
+    0x485, 0x481, 0x481, 0x481, 0x480, // repeater set 1
+    0x486, 0x484, 0x483, 0x482, 0x480, // repeater set 2
+    0x486, 0x481, 0x481, 0x481, 0x480, // repeater set 3
+];
+/// Per-stage `{i32 three_lamp_set, i32 repeater_set}`, stride 8 (read by 0x411500).
+const SIGNAL_SETS_VA: u32 = 0x466c08;
+/// Bit of the aspect argument that asks for a forced redisplay (0x411500).
+pub const SIGNAL_FORCED: i32 = 0x100;
+/// A new signal task waits this many updates before it first draws (`+0x38 = 5`, 0x4118c7).
+const SIGNAL_DELAY_TICKS: i32 = 5;
+/// A forced redisplay keeps the old sprite this many more updates (`old+0x34 = 5`, 0x411863).
+const SIGNAL_HANDOVER_TICKS: i32 = 5;
+/// Showing a green releases the pending green-signal hint as `Hint_Show(id, 0, 220)` (0x411774).
+const GREEN_HINT_DISTANCE_M: i32 = 0xdc;
+
+/// The sprite `Signal_Show` (0x411500) picks for `aspect` 0..=4 (without the forced bit),
+/// display `mode` (0 block, 1 home, 2 starting, 3 repeater), display variant `0x8570c2` and the
+/// stage's `[three_lamp_set, repeater_set]` (0x466c08). `None` for an invalid aspect or mode,
+/// where the original returns without showing anything.
+pub fn signal_sprite(aspect: i32, mode: i32, variant: i16, sets: [i32; 2]) -> Option<u16> {
+    let a = usize::try_from(aspect).ok().filter(|&a| a <= 4)?;
+    let set = |s: i32| usize::try_from(s).unwrap_or(0) * 5;
+    let base = match (variant & 1, mode) {
+        (_, 3) => set(sets[1]) + 0x2d,
+        (0, 0) => 0x23,
+        (0, 1) => 5,
+        (0, 2) => 0x14,
+        (_, 0) => set(sets[0]) + 0x1e,
+        (_, 1) => set(sets[0]),
+        (_, 2) => set(sets[0]) + 0xf,
+        _ => return None,
+    };
+    SIGNAL_SPRITES.get(a + base).copied()
+}
+
+/// One signal display task (0x411940).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SignalTask {
+    /// Tilemap id (`+0x30`).
+    sprite: u16,
+    /// Tick counter (`+0x34`): the display lasts while it is ≥ 0 when no distance is set.
+    ticks: i32,
+    /// Updates left before the first draw (`+0x38`); −1 once drawing.
+    delay: i32,
+    /// Enabled (`+0x3c`); cleared to stop the task at its next update.
+    enabled: bool,
+    /// Odometer at which the display ends (`+0x48` = trunc(odometer) + distance), 0 = none.
+    until_m: i32,
+}
+
+/// The signal sprite in HUD slot 0x60: `Signal_Show` 0x411500 creates a display task (0x411940)
+/// and keeps a pointer to the newest one (`0x856d30`); every task draws the slot while it lives
+/// and hides it when it ends (destructor 0x4119d0). Tasks update in creation order, after the
+/// calls of the same tick. The rules need this for the "already shown" test, the HUD for the
+/// sprite itself.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SignalHud {
+    /// Live tasks in creation order.
+    tasks: Vec<SignalTask>,
+    /// Index of the newest task in `tasks` (`0x856d30`), until it ends.
+    current: Option<usize>,
+    /// Slot 0x60's tilemap after the last update; sticky between draws.
+    slot: Option<u16>,
+}
+
+impl SignalHud {
+    /// The task part of 0x411500 for a valid sprite: does nothing (`false`) if the newest task
+    /// already shows `sprite`. Otherwise the newest task is stopped, or, when `forced`, kept for
+    /// five more updates without its distance, and a new task is created. `start_m` is the
+    /// truncated odometer at the call; `distance_m` 0 means "for `ticks` updates".
+    pub fn show(
+        &mut self,
+        sprite: u16,
+        forced: bool,
+        ticks: i32,
+        distance_m: i32,
+        start_m: i32,
+    ) -> bool {
+        if let Some(cur) = self.current.and_then(|i| self.tasks.get_mut(i)) {
+            if cur.sprite == sprite {
+                return false;
+            }
+            if forced {
+                cur.until_m = 0;
+                cur.ticks = SIGNAL_HANDOVER_TICKS;
+            } else {
+                cur.enabled = false;
+            }
+        }
+        self.tasks.push(SignalTask {
+            sprite,
+            ticks,
+            delay: SIGNAL_DELAY_TICKS,
+            enabled: true,
+            until_m: if distance_m == 0 {
+                0
+            } else {
+                start_m.wrapping_add(distance_m)
+            },
+        });
+        self.current = Some(self.tasks.len() - 1);
+        true
+    }
+
+    /// 0x411500 with a negative aspect: the newest task stops at its next update.
+    pub fn hide(&mut self) {
+        if let Some(cur) = self.current.and_then(|i| self.tasks.get_mut(i)) {
+            cur.enabled = false;
+        }
+    }
+
+    /// One update of every task (0x411940) with the odometer `0x857004` as it is then.
+    pub fn tick(&mut self, odometer_m: f32) {
+        let mut i = 0;
+        while i < self.tasks.len() {
+            let t = &mut self.tasks[i];
+            let alive = if t.delay > 0 {
+                t.delay -= 1;
+                true
+            } else {
+                if t.delay == 0 {
+                    t.delay = -1;
+                } else {
+                    t.ticks -= 1;
+                }
+                let showing = if t.until_m == 0 {
+                    t.ticks >= 0
+                } else {
+                    // fild +0x48; fsub 0x857004; fcomp 0.0f (0x458b10) at 0x411990.
+                    f64::from(t.until_m) - f64::from(odometer_m) >= 0.0
+                };
+                if showing && t.enabled {
+                    self.slot = Some(t.sprite);
+                }
+                showing && t.enabled
+            };
+            if alive {
+                i += 1;
+                continue;
+            }
+            // Destructor 0x4119d0: hide the slot, forget the task if it is the newest.
+            self.tasks.remove(i);
+            self.slot = None;
+            self.current = match self.current {
+                Some(c) if c == i => None,
+                Some(c) if c > i => Some(c - 1),
+                c => c,
+            };
+        }
+    }
+
+    /// Removes every task and hides the slot.
+    pub fn clear(&mut self) {
+        *self = Self::default();
+    }
+
+    /// Slot 0x60's tilemap after the last update, `None` = hidden.
+    pub fn slot(&self) -> Option<u16> {
+        self.slot
+    }
+
+    /// The sprite of the newest live task (`0x856d30 + 0x30`).
+    pub fn current_sprite(&self) -> Option<u16> {
+        self.current.map(|i| self.tasks[i].sprite)
     }
 }
 
@@ -404,8 +606,33 @@ pub enum RuleEvent {
     Time { reason: TimeReason, seconds: i32 },
     /// One second of lateness drained (0x40dad0), `seconds` negative.
     LateDrain { seconds: i32 },
-    /// A signal was sighted and shown: aspect 0 green … 4 stop.
-    SignalShown { aspect: i16, display: i16 },
+    /// `Signal_Show` 0x411500 created a signal display task (HUD slot 0x60, hud.md §3.9).
+    /// Raised only when the call was not a no-op; feed it to a [`SignalHud`] to draw it.
+    SignalShown {
+        /// 0 green … 4 stop (the forced bit 0x100 masked off).
+        aspect: i16,
+        /// The call had the 0x100 bit: the previous sprite stays 5 more ticks.
+        forced: bool,
+        /// 0 block, 1 home (場内), 2 starting (出発), 3 repeater (中継).
+        display: i16,
+        /// Display variant `0x8570c2` in effect for the call.
+        variant: i16,
+        /// Shown for this many ticks after the 5-tick delay when `distance_m` is 0.
+        ticks: i32,
+        /// Shown until the odometer passes `start_m + distance_m`, 0 = use `ticks`.
+        distance_m: i32,
+        /// Truncated odometer `0x857004` at the call.
+        start_m: i32,
+    },
+    /// `Signal_Show(-1, …)`: the signal sprite stops at the next HUD update.
+    SignalHidden,
+    /// `Hint_Show(id, ticks, distance)` 0x411f20 (hud.md §3.12). Raised only for the pending
+    /// green-signal hint (`0x857224`, course event 20) that a green signal releases.
+    HintShown {
+        id: i16,
+        ticks: i32,
+        distance_m: i32,
+    },
     /// A speed limit sign: limit in km/h, notice distance and enforcement offset in m.
     SpeedLimit {
         kmh: i32,
@@ -623,7 +850,16 @@ pub struct Rules {
     pub repeater_m: i32,
     /// Signal display variant (`0x8570c2`).
     pub signal_variant: i16,
-    displayed: Option<(i16, i16, i16)>,
+    /// The HUD signal tasks (`Signal_Show` 0x411500), for its "already shown" test.
+    pub signal_hud: SignalHud,
+    /// A `Task_Tick` ran since the last signal-task update (the update needs the odometer after
+    /// the physics step, which the next tick's input carries).
+    signal_hud_pending: bool,
+    /// The stage loop was left (0x4085e0): report its `Signal_Show(-1)` with the next step.
+    signal_hide_pending: bool,
+    /// Pending green-signal hint (`0x857224`, i16, −1 none): course event 20, shown by the next
+    /// green signal.
+    pub green_hint: i16,
     /// Signal speeds per aspect, km/h (stack array in 0x40b970 / 0x40c010).
     speed_by_aspect: [f32; 5],
 
@@ -785,7 +1021,10 @@ impl Rules {
             restricted_blocks: 0,
             repeater_m: -1,
             signal_variant: 0,
-            displayed: None,
+            signal_hud: SignalHud::default(),
+            signal_hud_pending: false,
+            signal_hide_pending: false,
+            green_hint: -1,
             speed_by_aspect: [GREEN_KMH, 0.0, 0.0, 0.0, 0.0],
             limit_mps: NO_LIMIT_MPS,
             limit_state: 0,
@@ -925,6 +1164,7 @@ impl Rules {
     /// 0x40cf40: per-segment reset.
     fn reset_segment_state(&mut self) {
         self.obstacle = 0;
+        self.green_hint = -1;
         self.horn_deadline = 0;
         self.horn_state = -1;
         self.ats = 0;
@@ -962,7 +1202,7 @@ impl Rules {
     }
 
     /// One update of the departure task (0x413370), inside `Task_Tick` after the train task.
-    fn departure_task(&mut self, speed_after: f32, brake_applied: i32) {
+    fn departure_task(&mut self, out: &mut TickOutput, speed_after: f32, brake_applied: i32) {
         let c = self.departure_counter;
         let base = self.departure_base;
         if c > DEPART_FALSE_START_FROM
@@ -977,6 +1217,17 @@ impl Rules {
         if c == base + DEPART_CHECK_AT && self.departure_released > 0 {
             // Brake released during the last 40 ticks of the countdown (0x4136fd).
             self.stat(2, 1);
+        }
+        if c == base + DEPART_SIGNAL_RED_AT {
+            // 0x41361a: the starting signal shows red for 100 ticks.
+            let variant = self.signal_variant;
+            self.signal_show(out, 4, 2, DEPART_SIGNAL_RED_TICKS, 0, variant);
+        }
+        if c == base + DEPART_SIGNAL_AT {
+            // 0x413696: then the aspect in force, forced, until 10 m travelled, looked up with
+            // `0x8570c2` set to 0 for the call.
+            let aspect = i32::from(self.aspect) | SIGNAL_FORCED;
+            self.signal_show(out, aspect, 2, 0, DEPART_SIGNAL_DISTANCE_M, 0);
         }
         if c >= base + DEPART_AT {
             self.departure_done = true;
@@ -1381,15 +1632,69 @@ impl Rules {
         self.signal_enforce_odo = 0;
     }
 
-    /// 0x411500's de-duplication: showing the sprite already on screen does nothing.
-    fn display(&mut self, out: &mut TickOutput, aspect: i16, display: i16) -> bool {
-        let key = (aspect, display, self.signal_variant & 1);
-        if self.displayed == Some(key) {
+    /// `Signal_Show(aspect, mode, ticks, distance)` 0x411500 with the display variant in
+    /// effect: `aspect` may carry [`SIGNAL_FORCED`]; a negative aspect hides the sprite.
+    /// Returns whether a new display task was created (the original's return value).
+    fn signal_show(
+        &mut self,
+        out: &mut TickOutput,
+        aspect: i32,
+        mode: i16,
+        ticks: i32,
+        distance_m: i32,
+        variant: i16,
+    ) -> bool {
+        if aspect < 0 {
+            if self.signal_hud.current_sprite().is_some() {
+                self.signal_hud.hide();
+                out.events.push(RuleEvent::SignalHidden);
+            }
             return false;
         }
-        self.displayed = Some(key);
-        out.events.push(RuleEvent::SignalShown { aspect, display });
+        let forced = aspect & SIGNAL_FORCED != 0;
+        let aspect = if forced { aspect & 0xff } else { aspect };
+        if aspect > 4 {
+            return false;
+        }
+        // The hint goes out before the "already shown" test (0x411760).
+        if aspect == 0 && self.green_hint != -1 {
+            out.events.push(RuleEvent::HintShown {
+                id: self.green_hint,
+                ticks: 0,
+                distance_m: GREEN_HINT_DISTANCE_M,
+            });
+            self.green_hint = -1;
+        }
+        let sets = self.tables.signal_sets[self.stage];
+        let Some(sprite) = signal_sprite(aspect, i32::from(mode), variant, sets) else {
+            return false;
+        };
+        let start_m = trunc(f64::from(self.odometer_m));
+        if !self
+            .signal_hud
+            .show(sprite, forced, ticks, distance_m, start_m)
+        {
+            return false;
+        }
+        out.events.push(RuleEvent::SignalShown {
+            aspect: aspect as i16,
+            forced,
+            display: mode,
+            variant,
+            ticks,
+            distance_m,
+            start_m,
+        });
         true
+    }
+
+    /// One update of the signal display tasks for the last `Task_Tick`, with the odometer the
+    /// physics left (0x411940 runs in list 3, after the train task).
+    fn flush_signal_hud(&mut self, odometer_m: f32) {
+        if self.signal_hud_pending {
+            self.signal_hud_pending = false;
+            self.signal_hud.tick(odometer_m);
+        }
     }
 
     fn display_type(&self) -> i16 {
@@ -1432,7 +1737,9 @@ impl Rules {
         let display = self.display_type();
         if self.repeater_m > 0 {
             if self.ats <= 3 {
-                self.display(out, self.aspect, 3);
+                // Distance = the repeater offset `0x856fb4` (0x40c010).
+                let (aspect, offset, variant) = (self.aspect, self.repeater_m, self.signal_variant);
+                self.signal_show(out, i32::from(aspect), 3, 0, offset, variant);
                 let delta = self.repeater_m;
                 self.repeater_m = 0;
                 if let Some(b) = self.blocks.get_mut(self.block + 1) {
@@ -1448,13 +1755,15 @@ impl Rules {
             self.repeater_m = -1;
             return;
         }
-        if !self.display(out, self.aspect, display) {
+        // Shown until the signal itself: distance = the sight distance of block k + 1.
+        let sight = self.blocks.get(k + 1).map_or(0, |b| b.sight_m);
+        let (aspect, variant) = (self.aspect, self.signal_variant);
+        if !self.signal_show(out, i32::from(aspect), display, 0, sight, variant) {
             self.repeater_m = -1;
             return;
         }
         self.signal_state = 0;
         if self.aspect != 0 {
-            let sight = self.blocks.get(k + 1).map_or(0, |b| b.sight_m);
             self.signal_enforce_odo = trunc(f64::from(sight) + f64::from(self.odometer_m));
             self.signal_limit_mps = self.aspect_speed_mps(self.aspect);
         } else {
@@ -1651,6 +1960,7 @@ impl Rules {
                     }
                 }
                 22 => self.weather_on = false,
+                20 => self.green_hint = a,
                 _ => out.events.push(RuleEvent::Script {
                     kind: e.kind,
                     args: e.args,
@@ -1807,6 +2117,10 @@ impl Rules {
             self.jolt_cooldown += 1;
         }
         if self.obstacle & 0xf == 1 {
+            // NaviAnim(0) 0x410cb0: the emergency-stop signal takes over slot 0x60 and hides the
+            // signal sprite (`Signal_Show(-1, …)`).
+            let variant = self.signal_variant;
+            self.signal_show(out, -1, -1, -1, -1, variant);
             self.obstacle += 1;
         }
 
@@ -1926,39 +2240,63 @@ impl Rules {
         // The first of the 60 standstill ticks (0x40a238: 0x857234 = 0 before each `Task_Tick`).
         self.speed_mps = 0.0;
         out.force_stop = true;
-        // Is a signal in sight ahead? If not, re-powering in the approach is excused; past the
-        // home signal the block index drops to 0.
-        if self.repeater_m != 0 {
-            let sight = self.blocks.get(self.block + 1).map_or(0, |b| b.sight_m);
-            let mut in_sight = false;
-            for i in (1..=self.block_count.min(self.blocks.len() - 1)).rev() {
-                if i == 2 {
-                    continue;
-                }
-                if self.blocks[i].sight_pos_m == NO_SIGNAL {
-                    if self.dist_m < self.blocks[2].sight_pos_m as f32 {
-                        self.block = 0;
-                    }
-                    break;
-                }
-                let ahead = self.blocks[i].sight_pos_m - self.dist_round_m;
-                if ahead > 0 && ahead < sight {
-                    in_sight = true;
-                    break;
-                }
-            }
-            if !in_sight && self.target_stops && self.approach > 0 {
-                self.repower_excused = 1;
-            }
-        }
-        self.displayed = None;
-        self.display(out, 0, 2);
         self.phase = Phase::Holding {
             ticks: 60 + 10,
             then: AfterHold::Resume,
         };
     }
 
+    /// The end of the red-signal / ATS recovery (0x40a45e, after the 60 standstill ticks): is a
+    /// signal in sight ahead? Past the home signal the block index drops to 0; with no signal in
+    /// sight, re-powering in the approach is excused. Then the HUD shows a green (forced) until
+    /// that signal, or for 60 ticks (`Signal_Show(0x100, mode, ticks, distance)` at 0x40a540).
+    fn recovery_signal(&mut self, out: &mut TickOutput) {
+        let (mode, ticks, distance) = if self.repeater_m == 0 {
+            // `0x856fb4` = 0 (a repeater was just shown): mode 3 for this distance (0x40a529).
+            let pos0 = self.blocks.first().map_or(NO_SIGNAL, |b| b.sight_pos_m);
+            (3, 0, self.dist_round_m - pos0 + 1)
+        } else {
+            let sight = self.blocks.get(self.block + 1).map_or(0, |b| b.sight_m);
+            let mut found = None;
+            let mut past_home = false;
+            for i in (1..=self.block_count.min(self.blocks.len().saturating_sub(1))).rev() {
+                if i == 2 {
+                    continue;
+                }
+                if self.blocks[i].sight_pos_m == NO_SIGNAL {
+                    if self.dist_m < self.blocks[2].sight_pos_m as f32 {
+                        self.block = 0;
+                        past_home = true;
+                    }
+                    break;
+                }
+                let ahead = self.blocks[i].sight_pos_m - self.dist_round_m;
+                if ahead > 0 && ahead < sight {
+                    found = Some((i, ahead));
+                    break;
+                }
+            }
+            let mode = if past_home || self.block == 0 {
+                2
+            } else if self.block <= 2 {
+                1
+            } else {
+                0
+            };
+            match found {
+                Some((i, ahead)) => (mode, 0, self.blocks[i].sight_m - ahead),
+                None => {
+                    if self.target_stops && self.approach > 0 {
+                        self.repower_excused = 1;
+                    }
+                    // 0x3c ticks (0x40a513).
+                    (mode, 0x3c, 0)
+                }
+            }
+        };
+        let variant = self.signal_variant;
+        self.signal_show(out, SIGNAL_FORCED, mode, ticks, distance, variant);
+    }
     /// The "stopped short / between stations" branch of 0x40a0a0.
     fn stopped_between(&mut self, out: &mut TickOutput) {
         self.stopped_ticks += 1;
@@ -2144,6 +2482,7 @@ impl Rules {
     }
 
     fn latch_input(&mut self, input: &TickInput) {
+        self.flush_signal_hud(input.odometer_m);
         self.input_power = input.power;
         self.input_brake = input.brake;
         self.speed_mps = input.speed_mps;
@@ -2172,6 +2511,7 @@ impl Rules {
         self.latch_input(input);
         self.train_task_tick(&mut out, train);
         self.hud_tick();
+        self.signal_hud_pending = true;
         out
     }
 
@@ -2210,6 +2550,14 @@ impl Rules {
     pub fn leave_driving_loop(&mut self) {
         self.ats = 0;
         self.ats_chime_from = -1;
+        // 0x4158b0 (game over) and 0x4085e0 both call `Signal_Show(-1, …)`; the event goes out
+        // with the next step.
+        let odometer = self.odometer_m;
+        self.flush_signal_hud(odometer);
+        if self.signal_hud.current_sprite().is_some() {
+            self.signal_hud.hide();
+            self.signal_hide_pending = true;
+        }
     }
 
     /// Departure: leave the pre-departure wait (0x4080d0 after the `0x800` loop).
@@ -2241,9 +2589,21 @@ impl Rules {
             self.depart();
         }
         self.latch_input(input);
+        if std::mem::take(&mut self.signal_hide_pending) {
+            out.events.push(RuleEvent::SignalHidden);
+        }
         match self.phase {
             Phase::Driving => self.drive(&mut out, input),
             Phase::Holding { ticks, then } => {
+                if then == AfterHold::Resume && ticks == RECOVERY_RELEASE_TICKS {
+                    self.recovery_signal(&mut out);
+                }
+                if then == AfterHold::ObstacleCleared && ticks == OBSTACLE_SIGNAL_AT {
+                    // 0x40a0a0, obstacle branch: `Signal_Show(0, 0, 0, 5)`, a green block signal
+                    // for 5 m, before the last 30 standstill ticks.
+                    let variant = self.signal_variant;
+                    self.signal_show(&mut out, 0, 0, 0, 5, variant);
+                }
                 // 0x40a0a0 zeroes 0x857234 before each `Task_Tick` of its wait loops, except in
                 // the recovery's last 10 ticks and the loop's own `Task_Tick` after it.
                 if !(then == AfterHold::Resume && ticks <= RECOVERY_RELEASE_TICKS) {
@@ -2295,9 +2655,10 @@ impl Rules {
         if self.phase == Phase::PreDeparture && !self.departure_done {
             let speed = train.map_or(self.speed_mps, |t| t.speed_after);
             let brake = train.map_or(self.input_brake, |t| t.brake_applied);
-            self.departure_task(speed, brake);
+            self.departure_task(out, speed, brake);
         }
         self.hud_tick();
+        self.signal_hud_pending = true;
     }
 
     fn drive(&mut self, out: &mut TickOutput, input: &TickInput) {
@@ -2408,7 +2769,6 @@ impl Rules {
         self.final_station = self.is_final_next();
         self.reset_segment_state();
         self.clock += DWELL_TICKS;
-        self.displayed = None;
         // 0x40d340 may also start scripted weather here when the global frame counter is a
         // multiple of 4; that depends on non-rule state and is left to the caller.
         self.signals_pending = true;
@@ -2449,7 +2809,9 @@ impl Rules {
         self.continues += 1;
         self.clock_skew = 0;
         self.final_station = self.is_final_next();
-        self.displayed = None;
+        self.signal_hud.clear();
+        self.signal_hud_pending = false;
+        self.signal_hide_pending = false;
         if self.stage == 0 {
             self.weather_level = 0;
             self.weather_ticks = 0;
@@ -2606,6 +2968,7 @@ mod tests {
             scripted_patterns: [[1, 4, 4, 4, 4], [1, 2, 4, 4, 4]],
             scripted_signals: Vec::new(),
             signal_speed_kmh: [70.0, 45.0, 25.0],
+            signal_sets: [[0, 1]; STAGE_COUNT],
         }
     }
 
@@ -2908,5 +3271,137 @@ mod tests {
                 .windows(2)
                 .all(|w| w[0].sight_pos_m < w[1].sight_pos_m)
         );
+    }
+
+    #[test]
+    fn signal_sprites_follow_the_table() {
+        let sets = [0, 1];
+        // 4-lamp block signal: green 0x47c … red 0x470; starting green 0x47e.
+        assert_eq!(signal_sprite(0, 0, 0, sets), Some(0x47c));
+        assert_eq!(signal_sprite(4, 0, 0, sets), Some(0x470));
+        assert_eq!(signal_sprite(0, 2, 0, sets), Some(0x47e));
+        // 3-lamp set 0 home; repeaters use their own set in both variants.
+        assert_eq!(signal_sprite(2, 1, 1, sets), Some(0x454));
+        assert_eq!(signal_sprite(1, 3, 0, sets), Some(0x481));
+        assert_eq!(signal_sprite(1, 3, 1, sets), Some(0x481));
+        assert_eq!(signal_sprite(5, 0, 0, sets), None);
+        assert_eq!(signal_sprite(0, 4, 0, sets), None);
+    }
+
+    fn shown(out: &TickOutput) -> Vec<RuleEvent> {
+        out.events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    RuleEvent::SignalShown { .. } | RuleEvent::HintShown { .. }
+                )
+            })
+            .cloned()
+            .collect()
+    }
+
+    #[test]
+    fn departure_shows_red_then_the_aspect_in_force() {
+        let mut r = Rules::new(&tables(), &stage(Vec::new(), Vec::new()), 3, 1, 0).unwrap();
+        r.rebuild_signals();
+        r.signal_variant = 1;
+        r.green_hint = 7;
+        let mut seen = Vec::new();
+        for t in 1..=170 {
+            let out = r.tick(&input(0.0, 2000.0, 0.0));
+            for e in shown(&out) {
+                seen.push((t, e));
+            }
+        }
+        // Counter 100 on the 101st update, 0xa0 on the 161st (offset 0 on stage 3).
+        assert_eq!(
+            seen,
+            vec![
+                (
+                    101,
+                    RuleEvent::SignalShown {
+                        aspect: 4,
+                        forced: false,
+                        display: 2,
+                        variant: 1,
+                        ticks: 100,
+                        distance_m: 0,
+                        start_m: 0,
+                    }
+                ),
+                (
+                    161,
+                    RuleEvent::HintShown {
+                        id: 7,
+                        ticks: 0,
+                        distance_m: 220,
+                    }
+                ),
+                (
+                    161,
+                    RuleEvent::SignalShown {
+                        aspect: 0,
+                        forced: true,
+                        display: 2,
+                        variant: 0,
+                        ticks: 0,
+                        distance_m: 10,
+                        start_m: 0,
+                    }
+                ),
+            ]
+        );
+        assert_eq!(r.green_hint, -1);
+        assert_eq!(
+            r.signal_hud.current_sprite(),
+            Some(0x47e),
+            "4-lamp starting green"
+        );
+    }
+
+    #[test]
+    fn the_same_sprite_shows_again_once_its_task_has_ended() {
+        let mut r = rules(Vec::new(), Vec::new());
+        let mut out = TickOutput::default();
+        assert!(r.signal_show(&mut out, 2, 0, 0, 10, 0));
+        assert!(!r.signal_show(&mut out, 2, 0, 0, 10, 0), "already shown");
+        // 3-lamp set 0 (variant 1): aspects 1..3 share a sprite.
+        assert!(r.signal_show(&mut out, 1, 0, 0, 10, 1));
+        assert!(!r.signal_show(&mut out, 3, 0, 0, 10, 1));
+        // Pass the signal: the task ends at the first update beyond its distance.
+        r.signal_hud_pending = true;
+        r.flush_signal_hud(11.0);
+        assert_eq!(
+            r.signal_hud.current_sprite(),
+            Some(0x453),
+            "still in its delay"
+        );
+        for _ in 0..6 {
+            r.signal_hud_pending = true;
+            r.flush_signal_hud(11.0);
+        }
+        assert_eq!(r.signal_hud.current_sprite(), None);
+        assert!(r.signal_show(&mut out, 3, 0, 0, 10, 1));
+    }
+
+    #[test]
+    fn recovery_shows_a_forced_green_before_the_last_ten_ticks() {
+        let mut r = rules(Vec::new(), Vec::new());
+        r.phase = Phase::Holding {
+            ticks: RECOVERY_RELEASE_TICKS + 1,
+            then: AfterHold::Resume,
+        };
+        let out = r.tick(&input(0.0, 1500.0, 500.0));
+        assert!(shown(&out).is_empty());
+        let out = r.tick(&input(0.0, 1500.0, 500.0));
+        assert!(matches!(
+            shown(&out)[..],
+            [RuleEvent::SignalShown {
+                aspect: 0,
+                forced: true,
+                ..
+            }]
+        ));
     }
 }

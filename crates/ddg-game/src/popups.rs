@@ -3,7 +3,7 @@
 //! [`RuleEvent`]s; these become timed sprite slots.
 
 use anyhow::Result;
-use ddg_engine::rules::{RuleEvent, TimeReason};
+use ddg_engine::rules::{RuleEvent, SignalHud, TimeReason, signal_sprite};
 use ddg_formats::exe::Exe;
 use ddg_render::sprites::{Slot, SpriteLayer};
 
@@ -18,23 +18,6 @@ const SLOT_MESSAGE_SIGN: usize = 0x29;
 const SLOT_MESSAGE_DIGITS: usize = 0x2a;
 const SLOT_MESSAGE_SECONDS: usize = 0x2d;
 
-/// Signal sprites, built from immediates on the stack in `Signal_Show` (0x411500): indexed
-/// `aspect + base`, see [`signal_sprite`]. Verified against the code listing.
-const SIGNAL_SPRITES: [u16; 65] = [
-    0x451, 0x454, 0x454, 0x454, 0x457, // 3-lamp set 0, home
-    0x47d, 0x47a, 0x477, 0x474, 0x471, // 4-lamp home
-    0x47f, 0x47a, 0x477, 0x474, 0x471, // 3-lamp set 1, home
-    0x452, 0x455, 0x455, 0x455, 0x458, // 3-lamp set 0, starting
-    0x47e, 0x47b, 0x478, 0x475, 0x472, // 4-lamp starting
-    0x47f, 0x47b, 0x478, 0x475, 0x472, // 3-lamp set 1, starting
-    0x450, 0x453, 0x453, 0x453, 0x456, // 3-lamp set 0, block
-    0x47c, 0x479, 0x476, 0x473, 0x470, // 4-lamp block
-    0x47f, 0x479, 0x476, 0x473, 0x470, // 3-lamp set 1, block
-    0x485, 0x484, 0x483, 0x482, 0x480, // repeater set 0
-    0x485, 0x481, 0x481, 0x481, 0x480, // repeater set 1
-    0x486, 0x484, 0x483, 0x482, 0x480, // repeater set 2
-    0x486, 0x481, 0x481, 0x481, 0x480, // repeater set 3
-];
 /// Per-stage `{i32 three_lamp_set, i32 repeater_set}` (0x466c08, stride 8, read by 0x411500).
 const SIGNAL_SETS_VA: u32 = 0x466c08;
 
@@ -98,9 +81,10 @@ struct Message {
 
 /// The state of the event-driven HUD elements.
 pub struct Popups {
-    three_lamp_set: i32,
-    repeater_set: i32,
-    signal: Option<i16>,
+    /// Stage's `[three_lamp_set, repeater_set]` (0x466c08).
+    signal_sets: [i32; 2],
+    /// Slot 0x60: the signal display tasks of `Signal_Show` 0x411500 (hud.md §3.9).
+    signal: SignalHud,
     limit: Option<LimitSign>,
     limit_end_ticks: u32,
     whistle_until_m: Option<f32>,
@@ -111,9 +95,8 @@ impl Popups {
     pub fn new(exe: &Exe<'_>, stage: usize) -> Result<Self> {
         let sets = exe.reader_at(SIGNAL_SETS_VA + 8 * stage as u32, 8, "signal sets")?;
         Ok(Self {
-            three_lamp_set: sets.i32(0)?,
-            repeater_set: sets.i32(4)?,
-            signal: None,
+            signal_sets: [sets.i32(0)?, sets.i32(4)?],
+            signal: SignalHud::default(),
             limit: None,
             limit_end_ticks: 0,
             whistle_until_m: None,
@@ -123,21 +106,38 @@ impl Popups {
 
     /// Clears everything (segment start, arrival).
     pub fn clear(&mut self) {
-        self.signal = None;
+        self.signal.clear();
         self.limit = None;
         self.limit_end_ticks = 0;
         self.whistle_until_m = None;
         self.message = None;
     }
 
-    /// Applies one rule event. `variant` is the signal display variant (`0x8570c2`).
-    pub fn event(&mut self, e: &RuleEvent, odometer_m: f32, variant: i16) {
+    /// Applies one rule event, before [`Popups::update`] of the same tick (the original's rule
+    /// calls precede its HUD tasks). `_variant` is unused: [`RuleEvent::SignalShown`] carries
+    /// the display variant in effect for the call (the departure task forces 0).
+    pub fn event(&mut self, e: &RuleEvent, odometer_m: f32, _variant: i16) {
         match *e {
-            RuleEvent::SignalShown { aspect, display } => {
-                self.signal = self
-                    .signal_sprite(aspect, display, variant)
-                    .map(|t| t as i16);
+            RuleEvent::SignalShown {
+                aspect,
+                forced,
+                display,
+                variant,
+                ticks,
+                distance_m,
+                start_m,
+            } => {
+                let sprite = signal_sprite(
+                    i32::from(aspect),
+                    i32::from(display),
+                    variant,
+                    self.signal_sets,
+                );
+                if let Some(sprite) = sprite {
+                    self.signal.show(sprite, forced, ticks, distance_m, start_m);
+                }
             }
+            RuleEvent::SignalHidden => self.signal.hide(),
             RuleEvent::SpeedLimit {
                 kmh,
                 notice_m,
@@ -168,30 +168,6 @@ impl Popups {
         }
     }
 
-    fn signal_sprite(&self, aspect: i16, display: i16, variant: i16) -> Option<u16> {
-        let a = usize::try_from(aspect & 0xff).ok().filter(|&a| a <= 4)?;
-        let set = |s: i32| usize::try_from(s).unwrap_or(0) * 5;
-        let base = if variant & 1 == 0 {
-            match display {
-                0 => 0x23,
-                1 => 5,
-                2 => 0x14,
-                3 => set(self.repeater_set) + 0x2d,
-                _ => return None,
-            }
-        } else {
-            let s = set(self.three_lamp_set);
-            match display {
-                0 => s + 0x1e,
-                1 => s,
-                2 => s + 0xf,
-                3 => set(self.repeater_set) + 0x2d,
-                _ => return None,
-            }
-        };
-        SIGNAL_SPRITES.get(a + base).copied()
-    }
-
     /// Sets the slots for this tick and runs the timers.
     pub fn update(
         &mut self,
@@ -209,7 +185,10 @@ impl Popups {
                 },
             };
         };
-        show(layer, SLOT_SIGNAL, self.signal, SIGNAL_POS);
+        // The signal tasks (0x411940) update after this tick's rule calls.
+        self.signal.tick(odometer_m);
+        let signal = self.signal.slot().map(|t| t as i16);
+        show(layer, SLOT_SIGNAL, signal, SIGNAL_POS);
 
         if self.whistle_until_m.is_some_and(|m| odometer_m >= m) {
             self.whistle_until_m = None;
@@ -308,9 +287,8 @@ mod tests {
 
     fn popups() -> Popups {
         Popups {
-            three_lamp_set: 0,
-            repeater_set: 1,
-            signal: None,
+            signal_sets: [0, 1],
+            signal: SignalHud::default(),
             limit: None,
             limit_end_ticks: 0,
             whistle_until_m: None,
@@ -318,18 +296,125 @@ mod tests {
         }
     }
 
+    fn signal(aspect: i16, forced: bool, ticks: i32, distance_m: i32, start_m: i32) -> RuleEvent {
+        RuleEvent::SignalShown {
+            aspect,
+            forced,
+            display: 2,
+            variant: 0,
+            ticks,
+            distance_m,
+            start_m,
+        }
+    }
+
+    /// Runs one HUD update and returns slot 0x60's tilemap.
+    fn step(p: &mut Popups, layer: &mut SpriteLayer, odometer_m: f32) -> i16 {
+        p.update(layer, odometer_m, 0, false);
+        layer.slots[SLOT_SIGNAL].tilemap
+    }
+
+    const RED_STARTING: i16 = 0x472;
+    const GREEN_STARTING: i16 = 0x47e;
+
     #[test]
-    fn signal_sprites_follow_the_table() {
-        let p = popups();
-        // 4-lamp block signal: green 0x47c … red 0x470.
-        assert_eq!(p.signal_sprite(0, 0, 0), Some(0x47c));
-        assert_eq!(p.signal_sprite(4, 0, 0), Some(0x470));
-        // Forced redisplay bit is ignored for the lookup.
-        assert_eq!(p.signal_sprite(0x100, 2, 0), Some(0x47e));
-        // 3-lamp set 0 home, repeater set 1.
-        assert_eq!(p.signal_sprite(2, 1, 1), Some(0x454));
-        assert_eq!(p.signal_sprite(1, 3, 0), Some(0x481));
-        assert_eq!(p.signal_sprite(5, 0, 0), None);
+    fn signal_waits_five_ticks_then_counts_down() {
+        let mut p = popups();
+        let mut layer = SpriteLayer::default();
+        p.event(&signal(4, false, 100, 0, 0), 0.0, 0);
+        let seen: Vec<i16> = (0..108).map(|_| step(&mut p, &mut layer, 0.0)).collect();
+        assert!(seen[..5].iter().all(|&t| t == -1), "5-tick delay");
+        // First draw with the counter at 100, then 99 … 0: 101 updates.
+        assert!(seen[5..106].iter().all(|&t| t == RED_STARTING));
+        assert_eq!(seen[106], -1);
+        assert_eq!(seen[107], -1);
+    }
+
+    #[test]
+    fn signal_with_a_distance_shows_until_the_odometer_passes_it() {
+        let mut p = popups();
+        let mut layer = SpriteLayer::default();
+        // Called at odometer 1000.7 (truncated to 1000) for 10 m.
+        p.event(&signal(4, false, 0, 10, 1000), 1000.7, 0);
+        for _ in 0..5 {
+            assert_eq!(step(&mut p, &mut layer, 1000.7), -1);
+        }
+        // The tick counter (0) runs out, but the distance decides.
+        assert_eq!(step(&mut p, &mut layer, 1005.0), RED_STARTING);
+        assert_eq!(step(&mut p, &mut layer, 1010.0), RED_STARTING);
+        assert_eq!(step(&mut p, &mut layer, 1010.01), -1);
+        assert_eq!(step(&mut p, &mut layer, 1000.0), -1, "the task has ended");
+    }
+
+    #[test]
+    fn showing_the_same_sprite_again_does_nothing() {
+        let mut p = popups();
+        let mut layer = SpriteLayer::default();
+        p.event(&signal(4, false, 10, 0, 0), 0.0, 0);
+        for _ in 0..8 {
+            step(&mut p, &mut layer, 0.0);
+        }
+        // Same sprite: no new delay, no new duration.
+        p.event(&signal(4, false, 100, 0, 0), 0.0, 0);
+        let seen: Vec<i16> = (0..10).map(|_| step(&mut p, &mut layer, 0.0)).collect();
+        assert_eq!(seen[..8], [RED_STARTING; 8]);
+        assert_eq!(seen[8..], [-1, -1]);
+        // Once it has ended the same sprite shows again (after the delay).
+        p.event(&signal(4, false, 100, 0, 0), 0.0, 0);
+        let seen: Vec<i16> = (0..6).map(|_| step(&mut p, &mut layer, 0.0)).collect();
+        assert_eq!(seen, [-1, -1, -1, -1, -1, RED_STARTING]);
+    }
+
+    #[test]
+    fn forced_redisplay_keeps_the_old_sprite_through_the_delay() {
+        let mut p = popups();
+        let mut layer = SpriteLayer::default();
+        p.event(&signal(4, false, 100, 0, 0), 0.0, 0);
+        for _ in 0..20 {
+            step(&mut p, &mut layer, 0.0);
+        }
+        // Departure: the real aspect, forced, until 10 m travelled.
+        p.event(&signal(0, true, 0, 10, 0), 0.0, 0);
+        let seen: Vec<i16> = (0..7).map(|_| step(&mut p, &mut layer, 0.0)).collect();
+        assert_eq!(
+            seen,
+            [
+                RED_STARTING,
+                RED_STARTING,
+                RED_STARTING,
+                RED_STARTING,
+                RED_STARTING,
+                GREEN_STARTING,
+                GREEN_STARTING
+            ]
+        );
+        assert_eq!(step(&mut p, &mut layer, 10.5), -1);
+    }
+
+    #[test]
+    fn unforced_replacement_leaves_a_gap() {
+        let mut p = popups();
+        let mut layer = SpriteLayer::default();
+        p.event(&signal(4, false, 100, 0, 0), 0.0, 0);
+        for _ in 0..20 {
+            step(&mut p, &mut layer, 0.0);
+        }
+        p.event(&signal(0, false, 100, 0, 0), 0.0, 0);
+        let seen: Vec<i16> = (0..6).map(|_| step(&mut p, &mut layer, 0.0)).collect();
+        assert_eq!(seen, [-1, -1, -1, -1, -1, GREEN_STARTING]);
+    }
+
+    #[test]
+    fn hiding_ends_the_signal_at_the_next_update() {
+        let mut p = popups();
+        let mut layer = SpriteLayer::default();
+        p.event(&signal(4, false, 100, 0, 0), 0.0, 0);
+        for _ in 0..10 {
+            step(&mut p, &mut layer, 0.0);
+        }
+        p.event(&RuleEvent::SignalHidden, 0.0, 0);
+        assert_eq!(step(&mut p, &mut layer, 0.0), -1);
+        assert_eq!(step(&mut p, &mut layer, 0.0), -1);
     }
 
     #[test]

@@ -128,7 +128,7 @@ point. With `D = row[s].to_next`, `H = row[s+1].f5` (home-signal distance), `n =
 
 A signal is **sighted** when the distance drops below `sight_pos` (0x40c010: `k−1` per tick at
 most). The aspect in force (`0x8570a6`) becomes that block's aspect, the HUD shows it
-(0x411500, skipped if the same sprite is already shown) and the signal speed limit
+(0x411500, skipped if the newest live display task already shows the same sprite, hud.md §3.9) and the signal speed limit
 `0x857090 = speed[aspect] / 3.6` is armed; it is **enforced from `odometer + sight`** onwards,
 i.e. from the signal itself (`0x856fcc`). Aspect 0 sets 300 km/h. No new sighting happens while
 the ATS is in emergency or for block 1. **confirmed**
@@ -189,6 +189,20 @@ signal limit cleared, notches forced to P0/B9, **60 ticks** standstill (or 30 + 
 animation of 200/300/360 ticks for scripted signals), the HUD shows a green, then 10 ticks. If
 no signal is in sight ahead, re-powering during the station approach is excused (`0x857238 = 1`).
 **confirmed** (structure), hold lengths **likely**.
+
+The green is `Signal_Show(0x100, mode, ticks, distance)` at 0x40a540, computed after the hold
+(0x40a45e–0x40a53b, **confirmed** from the code):
+
+* `0x856fb4 == 0` (a repeater was just shown): mode 3, ticks 0, distance
+  `0x85722c − block[0].sight_pos + 1`.
+* Otherwise blocks `i = 0x85720c … 1` (skipping 2) are searched for one whose sighting point is
+  ahead, `0 < sight_pos[i] − 0x85722c < block[k+1].sight`. If block `i` has no signal (−999) and
+  the train is past the home signal (`0x85708c < block[2].sight_pos`), `0x857080 = 0` and mode 2.
+  Otherwise the mode is 2 at block 0, 1 at blocks 1–2, and 0 beyond.
+  * Found: ticks 0, distance `block[i].sight − (sight_pos[i] − 0x85722c)`, i.e. until that
+    signal.
+  * Not found: ticks 0x3c, distance 0, and the re-power excuse above.
+
 
 ## 5. Speed limits
 
@@ -475,9 +489,27 @@ Hook points for event-level traces: 0x415080 (every time message: kind, seconds)
   the obstacle sequence are **likely/guess**.
 * `finish_station` counts the remaining pending time in before the result deductions (the HUD
   keeps draining it during the result screen).
-* The signal HUD de-duplication is keyed on `(aspect, display mode, variant)`; the original keys
-  on the sprite id (adds the per-stage table 0x466c08) — **likely** equivalent.
-* Not modelled: hint messages (0x40c4e0 tail, 0x422990), the station-approach HUD state
+* The signal HUD (`Signal_Show` 0x411500, hud.md §3.9) is modelled by `rules::SignalHud`, which
+  both the rules and the HUD use: the "already shown" test compares sprite ids against the newest
+  **live** display task, as the original does. Its return value matters in 0x40c010, where a
+  no-op skips the `signal_state` reset and the limit set-up. The task update needs the odometer
+  after the physics step, so the rules run it at the start of the next tick (`latch_input`), and
+  `leave_driving_loop` runs it first. The earlier key `(aspect, mode, variant)`, which never
+  expired, made a repeated restrictive aspect a no-op even after its sprite had gone (the original
+  re-arms the limit), and it told the 3-lamp aspects 1–3 apart, which share a sprite.
+  **confirmed** (code); no trace logs the slot or `0x856d30` yet.
+* `Signal_Show` calls raised (`RuleEvent::SignalShown` with ticks, distance, start odometer,
+  forced bit and variant): sighting and repeater (0x40c010), departure red and aspect (0x413370),
+  red-signal / ATS recovery green after the 60 standstill ticks (0x40a540), obstacle recovery
+  green `(0, 0, 0, 5)` (0x40a0a0, 31 hold ticks before the end; the hold length is a guess), and
+  hides (`SignalHidden`) for NaviAnim(0) at the obstacle start (0x40c4e0 → 0x410cb0) and at the
+  stage-loop exit (0x4158b0 / 0x4085e0, via `leave_driving_loop`). The attract demo drive task
+  0x40e860 (list 4, stage 5) has its own two calls; the engine has no attract mode.
+* Green-signal hint: course event 20 sets `0x857224` (`Rules::green_hint`, reset per segment
+  in 0x40cf40). The next `Signal_Show` with aspect 0, whether a no-op or not, raises
+  `HintShown { id, ticks: 0, distance_m: 220 }` and clears it. This includes the departure call
+  and both recoveries.
+* Not modelled: hint messages other than the green-signal hint (0x40c4e0 tail, 0x422990), the station-approach HUD state
   `0x856d68`, scripted weather start at a segment change (needs the global frame counter % 4),
   special stage endings (stages 1, 2, 10, 17–19 at fixed stations), the Komachi section display.
 * x87 extended-precision intermediates are computed in f64 then stored to f32 where the original

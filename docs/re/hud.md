@@ -64,7 +64,7 @@ shake offset (signed bytes `0x856358`/`0x856359`) is added unless `0x855ffc & 0x
 | `Hud_Create` 0x40f7e0 | 3 | stage load (0x4080d0 step 2) | places the static slots, initial images, creates the HUD task and the ATS lamp task | confirmed |
 | `Hud_Update` 0x40ff20 | 3 | 0x40f7e0 | per tick: handles, clocks, remaining-time transfer, station plates, vehicle plate, then `Hud_Distance` 0x4162c0 and `Hud_HighSpeed` 0x416d10 | confirmed |
 | `Departure_Update` 0x413370 | 3 | `Segment_Hud` 0x4124f0 (each segment) | pre-departure route strip, star marks, departure signal and banner (§5) | confirmed |
-| `Signal_Show` 0x411500 → task 0x411940 | 3 | rules (0x40c010, 0x40a0a0, 0x413370, 0x40e860) | signal aspect sprite, slot 0x60 | confirmed |
+| `Signal_Show` 0x411500 → task 0x411940 | 3 | rules (0x40c010, 0x40a0a0), departure task 0x413370, NaviAnim 0x410cb0 (hide), attract demo 0x40e860 | signal aspect sprite, slot 0x60 (§3.9) | confirmed |
 | `Sign_Show` 0x411a00 → 0x411d40 / 0x411e00 | 3 | rules (0x40acd0, 0x40b4a0, 0x40c4e0) | gradient / whistle sign (slot 0x5e), speed-limit sign (slot 0x5f) | confirmed |
 | `TimeMsg_Show` 0x415080 → 0x415810 | 3 | every bonus / penalty | message + ±seconds, slots 0x28–0x2d, and adds the seconds to pending | confirmed |
 | `Hint_Show` 0x411f20 → 0x4121d0 | 3 | rules, course event 9 | navigator portrait + speech balloon, slots 0x34/0x35 | confirmed |
@@ -90,7 +90,7 @@ element: `0x856d30` signal, `0x856d54` gradient/whistle sign, `0x856d04` limit s
 `0x856d38` time message, `0x856d44` hint, `0x856c7c` caption, `0x856d40` banner,
 `0x856c64` landmark, `0x856c68` navigator animation). The duration argument is passed as a
 float and converted with `__ftol` (the decompiler lost the value; it is the third argument
-at every call site) (**likely**).
+at every call site) (**likely**). `Signal_Show` is the exception: its ticks argument is an int, loaded with `fild` and converted back with `__ftol` (0x411888), so it is unchanged (**confirmed**).
 
 ### 1.3 Flags that gate the HUD — confirmed
 
@@ -308,12 +308,72 @@ the stack, indexed `aspect + base`:
 
 Repeater sets: 0 → 0x485 0x484 0x483 0x482 0x480; 1 → 0x485 0x481 0x481 0x481 0x480;
 2 → 0x486 0x484 0x483 0x482 0x480; 3 → 0x486 0x481 0x481 0x481 0x480. Each sprite carries its
-caption (進行信号, 注意信号 速度45km/h, …). The same sprite is not re-shown (keyed on the tbl id
-in the current task). Aspect | 0x100 marks a forced redisplay (departure, red-signal
-recovery). Showing aspect 0 also releases a pending green-signal hint (`0x857224`, course event
-20) as `Hint_Show(id, 0, 220)`. Callers: sighting in 0x40c010 (distance = the signal's
-sight distance, so it disappears when the train passes the signal), the departure task
-(§5), and recovery 0x40a0a0.
+caption (進行信号, 注意信号 速度45km/h, …).
+
+With variant 1 the mode 0–2 base is `set × 5 + {0x1e, 0, 0xf}`, so set 1 selects the same
+4-lamp row as variant 0, and set 2 selects a third row with green 0x47f (otherwise 4-lamp).
+`0x466c08` in the 3000-bandai exe holds `(1,0) (1,1) (1,1) (1,1) (1,1) (1,0) (1,1) (2,3) (2,1)
+(2,1)` for stages 0–9 and `(1,1)` for stages 10–19. No stage uses the 3-lamp set 0, and only
+stages 7–9 show a different sprite under variant 1. With variant 1 a green also sets `0x85744c`
+(the aspect the 3D signal models show, scene.md) to 5 instead of 0. **confirmed** (exe bytes)
+
+**Call (0x411500), step by step — confirmed (code 0x411500–0x41190f):**
+
+1. Negative aspect: if a display task exists (`0x856d30`), its enable flag `+0x3c` is cleared
+   and it ends at its next update. Returns 0.
+2. Bit 0x100 marks a *forced* redisplay and is masked off (`& 0xff`). An aspect above 4 returns 0.
+3. `0x85744c = aspect`. If the aspect is 0 and a green-signal hint is pending (`0x857224` ≠ −1,
+   set by course event 20 and reset per segment by 0x40cf40), `Hint_Show(id, 0, 220)` is called
+   (push 0xdc at 0x411774) and `0x857224 = −1`. This happens before the same-sprite test, so a
+   no-op call still releases the hint.
+4. The sprite is looked up as in the table above. A mode outside 0–3 returns 0.
+5. If the newest task still shows the same sprite (`+0x30`), the call returns 0. Otherwise the
+   newest task is either stopped (`+0x3c = 0`, unforced), or, when forced, keeps its sprite for
+   5 more updates: `+0x48 = 0` and `+0x34 = 5` (0x411863).
+6. A new task (list 3, update 0x411940, destructor 0x4119d0) gets `+0x30` = sprite,
+   `+0x34` = ticks (pushed as an int and converted with `fild` + `__ftol`, so unchanged),
+   `+0x38 = 5` (0x4118c7), `+0x3c = 1`, and `+0x48 = __ftol(0x857004) + distance`, or 0 when
+   distance is 0. `0x856d30` then points to it. Returns 1.
+
+**Task 0x411940 — confirmed (code 0x411940–0x4119c4):**
+
+* While `+0x38 > 0`, it is decremented and nothing is drawn: 5 updates with no sprite.
+* The update that finds `+0x38 == 0` sets it to −1 and does not decrement `+0x34`. Every later
+  update decrements `+0x34` first.
+* Without a distance (`+0x48 == 0`): it draws (`0x4318c0(0x60, sprite)`) while `+0x34 ≥ 0` and
+  enabled. With ticks t, the sprite shows on updates 6 … t + 6, which is t + 1 updates.
+* With a distance: it draws while `(float)+0x48 − 0x857004 ≥ 0.0` and enabled. The constant at
+  0x458b10 is the f32 **0.0** (bytes 00 00 00 00), and the `fcomp` / `test ah, 1` at 0x41199a
+  ends the task as soon as the odometer is strictly beyond the target.
+* Otherwise it returns 0, and the destructor 0x4119d0 hides slot 0x60 (tbl −1) and clears
+  `0x856d30` if it pointed to this task.
+
+The slot keeps its last tilemap between draws. Tasks update in creation order, after the rule
+calls of the tick (main-loop.md §2). So:
+
+* **Forced handover**: the old sprite stays for 5 updates. On the 6th the old task ends (slot
+  hidden) and the new one draws, so the change is seamless.
+* **Unforced replacement**: the old task ends at the next update, which leaves a 5-update gap
+  with no signal.
+* **Same sprite**: there is no restart, and the running task keeps its own expiry. Once that
+  task has ended, the same sprite can be shown again.
+
+`ddg_engine::rules::SignalHud` implements this model. The rules use it for the return value
+(0x40c010 skips the limit set-up on 0), and `ddg-game` popups use it for slot 0x60.
+
+**Call sites (`aspect, mode, ticks, distance`) — confirmed (code):**
+
+| Caller | Arguments | When |
+|---|---|---|
+| 0x40c010 sighting | `(0x8570a6, display type, 0, block[k+1].sight)` | new block; shown until the signal itself |
+| 0x40c010 repeater | `(0x8570a6, 3, 0, 0x856fb4)` | `0x856fb4 > 0`, ATS ≤ 3; return value ignored |
+| departure 0x413370 | `(4, 2, 100, 0)` (0x41361a) | counter = offset + 100 (§5) |
+| departure 0x413370 | `(0x8570a6 \| 0x100, 2, 0, 10)` (0x413696), with `0x8570c2` set to 0 for the call | counter = offset + 0xa0 |
+| 0x40a0a0 red-signal / ATS recovery | `(0x100, mode, 0 or 0x3c, distance)` (0x40a540) | after the 60 standstill ticks (rules.md §4.4) |
+| 0x40a0a0 obstacle recovery | `(0, 0, 0, 5)` | before the final 30 standstill ticks |
+| NaviAnim(0) 0x410cb0 | `(−1, −1, −1, −1)` | obstacle start (0x40c4e0, `0x856d80 & 0xf == 1`); the emergency-stop signal takes slot 0x60 |
+| 0x4158b0, 0x4085e0 | `(−1, …)` | game over and stage-loop exit |
+| attract demo task 0x40e860 | `(4, 2, 0x96, 0)` at counter 0x1e; `(0x8570a6 \| 0x100, 2, 0, 10)` at 0xa0 | demo drive created by 0x40e6e0 in list 4 (stage 5); not gameplay |
 
 Emergency-stop signal (特殊信号発光機): `NaviAnim(0)` 0x410cb0 plays 0x44b..0x44f (flashing
 pentagon, 緊急停止) in slot 0x60 during the obstacle event (course event 8).
@@ -498,8 +558,8 @@ Counter `t` starts at 0 in the segment setup tick; `o` = 180 at station 0 of sta
 | < 60 | current strip segment blinks (palette 4 entry 0x50 + n, 10-tick period) |
 | < 91 | star marks animate |
 | o + 20, o + 140, o + 220 | lesson stage (kind 1) station 0: hints 0, 9, 0x13 |
-| o + 100 | strip, map and marks removed; signal shows red, mode 2 (出), 100 ticks; sound 0x23 |
-| o + 160 | signal shows the real aspect, mode 2, until 10 m travelled |
+| o + 100 | strip, map and marks removed; signal shows red, mode 2 (出), 100 ticks (`Signal_Show(4, 2, 100, 0)`, from the 6th update); sound 0x23 |
+| o + 160 | signal shows the real aspect, mode 2, until 10 m travelled (`Signal_Show(aspect \| 0x100, 2, 0, 10)` looked up with `0x8570c2 = 0`; forced, so the red stays until the new sprite appears 5 updates later; a green releases the pending green-signal hint) |
 | o + 200 | banner 出発<aspect> (kind = aspect) at y 224, until 10 m travelled; lamp on; sound 0x2d (bell 0xb stopped if the ATS was tripped) |
 | ≥ o + 201 | wait ends (`0x855ff8 &= ~0x800`); departure voice from {0x97, 0xce, 0xcf, 0xd0, 0xd2}[aspect] once the train moves at ≥ 0.04 m/s |
 
@@ -559,3 +619,10 @@ meanings: **likely**). None of the HUD elements in §3 use them.
 6. Failure-cause codes `0x856d84` for the time-up advice (§3.16).
 7. The float truncated to 50/51 in 0x40c4e0 that times the late/early advice (it also
    advances `0x84c40c`); likely a per-segment timer, not identified.
+8. The signal display model (§3.9) comes from the code alone. No trace logs slot 0x60 or
+   `0x856d30` yet. Adding the slot-0x60 tilemap to the hook trace would let the replay check the
+   5-update delay, the forced handover and the expiry tick against the original.
+9. `NaviAnim(0)` (which hides the signal at the obstacle start) does nothing when
+   `0x84c0f8 == 1`, and the meaning of that flag is unknown. The engine always hides.
+   Separately, the obstacle-recovery hold length (and with it the tick of its `(0, 0, 0, 5)`
+   green) is a guess (rules.md §12).
