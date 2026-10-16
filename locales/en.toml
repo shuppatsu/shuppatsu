@@ -435,6 +435,94 @@ name = "English"
 0x545 = { parts = [{ region = [34, 0, 120, 32], text = "Next", align = "left" }, { region = [196, 0, 188, 32], text = "Back to menu", align = "left" }] }  # [Enter] 次に進む [Esc] メニューに戻る
 0x546 = { parts = [{ region = [34, 0, 120, 32], text = "Next", align = "left" }, { region = [196, 0, 188, 32], text = "Back to menu", align = "left" }] }  # (A) 次に進む (B) メニューに戻る
 
+# Control-mode diagrams of Options → Controls (menus.md §4, 0x42ad10: `0x487684[mode]` for modes
+# 0–5, 0x49d for mode 6), 352×304 (0x49d 352×272). Each callout is a coloured box of cells; the
+# regions are the cells' interiors, measured from the art. The vertical arrows between two
+# words (▲▼) are kept as art, so each word is its own part above or below its arrow; a value
+# part uses its whole cell (`backdrop = "solid"`), a label the original lettering's ink box.
+# Keyboard A and B put 解除 and 非常 beside a horizontal ◆◆, so that cell is redrawn whole. The
+# controller pictures (0x493–0x498, 0x4a1) and the A / B / B・C button tabs stay.
+# Keyboard A (mode 0).
+0x49e = { parts = [
+    { region = [26, 2, 92, 21], text = "Pro Mode" },          # PROモード (the Professional plate)
+    { region = [26, 25, 92, 21], text = "On/Off" },           # ON/OFF
+    { region = [174, 23, 61, 22], text = "Brake" },           # ブレーキ
+    { region = [238, 2, 112, 68], backdrop = "solid", text = "Release\n↔\nEmergency" }, # 解除 ◆◆ 非常: the words sit beside the arrow, so it is redrawn
+    { region = [174, 254, 61, 22], text = "Power" },          # マスコン
+    { region = [238, 233, 60, 25], backdrop = "solid", text = "Off" },            # 切る ↕ (kept)
+    { region = [238, 277, 60, 24], backdrop = "solid", text = "Accelerate" },     # 加速
+    { region = [25, 242, 93, 20], text = "Horn" },            # 警笛
+] }
+# Keyboard B (mode 1).
+0x49f = { parts = [
+    { region = [26, 2, 92, 21], text = "Pro Mode" },
+    { region = [26, 25, 92, 21], text = "On/Off" },
+    { region = [174, 23, 61, 22], text = "Brake" },
+    { region = [238, 2, 112, 68], backdrop = "solid", text = "Release\n↔\nEmergency" },
+    { region = [2, 255, 61, 22], text = "Power" },
+    { region = [66, 234, 60, 25], backdrop = "solid", text = "Off" },
+    { region = [66, 278, 60, 24], backdrop = "solid", text = "Accelerate" },
+    { region = [225, 242, 93, 20], text = "Horn" },
+] }
+# Keyboard C (mode 2): number keys for the notches.
+0x4a0 = { parts = [
+    { region = [2, 23, 61, 22], text = "Power" },
+    { region = [116, 2, 54, 25], backdrop = "solid", text = "Off" },              # 切る ↕
+    { region = [66, 46, 106, 24], backdrop = "solid", text = "1–5: Accelerate" }, # 1〜5:加速
+    { region = [207, 23, 61, 22], text = "Brake" },
+    { region = [271, 2, 79, 25], backdrop = "solid", text = "9: Emergency" },     # 9:非常 ↕
+    { region = [271, 46, 79, 24], backdrop = "solid", text = "0: Release" },      # 0:解除
+    { region = [178, 242, 92, 21], text = "Pro Mode" },
+    { region = [178, 265, 92, 21], text = "On/Off" },
+    { region = [25, 242, 93, 20], text = "Horn" },
+] }
+# Keyboard D (mode 3): one combined lever, ブレーキ ↕ マスコン / 非常 ▲ 切る ▼ 加速.
+0x4a2 = { parts = [
+    { region = [26, 2, 92, 21], text = "Pro Mode" },
+    { region = [26, 25, 92, 21], text = "On/Off" },
+    { region = [174, 227, 61, 22], text = "Brake" },
+    { region = [174, 270, 61, 22], text = "Power" },
+    { region = [238, 218, 60, 22], backdrop = "solid", text = "Emergency" },
+    { region = [238, 248, 60, 24], backdrop = "solid", text = "Off" },
+    { region = [238, 280, 60, 22], backdrop = "solid", text = "Accelerate" },
+    { region = [25, 242, 93, 20], text = "Horn" },
+] }
+# Gamepad (mode 4).
+0x49a = { parts = [
+    { region = [2, 23, 61, 22], text = "Brake" },
+    { region = [66, 2, 60, 25], backdrop = "solid", text = "Emergency" },         # 非常 ↕
+    { region = [66, 46, 60, 24], backdrop = "solid", text = "Release" },          # 解除
+    { region = [2, 247, 61, 22], text = "Power" },
+    { region = [66, 226, 60, 25], backdrop = "solid", text = "Off" },
+    { region = [66, 270, 60, 24], backdrop = "solid", text = "Accelerate" },
+    { region = [234, 234, 92, 21], text = "Pro Mode" },
+    { region = [234, 257, 92, 21], text = "On/Off" },
+    { region = [233, 26, 93, 20], text = "Horn" },
+] }
+# Joystick (mode 5): one combined lever as in keyboard D.
+0x49b = { parts = [
+    { region = [26, 2, 92, 21], text = "Pro Mode" },
+    { region = [26, 25, 92, 21], text = "On/Off" },
+    { region = [217, 18, 93, 20], text = "Horn" },
+    { region = [2, 227, 61, 22], text = "Brake" },
+    { region = [2, 270, 61, 22], text = "Power" },
+    { region = [66, 218, 60, 22], backdrop = "solid", text = "Emergency" },
+    { region = [66, 248, 60, 24], backdrop = "solid", text = "Off" },
+    { region = [66, 280, 60, 22], backdrop = "solid", text = "Accelerate" },
+] }
+# DDG controller (mode 6), 352×272.
+0x49d = { parts = [
+    { region = [2, 23, 61, 22], text = "Power" },
+    { region = [66, 2, 60, 25], backdrop = "solid", text = "Off" },
+    { region = [66, 46, 60, 24], backdrop = "solid", text = "Accelerate" },
+    { region = [154, 23, 61, 22], text = "Brake" },
+    { region = [218, 2, 60, 25], backdrop = "solid", text = "Emergency" },
+    { region = [218, 46, 60, 24], backdrop = "solid", text = "Release" },
+    { region = [67, 226, 92, 21], text = "Pro Mode" },
+    { region = [67, 249, 92, 21], text = "On/Off" },
+    { region = [225, 250, 93, 20], text = "Horn" },
+] }
+
 # Station names (HUD captions and banners, hud.md §3.13). Plain (green caption) and
 # highlighted (banner) variants; ids from the exe tables 0x4665c4 / 0x4668ac by name id.
 # Layout: 2 tiles high; the width is the map width (64–192 px), also stored in 0x4665c4.

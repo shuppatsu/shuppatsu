@@ -25,8 +25,8 @@ Keyed by the sprite's identity in the original:
 * `[sheet.<tbl>]`: a label on a string sheet. Integer keys are descriptor indices into the
   sheet's table in the exe; the tables are listed with their addresses in `SHEETS`
   (`crates/ddg-game/src/locale.rs`) and read from the user's exe at runtime. Named keys with an
-  explicit `rect` cover sheets whose descriptors were not found (the screen headers, the
-  legend word sheet).
+  explicit `rect` cover labels without a known descriptor (most screen headers, the
+  replay mark).
 * `[station_plate]`: the English name of each vertical station plate, keyed by the plate's
   tilemap id (`0x4e1 = "Yokohama"`). These are not sprite overrides: they feed the horizontal
   plate layout below.
@@ -251,7 +251,7 @@ module-level `#![allow(dead_code)]` until these calls exist; remove it then.
 
 ## Coverage of `en.toml`
 
-592 sprite entries (476 tilemaps and 116 string-sheet labels), 65 station-plate names and 30
+599 sprite entries (483 tilemaps and 116 string-sheet labels), 65 station-plate names and 30
 landmark names.
 
 * HUD: time labels, remaining time, line/vehicle plates (15), distance-panel headers (m and
@@ -263,9 +263,12 @@ landmark names.
   9 advice balloons, the coupling bonus game.
 * Screens: station result rows, continue, run end (both grades), report card, lever check,
   departure board (header and all 37 flaps), route select (groups, difficulty, rank badges,
-  Shizukuishi tags), records (header, 7 line and 13 series plates, legends), press START.
+  Shizukuishi tags), records (header, 7 line and 13 series plates, legends), press START,
+  the seven control-mode diagrams of Options → Controls (callouts only; the controller
+  pictures 0x493–0x498 and 0x4a1 are not text).
 * Sheets: title items (5), options labels and values (2 × 31), pause/dialog texts (27), screen
-  headers (13), name-entry legends (3), legend words and the replay mark (6).
+  headers (13), name-entry legends (3), legend words (5: 選択 / キャンセル / 決定 / おわり /
+  モード切替 by descriptor, 0x47c538; the key pictures beside them stay) and the replay mark.
 
 Not catalogued, on purpose:
 
