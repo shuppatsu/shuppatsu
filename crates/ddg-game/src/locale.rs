@@ -559,9 +559,16 @@ pub struct LocaleConfig {
     pub font: Option<PathBuf>,
     /// Extra catalogue directory (`<dir>/<lang>.toml` overrides the built-in one).
     pub dir: Option<PathBuf>,
-    /// Enhancement `ui_scale`: the 2D layer is composed at 640×480 × this (1 = the original).
-    /// The art is enlarged with nearest neighbour; translated text gets the extra pixels.
+    /// The canvas multiple in use: the 2D layer is composed at 640×480 × this (1 = the
+    /// original). The art is enlarged with nearest neighbour; translated text gets the extra
+    /// pixels. Follows the window ([`LocaleConfig::multiple_for`]) unless `ui_scale_fixed`.
     pub ui_scale: usize,
+    /// `--ui-scale N` / `DDG_UI_SCALE`: a fixed canvas multiple instead of the window's.
+    pub ui_scale_fixed: Option<usize>,
+    /// `--hud-layout` / `DDG_HUD_LAYOUT` (enhancement `hud_layout`).
+    pub hud_layout: crate::presentation::HudLayout,
+    /// `--ui-scaling` / `DDG_UI_SCALING`: how the canvas reaches the window.
+    pub ui_scaling: ddg_render::overlay::UiScaling,
 }
 
 impl Default for LocaleConfig {
@@ -571,12 +578,34 @@ impl Default for LocaleConfig {
             font: None,
             dir: None,
             ui_scale: 1,
+            ui_scale_fixed: None,
+            hud_layout: Default::default(),
+            ui_scaling: Default::default(),
         }
     }
 }
 
 impl LocaleConfig {
-    /// `DDG_LANG`, `DDG_FONT`, `DDG_LOCALE_DIR`, `DDG_UI_SCALE`.
+    /// The canvas multiple for a window `height` pixels high: the fixed one, else
+    /// [`ddg_render::overlay::auto_multiple`].
+    pub fn multiple_for(&self, height: u32) -> usize {
+        self.ui_scale_fixed
+            .unwrap_or_else(|| ddg_render::overlay::auto_multiple(height, self.ui_scaling))
+    }
+
+    /// Sets [`LocaleConfig::ui_scale`] for a window `height` pixels high (at startup; a
+    /// resize goes through `presentation::rescale`).
+    pub fn fit_height(&mut self, height: u32) {
+        self.ui_scale = self.multiple_for(height);
+    }
+
+    /// Whether the enhanced HUD layout is on (enhancement `hud_layout enhanced`).
+    pub fn enhanced_hud(&self) -> bool {
+        self.hud_layout == crate::presentation::HudLayout::Enhanced
+    }
+
+    /// `DDG_LANG`, `DDG_FONT`, `DDG_LOCALE_DIR`, `DDG_UI_SCALE`, `DDG_HUD_LAYOUT`,
+    /// `DDG_UI_SCALING` (unknown values are ignored with a warning).
     pub fn from_env() -> Self {
         let var = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty());
         let mut c = Self::default();
@@ -586,13 +615,27 @@ impl LocaleConfig {
         c.font = var("DDG_FONT").map(PathBuf::from);
         c.dir = var("DDG_LOCALE_DIR").map(PathBuf::from);
         if let Some(s) = var("DDG_UI_SCALE").and_then(|v| v.to_str()?.parse().ok()) {
-            c.ui_scale = clamp_scale(s);
+            c.ui_scale_fixed = Some(clamp_scale(s));
         }
+        if let Some(v) = var("DDG_HUD_LAYOUT") {
+            match crate::presentation::HudLayout::parse(&v.to_string_lossy()) {
+                Some(l) => c.hud_layout = l,
+                None => eprintln!("DDG_HUD_LAYOUT: expected original or enhanced"),
+            }
+        }
+        if let Some(v) = var("DDG_UI_SCALING") {
+            match ddg_render::overlay::UiScaling::parse(&v.to_string_lossy()) {
+                Some(s) => c.ui_scaling = s,
+                None => eprintln!("DDG_UI_SCALING: expected smooth, integer or nearest"),
+            }
+        }
+        c.ui_scale = c.ui_scale_fixed.unwrap_or(1);
         c
     }
 
-    /// Takes `--lang <code>`, `--font <file>`, `--locale-dir <dir>` and `--ui-scale <n>` out of `args`
-    /// (they override the environment) and leaves everything else.
+    /// Takes `--lang <code>`, `--font <file>`, `--locale-dir <dir>`, `--ui-scale <n>`,
+    /// `--hud-layout <original|enhanced>` and `--ui-scaling <smooth|integer|nearest>` out of
+    /// `args` (they override the environment) and leaves everything else.
     pub fn take_args(&mut self, args: &mut Vec<String>) -> Result<()> {
         let mut rest = Vec::with_capacity(args.len());
         let mut it = std::mem::take(args).into_iter();
@@ -605,7 +648,19 @@ impl LocaleConfig {
                 }
                 "--ui-scale" => {
                     let n = it.next().context("--ui-scale needs 1..=4")?;
-                    self.ui_scale = clamp_scale(n.parse().context("--ui-scale needs 1..=4")?);
+                    let s = clamp_scale(n.parse().context("--ui-scale needs 1..=4")?);
+                    self.ui_scale_fixed = Some(s);
+                    self.ui_scale = s;
+                }
+                "--hud-layout" => {
+                    let v = it.next().unwrap_or_default();
+                    self.hud_layout = crate::presentation::HudLayout::parse(&v)
+                        .context("--hud-layout needs original or enhanced")?;
+                }
+                "--ui-scaling" => {
+                    let v = it.next().unwrap_or_default();
+                    self.ui_scaling = ddg_render::overlay::UiScaling::parse(&v)
+                        .context("--ui-scaling needs smooth, integer or nearest")?;
                 }
                 _ => rest.push(a),
             }
@@ -620,9 +675,9 @@ impl LocaleConfig {
     }
 }
 
-/// UI scales beyond 4 only cost memory (a 2560×1920 canvas at 4).
+/// Canvas multiples beyond [`ddg_render::overlay::MAX_MULTIPLE`] only cost memory.
 fn clamp_scale(s: usize) -> usize {
-    s.clamp(1, 4)
+    s.clamp(1, ddg_render::overlay::MAX_MULTIPLE)
 }
 
 /// Builds the overlay for `cfg` and installs it on `bank`. Returns the number of sprites
@@ -813,6 +868,41 @@ mod tests {
         assert_eq!(c.lang, "en");
         assert!(c.active());
         assert!(c.take_args(&mut vec!["--font".into()]).is_err());
+    }
+
+    /// `--hud-layout`, `--ui-scaling` and `--ui-scale` (docs/localisation.md, "UI scaling").
+    #[test]
+    fn layout_and_scaling_from_args() {
+        use crate::presentation::HudLayout;
+        use ddg_render::overlay::UiScaling;
+        let mut c = LocaleConfig::default();
+        assert_eq!(c.hud_layout, HudLayout::Original);
+        assert_eq!(c.ui_scaling, UiScaling::Smooth);
+        // The multiple follows the window by default.
+        assert_eq!((c.multiple_for(800), c.multiple_for(1080)), (2, 3));
+        let mut args: Vec<String> = ["--hud-layout", "enhanced", "--ui-scaling", "integer", "x"]
+            .map(String::from)
+            .to_vec();
+        c.take_args(&mut args).unwrap();
+        assert_eq!(args, ["x"]);
+        assert!(c.enhanced_hud());
+        assert_eq!(c.ui_scaling, UiScaling::Integer);
+        assert_eq!((c.multiple_for(800), c.multiple_for(1080)), (1, 2));
+        // A fixed multiple overrides the window's, and nothing else.
+        let mut args: Vec<String> = ["--ui-scale", "3"].map(String::from).to_vec();
+        c.take_args(&mut args).unwrap();
+        assert_eq!((c.multiple_for(800), c.ui_scale), (3, 3));
+        assert!(c.enhanced_hud());
+        let mut c = LocaleConfig::default();
+        c.take_args(&mut vec!["--ui-scale".into(), "2".into()])
+            .unwrap();
+        assert!(
+            !c.enhanced_hud(),
+            "the multiple no longer switches the layout"
+        );
+        for bad in [["--hud-layout", "wide"], ["--ui-scaling", "blurry"]] {
+            assert!(c.take_args(&mut bad.map(String::from).to_vec()).is_err());
+        }
     }
 
     /// Against the user's data: every catalogued tbl id exists in `tbl.rom`, every sheet
