@@ -116,6 +116,7 @@ pub fn run(opts: PlayOptions) -> Result<()> {
         panel_on: true,
         tolerance_m,
         hold: 0,
+        last_events: Vec::new(),
         paused: false,
         interpolate: false,
         frame: FrameGeometry::default(),
@@ -196,6 +197,8 @@ struct Play {
     /// Distance panel shown (1) or "Professional" plate (0), toggled by Enter (`0x856c70`).
     panel_on: bool,
     tolerance_m: i32,
+    /// Rule events of the previous tick, to keep repeats out of the log.
+    last_events: Vec<ddg_engine::rules::RuleEvent>,
     /// Ticks spent in the current arrival hold.
     hold: u32,
     paused: bool,
@@ -217,9 +220,12 @@ impl Play {
             // Digital modes force P0 / EB at each station start (0x4332c0, input.md §4.1).
             self.keyboard.reset_levers();
         }
-        for e in &out.events {
+        // Some messages are re-raised every tick while their condition holds (the overrun
+        // message, 0x40dad0); log only what changed.
+        for e in out.events.iter().filter(|e| !self.last_events.contains(e)) {
             eprintln!("[{}] {e:?}", self.drive.tick_count());
         }
+        self.last_events = out.events;
 
         // The input poll at the end of `Task_Tick`: next tick's controls.
         let down = self.down;
