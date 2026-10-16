@@ -2,6 +2,7 @@
 //! layer and the rect layer, composed on the CPU into a 640×480 RGBA canvas exactly as the
 //! original blits them into its back buffer. The canvas is then drawn as one overlay texture.
 
+use crate::label::LabelFont;
 use crate::text::{SubRect, TextOverlay, draw_parts};
 use ddg_formats::cg::{CgFile, Palette, TILE_PIXELS, TILE_SIZE, Tilemap};
 
@@ -72,6 +73,51 @@ pub struct Fan {
     pub argb: u32,
 }
 
+/// A port-only 2D element (enhancements; the original has none). Widgets are rebuilt every
+/// tick by their owner and cleared with the rect layer ([`SpriteLayer::reset_transient`]).
+/// They are drawn in the sprite passes, after the slots of the same `layer`, in the order they
+/// were added. Geometry is in original 640×480 pixels; fractions address the finer canvas
+/// pixels of `SpriteLayer::scale` > 1. The shake offset applies.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Widget {
+    pub layer: u8,
+    /// `[x, y, w, h]`; nothing is drawn outside it.
+    pub rect: [f32; 4],
+    pub kind: WidgetKind,
+}
+
+/// A colour: index `index` of palette slot `palette`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Paint {
+    pub palette: u8,
+    pub index: u8,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum WidgetKind {
+    /// The whole rectangle in one colour.
+    Fill(Paint),
+    /// A triangle pointing down: the rectangle's top edge to the middle of its bottom edge.
+    DownArrow(Paint),
+    /// The `src` rectangle (`[x, y, w, h]` in art pixels) of a tilemap, `zoom` canvas pixels
+    /// per art pixel, centred in the widget's rectangle and clipped to it (never stretched).
+    /// Index 0 is transparent, as in a slot.
+    Sprite {
+        tilemap: u16,
+        src: [u16; 4],
+        zoom: u8,
+        palette: u8,
+    },
+    /// Text in the rectangle at canvas resolution, uniformly scaled and centred, in the bank's
+    /// label font ([`SpriteBank::set_label_font`]): capitals `cap` original pixels high (made
+    /// smaller only when the text would not fit), or with `None` the largest size that fits.
+    Text {
+        text: String,
+        paint: Paint,
+        cap: Option<f32>,
+    },
+}
+
 /// Decoded tiles and tilemaps (`cg.rom`, `tbl.rom`).
 pub struct SpriteBank {
     tiles: Vec<Option<Box<[u8; TILE_PIXELS]>>>,
@@ -79,6 +125,8 @@ pub struct SpriteBank {
     /// Opt-in translated text drawn instead of the art of some sprites (`text.rs`); `None`
     /// draws the original art everywhere.
     text: Option<TextOverlay>,
+    /// The font of [`WidgetKind::Text`] labels; `None` draws no labels.
+    labels: Option<LabelFont>,
 }
 
 impl SpriteBank {
@@ -91,6 +139,7 @@ impl SpriteBank {
             tiles,
             tilemaps,
             text: None,
+            labels: None,
         }
     }
 
@@ -106,6 +155,23 @@ impl SpriteBank {
 
     pub fn text(&self) -> Option<&TextOverlay> {
         self.text.as_ref()
+    }
+
+    /// Installs (or with `None` removes) the font of [`WidgetKind::Text`] labels.
+    pub fn set_label_font(&mut self, font: Option<LabelFont>) {
+        self.labels = font;
+    }
+
+    pub fn has_label_font(&self) -> bool {
+        self.labels.is_some()
+    }
+
+    /// The palette indices of a whole tilemap: `(width, height, pixels)` in art pixels.
+    pub fn art(&self, tbl: u16) -> Option<(usize, usize, Vec<u8>)> {
+        let map = self.tilemaps.get(usize::from(tbl))?;
+        let (w, h) = (map.width, map.height);
+        let px = self.render_rect(tbl, (0, 0, w, h));
+        Some((usize::from(w) * TILE_SIZE, usize::from(h) * TILE_SIZE, px))
     }
 
     /// Palette indices of a resolved `(col, row, w, h)` tile rectangle of map `tbl`,
@@ -144,6 +210,8 @@ pub struct SpriteLayer {
     pub slots: [Slot; SLOT_COUNT],
     pub palettes: Vec<Option<Palette>>,
     pub fans: Vec<Fan>,
+    /// Port-only elements of enhancements; empty in the arcade default.
+    pub widgets: Vec<Widget>,
     /// Global shake offset (signed bytes 0x856358/0x856359).
     pub shake: (i8, i8),
     /// Canvas pixels per original pixel. 1 is the original 640×480; 2 is the enhancement
@@ -157,6 +225,7 @@ impl Default for SpriteLayer {
             slots: [Slot::CLEAR; SLOT_COUNT],
             palettes: vec![None; PALETTE_COUNT],
             fans: Vec::new(),
+            widgets: Vec::new(),
             shake: (0, 0),
             scale: 1,
         }
@@ -170,6 +239,27 @@ impl SpriteLayer {
             *s = Slot::CLEAR;
         }
         self.fans.clear();
+        self.widgets.clear();
+    }
+
+    /// Adds a [`Widget`].
+    pub fn add_widget(&mut self, layer: u8, rect: [f32; 4], kind: WidgetKind) {
+        self.widgets.push(Widget { layer, rect, kind });
+    }
+
+    /// Adds `text` in `rect` (original pixels) in `paint`, capitals `cap` original pixels high
+    /// (`None`: as large as fits): the free-text path of the label font, drawn at the canvas
+    /// resolution of [`SpriteLayer::scale`].
+    pub fn add_text(
+        &mut self,
+        layer: u8,
+        rect: [f32; 4],
+        text: &str,
+        paint: Paint,
+        cap: Option<f32>,
+    ) {
+        let text = text.to_owned();
+        self.add_widget(layer, rect, WidgetKind::Text { text, paint, cap });
     }
 
     /// Appends a fan; ignored once the list is full (16 fans).
@@ -214,6 +304,9 @@ impl SpriteLayer {
         for layer in (0..LAYERS).rev() {
             for slot in self.slots.iter().rev().filter(|s| s.layer == layer) {
                 self.blit(bank, slot, sx, sy, c, canvas);
+            }
+            for w in self.widgets.iter().filter(|w| w.layer == layer) {
+                self.draw_widget(bank, w, sx, sy, c, canvas);
             }
         }
         for fan in &self.fans {
@@ -300,6 +393,130 @@ impl SpriteLayer {
     }
 }
 
+impl SpriteLayer {
+    fn draw_widget(
+        &self,
+        bank: &SpriteBank,
+        w: &Widget,
+        sx: i32,
+        sy: i32,
+        c: Canvas,
+        canvas: &mut [u8],
+    ) {
+        let palette = |p: u8| self.palettes.get(usize::from(p)).and_then(Option::as_ref);
+        // The rectangle in canvas pixels, clipped to the canvas.
+        let s = c.s as f32;
+        let [x, y, rw, rh] = w.rect;
+        let to_px = |v: f32, shake: i32, max: usize| {
+            (((v + shake as f32) * s).round() as i64).clamp(0, max as i64) as usize
+        };
+        let (x0, x1) = (to_px(x, sx, c.w), to_px(x + rw, sx, c.w));
+        let (y0, y1) = (to_px(y, sy, c.h), to_px(y + rh, sy, c.h));
+        if x0 >= x1 || y0 >= y1 {
+            return;
+        }
+        let put = |canvas: &mut [u8], px: usize, py: usize, rgba: [u8; 4]| {
+            let o = (py * c.w + px) * 4;
+            canvas[o..o + 4].copy_from_slice(&rgba);
+        };
+        match &w.kind {
+            WidgetKind::Fill(p) => {
+                let Some(pal) = palette(p.palette) else {
+                    return;
+                };
+                let rgba = pal.rgba(p.index);
+                for py in y0..y1 {
+                    for px in x0..x1 {
+                        put(canvas, px, py, rgba);
+                    }
+                }
+            }
+            WidgetKind::DownArrow(p) => {
+                let Some(pal) = palette(p.palette) else {
+                    return;
+                };
+                let rgba = pal.rgba(p.index);
+                let (l, r) = ((x + sx as f32) * s, (x + rw + sx as f32) * s);
+                let (t, b) = ((y + sy as f32) * s, (y + rh + sy as f32) * s);
+                let tri = [[l, t], [r, t], [(l + r) / 2.0, b]];
+                fill_triangle(tri, rgba, c, canvas);
+            }
+            WidgetKind::Sprite {
+                tilemap,
+                src,
+                zoom,
+                palette: p,
+            } => {
+                let (Some(pal), Some(map)) =
+                    (palette(*p), bank.tilemaps.get(usize::from(*tilemap)))
+                else {
+                    return;
+                };
+                let art = bank.render_rect(*tilemap, (0, 0, map.width, map.height));
+                let aw = usize::from(map.width) * TILE_SIZE;
+                let ah = usize::from(map.height) * TILE_SIZE;
+                let [ax, ay, sw, sh] = src.map(usize::from);
+                let (sw, sh) = (sw.min(aw.saturating_sub(ax)), sh.min(ah.saturating_sub(ay)));
+                let z = usize::from((*zoom).max(1));
+                // Centred in the unclipped rectangle (in signed canvas pixels).
+                let cx = ((x + sx as f32 + rw / 2.0) * s).round() as i64 - (sw * z / 2) as i64;
+                let cy = ((y + sy as f32 + rh / 2.0) * s).round() as i64 - (sh * z / 2) as i64;
+                for py in y0..y1 {
+                    let ly = py as i64 - cy;
+                    if ly < 0 || ly >= (sh * z) as i64 {
+                        continue;
+                    }
+                    let row = ay + ly as usize / z;
+                    for px in x0..x1 {
+                        let lx = px as i64 - cx;
+                        if lx < 0 || lx >= (sw * z) as i64 {
+                            continue;
+                        }
+                        let index = art[row * aw + ax + lx as usize / z];
+                        if index != 0 {
+                            put(canvas, px, py, pal.rgba(index));
+                        }
+                    }
+                }
+            }
+            WidgetKind::Text { text, paint, cap } => {
+                let (Some(pal), Some(font)) = (palette(paint.palette), bank.labels.as_ref()) else {
+                    return;
+                };
+                let (mw, mh) = (x1 - x0, y1 - y0);
+                let mask = font.mask(text, mw, mh, cap.map(|v| v * s));
+                let fg = pal.rgba(paint.index);
+                for py in 0..mh {
+                    for px in 0..mw {
+                        let cov = mask[py * mw + px];
+                        if cov == 0 {
+                            continue;
+                        }
+                        let o = ((y0 + py) * c.w + x0 + px) * 4;
+                        let under: [u8; 4] = canvas[o..o + 4].try_into().expect("4 bytes");
+                        let out = if under[3] == 0 {
+                            // Over transparency the overlay's alpha test decides.
+                            [fg[0], fg[1], fg[2], cov]
+                        } else {
+                            let t = u16::from(cov);
+                            let mix = |a: u8, b: u8| {
+                                ((u16::from(a) * (255 - t) + u16::from(b) * t) / 255) as u8
+                            };
+                            [
+                                mix(under[0], fg[0]),
+                                mix(under[1], fg[1]),
+                                mix(under[2], fg[2]),
+                                255,
+                            ]
+                        };
+                        canvas[o..o + 4].copy_from_slice(&out);
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Fills a convex fan, sampling pixel centres (D3D's top-left fill convention is approximated
 /// by the half-pixel centre test). Opaque; the original's alpha byte is not used (guess).
 fn fill_fan(fan: &Fan, sx: i32, sy: i32, c: Canvas, canvas: &mut [u8]) {
@@ -365,6 +582,7 @@ mod tests {
                 tiles: vec![1],
             }],
             text: None,
+            labels: None,
         }
     }
 
@@ -493,6 +711,91 @@ mod tests {
         assert_eq!(px(52, 52), [0, 0, 0, 0]);
         assert_eq!(px(210, 210), [0x12, 0x34, 0x56, 255]);
         assert_eq!(px(221, 210), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn widgets_draw_in_their_layer_and_clip() {
+        // A 2×1-tile map: index 1 (green) in the left tile, 2 (red) in the right one.
+        let mut b = bank(1);
+        b.tiles.push(Some(Box::new([2; TILE_PIXELS])));
+        b.tilemaps[0] = Tilemap {
+            width: 2,
+            height: 1,
+            tiles: vec![1, 2],
+        };
+        let mut l = SpriteLayer {
+            scale: 2,
+            ..SpriteLayer::default()
+        };
+        l.palettes[0] = Some(palette());
+        // A slot on layer 1 under a layer-1 fill, which is under a layer-0 slot.
+        l.slots[0] = Slot::new(0, 0, 0, 0, 0, true);
+        l.slots[1] = Slot::new(0, 100, 100, 0, 1, true);
+        let red = Paint {
+            palette: 0,
+            index: 2,
+        };
+        l.add_widget(1, [0.0, 0.0, 120.0, 120.0], WidgetKind::Fill(red));
+        // The whole 32×16 map, one canvas pixel per art pixel, centred in a 10×20 rect at
+        // (200, 200): 20 canvas pixels wide, so 6 art columns are cut off on each side.
+        let sprite = WidgetKind::Sprite {
+            tilemap: 0,
+            src: [0, 0, 32, 16],
+            zoom: 1,
+            palette: 0,
+        };
+        l.add_widget(0, [200.0, 200.0, 10.0, 20.0], sprite);
+        let (w, h) = l.canvas_size();
+        let mut c = vec![0; w * h * 4];
+        l.compose(&b, &mut c);
+        let px = |x: usize, y: usize| -> [u8; 4] { c[(y * w + x) * 4..][..4].try_into().unwrap() };
+        assert_eq!(px(5, 5), [0, 255, 0, 255], "layer-0 slot over the fill");
+        assert_eq!(px(210, 210), [255, 0, 0, 255], "fill over the layer-1 slot");
+        assert_eq!(px(239, 239), [255, 0, 0, 255]);
+        assert_eq!(px(240, 240), [0, 0, 0, 0]);
+        // Sprite: canvas x 400..420, y 400..440; art rows centred at 412..428.
+        assert_eq!(px(399, 420), [0, 0, 0, 0]);
+        assert_eq!(px(400, 420), [0, 255, 0, 255]);
+        assert_eq!(px(409, 420), [0, 255, 0, 255]);
+        assert_eq!(px(410, 420), [255, 0, 0, 255]);
+        assert_eq!(px(419, 420), [255, 0, 0, 255]);
+        assert_eq!(px(420, 420), [0, 0, 0, 0]);
+        assert_eq!(px(405, 411), [0, 0, 0, 0]);
+        assert_eq!(px(405, 412), [0, 255, 0, 255]);
+        // Text without a label font draws nothing; widgets go with the per-tick reset.
+        l.add_text(0, [300.0, 300.0, 50.0, 10.0], "Hi", red, None);
+        l.compose(&b, &mut c);
+        assert!((600..700).all(|x| (600..620).all(|y| c[(y * w + x) * 4 + 3] == 0)));
+        l.reset_transient();
+        assert!(l.widgets.is_empty());
+    }
+
+    #[test]
+    fn text_widgets_use_the_label_font() {
+        use crate::text::tests::BoxGlyphs;
+        let mut b = bank(1);
+        b.set_label_font(Some(LabelFont::new(Box::new(BoxGlyphs))));
+        let mut l = SpriteLayer::default();
+        l.palettes[0] = Some(palette());
+        let green = Paint {
+            palette: 0,
+            index: 1,
+        };
+        l.add_text(0, [300.0, 300.0, 50.0, 10.0], "Hi", green, Some(5.0));
+        let mut c = vec![0; CANVAS_W * CANVAS_H * 4];
+        l.compose(&b, &mut c);
+        let inside = (300..350)
+            .flat_map(|x| (300..310).map(move |y| (x, y)))
+            .filter(|&(x, y)| pixel(&c, x, y) == [0, 255, 0, 255])
+            .count();
+        assert!(inside > 0);
+        for y in 0..CANVAS_H {
+            for x in 0..CANVAS_W {
+                if !(300..350).contains(&x) || !(300..310).contains(&y) {
+                    assert_eq!(pixel(&c, x, y)[3], 0, "({x}, {y})");
+                }
+            }
+        }
     }
 
     #[test]
