@@ -10,8 +10,9 @@ use crate::text::{Align, GlyphSource, rasterise_sized};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// Cache key: text, mask size, cap height (bits of the f32) in canvas pixels and alignment.
-type Key = (String, usize, usize, Option<u32>, Align);
+/// Cache key: text, mask size, cap height (bits of the f32) in canvas pixels, alignment and
+/// rotation.
+type Key = (String, usize, usize, Option<u32>, Align, bool);
 
 /// A font for labels, with the coverage masks rendered so far (labels are redrawn every
 /// frame, so each distinct string and size is rasterised once).
@@ -30,7 +31,8 @@ impl LabelFont {
 
     /// `text` in a `w × h` coverage mask (row-major, 0..=255), uniformly scaled and centred:
     /// capitals `cap_px` high, or smaller if that does not fit; `None` = the largest size that
-    /// fits ([`rasterise_sized`]); `align` places it horizontally.
+    /// fits ([`rasterise_sized`]); `align` places it along the line; `vertical` turns it 90°
+    /// clockwise (reads top to bottom).
     pub fn mask(
         &self,
         text: &str,
@@ -38,16 +40,39 @@ impl LabelFont {
         h: usize,
         cap_px: Option<f32>,
         align: Align,
+        vertical: bool,
     ) -> Arc<[u8]> {
-        let key = (text.to_owned(), w, h, cap_px.map(f32::to_bits), align);
+        let key = (
+            text.to_owned(),
+            w,
+            h,
+            cap_px.map(f32::to_bits),
+            align,
+            vertical,
+        );
         let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
         cache
             .entry(key)
             .or_insert_with(|| {
                 let g = &*self.glyphs;
-                rasterise_sized(text, w, h, align, false, g, cap_px).into()
+                rasterise_sized(text, w, h, align, vertical, g, cap_px).into()
             })
             .clone()
+    }
+
+    /// The width of the widest line of `text` with capitals `cap` high, in the unit of `cap`
+    /// (as [`rasterise_sized`] sizes it, before any fitting).
+    pub fn width(&self, text: &str, cap: f32) -> f32 {
+        let g = &*self.glyphs;
+        let reference = 100.0;
+        let h_ref = g.glyph('H', reference).height as f32;
+        if h_ref <= 0.0 {
+            return 0.0;
+        }
+        let px = cap * reference / h_ref;
+        text.lines()
+            .map(|l| l.chars().map(|c| g.advance(c, px)).sum::<f32>())
+            .fold(0.0, f32::max)
     }
 }
 
@@ -59,16 +84,16 @@ mod tests {
     #[test]
     fn masks_are_cached_per_size() {
         let f = LabelFont::new(Box::new(BoxGlyphs));
-        let a = f.mask("Tokyo", 60, 12, None, Align::Center);
+        let a = f.mask("Tokyo", 60, 12, None, Align::Center, false);
         assert_eq!(a.len(), 60 * 12);
         assert!(a.iter().any(|&c| c > 0));
         assert!(Arc::ptr_eq(
             &a,
-            &f.mask("Tokyo", 60, 12, None, Align::Center)
+            &f.mask("Tokyo", 60, 12, None, Align::Center, false)
         ));
         assert!(!Arc::ptr_eq(
             &a,
-            &f.mask("Tokyo", 120, 24, None, Align::Center)
+            &f.mask("Tokyo", 120, 24, None, Align::Center, false)
         ));
     }
 }

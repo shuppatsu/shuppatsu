@@ -197,6 +197,7 @@ impl OneLine {
                 outline: look.outline.map(paint),
                 backdrop: look.backdrop.map(paint),
                 align,
+                vertical: false,
             },
             fill: None,
         })
@@ -304,6 +305,7 @@ impl LandmarkLines {
                 outline: outline.map(paint),
                 backdrop: l.look.backdrop.map(paint),
                 align: Align::Center,
+                vertical: false,
             },
             fill: l.look.backdrop.map(|b| ([px, top, pw, h], paint(b))),
         })

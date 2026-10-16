@@ -141,6 +141,8 @@ pub struct TextStyle {
     /// text plus [`BACKDROP_PAD`] on each side (for art drawn on a box, like the banners).
     pub backdrop: Option<Paint>,
     pub align: Align,
+    /// Rotated 90° clockwise (reads top to bottom); `align` then runs from the top.
+    pub vertical: bool,
 }
 
 /// Horizontal padding of a [`TextStyle::backdrop`], original pixels.
@@ -155,6 +157,7 @@ impl TextStyle {
             outline: None,
             backdrop: None,
             align: Align::Center,
+            vertical: false,
         }
     }
 }
@@ -205,6 +208,12 @@ impl SpriteBank {
 
     pub fn has_label_font(&self) -> bool {
         self.labels.is_some()
+    }
+
+    /// The width of `text` in the label font with capitals `cap` pixels high (any unit: the
+    /// result is in the same one); `None` without a label font.
+    pub fn label_width(&self, text: &str, cap: f32) -> Option<f32> {
+        Some(self.labels.as_ref()?.width(text, cap))
     }
 
     /// The palette indices of a whole tilemap: `(width, height, pixels)` in art pixels.
@@ -610,7 +619,14 @@ impl SpriteLayer {
                     return;
                 };
                 let (mw, mh) = (x1 - x0, y1 - y0);
-                let mask = font.mask(text, mw, mh, style.cap.map(|v| v * s), style.align);
+                let mask = font.mask(
+                    text,
+                    mw,
+                    mh,
+                    style.cap.map(|v| v * s),
+                    style.align,
+                    style.vertical,
+                );
                 let backdrop = style
                     .backdrop
                     .and_then(|b| Some(palette(b.palette)?.rgba(b.index)));
