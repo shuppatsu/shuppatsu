@@ -5,8 +5,8 @@
 
 mod app;
 mod cab;
-mod coupling_hud;
 mod captions;
+mod coupling_hud;
 mod departure_hud;
 mod front;
 mod gamepad;
