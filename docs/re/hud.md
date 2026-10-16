@@ -737,10 +737,35 @@ renderer.md §13, confirmed). None of the HUD elements in §3 use them.
 
 ### 6.4 Implications for the port
 
-* Draw the HUD in a 640×480 canvas. For Hor+ widescreen, anchor groups to edges: the left group
-  (handles in one-handle mode, speedometer, ATC panel), the right group (brake in two-handle
-  mode, plates, signal, signs, distance panel) and the centred group (clocks, remaining time,
-  messages, banners, navigator). The original has no anchoring; this is an enhancement.
+* Draw the HUD in a 640×480 canvas. The original has no anchoring and no wide layout.
+* **Enhancement `wide_hud`** (port, decided by the user; `ui_scale` 2 and up only, so 1× stays
+  the original centred 4:3):
+  * The canvas follows the window's shape: it keeps 480 × `ui_scale` pixels of height and is
+    widened to the window's aspect (`SpriteLayer::fit_window`, `SpriteLayer::wide`). It is
+    mapped to the window with one scale factor for x and y (`overlay::canvas_rect_for`), so
+    art keeps square pixels and the speedometer stays round; a 4:3 window gives the normal
+    canvas. The 3D projection's original 7.9 % horizontal stretch (`ORIGINAL_STRETCH`) is not
+    applied to the 2D layer. Measured on headless shots at `ui_scale` 2: the dial face is
+    244 × 244 px at 1280×960, 203 × 203 at 1280×800 and 274 × 274 at 2560×1080.
+  * Each slot, widget and fan has an anchor (`sprites::Anchor`). Positions stay in 640×480
+    design pixels; on a canvas `wide` pixels wider, `Left` elements are not moved, `Centre`
+    ones move by `wide / 2` (the 4:3 design centred) and `Right` ones by `wide`. Only
+    positions change; sizes never do. Each group keeps its internal layout.
+  * Groups (`hud::anchor_slots`, set every HUD tick): **left** = clocks and their labels
+    (0x0a–0x17), high-speed readout and ATC panel (0x75–0x78), mascon, one-handle frame and
+    lamp, speedometer and its needle, cab-signal lamp (0x7e–0x82), and the brake gauge when it
+    is at the left (one-handle mode); **right** = vehicle picture (0x1e), station plates
+    (0x83–0x85), distance panel (0x5a, 0x7c, 0x7d, 0x20–0x24), signs and signal (0x5e–0x60)
+    and the brake gauge in two-handle mode; **centre** = everything else: remaining time and
+    vehicle name, captions, banners, landmarks, time messages, hints and navigator, ATS lamp,
+    popups, the departure strip and the coupling game's screen.
+  * Screens stay a centred 4:3 inside the wide canvas: every tick starts with all anchors
+    `Centre`; the driving HUD sets its own, and the slots the stage flow's screens drew (pause,
+    station result, continue) are put back to `Centre`. With the HUD hidden (report card,
+    ranking, run end), in the ending, opening, bonus game and the front end everything is
+    centred.
+  * The wider station plates of `wide_plates` (docs/localisation.md) take part of the right
+    group's extra room; the vehicle picture moves left with them.
 * Palette animation (speedometer digits, route strip) means palettes are per-frame state, not
   constant textures.
 * Sprite ids are per slot, and the slot table can be mirrored directly as engine state; the

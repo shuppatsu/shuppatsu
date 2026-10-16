@@ -91,23 +91,44 @@ rebuild.
   their layer, are cleared with the rect layer every tick, and are empty in the arcade default.
   The text uses `crates/ddg-render/src/label.rs` (`LabelFont`: the language's font, installed
   by `install` with `SpriteBank::set_label_font`, masks cached per string and size).
+  `SpriteLayer::add_styled_text` takes a `TextStyle` with an alignment, an outline colour
+  (one original pixel around the text) and a backdrop colour (a box behind the text), used by
+  the one-line captions. Widgets and fans take an edge anchor (`SpriteLayer::anchored`) for the
+  wide HUD (hud.md §6.4).
 
-## Station plates (enhancement `en_station_plates`)
+## Station plates by UI scale (enhancement `wide_plates`)
 
 The original's station plates (hud.md §3.7) are two 32×96 plates with vertical kanji in the
 top right, "from" (slot 0x83 at (493, 8)) and "next stop" (slot 0x85 at (552, 8)), with the
-arrow 0x4b8 (slot 0x84 at (530, 48)) between them. Vertical romaji is hard to read, so with a
-translation active (`LocaleConfig::active`: a language other than `ja` and a font) the plates
-are laid out horizontally in the same footprint (`crates/ddg-game/src/hud/plates_en.rs`).
-640×480 coordinates:
+arrow 0x4b8 (slot 0x84 at (530, 48)) between them.
+
+Decided by the user (enhancement):
+
+* **`ui_scale` 1 is "original mode"**: the original vertical plates with the Japanese art
+  only, in every language. No horizontal plates, no romaji; the whole 1× HUD is the original
+  4:3 layout, centred. (Japanese at 1× is pixel-identical to the arcade default.)
+* **`ui_scale` 2 and up**: the plates are laid out horizontally
+  (`crates/ddg-game/src/hud/plates_en.rs`), in every language. The romaji line is drawn when
+  a translation with a font is active (`LocaleConfig::active`); otherwise the boxes show the
+  kanji only. The boxes grow on a wide canvas (enhancement `wide_hud`, hud.md §6.4).
+
+640×480 coordinates, with `extra` = the widening (below):
 
 | Element | Rectangle | Content |
 |---|---|---|
-| Backdrop | (490, 7) 98×100 | the plates' black |
-| "From" box | (492, 10) 94×42 | #303030, the kanji name and the English name under it |
-| Arrow | (533.5, 53) 11×9 | ▼ in the plates' yellow |
-| "Next stop" box | (492, 62) 94×42 | as "from" |
+| Backdrop | (490 − extra, 7) (98 + extra)×100 | the plates' black |
+| "From" box | (492 − extra, 10) (94 + extra)×42 | #303030, the kanji name and the English name under it |
+| Arrow | centred on the boxes, y 53, 11×9 | ▼ in the plates' yellow |
+| "Next stop" box | (492 − extra, 62) (94 + extra)×42 | as "from" |
 
+* **Width.** The plates are in the right group of the wide HUD. They grow to the left into the
+  room that group gains over the centred 4:3 layout, up to 56 px: `extra = min(56,
+  floor(side room))`, where the side room is half the canvas widening in 640×480 pixels
+  (`SpriteLayer::side_room`). The vehicle picture (slot 0x1e, same group) moves left by the
+  same amount, so nothing overlaps the centred remaining-time readout. At 16:10 the side room
+  is 64 px, so the boxes are 150 px wide (1.6×); at 21:9 also 150. **At 4:3 there is no room**:
+  the boxes stay 94 px wide (the layout compromise; the vehicle picture already touches the
+  remaining time's 秒 there).
 * The kanji are the original horizontal station-name sprites (`HudTables::station_names`,
   `plain`, the captions' art), not a font. Their lettering index (0x1c, green in palette 4) is
   recoloured to the plates' yellow (palette 4 index 0xa) in a port-only palette, slot 0x7f,
@@ -115,20 +136,48 @@ are laid out horizontally in the same footprint (`crates/ddg-game/src/hud/plates
   use. All indices are found in the art at load (the plates' commonest index is the backdrop,
   the second their lettering; the name sprites' commonest other than the backdrop is theirs).
 * The sprite is drawn at a whole number of canvas pixels per art pixel, never resampled:
-  1 at `ui_scale` 1 and 2 (at 2× it is half the original height, 14 px of 640×480, like the
-  other HUD lettering), 2 at 3 and 4. A name wider than the box is centred and clipped at both
-  ends. At `ui_scale` 2 every name fits (the widest, Hokuhoku-Ōshima, is 164 of 188 px). At
-  `ui_scale` 1 eight are clipped: Yotsugoya 0x4ba (109 px), Uragawara 0x4ce (138),
-  Hokuhoku-Ōshima 0x4cf (164), Matsudai 0x4d0 (107), Higashi-Kanagawa 0x4e2 (116),
-  Kōshienguchi 0x4ef (105), Kōnan-Yamate 0x4f2 (110), Settsu-Motoyama 0x4f3 (117); the box
-  is 94 px wide. At `ui_scale` 3 (2 canvas pixels per art pixel in a 282-pixel box) only
-  Hokuhoku-Ōshima is clipped; at 4 none.
-* The English name is `[station_plate]` text under the kanji, capitals 5 px high (smaller if
-  a long name needs it), centred, in the plates' yellow.
+  1 at `ui_scale` 2 (half the original height, 14 px of 640×480, like the other HUD
+  lettering), 2 at 3 and 4. A name wider than the box is centred and clipped at both ends. At
+  `ui_scale` 2 every name fits even the 94-px box (the widest, Hokuhoku-Ōshima, is 164 of 188
+  canvas px). At `ui_scale` 3 in a 94-px box only Hokuhoku-Ōshima is clipped (none in a
+  150-px box); at 4 none.
+* The English name is `[station_plate]` text under the kanji, capitals 5 px high in a 94-px
+  box and up to 7 px in a 150-px one (smaller if a long name needs it), centred, in the
+  plates' yellow.
 * State: the plate slots are set and cleared exactly as in arcade mode but parked off screen;
   each tick the HUD draws the boxes from the slots' current images, so they appear and
   disappear with the original plates. With neither plate shown nothing is drawn.
-* Japanese (and any run without a font) draws the original plates unchanged.
+
+## Captions and banners (enhancement `one_line_captions`)
+
+The station captions (slots 0x36–0x38) and banners (0x39–0x3b) are each three sprites:
+name + 駅 + word (通過 / 停車 / 出発進行 …), hud.md §3.13. Translated sprite by sprite, each
+word is fitted to its own box, so the long name comes out small and "Stn" / "Stop" big.
+
+Decided by the user (enhancement, translations only; Japanese is unchanged): with a
+translation and a font, each caption or banner is **one line of text at one size** across the
+group's area, e.g. "Higashi-Kanagawa · Stop" ("Stn" is dropped). `crates/ddg-game/src/
+captions.rs` (`OneLine`):
+
+* **Phrases** are `[caption]` in the catalogue, by kind: `depart_clear`, `depart_reduce`,
+  `depart_caution`, `depart_restrict`, `pass`, `stop` and `name` (kind 6, the bare name).
+  `{name}` is the station's name: the `[tbl]` text of the station's plain name sprite (the
+  existing name table, e.g. `0xe6 = "Higashi-Kanagawa"`). A kind without a phrase, or a
+  station without a name, keeps the three sprites.
+* **Drawing.** The tasks, their timing (6 hidden updates, then distance or tick mode), the
+  time-message hiding and the cancelling are the original's; only the drawing differs. The
+  three slots stay empty and the task adds a text widget each update it would have drawn
+  them. Captions are left-aligned from the caption's x (80) to the same margin on the right;
+  banners are centred on the original's centre (x 320), at most 560 px wide.
+* **Size**: capitals 0.75 × the original lettering height (`rasterise_sized`'s rule), measured
+  from the 駅 sprite of the set; smaller only when the line does not fit.
+* **Colours** come from palette 4 at draw time, so palette changes apply as on the art. The
+  captions' 駅 art is plain: the line is its commonest colour (green) with a one-pixel outline
+  in its second (dark). The banners' art is on a box (most of its edge is opaque): the line is
+  the commonest colour that is not the box's (yellow) on a box of the box colour (navy), the
+  sprite's full height and as wide as the text plus 4 px each side.
+* The landmark captions (one sprite each) and the time messages (word + digits) are not
+  changed.
 
 ## Integration
 
