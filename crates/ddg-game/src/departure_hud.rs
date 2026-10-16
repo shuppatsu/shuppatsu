@@ -76,6 +76,8 @@ pub struct DepartureHud {
     name_id: Option<usize>,
     /// Plates: start station and next stop (`0x856d4c`, `0x856c74`).
     pub plates: (Option<usize>, Option<usize>),
+    /// Station-name ids from the segment's start station on (the diagram's columns).
+    window: Vec<usize>,
 }
 
 impl DepartureHud {
@@ -92,7 +94,35 @@ impl DepartureHud {
             marks: [0; STAR_SLOTS],
             name_id: None,
             plates: (None, None),
+            window: Vec::new(),
         }
+    }
+
+    /// Every diagram tilemap the strip tables name (for [`crate::board_en::BoardNames`]).
+    pub fn diagram_tilemaps(&self) -> impl Iterator<Item = u16> + '_ {
+        self.strips
+            .iter()
+            .chain(std::iter::once(&self.strip_stage10))
+            .flat_map(|s| s[1..].iter())
+            .filter_map(|&t| u16::try_from(t).ok())
+    }
+
+    /// Enhancement `board_names`: the romaji under the diagram's columns while it shows.
+    pub fn draw_names(&self, names: &crate::board_en::BoardNames, layer: &mut SpriteLayer) {
+        let slot = layer.slots[SLOT_DIAGRAM];
+        if slot.tilemap < 0 {
+            return;
+        }
+        let anchor = layer.anchors[SLOT_DIAGRAM];
+        layer.anchored(anchor, |layer| {
+            names.draw(
+                layer,
+                slot.tilemap,
+                (slot.x, slot.y),
+                (slot.layer, slot.palette),
+                &|i| self.window.get(i).copied(),
+            );
+        });
     }
 
     /// Hud_Create 0x40f7e0: the whole strip palette is olive again.
@@ -142,6 +172,12 @@ impl DepartureHud {
         let (here, next) = (id(s.station), next_stop.and_then(id));
         self.name_id = here;
         self.plates = (here, next);
+        self.window = s
+            .name_ids
+            .iter()
+            .skip(s.station)
+            .map(|&i| usize::from(i))
+            .collect();
 
         let strip = if stage10_late {
             &self.strip_stage10

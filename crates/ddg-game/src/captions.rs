@@ -412,7 +412,7 @@ impl Task {
 /// The exe tables the captions use.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CaptionDefs {
-    names: Vec<StationNameSprite>,
+    pub(crate) names: Vec<StationNameSprite>,
     caption_words: [i16; 7],
     caption_station: i16,
     banner_words: [i16; 7],

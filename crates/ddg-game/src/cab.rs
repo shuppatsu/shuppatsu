@@ -180,6 +180,8 @@ pub struct CabHud {
     stage_speed_mode: i32,
     /// An attract demo drive: its task, not the stage loop, runs (no 0x40c4e0 HUD parts).
     demo: bool,
+    /// Enhancement `board_names`; `None` leaves the route board in kanji only.
+    board_names: Option<crate::board_en::BoardNames>,
 }
 
 impl CabHud {
@@ -219,16 +221,19 @@ impl CabHud {
             vehicle_code: None,
             stage_speed_mode: speed_mode,
             demo: false,
+            board_names: None,
         })
     }
 
     /// Enhancement `one_line_captions`: captions and banners as one translated line. Returns
-    /// false (and keeps the sprites) when the art has no caption sprites.
+    /// false (and keeps the sprites) when the art has no caption sprites. The same names go
+    /// under the route board's kanji (enhancement `board_names`).
     pub fn use_one_line_captions(
         &mut self,
         bank: &ddg_render::sprites::SpriteBank,
         phrases: &crate::locale::CaptionPhrases,
     ) -> bool {
+        self.use_board_names(bank, &phrases.tbl_texts);
         let defs = self.captions.defs();
         let one =
             crate::captions::OneLine::new(bank, defs, &phrases.tbl_texts, phrases.by_kind.clone());
@@ -239,6 +244,25 @@ impl CabHud {
             }
             None => false,
         }
+    }
+
+    /// Enhancement `board_names`: romaji under the route board's station names. `tbl_texts`:
+    /// translated texts by tilemap id (the station names are their name sprites' texts).
+    fn use_board_names(
+        &mut self,
+        bank: &ddg_render::sprites::SpriteBank,
+        tbl_texts: &std::collections::HashMap<u16, String>,
+    ) {
+        let names = self
+            .captions
+            .defs()
+            .names
+            .iter()
+            .enumerate()
+            .filter_map(|(id, n)| Some((id, tbl_texts.get(&n.plain)?.clone())))
+            .collect();
+        let tilemaps: Vec<u16> = self.departure.diagram_tilemaps().collect();
+        self.board_names = Some(crate::board_en::BoardNames::new(bank, tilemaps, &names));
     }
 
     /// Enhancement `landmark_names`: translated names under the landmark captions, by
@@ -396,6 +420,9 @@ impl CabHud {
             .handling_error(layer, s.train_driving, b.power, b.brake);
         self.captions
             .update(layer, self.popups.message_up(), s.odometer);
+        if let Some(names) = self.board_names.as_ref() {
+            self.departure.draw_names(names, layer);
+        }
 
         let frozen = self.clock_freeze > 0;
         if frozen {

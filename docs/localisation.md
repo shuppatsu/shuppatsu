@@ -216,6 +216,37 @@ it (`crates/ddg-game/src/captions.rs`, `LandmarkLines`):
   captions in the middle on a wide canvas).
 * A landmark without a `[landmark]` name, or Japanese, shows the sprite alone.
 
+## Route board (enhancement `board_names`)
+
+Before departure the board of hud.md §3.7 / §5 shows the route diagram (slot 0x7b, one sprite
+per stage and stations served, e.g. 0x32a 秋田…大曲, 0x31e 直江津…犀潟): a white board with the
+line and its station dots, and under each dot the station's name in vertical kanji (black
+for stops, grey for stations passed).
+
+With a translation and a font (enhancement, translations only; Japanese is unchanged) the
+kanji stay and each station's romaji is drawn under its column
+(`crates/ddg-game/src/board_en.rs`):
+
+* **Columns from the art.** At load every diagram the strip tables name is scanned: the board
+  is its commonest colour, rows and columns opaque almost throughout are its frame, the first
+  rows inked over half the width are the line, the names start at the first blank row below
+  it. Ink columns closer than 6 px are one name. Each column keeps its ink extent, its last
+  kanji row and its lettering colour (black or grey), which the romaji uses (palette 4).
+* **Stations.** A diagram starts at the segment's start station: column `i` is station
+  `station + i` of the stage (checked on stages 0, 5, 10, 12 and 19). The names are the
+  station-name texts the one-line captions use (`[tbl]` of the plain name sprites), so a
+  passed station without a plate (黒井 Kuroi) has one too.
+* **Placement**, left to right: the first line under the column's own kanji, centred on the
+  column, that touches no other column's kanji and no name placed before (on a crowded board
+  such as 秋田–大曲 neighbouring names step down in turn); else broken at a hyphen or space onto
+  two lines (Kita-/Ōmagari); a name whose kanji reach the bottom edge (羽後四ッ屋) is turned
+  90° beside them, in the gap to the next column; failing all that it is drawn smaller (down
+  to 70 %), and last of all narrowed into the room directly under its kanji.
+* **Size.** Capitals 5.5 original pixels high (11 canvas pixels at `ui_scale` 2), at least 6
+  canvas pixels; drawn at the `ui_scale` resolution with the sprite layer's text widget.
+* **Timing.** Drawn every update while slot 0x7b shows a diagram, with its anchor, so the
+  names come and go with the board (removed at departure tick `offset + 100`).
+
 ## Integration
 
 Nothing calls this yet. Three edits turn it on for `ddg-game play`:
@@ -279,9 +310,9 @@ Not catalogued, on purpose:
   key/pad glyphs (0x4a6, 0x503), the name-entry symbol wheel (its katakana are input symbols),
   `〜` 0x30d.
 * Text baked into pictures where replacing it would damage the art: the E3 coupling animation
-  0x163–0x166, the EF63 shock meter 0x2da, the tiny 車内信号 label in hint picture 0x13e, and
-  the vertical route diagrams of the pre-departure screen (0x31e–0x325, 0x329, 0x32a…: one
-  station name per column; doable with one vertical part per station, not done yet).
+  0x163–0x166, the EF63 shock meter 0x2da and the tiny 車内信号 label in hint picture 0x13e.
+  The vertical route diagrams of the pre-departure screen (0x31e–0x325, 0x329, 0x32a…) keep
+  their kanji and get romaji under them ("Route board" above).
 * Arcade-only, unreachable on PC: insert-coin texts 0x253, 0x254.
 
 Regions marked `(est.)` in `en.toml` were measured by eye and should be checked in the running

@@ -4,6 +4,7 @@
 //! headless for checks.
 
 mod app;
+mod board_en;
 mod cab;
 mod captions;
 mod coupling_hud;
