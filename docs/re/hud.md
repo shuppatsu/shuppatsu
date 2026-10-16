@@ -739,8 +739,8 @@ renderer.md §13, confirmed). None of the HUD elements in §3 use them, but the 
 ### 6.4 Implications for the port
 
 * Draw the HUD in a 640×480 canvas. The original has no anchoring and no wide layout.
-* **Enhancement `wide_hud`** (port, decided by the user; `ui_scale` 2 and up only, so 1× stays
-  the original centred 4:3):
+* **Enhancement `wide_hud`** (port, decided by the user; only in the `enhanced` HUD
+  layout, `--hud-layout`; the `original` layout stays the centred 4:3 at any canvas multiple):
   * The canvas follows the window's shape: it keeps 480 × `ui_scale` pixels of height and is
     widened to the window's aspect (`SpriteLayer::fit_window`, `SpriteLayer::wide`). It is
     mapped to the window with one scale factor for x and y (`overlay::canvas_rect_for`), so
@@ -765,8 +765,8 @@ renderer.md §13, confirmed). None of the HUD elements in §3 use them, but the 
     station result, continue) are put back to `Centre`. With the HUD hidden (report card,
     ranking, run end), in the ending, opening, bonus game and the front end everything is
     centred.
-  * The wider station plates of `wide_plates` (docs/localisation.md; a translation at
-    `ui_scale` 2 and up) take part of the right group's extra room; the vehicle picture moves
+  * The wider station plates of `wide_plates` (docs/localisation.md; a translation in
+    the enhanced HUD layout) take part of the right group's extra room; the vehicle picture moves
     left with them, and only then.
 * Palette animation (speedometer digits, route strip) means palettes are per-frame state, not
   constant textures.

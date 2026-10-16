@@ -69,6 +69,9 @@ sprite) is an error, not a silent fallback.
 | Language (default `ja`) | `DDG_LANG` | `--lang <code>` |
 | Font file (TTF/OTF) | `DDG_FONT` | `--font <file>` |
 | Extra catalogue directory | `DDG_LOCALE_DIR` | `--locale-dir <dir>` |
+| HUD layout: `original` (default) or `enhanced` | `DDG_HUD_LAYOUT` | `--hud-layout <layout>` |
+| Presentation: `smooth` (default), `integer`, `nearest` | `DDG_UI_SCALING` | `--ui-scaling <mode>` |
+| Fixed canvas multiple 1..4 (default: follows the window) | `DDG_UI_SCALE` | `--ui-scale <n>` |
 
 No font is shipped in the repo. Any TTF/OTF with Latin glyphs works; DejaVu Sans Bold or Noto
 Sans Bold are good starting points (on NixOS: `fc-list | grep -i dejavu`). The catalogue uses a
@@ -77,6 +80,48 @@ should cover Latin Extended-A and arrows. A language without a font keeps the or
 prints a warning. Built-in catalogues (`en`) are compiled into the binary;
 `<locale-dir>/<lang>.toml` overrides them, which is how a new language can be tried without a
 rebuild.
+
+## UI scaling
+
+Decided by the user (enhancements). The 2D layer (sprites, HUD, menus, translated text) is
+composed on the CPU into a canvas of 640×480 × the *canvas multiple* (`SpriteLayer::scale`),
+widened to the window's shape in the enhanced HUD while driving. Three settings, independent of
+each other (`crates/ddg-game/src/presentation.rs`, `crates/ddg-render/src/overlay.rs`):
+
+* **Layout** (`hud_layout`). `original`: the original 4:3 layout, centred, at any resolution
+  and multiple. `enhanced`: the driving HUD on a canvas of the window's shape with its groups at
+  the edges (`wide_hud`, hud.md §6.4) and the wider station plates, horizontal and bilingual
+  with a translation (`wide_plates`, below). Until this split, `ui_scale` 2 and up switched
+  the enhanced layout on; it no longer does.
+* **Canvas multiple.** Follows the window height unless `--ui-scale` fixes it
+  (`overlay::auto_multiple`, capped at 4). With `smooth`/`nearest` it is `ceil(h / 480)`, so
+  text is always rasterised at or above the window's resolution and the presentation only
+  shrinks, by 1/2 to 1 (800 → 2, 1080 → 3, 1440 → 3, 1600 → 4; 2160 → 4, enlarged ×1.125 by the
+  cap). With `integer` it is `floor(h / 480)`, the largest canvas that fits whole (800 → 1,
+  1080 → 2, 1440 → 3, 2160 → 4). A resize recomputes it every frame (cheap); only when it
+  changes are the translated text sprites rasterised again (`presentation::rescale_text`, via
+  `locale::install`), the canvas re-made and recomposed and the overlay texture resized, so a
+  drag rebuilds at most once per multiple crossed. Label masks are cached per size.
+* **Presentation** (`ui_scaling`), one factor for x and y, never stretched:
+  * `smooth` (default): sharp bilinear in the overlay shader, no extra pass. Per axis the
+    canvas is (conceptually) enlarged with nearest neighbour to the smallest whole multiple
+    `p = ceil(target / canvas)` at least the target, then sampled with one bilinear tap: inside
+    a canvas pixel the sample is its centre, and within `0.5 / p` of a pixel edge it ramps
+    across (`overlay::sharp_bilinear_coord`). When the canvas is larger than the target
+    (`p` = 1) this is plain bilinear. Every canvas pixel gets the same size; only edge pixels
+    blend. Texels keep the original blit's alpha test (alpha < 0.5 is transparent) and are
+    filtered premultiplied, in linear light, so edges blend with the 3D view without fringes.
+  * `integer`: the largest whole multiple `k` of the canvas that fits, centred, unfiltered.
+    The rest of the window shows the 3D view while driving and black around menus. The
+    enhanced HUD canvas is `floor(width / k)` wide, so its edge anchors sit at the edges of the
+    integer-scaled area; the 3D view's top edge moves down with the canvas
+    (`presentation::band_top`) so the HUD band and the 3D band still meet. A window under
+    480 high (k = 0) is fitted like `smooth`.
+  * `nearest`: the earlier presentation, nearest neighbour at the fitting factor (uneven pixel
+    sizes, dropped detail); kept for comparisons.
+
+Play, the front end, `view --hud` and the headless `--shot` paths all use the same settings
+(shots take the multiple from `--size`).
 
 ## Code
 
@@ -102,7 +147,7 @@ rebuild.
   the one-line captions. Widgets and fans take an edge anchor (`SpriteLayer::anchored`) for the
   wide HUD (hud.md §6.4).
 
-## Station plates by UI scale (enhancement `wide_plates`)
+## Station plates by HUD layout (enhancement `wide_plates`)
 
 The original's station plates (hud.md §3.7) are two 32×96 plates with vertical kanji in the
 top right, "from" (slot 0x83 at (493, 8)) and "next stop" (slot 0x85 at (552, 8)), with the
@@ -110,12 +155,12 @@ arrow 0x4b8 (slot 0x84 at (530, 48)) between them.
 
 Decided by the user (enhancement):
 
-* **`ui_scale` 1 is "original mode"**: the original vertical plates with the Japanese art
-  only, in every language. No horizontal plates, no romaji; the whole 1× HUD is the original
-  4:3 layout, centred. (Japanese at 1× is pixel-identical to the arcade default.)
-* **Japanese keeps the original vertical plates at every `ui_scale`** (they are its own
+* **The `original` HUD layout**: the original vertical plates with the Japanese art only, in
+  every language. No horizontal plates, no romaji; the whole HUD is the original 4:3 layout,
+  centred. (Japanese at multiple 1 is pixel-identical to the arcade default.)
+* **Japanese keeps the original vertical plates in every layout** (they are its own
   script; only the HUD canvas is larger and, with `wide_hud`, the groups keep to the edges).
-* **A translation at `ui_scale` 2 and up** (`LocaleConfig::active`: a language other than
+* **A translation in the `enhanced` layout** (`LocaleConfig::active`: a language other than
   `ja` with a font): the plates are laid out horizontally
   (`crates/ddg-game/src/hud/plates_en.rs`), kanji with the translated name under them. The
   boxes grow on a wide canvas (enhancement `wide_hud`, hud.md §6.4). The vehicle picture's
