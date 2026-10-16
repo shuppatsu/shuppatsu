@@ -419,6 +419,7 @@ impl App {
         } = &self.defs;
         let r = self.res.as_mut().expect("resources");
         r.layer.fans.clear();
+        r.layer.widgets.clear();
         self.screen = match screen {
             Screen::Attract(mut a) => {
                 let marks = |route| r.save.eeprom.clear_mark(route);

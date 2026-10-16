@@ -19,6 +19,7 @@
 
 use anyhow::{Context, Result, bail, ensure};
 use ddg_formats::exe::Exe;
+use ddg_render::label::LabelFont;
 use ddg_render::sprites::SpriteBank;
 use ddg_render::text::{Align, FontGlyphs, Style, SubRect, TextOverlay, TextOverride, TextPart};
 use std::collections::HashMap;
@@ -122,9 +123,35 @@ pub struct Catalogue {
     pub language: String,
     pub name: String,
     pub entries: Vec<Entry>,
+    /// `[station_plate]`: translated station names by vertical plate tilemap (hud.md §3.7),
+    /// shown by the horizontal plate layout (`hud::plates_en`), not as sprite overrides.
+    pub station_plates: Vec<(u16, String)>,
 }
 
 impl Catalogue {
+    /// `<dir>/<lang>.toml` when a directory is given and the file exists, else the built-in
+    /// catalogue of `lang`.
+    pub fn load(lang: &str, dir: Option<&Path>) -> Result<Self> {
+        let file = dir.map(|d| d.join(format!("{lang}.toml")));
+        let src = match file.filter(|f| f.is_file()) {
+            Some(f) => {
+                std::fs::read_to_string(&f).with_context(|| format!("reading {}", f.display()))?
+            }
+            None => BUILTIN
+                .iter()
+                .find(|(l, _)| *l == lang)
+                .map(|(_, s)| (*s).to_owned())
+                .with_context(|| format!("no catalogue for language {lang:?}"))?,
+        };
+        let cat = Self::parse(&src).with_context(|| format!("catalogue {lang}"))?;
+        ensure!(
+            cat.language == lang,
+            "catalogue for {lang:?} says language {:?}",
+            cat.language
+        );
+        Ok(cat)
+    }
+
     /// Parses and checks a catalogue. Every key must be a valid tbl id or a known sheet
     /// descriptor; unknown fields are errors, so typos do not silently fall back to the art.
     pub fn parse(src: &str) -> Result<Self> {
@@ -132,6 +159,7 @@ impl Catalogue {
         let mut language = None;
         let mut name = None;
         let mut entries = Vec::new();
+        let mut station_plates = Vec::new();
         for (section, value) in &root {
             match section.as_str() {
                 "meta" => {
@@ -188,6 +216,18 @@ impl Catalogue {
                         }
                     }
                 }
+                "station_plate" => {
+                    let t = value
+                        .as_table()
+                        .context("[station_plate] must be a table")?;
+                    for (k, v) in t {
+                        let tbl =
+                            parse_id(k).with_context(|| format!("station_plate key {k:?}"))?;
+                        let s = v.as_str().with_context(|| format!("station_plate.{k}"))?;
+                        ensure!(!s.trim().is_empty(), "station_plate.{k}: empty text");
+                        station_plates.push((tbl, s.to_owned()));
+                    }
+                }
                 _ => bail!("unknown section [{section}]"),
             }
         }
@@ -195,6 +235,7 @@ impl Catalogue {
             language: language.context("meta.language missing")?,
             name: name.context("meta.name missing")?,
             entries,
+            station_plates,
         })
     }
 }
@@ -374,24 +415,7 @@ impl Locale {
         if lang == IDENTITY_LANG {
             return Ok(Self::identity());
         }
-        let file = dir.map(|d| d.join(format!("{lang}.toml")));
-        let src = match file.filter(|f| f.is_file()) {
-            Some(f) => {
-                std::fs::read_to_string(&f).with_context(|| format!("reading {}", f.display()))?
-            }
-            None => BUILTIN
-                .iter()
-                .find(|(l, _)| *l == lang)
-                .map(|(_, s)| (*s).to_owned())
-                .with_context(|| format!("no catalogue for language {lang:?}"))?,
-        };
-        let cat = Catalogue::parse(&src).with_context(|| format!("catalogue {lang}"))?;
-        ensure!(
-            cat.language == lang,
-            "catalogue for {lang:?} says language {:?}",
-            cat.language
-        );
-        Self::from_catalogue(&cat, sheets)
+        Self::from_catalogue(&Catalogue::load(lang, dir)?, sheets)
     }
 
     pub fn is_identity(&self) -> bool {
@@ -493,6 +517,7 @@ fn clamp_scale(s: usize) -> usize {
 pub fn install(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Result<usize> {
     if cfg.lang == IDENTITY_LANG {
         bank.set_text(None);
+        bank.set_label_font(None);
         return Ok(0);
     }
     let Some(font_path) = &cfg.font else {
@@ -501,6 +526,7 @@ pub fn install(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Resu
             cfg.lang
         );
         bank.set_text(None);
+        bank.set_label_font(None);
         return Ok(0);
     };
     let sheets = SheetTables::read(exe)?;
@@ -511,7 +537,19 @@ pub fn install(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Resu
     let overlay = TextOverlay::build_scaled(bank, locale.overrides(), &font, cfg.ui_scale);
     let n = overlay.len();
     bank.set_text(Some(overlay));
+    // The same font for the free text of port-only widgets (the English station plates).
+    bank.set_label_font(Some(LabelFont::new(Box::new(font))));
     Ok(n)
+}
+
+/// The translated station names of the vertical plates (`[station_plate]`), by plate tilemap
+/// id; empty unless text overrides are drawn ([`LocaleConfig::active`]).
+pub fn station_plate_names(cfg: &LocaleConfig) -> Result<HashMap<u16, String>> {
+    if !cfg.active() {
+        return Ok(HashMap::new());
+    }
+    let cat = Catalogue::load(&cfg.lang, cfg.dir.as_deref())?;
+    Ok(cat.station_plates.into_iter().collect())
 }
 
 #[cfg(test)]
@@ -552,6 +590,11 @@ mod tests {
         assert_eq!(l.len(), cat.entries.len());
         // Spot checks: a HUD label, a sheet descriptor, a named sheet rect.
         assert!(l.lookup(0x206, SubRect::WHOLE).is_some());
+        // The vertical plates are named for the horizontal layout, not overridden as art.
+        assert!(cat.station_plates.len() >= 60);
+        for (tbl, _) in &cat.station_plates {
+            assert!(l.lookup(*tbl as i16, SubRect::WHOLE).is_none(), "{tbl:#x}");
+        }
         assert!(
             cat.entries
                 .iter()

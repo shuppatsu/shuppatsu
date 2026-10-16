@@ -277,6 +277,7 @@ impl Play {
         let cnt = first.first().map_or(0, |r| i32::from(r.dur));
         // The HUD task and the report card are gone (Stage_Run kills lists 2, 3 and 5).
         self.layer.slots.fill(ddg_render::sprites::Slot::CLEAR);
+        self.layer.widgets.clear();
         self.drive.ending_place(0)?;
         if let Some(s) = self.sound.as_mut() {
             s.request(if full { BGM_FULL } else { BGM_PLAIN });

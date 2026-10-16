@@ -174,6 +174,7 @@ impl Play {
             self.load_set(k)?;
         }
         self.layer.slots.fill(ddg_render::sprites::Slot::CLEAR);
+        self.layer.widgets.clear();
         // `0x436c20(0x14, 0xffffff)`: the flash palette is all white.
         self.layer.palettes[usize::from(PAL_FLASH)] =
             Some(ddg_formats::cg::Palette([0x00ff_ffff; 256]));
@@ -247,6 +248,7 @@ impl Play {
         let mut route_units = None;
         let l = &mut self.layer;
         l.fans.clear();
+        l.widgets.clear();
         match o.phase {
             0 | 2 => {
                 if o.phase == 2 && o.c == 0 {

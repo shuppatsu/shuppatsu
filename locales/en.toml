@@ -639,74 +639,6 @@ name = "English"
 0x11a = "Shin-Hanamaki"   # name 89, plain
 0x11b = "Shin-Hanamaki"   # name 89, banner
 
-# Vertical station plates, top right (hud.md §3.7: 0x46645c by name id). 32×96 px; the
-# text runs top to bottom like the original.
-0x4b9 = { text = "Akita", vertical = true }   # name 5
-0x4ba = { text = "Yotsugoya", vertical = true }   # name 6
-0x4bb = { text = "Wada", vertical = true }   # name 7
-0x4bc = { text = "Ōbarino", vertical = true }   # name 8
-0x4bd = { text = "Ugo-Sakai", vertical = true }   # name 9
-0x4be = { text = "Minekichikawa", vertical = true }   # name 10
-0x4bf = { text = "Kariwano", vertical = true }   # name 11
-0x4c0 = { text = "Jingūji", vertical = true }   # name 12
-0x4c1 = { text = "Ōmagari", vertical = true }   # name 13
-0x4c2 = { text = "Kakunodate", vertical = true }   # name 19
-0x4c3 = { text = "Tazawako", vertical = true }   # name 23
-0x4c4 = { text = "Akabuchi", vertical = true }   # name 24
-0x4c5 = { text = "Harukiba", vertical = true }   # name 25
-0x4c6 = { text = "Shizukuishi", vertical = true }   # name 26
-0x4c7 = { text = "Koiwai", vertical = true }   # name 27
-0x4c8 = { text = "Ōkama", vertical = true }   # name 28
-0x4c9 = { text = "Morioka", vertical = true }   # name 29
-0x4cb = { text = "Naoetsu", vertical = true }   # name 30
-0x4cc = { text = "Saigata", vertical = true }   # name 32
-0x4cd = { text = "Kubiki", vertical = true }   # name 33
-0x4ce = { text = "Uragawara", vertical = true }   # name 35
-0x4cf = { text = "Hokuhoku-Ōshima", vertical = true }   # name 37
-0x4d0 = { text = "Matsudai", vertical = true }   # name 38
-0x4d1 = { text = "Tōkamachi", vertical = true }   # name 39
-0x4d2 = { text = "Muikamachi", vertical = true }   # name 43
-0x4d3 = { text = "Tokyo", vertical = true }   # name 48
-0x4d4 = { text = "Yūrakuchō", vertical = true }   # name 49
-0x4d5 = { text = "Shimbashi", vertical = true }   # name 50
-0x4d6 = { text = "Hamamatsuchō", vertical = true }   # name 51
-0x4d7 = { text = "Tamachi", vertical = true }   # name 52
-0x4d8 = { text = "Shinagawa", vertical = true }   # name 53
-0x4d9 = { text = "Ōsaki", vertical = true }   # name 54
-0x4da = { text = "Gotanda", vertical = true }   # name 55
-0x4db = { text = "Meguro", vertical = true }   # name 56
-0x4dc = { text = "Ebisu", vertical = true }   # name 57
-0x4dd = { text = "Shibuya", vertical = true }   # name 58
-0x4de = { text = "Harajuku", vertical = true }   # name 59
-0x4df = { text = "Yoyogi", vertical = true }   # name 60
-0x4e0 = { text = "Shinjuku", vertical = true }   # name 61
-0x4e1 = { text = "Yokohama", vertical = true }   # name 62
-0x4e2 = { text = "Higashi-Kanagawa", vertical = true }   # name 63
-0x4e3 = { text = "Shin-Koyasu", vertical = true }   # name 64
-0x4e4 = { text = "Tsurumi", vertical = true }   # name 65
-0x4e5 = { text = "Kawasaki", vertical = true }   # name 66
-0x4e6 = { text = "Kamata", vertical = true }   # name 67
-0x4e7 = { text = "Ōmori", vertical = true }   # name 68
-0x4e8 = { text = "Ōimachi", vertical = true }   # name 69
-0x4e9 = { text = "Akihabara", vertical = true }   # name 71
-0x4ea = { text = "Ueno", vertical = true }   # name 73
-0x4eb = { text = "Osaka", vertical = true }   # name 74
-0x4ec = { text = "Tsukamoto", vertical = true }   # name 75
-0x4ed = { text = "Amagasaki", vertical = true }   # name 76
-0x4ee = { text = "Tachibana", vertical = true }   # name 77
-0x4ef = { text = "Kōshienguchi", vertical = true }   # name 78
-0x4f0 = { text = "Nishinomiya", vertical = true }   # name 79
-0x4f1 = { text = "Ashiya", vertical = true }   # name 80
-0x4f2 = { text = "Kōnan-Yamate", vertical = true }   # name 81
-0x4f3 = { text = "Settsu-Motoyama", vertical = true }   # name 82
-0x4f4 = { text = "Sumiyoshi", vertical = true }   # name 83
-0x4f5 = { text = "Rokkōmichi", vertical = true }   # name 84
-0x4f6 = { text = "Nada", vertical = true }   # name 85
-0x4f7 = { text = "Sannomiya", vertical = true }   # name 86
-0x4f8 = { text = "Motomachi", vertical = true }   # name 87
-0x4f9 = { text = "Kobe", vertical = true }   # name 88
-0x4ca = { text = "Shin-Hanamaki", vertical = true }   # name 89
-
 # =============================================================================================
 # String sheets (menus.md §1.2). Integer keys are descriptor indices into the sheet's table in
 # the exe (see SHEETS in crates/ddg-game/src/locale.rs); named keys give the rectangle in tiles.
@@ -852,3 +784,75 @@ cancel = { rect = [0, 2, 6, 2], text = "Cancel" }     # キャンセル
 confirm = { rect = [0, 4, 6, 2], text = "OK" }        # 決定
 finish = { rect = [0, 6, 6, 2], text = "Done" }       # おわり
 mode = { rect = [0, 8, 6, 2], text = "Mode" }         # モード切替
+
+# =============================================================================================
+# Station plates (hud.md §3.7): the English names of the vertical plates, by plate tilemap
+# (0x46645c by name id). Not sprite overrides: with a translation the plates are drawn as two
+# horizontal boxes with the original kanji name sprite and this name under it
+# (docs/localisation.md, "Station plates").
+[station_plate]
+0x4b9 = "Akita"   # name 5
+0x4ba = "Yotsugoya"   # name 6
+0x4bb = "Wada"   # name 7
+0x4bc = "Ōbarino"   # name 8
+0x4bd = "Ugo-Sakai"   # name 9
+0x4be = "Minekichikawa"   # name 10
+0x4bf = "Kariwano"   # name 11
+0x4c0 = "Jingūji"   # name 12
+0x4c1 = "Ōmagari"   # name 13
+0x4c2 = "Kakunodate"   # name 19
+0x4c3 = "Tazawako"   # name 23
+0x4c4 = "Akabuchi"   # name 24
+0x4c5 = "Harukiba"   # name 25
+0x4c6 = "Shizukuishi"   # name 26
+0x4c7 = "Koiwai"   # name 27
+0x4c8 = "Ōkama"   # name 28
+0x4c9 = "Morioka"   # name 29
+0x4cb = "Naoetsu"   # name 30
+0x4cc = "Saigata"   # name 32
+0x4cd = "Kubiki"   # name 33
+0x4ce = "Uragawara"   # name 35
+0x4cf = "Hokuhoku-Ōshima"   # name 37
+0x4d0 = "Matsudai"   # name 38
+0x4d1 = "Tōkamachi"   # name 39
+0x4d2 = "Muikamachi"   # name 43
+0x4d3 = "Tokyo"   # name 48
+0x4d4 = "Yūrakuchō"   # name 49
+0x4d5 = "Shimbashi"   # name 50
+0x4d6 = "Hamamatsuchō"   # name 51
+0x4d7 = "Tamachi"   # name 52
+0x4d8 = "Shinagawa"   # name 53
+0x4d9 = "Ōsaki"   # name 54
+0x4da = "Gotanda"   # name 55
+0x4db = "Meguro"   # name 56
+0x4dc = "Ebisu"   # name 57
+0x4dd = "Shibuya"   # name 58
+0x4de = "Harajuku"   # name 59
+0x4df = "Yoyogi"   # name 60
+0x4e0 = "Shinjuku"   # name 61
+0x4e1 = "Yokohama"   # name 62
+0x4e2 = "Higashi-Kanagawa"   # name 63
+0x4e3 = "Shin-Koyasu"   # name 64
+0x4e4 = "Tsurumi"   # name 65
+0x4e5 = "Kawasaki"   # name 66
+0x4e6 = "Kamata"   # name 67
+0x4e7 = "Ōmori"   # name 68
+0x4e8 = "Ōimachi"   # name 69
+0x4e9 = "Akihabara"   # name 71
+0x4ea = "Ueno"   # name 73
+0x4eb = "Osaka"   # name 74
+0x4ec = "Tsukamoto"   # name 75
+0x4ed = "Amagasaki"   # name 76
+0x4ee = "Tachibana"   # name 77
+0x4ef = "Kōshienguchi"   # name 78
+0x4f0 = "Nishinomiya"   # name 79
+0x4f1 = "Ashiya"   # name 80
+0x4f2 = "Kōnan-Yamate"   # name 81
+0x4f3 = "Settsu-Motoyama"   # name 82
+0x4f4 = "Sumiyoshi"   # name 83
+0x4f5 = "Rokkōmichi"   # name 84
+0x4f6 = "Nada"   # name 85
+0x4f7 = "Sannomiya"   # name 86
+0x4f8 = "Motomachi"   # name 87
+0x4f9 = "Kobe"   # name 88
+0x4ca = "Shin-Hanamaki"   # name 89

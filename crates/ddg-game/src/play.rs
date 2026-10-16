@@ -237,6 +237,7 @@ impl Play {
 
         layer.slots.fill(Slot::CLEAR);
         layer.fans.clear();
+        layer.widgets.clear();
         layer.scale = opts.locale.ui_scale;
         let canvas = layer.new_canvas();
         Hud::install_palettes(&exe, &mut layer)?;
@@ -253,6 +254,11 @@ impl Play {
             1 => DistanceReadout::Centimetres,
             _ => DistanceReadout::Metres,
         };
+        if opts.locale.active() && bank.has_label_font() {
+            let names = crate::locale::station_plate_names(&opts.locale)?;
+            cab.hud
+                .use_english_plates(&bank, &names, opts.locale.ui_scale);
+        }
         cab.create(&mut layer);
         let screen_tables = ScreenTables::read(&exe)?;
         let flow = StageFlow::new(FlowDefs::new(&screen_tables, |tbl| {
@@ -334,6 +340,7 @@ impl Play {
         let mut layer = self.layer;
         layer.slots.fill(Slot::CLEAR);
         layer.fans.clear();
+        layer.widgets.clear();
         Shared {
             data: self.data,
             bank: self.bank,

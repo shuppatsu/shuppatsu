@@ -134,6 +134,7 @@ pub fn clear_all(l: &mut SpriteLayer) {
         *s = Slot::CLEAR;
     }
     l.fans.clear();
+    l.widgets.clear();
 }
 
 /// Row height of the scrolling lists (title, route select; 0x6a).

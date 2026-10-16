@@ -10,7 +10,11 @@ use ddg_formats::cab_hud::{CabTables, Place, VehicleRow};
 use ddg_formats::cg;
 use ddg_formats::exe::Exe;
 use ddg_formats::hud::{HudTables, digits_blank_leading};
-use ddg_render::sprites::{Slot, SpriteLayer};
+use ddg_render::sprites::{Slot, SpriteBank, SpriteLayer};
+use plates_en::EnglishPlates;
+use std::collections::HashMap;
+
+mod plates_en;
 
 // Slots (hud.md §2).
 const SLOT_CLOCK_LABEL: usize = 0x0a;
@@ -176,6 +180,8 @@ pub struct Hud {
     /// after it (`0x829d14`).
     overlay_waiting: bool,
     lamp_ticks: i32,
+    /// Enhancement `en_station_plates` ([`plates_en`]); `None` draws the original plates.
+    english_plates: Option<EnglishPlates>,
 }
 
 impl Hud {
@@ -205,7 +211,32 @@ impl Hud {
             high_speed: false,
             overlay_waiting: false,
             lamp_ticks: 0,
+            english_plates: None,
         }
+    }
+
+    /// Switches the station plates to the horizontal layout for a translation ([`plates_en`]),
+    /// with `romaji` names by plate tilemap id. Call before [`Hud::create`]. Returns false
+    /// (and keeps the original plates) when the art has no usable plates. Names whose kanji
+    /// will be clipped at `ui_scale` are listed on stderr.
+    pub fn use_english_plates(
+        &mut self,
+        bank: &SpriteBank,
+        romaji: &HashMap<u16, String>,
+        ui_scale: usize,
+    ) -> bool {
+        let palette = self.plate_places[0].palette as u8;
+        self.english_plates =
+            EnglishPlates::new(bank, &self.tables, &self.station_plates, palette, romaji);
+        if let Some(e) = &self.english_plates {
+            let wide = e.too_wide(ui_scale);
+            if !wide.is_empty() {
+                eprintln!(
+                    "station plates: kanji clipped at ui_scale {ui_scale} (plate, px): {wide:x?}"
+                );
+            }
+        }
+        self.english_plates.is_some()
     }
 
     pub fn tables(&self) -> &HudTables {
@@ -238,6 +269,11 @@ impl Hud {
             if let Ok(slot) = usize::try_from(p.slot) {
                 slots::clear(layer, slot);
                 slots::place(layer, slot, p.x, p.y, p.layer as u8, p.palette as u8);
+                if self.english_plates.is_some() {
+                    // Parked off screen: the slots keep their state, the boxes show it.
+                    let off = Slot::CLEAR;
+                    slots::move_to(layer, slot, off.x, off.y);
+                }
             }
         }
     }
@@ -297,6 +333,12 @@ impl Hud {
         slots::image(layer, SLOT_PLATE_ARROW, TBL_PLATE_ARROW);
         if let Some(t) = s.plates[1] {
             slots::image(layer, SLOT_PLATE_NEXT, t);
+        }
+        if let Some(e) = &self.english_plates {
+            let shown = |slot: usize| Some(layer.slots[slot].tilemap).filter(|&t| t >= 0);
+            let (from, next) = (shown(SLOT_PLATE_FROM), shown(SLOT_PLATE_NEXT));
+            let l = layer.slots[SLOT_PLATE_ARROW].layer;
+            e.draw(layer, l, from, next);
         }
     }
 
