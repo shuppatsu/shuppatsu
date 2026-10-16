@@ -383,6 +383,7 @@ impl Play {
         let before = crate::sound::Before::of(&self.drive);
         let out = self.drive.tick(self.latched);
         if let Some(s) = self.sound.as_mut() {
+            s.events(&out.events);
             s.after_tick(
                 &self.drive,
                 before,
@@ -533,6 +534,9 @@ impl Play {
                 );
             }
             Action::Quit | Action::RunOver => {
+                if let Some(s) = self.sound.as_mut() {
+                    s.stop_all();
+                }
                 eprintln!("{action:?}: leaving play (no title screen yet)");
                 self.leave = true;
             }
@@ -557,11 +561,14 @@ impl Play {
     }
 
     fn play(&mut self, sfx: &[Sfx]) {
+        let paused = self.flow.paused();
         let Some(s) = self.sound.as_mut() else {
             return;
         };
         for &c in sfx {
             match c {
+                // Dialog clicks bypass the pause gate (menus.md §1.4).
+                Sfx::Play(code) if paused => s.request_ungated(code),
                 Sfx::Play(code) => s.request(code),
                 Sfx::Stop(code) => s.release(code),
             }

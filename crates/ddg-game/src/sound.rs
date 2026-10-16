@@ -68,8 +68,6 @@ impl Sound {
 
     /// The rule events of this tick ([`ddg_engine::drive::DriveTick::events`]). Call before
     /// [`Sound::after_tick`] of the same tick; events given later are heard one tick late.
-    // Until play.rs passes its events (see the module docs).
-    #[allow(dead_code)]
     pub fn events(&mut self, events: &[RuleEvent]) {
         self.events.extend_from_slice(events);
     }
@@ -143,7 +141,6 @@ impl Sound {
 
     /// Plays `code` even while paused: the pause dialog's clicks (0x26), which the original
     /// posts straight to the sound thread (menus.md §1.4).
-    #[allow(dead_code)] // Wired by play.rs.
     pub fn request_ungated(&mut self, code: u16) {
         self.snd.play_ungated(code);
         self.flush();
@@ -151,7 +148,6 @@ impl Sound {
 
     /// `0x420660`: stops every voice (the end of a run). Running sequences keep stepping, as in
     /// the original.
-    #[allow(dead_code)] // Wired by play.rs.
     pub fn stop_all(&mut self) {
         self.snd.stop_all();
         self.flush();
