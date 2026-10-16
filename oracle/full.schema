@@ -124,3 +124,5 @@ stat8              0x857070 i32
 stat9              0x857074 i32
 stat10             0x857078 i32
 stat11             0x85707c i32
+# HUD signal slot 0x60 tilemap (slot records 0x816f88 + 16*slot, +0xa; hud.md §3.9)
+hud_signal_tbl     0x817592 i16
