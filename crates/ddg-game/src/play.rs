@@ -37,6 +37,7 @@ use ddg_render::sprites::{Anchor, Slot, SpriteBank, SpriteLayer};
 use std::time::{Duration, Instant};
 
 mod bonus;
+mod cab_mask;
 mod demo;
 mod ending;
 mod opening;
@@ -467,6 +468,7 @@ impl Play {
         let band_aspect = w as f32 / (h as f32 * (1.0 - HUD_BAND_TOP)).max(1.0);
         self.weather
             .compose(&self.scene, &self.drive, band_aspect, &mut effects);
+        Self::cab_mask(&self.scene, self.ending.as_ref(), band_aspect, &mut effects);
         Self::ending_masks(self.ending.as_ref(), &mut effects);
         let fog = fog && self.weather.fog();
         crate::shot::render_to_ppm(
@@ -1129,6 +1131,8 @@ impl Play {
             let fx = &mut gpu.renderer.effects;
             self.weather
                 .compose(&self.scene, &self.drive, band_aspect, fx);
+            fx.clear();
+            Self::cab_mask(&self.scene, self.ending.as_ref(), band_aspect, fx);
             Self::ending_masks(self.ending.as_ref(), fx);
             Self::opening_masks(self.opening.as_ref(), fx);
             Self::ending_camera(self.ending.as_ref(), &mut camera);

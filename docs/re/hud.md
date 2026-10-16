@@ -733,7 +733,8 @@ NULL, Z test and Z write off (render states 7 and 14 = 0), culling off (22 = 1).
 `Draw2D_FlatQuad` 0x432b50 / `Draw2D_TexQuad` 0x432da0 are drawn by task draw callbacks
 before `Frame_End`: sky and ground backgrounds, fades, and weather/cab effects during driving
 (wiper shapes 0x424950 / 0x424aa0 / 0x424cb0, drops 0x425040, snow layers 0x425120;
-renderer.md §13, confirmed). None of the HUD elements in §3 use them.
+renderer.md §13, confirmed). None of the HUD elements in §3 use them, but the drive task's top mask
+(§6.5) is the black panel behind the top HUD row.
 
 ### 6.4 Implications for the port
 
@@ -771,6 +772,38 @@ renderer.md §13, confirmed). None of the HUD elements in §3 use them.
   constant textures.
 * Sprite ids are per slot, and the slot table can be mirrored directly as engine state; the
   rules engine already produces most of the driving state (rules.md §11).
+
+### 6.5 The black panel behind the top HUD (drive mask) — confirmed
+
+While driving, the top **113 pixel rows of 640×480** (virtual rows 0..94) are black, although
+the 3D viewport starts at virtual y 52 (pixel 62). The extra black over the world is not a
+sprite or a rect-layer fan; it is the first thing the drive task draws:
+
+* **Who.** The drive task's draw callback 0x41e460 (set by 0x41cb00 at `task + 0x10`) starts
+  with `Draw2D_FlatQuad(0x486160, 0x469858, 4, 0)` (confirmed, code; scene.md §2.1).
+* **Geometry.** 0x486160 = i16 (0,0) (0,94) (496,94) (496,0): a plain rectangle, virtual
+  x 0..496, y 0..94, straight lower edge, no art or texture (confirmed, exe bytes). At 640×480
+  that is y 0..112.8, so rows 0..=112 are covered (the first world row is 113).
+* **Colour.** 0x469858 = four colour words 0 → `0x829d5c[0]`, palette 0 entry 0 (confirmed,
+  code); black (confirmed, f144: rows 0..=112 are exactly (0,0,0) in every column).
+* **Depth.** Depth word 0 → z = 0 with Z test and write on (renderer.md §6), drawn before
+  the main line, scenery and background, so nothing of the world or the sky gradient (which
+  starts at virtual y 66) shows through. Under LESSEQUAL the wiper (depth 0, drawn later by its
+  own task) can still cover it; drops (2) and snow (0x10+) cannot (likely; ZFUNC is the
+  device default).
+* **When.** Every rendered frame while the drive task exists: the stage intro, driving, the
+  attract demo drives (f132–f230 of `out/orig_opening`: the edge is at row 112/113 in every
+  frame checked: f132, f144, f160, f200, f230) and (likely, not checked on a capture) the
+  opening's drive view. Not at the
+  station-result replay (the drive task is killed, scene.md §8.1). The ending animates the same
+  quad's y as its top letterbox bar. Render mode 2 of 0x425680 and the menu model view
+  0x41c3c0 draw the same quad too.
+* **Port.** `Play::cab_mask` (`crates/ddg-game/src/play/cab_mask.rs`) adds it to the 3D band's
+  effect quads before the weather overlay, from `BackgroundTables::mask_quad` (read from the
+  exe). Measured on headless shots: black down to row 225 at 1280×960 (= 2 × 113), 187 at
+  1280×800. **Widescreen:** the quad's left and right edges are moved to the visible Hor+ range,
+  so the panel fills the full window width at every `ui_scale` (a plain black rectangle,
+  so this is filling, not stretching). At 4:3 and 1× it is the original layout.
 
 ## Open questions
 

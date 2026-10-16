@@ -606,8 +606,9 @@ impl Weather {
         camera.target.y -= 2.0 * self.jolt_now;
     }
 
-    /// The overlay's quads for a frame, mapped into the 3D band of a target of band aspect
-    /// `aspect` (width / band height).
+    /// Appends the overlay's quads for a frame, mapped into the 3D band of a target of band
+    /// aspect `aspect` (width / band height). The caller clears `out` first; the drive's top
+    /// mask goes in before these quads (`Play::cab_mask`).
     pub fn compose(
         &self,
         scene: &RouteScene,
@@ -615,7 +616,6 @@ impl Weather {
         aspect: f32,
         out: &mut EffectGeometry,
     ) {
-        out.clear();
         let Some(o) = &self.overlay else {
             return;
         };
