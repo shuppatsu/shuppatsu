@@ -3,6 +3,7 @@
 //! Phase 3: `ddg-game view <route.com>` flies through a route; `ddg-game shot` renders one frame
 //! headless for checks.
 
+mod gamepad;
 mod hud;
 mod input;
 mod play;
@@ -31,6 +32,7 @@ usage: ddg-game play <stage 0..19> [--difficulty <0..>] [--station <n>] [--keys 
                      [--inputs <script>] [--shot <ticks>:<file.ppm>]
        ddg-game view <route.com> [options]
        ddg-game shot <route.com> --at <metres> --out <file.ppm> [options]
+       ddg-game pad <monitor|calibrate|learn> [--mode <4..6>] [--joystick-dat <file>] [--combo <file>]
 
 options:
   --speed <km/h>           fly-through speed (default 80)
@@ -479,6 +481,12 @@ impl ApplicationHandler for App {
 fn main() -> Result<()> {
     if std::env::args().nth(1).as_deref() == Some("play") {
         return play::run(parse_play_args()?);
+    }
+    if std::env::args().nth(1).as_deref() == Some("pad") {
+        let data = scene::GameData::from_env()?;
+        let exe = data.exe()?;
+        let args: Vec<String> = std::env::args().skip(2).collect();
+        return gamepad::run_tool(&ddg_formats::exe::Exe::parse(&exe)?, &args);
     }
     let opts = parse_args()?;
     let data = scene::GameData::from_env()?;
