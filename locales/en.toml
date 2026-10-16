@@ -1,0 +1,854 @@
+# English text for the original's text sprites (docs/localisation.md).
+#
+# The original draws every string as tile art from tbl.rom/cg.rom (docs/re/hud.md §4). Each entry
+# below replaces the art of one sprite with our own English, rasterised into the same rectangle,
+# so the arcade layout is kept. Anything not listed keeps the original art. Nothing here is drawn
+# unless a language and a font are configured (DDG_LANG=en, DDG_FONT=/path/to/font.ttf).
+#
+# Keys
+#   [tbl]          0x206 = ...       a tbl.rom tilemap id; the whole map, or `rect` (tiles)
+#   [sheet.0x544]  2 = ...           descriptor index into the sheet's table in the exe
+#                  name = { rect }   a named rectangle of a sheet with no known table
+# Values
+#   "text"                            the whole sprite; \n breaks lines; size is fitted
+#   { text, align, style, vertical, outline }
+#   { parts = [{ region = [x, y, w, h], text }, ...] }
+#                                     replace only these pixel regions (relative to the
+#                                     sprite); the rest of the art stays (gauges, digits, icons)
+#   style: "auto" (default) | "plain" | "boxed"; align: "center" (default) | "left" | "right"
+# Colours always come from the slot's palette (the art's own colours), so palette swaps work.
+#
+# Comments give each sprite's role, a short Japanese label for identification, and the size in
+# pixels (w×h) where it constrains the layout. Regions marked "est." were measured by eye.
+
+[meta]
+language = "en"
+name = "English"
+
+[tbl]
+
+# ---------------------------------------------------------------------------------------------
+# HUD labels (hud.md §2, §3)
+
+0x206 = "TIME"                       # 現在時刻 current-time label, 80×16
+0x207 = "NEXT ARR."                  # 次駅到着時刻 scheduled arrival label, 112×16
+0x208 = "NEXT PASS"                  # 次駅通過時刻 scheduled passing label, 112×16
+0x40d = "sec"                        # 秒 after the remaining time (first frame), 48×48
+0x40e = "sec"                        # 秒 after the remaining time, 48×48
+0x261 = "TIME LEFT"                  # 持ち時間 remaining-time label, 128×32
+
+# Line + rolling-stock plate (hud.md §3.8, menus.md §6.1), 176×16.
+0x262 = "Yamanote Line 205"          # 山手線205系
+0x263 = "Tōkaidō Line 223"           # 東海道線223系
+0x264 = "Tōkaidō Line 221"           # 東海道線221系
+0x265 = "Tōkaidō Line 207"           # 東海道線207系
+0x266 = "Tōkaidō Line 201"           # 東海道線201系
+0x267 = "Keihin-Tōhoku Line 209"     # 京浜東北線209系
+0x268 = "Akita Shinkansen E3"        # 秋田新幹線E3系
+0x269 = "Tōhoku Shinkansen 200"      # 東北新幹線200系
+0x26a = "Tōhoku Shinkansen E2"       # 東北新幹線E2系
+0x26b = "Hokuhoku Line HK100"        # ほくほく線HK100形
+0x26c = "Hokuhoku Line 485"          # ほくほく線485系
+0x26d = "Hokuhoku Line 681"          # ほくほく線681系
+0x26e = "Ōu Main Line 701"           # 奥羽本線701系
+0x26f = "Tazawako Line 701"          # 田沢湖線701系
+0x270 = "Shin'etsu Line EF63"        # 信越本線EF63
+
+# Replay playback mark (hud.md §3.16 slot 0x86, menus.md §6.2): sub-rect of the legend sheet.
+# Listed under [sheet.0x50b] below.
+
+# Distance-to-stop panel headers (hud.md §3.4). Top band = label; bottom-left word sits before
+# the digits (max 24 px wide); the unit (m / Cm) and OVER are Latin art and stay.
+# Metres, 128×64:
+0x58 = { parts = [{ region = [0, 4, 128, 26], text = "STOP POINT" }, { region = [0, 40, 24, 24], text = "dist" }] }   # 停止位置 あと
+0x59 = { parts = [{ region = [0, 4, 128, 26], text = "PASS STATION" }, { region = [0, 40, 24, 24], text = "dist" }] }  # 通過駅 まで
+0x5a = { parts = [{ region = [0, 4, 128, 26], text = "IN RANGE" }, { region = [0, 40, 24, 24], text = "dist" }] }     # 合格範囲 あと
+0x5b = { parts = [{ region = [0, 4, 128, 26], text = "IN RANGE" }, { region = [0, 40, 24, 24], text = "dist" }] }     # 合格範囲 あと (Cm art; unused)
+0x5c = { parts = [{ region = [0, 4, 128, 26], text = "IN RANGE" }] }      # 合格範囲 OVER
+0x5d = { parts = [{ region = [0, 4, 128, 26], text = "IN RANGE" }] }      # 合格範囲 OVER (Cm art; unused)
+0x5e = { parts = [{ region = [0, 4, 128, 26], text = "OVERRUN" }] }       # 過走 OVER
+# Centimetres, 160×64:
+0x551 = { parts = [{ region = [0, 2, 160, 30], text = "PASS STATION" }, { region = [0, 40, 24, 24], text = "dist" }] } # 通過駅 まで
+0x4fe = { parts = [{ region = [0, 2, 160, 30], text = "STOP POINT" }, { region = [0, 40, 24, 24], text = "dist" }] }   # 停止位置 あと
+0x4fc = { parts = [{ region = [0, 2, 160, 30], text = "IN RANGE" }, { region = [0, 40, 24, 24], text = "dist" }] }     # 合格範囲 あと
+0x4fd = { parts = [{ region = [0, 2, 160, 30], text = "IN RANGE" }] }     # 合格範囲 OVER
+0x507 = { parts = [{ region = [0, 2, 160, 30], text = "OVERRUN" }] }      # 過走 OVER
+
+# Handle gauges (hud.md §3.1): only the label; the bar and the 7-segment digit stay. 48×80.
+0x09 = { parts = [{ region = [0, 24, 48, 26], text = "REL", style = "plain" }] }   # 解除 brake released
+0x12 = { parts = [{ region = [0, 24, 48, 26], text = "EMER", style = "plain" }] }  # 非常 emergency brake
+0x50d = { parts = [{ region = [14, 12, 24, 24], text = "OFF", style = "plain" }] }  # 切 power off, 48×64 (est.)
+
+# ATS lamp (hud.md §3.14), 224×48 boxes.
+0x20e = "ATS TRIPPED"                # ATS作動
+0x211 = "ATS CONFIRMED"              # ATS確認
+
+# Cab-signal lamp label (hud.md §3.15), 64×64: the small label band only.
+0x54e = { parts = [{ region = [2, 3, 60, 15], text = "CAB SIGNAL" }] }    # 車内信号, dark
+0x54f = { parts = [{ region = [2, 3, 60, 15], text = "CAB SIGNAL" }] }    # 車内信号, lit
+
+# ---------------------------------------------------------------------------------------------
+# Time messages: bonus / penalty popups (hud.md §3.11). Width given by the exe (0x415080).
+
+0x1be = "Signal is clear.\nMove the train forward!"   # kind 0 進行信号が現示されています…, 384×64
+# 0x1aa "great!" and 0x1ab "good" are English art.
+0x1ac = { text = "BONUS", style = "plain" }   # kind 3 ボーナス logo (the swoosh goes too), 160×64
+0x1af = "Sudden braking"             # kind 4 急制動 EB penalty, 128×32
+0x1b0 = "Ignored a sign"             # kind 5 標識無視 whistle sign missed, 144×32
+0x1b1 = "Over the speed limit"       # kind 6 制限速度超過, 192×32
+0x1b2 = "Passed your stop"           # kind 7 停車駅通過, 176×32
+0x1c6 = "Left before the lamp"       # kind 9 知らせ灯確認ミス false start, 256×32
+0x1c7 = "Hit the buffer stop"        # kind 10 車止め激突, 176×32
+0x1c8 = "Too much horn"              # kind 11 警笛過剰, 144×32
+0x258 = "Dead section cleared"       # kind 12 セクション通過 no-power section bonus, 256×32
+0x259 = { text = "ON TIME", style = "plain" } # kind 13 定通 on-time pass logo (the swoosh goes too), 160×64
+0x1c5 = "Stopped short"              # kind 14 停止位置手前です, 256×32
+0x1ce = "Collision!"                 # kind 15 車両激突, 176×32
+0x1ad = "Penalty"                    # 減点 before the seconds of a penalty, 64×32
+0x1bd = "sec"                        # 秒 after the seconds, 48×32
+
+# ---------------------------------------------------------------------------------------------
+# Navigator hints (hud.md §3.12): balloon 0x135 + id, 224×64. Only the inside of the balloon
+# is replaced; the green border stays. Three short lines at most.
+
+0x135 = { region = [6, 4, 212, 56], text = "The door lamp lights up\nonce the doors close." }            # id 0
+0x136 = { region = [6, 4, 212, 56], text = "Obey a speed-limit sign\nuntil it is lifted." }             # id 1
+0x137 = { region = [6, 4, 212, 56], text = "Sign and signal together?\nObey the lower speed." }         # id 2
+0x138 = { region = [6, 4, 212, 56], text = "At a restrictive signal,\nslow down promptly." }           # id 3
+0x139 = { region = [6, 4, 212, 56], text = "Hold the limit until the\nnext signal is in sight.\nPatience!" } # id 4
+0x13a = { region = [6, 4, 212, 56], text = "You didn't slow down\nin time." }                          # id 5
+0x13b = { region = [6, 4, 212, 56], text = "Don't accelerate yet." }                                   # id 6
+0x13c = { region = [6, 4, 212, 56], text = "Don't use the\nemergency brake." }                         # id 7
+0x13d = { region = [6, 4, 212, 56], text = "A repeater relays the main\nsignal where it can't\nbe seen directly." } # id 8
+# id 9 (0x13e) is a picture of the lamp: only its two labels.
+0x13e = { region = [142, 31, 76, 18], text = "door lamp" }   # 知らせ灯 arrow label; the tiny 車内信号 lamp label stays (text fills its band)
+0x13f = { region = [6, 4, 212, 56], text = "Handling error:\nbrake and power\nare both on." }          # id 0xa
+0x140 = { region = [6, 4, 212, 56], text = "The horn is the\nfoot pedal." }                            # id 0xb
+0x141 = { region = [6, 4, 212, 56], text = "A blinking limit sign is\nadvance notice.\nSlow down now." } # id 0xc
+0x142 = { region = [6, 4, 212, 56], text = "The limit applies from\nhere (blinking ends)\nuntil it is lifted." } # id 0xd
+0x143 = { region = [6, 4, 212, 56], text = "The limit is lifted,\nbut keep to the signal's\n70 km/h." }  # id 0xe
+0x144 = { region = [6, 4, 212, 56], text = "You coupled too gently." }                                 # id 0xf
+0x145 = { region = [6, 4, 212, 56], text = "ATC section: enjoy\nthe high-speed run!\nIt's on the house!" } # id 0x10
+0x146 = { region = [6, 4, 212, 56], text = "Keep to the timetable\neven at passing stations." }          # id 0x11
+0x147 = { region = [6, 4, 212, 56], text = "Stop in a dead section\nand we can't move.\nHmph!" }         # id 0x12
+0x148 = { region = [6, 4, 212, 56], text = "Please depart." }                                          # id 0x13
+0x149 = { region = [6, 4, 212, 56], text = "Start braking." }                                          # id 0x14
+0x14a = { region = [6, 4, 212, 56], text = "Target speed:\n90 km/h." }                                 # id 0x15
+0x14b = { region = [6, 4, 212, 56], text = "Target speed:\n100 km/h." }                                # id 0x16
+0x14c = { region = [6, 4, 212, 56], text = "Target speed:\n110 km/h." }                                # id 0x17
+0x14d = { region = [6, 4, 212, 56], text = "Target speed:\n110–120 km/h." }                            # id 0x18
+0x14e = { region = [6, 4, 212, 56], text = "Keep the timetable even\nwhen passing stations." }        # id 0x19
+0x14f = { region = [6, 4, 212, 56], text = "Stop at the mark,\nthen couple up." }                      # id 0x1a
+0x150 = { region = [6, 4, 212, 56], text = "Follow the ATC speed and\nhead for Shin-Hanamaki." }      # id 0x1b
+0x151 = { region = [6, 4, 212, 56], text = "Target speed:\n120 km/h." }                                # id 0x1c
+0x152 = { region = [6, 4, 212, 56], text = "We pass the\nnext station!" }                              # id 0x1d
+0x153 = { region = [6, 4, 212, 56], text = "We stop at the\nnext station!" }                           # id 0x1e
+0x154 = { region = [6, 4, 212, 56], text = "Target speed:\n80 km/h." }                                 # id 0x1f
+0x155 = { region = [6, 4, 212, 56], text = "Running a little late.\nSpeed up a bit." }                 # id 0x20
+0x156 = { region = [6, 4, 212, 56], text = "Running a little early.\nEase off a bit." }                # id 0x21
+0x508 = { region = [6, 4, 212, 56], text = "The horn is the\nSpace key." }                             # id 0xb, keyboard
+0x509 = { region = [6, 4, 212, 56], text = "The horn is the\nB button." }                              # id 0xb, gamepad
+
+# ---------------------------------------------------------------------------------------------
+# Signals (hud.md §3.9), 96×144: the caption under the lamps only. Aspect names follow JR
+# practice: 進行 Clear, 減速 Reduce, 注意 Caution, 警戒 Restricted, 停止 Stop. 場 = home signal,
+# 出 = starting signal (the plate is behind the caption band, so the caption names it).
+
+# Emergency-stop signal 緊急停止 (NaviAnim(0)), five flash frames.
+0x44b = { region = [0, 102, 96, 34], text = "EMERGENCY\nSTOP" }
+0x44c = { region = [0, 102, 96, 34], text = "EMERGENCY\nSTOP" }
+0x44d = { region = [0, 102, 96, 34], text = "EMERGENCY\nSTOP" }
+0x44e = { region = [0, 102, 96, 34], text = "EMERGENCY\nSTOP" }
+0x44f = { region = [0, 102, 96, 34], text = "EMERGENCY\nSTOP" }
+# Three-lamp set (no stage uses it, hud.md §3.9).
+0x450 = { region = [0, 104, 96, 24], text = "CLEAR" }                     # 進行信号
+0x451 = { region = [0, 102, 96, 42], text = "CLEAR\nhome" }               # 進行信号 場
+0x452 = { region = [0, 102, 96, 42], text = "CLEAR\nstarting" }           # 進行信号 出
+0x453 = { region = [0, 97, 96, 47], text = "CAUTION\n45 km/h" }           # 注意信号 速度45
+0x454 = { region = [0, 97, 96, 47], text = "CAUTION 45\nhome" }
+0x455 = { region = [0, 97, 96, 47], text = "CAUTION 45\nstarting" }
+0x456 = { region = [0, 104, 96, 24], text = "STOP" }                      # 停止信号
+0x457 = { region = [0, 102, 96, 42], text = "STOP\nhome" }
+0x458 = { region = [0, 102, 96, 42], text = "STOP\nstarting" }
+# Four-lamp set (all stages).
+0x470 = { region = [0, 112, 96, 24], text = "STOP" }                      # 停止信号
+0x471 = { region = [0, 104, 96, 40], text = "STOP\nhome" }
+0x472 = { region = [0, 104, 96, 40], text = "STOP\nstarting" }
+0x473 = { region = [0, 97, 96, 47], text = "RESTRICTED\n25 km/h" }        # 警戒信号 速度25
+0x474 = { region = [0, 97, 96, 47], text = "RESTRICT 25\nhome" }
+0x475 = { region = [0, 97, 96, 47], text = "RESTRICT 25\nstarting" }
+0x476 = { region = [0, 97, 96, 47], text = "CAUTION\n45 km/h" }           # 注意信号 速度45
+0x477 = { region = [0, 97, 96, 47], text = "CAUTION 45\nhome" }
+0x478 = { region = [0, 97, 96, 47], text = "CAUTION 45\nstarting" }
+0x479 = { region = [0, 97, 96, 47], text = "REDUCE\n70 km/h" }            # 減速信号 速度70
+0x47a = { region = [0, 97, 96, 47], text = "REDUCE 70\nhome" }
+0x47b = { region = [0, 97, 96, 47], text = "REDUCE 70\nstarting" }
+0x47c = { region = [0, 112, 96, 24], text = "CLEAR" }                     # 進行信号
+0x47d = { region = [0, 104, 96, 40], text = "CLEAR\nhome" }
+0x47e = { region = [0, 104, 96, 40], text = "CLEAR\nstarting" }
+0x47f = { region = [0, 118, 96, 26], text = "HIGH-SPEED" }                # 高速進行 (stages 7–9)
+# Repeater signals 中継信号.
+0x480 = { region = [0, 97, 96, 47], text = "STOP\nrepeater" }             # 停止
+0x481 = { region = [0, 97, 96, 47], text = "LIMIT\nrepeater" }            # 制限
+0x482 = { region = [0, 97, 96, 47], text = "LIMIT 25\nrepeater" }         # 制限25km/h
+0x483 = { region = [0, 97, 96, 47], text = "LIMIT 45\nrepeater" }         # 制限45km/h
+0x484 = { region = [0, 97, 96, 47], text = "LIMIT 70\nrepeater" }         # 制限70km/h
+0x485 = { region = [0, 97, 96, 47], text = "CLEAR\nrepeater" }            # 進行
+0x486 = { region = [0, 97, 96, 47], text = "HIGH-SPEED\nrepeater" }       # 高速進行
+
+# ---------------------------------------------------------------------------------------------
+# Signs (hud.md §3.10), 96×96: the caption under the sign (lettering on transparency).
+
+0x45b = { region = [0, 66, 96, 30], style = "plain", text = "LEVEL" }                      # 勾配なし
+0x45c = { region = [0, 66, 96, 30], style = "plain", text = "UPGRADE" }                    # 上り勾配
+0x45d = { region = [0, 66, 96, 30], style = "plain", text = "DOWNGRADE" }                  # 下り勾配
+0x45e = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 速度制限 20
+0x45f = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 25
+0x460 = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 30
+0x461 = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 35
+0x462 = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 40
+0x463 = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 45
+0x464 = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 50
+0x465 = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 55
+0x466 = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 60
+0x467 = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 65
+0x468 = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 70
+0x469 = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 75
+0x46a = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 80
+0x46b = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 85
+0x46c = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 90
+0x46d = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 95
+0x46e = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT ENDS" }                 # 制限解除
+0x46f = { region = [0, 66, 96, 30], style = "plain", text = "SOUND HORN" }                 # 警笛鳴らせ
+0x48a = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 速度制限 100
+0x48b = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 105
+0x48c = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 110
+0x48d = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 115
+0x48e = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 120
+0x48f = { region = [0, 66, 96, 30], style = "plain", text = "LIMIT" }                      # 125
+
+# ---------------------------------------------------------------------------------------------
+# Station captions and banners (hud.md §3.13). Caption = [name][駅][通過|停車]; banner = the
+# highlighted set, centred. Departure banners = [出発…] words. The station-name table also
+# lists these words as name ids 0–4 and 90–92.
+
+0x70 = "Stn"                         # 駅 after a station name, plain, 32×32
+0x71 = "Stn"                         # 駅 banner
+0x6c = "PASS"                        # 通過 plain, 64×32
+0x6d = "PASS"                        # 通過 banner
+0x6e = "STOP"                        # 停車 plain, 64×32
+0x6f = "STOP"                        # 停車 banner
+0x6a = "Depart: CLEAR!"              # 出発進行 plain, 112×32
+0x6b = "Depart: CLEAR!"              # 出発進行 banner
+0x11c = "Depart: REDUCE"             # 出発減速 plain, 112×32
+0x11d = "Depart: REDUCE"             # 出発減速 banner
+0x11e = "Depart: CAUTION"            # 出発注意 plain
+0x11f = "Depart: CAUTION"            # 出発注意 banner
+0x120 = "Depart: RESTRICT"           # 出発警戒 plain
+0x121 = "Depart: RESTRICT"           # 出発警戒 banner
+
+# Landmark captions (hud.md §3.13, 0x466a20), white plates, 2 tiles high.
+0x222 = "Akita Depot"                # 秋田車両基地
+0x223 = "Akita North Bypass"         # 秋田北バイパス
+0x224 = "Akita Expressway"           # 秋田自動車道
+0x225 = "Iwami River"                # 岩見川
+0x226 = "No. 1 Tamagawa Bridge"      # 第一玉川橋梁
+0x227 = "Sainai River"               # 斉内川
+0x228 = "Iwase Bridge"               # 岩瀬橋
+0x229 = "Shidōchi Signal Stn"        # 志度内信号場
+0x22a = "Ōjizawa Signal Stn"         # 大地沢信号場
+0x22b = "Akita Kaidō"                # 秋田街道
+0x22c = "Tōhoku Expressway"          # 東北自動車道
+0x22d = "Seki River"                 # 関川
+0x22e = "Hokuriku Expressway"        # 北陸自動車道
+0x22f = "Kata River"                 # 潟川
+0x230 = "Shinano River"              # 信濃川
+0x231 = "Kan-Etsu Expressway"        # 関越自動車道
+0x232 = "Gimyō Signal Stn"           # 儀明信号場
+0x233 = "Yakushitōge Signal Stn"     # 薬師峠信号場
+0x234 = "Akakura Signal Stn"         # 赤倉信号場
+0x235 = "Yodo River"                 # 淀川
+0x236 = "Kanzaki River"              # 神崎川
+0x237 = "Shōge River"                # 庄下川
+0x238 = "Muko River"                 # 武庫川
+0x239 = "Hankyū Imazu Line"          # 阪急今津線
+0x23a = "Shuku River"                # 夙川
+0x23b = "Yokohama Line"              # 横浜線
+0x23c = "Tsurumi Line"               # 鶴見線
+0x23d = "Tsurumi River"              # 鶴見川
+0x23e = "Nambu Line"                 # 南武線
+0x23f = "Tama River"                 # 多摩川
+0x240 = "Passing"                    # 通過
+
+# Pre-departure progress strips (hud.md §3.7), 352×48: 発 / 着 at the ends.
+0x31c = { parts = [{ region = [8, 6, 44, 20], text = "Dep" }, { region = [304, 6, 40, 20], text = "Arr" }] }
+0x31d = { parts = [{ region = [8, 6, 44, 20], text = "Dep" }, { region = [304, 6, 40, 20], text = "Arr" }] }
+0x326 = { parts = [{ region = [8, 6, 44, 20], text = "Dep" }, { region = [304, 6, 40, 20], text = "Arr" }] }
+0x327 = { parts = [{ region = [8, 6, 44, 20], text = "Dep" }, { region = [304, 6, 40, 20], text = "Arr" }] }
+0x328 = { parts = [{ region = [8, 6, 44, 20], text = "Dep" }, { region = [304, 6, 40, 20], text = "Arr" }] }
+
+# ---------------------------------------------------------------------------------------------
+# Other popups (hud.md §3.16)
+
+0x20f = { region = [0, 0, 272, 59], text = "FULL LINE CLEAR!" }  # 全区間走破 (ALL ROUND CLEAR stays), 272×80
+0x24b = "USE THE EMERGENCY BRAKE!"   # 非常ブレーキ使え obstacle, 256×32
+0x252 = { region = [40, 12, 150, 34], text = "TIME UP!" }        # 時間切れ, 224×64 (est.)
+0x459 = { region = [0, 0, 128, 32], text = "SHIFT DONE" }        # 乗務完了 with the conductor, 128×160 (est.)
+0x45a = { region = [0, 0, 128, 32], text = "SHIFT DONE" }        # 乗務完了, second frame (est.)
+
+# Coupling bonus game (hud.md §3.16, menus.md §12).
+0x2d8 = "BONUS GAME"                 # ボーナスゲーム, 320×48
+0x2d9 = { region = [8, 20, 264, 71], text = "Couple up within\nthe time limit,\nwithout a jolt!" }  # instruction balloon, 368×96
+0x2dc = "COUPLED!"                   # 連結成功
+0x2dd = "COUPLING FAILED"            # 連結失敗
+0x2de = "READY"                      # 準備
+0x2df = "GO!"                        # 開始
+
+# Time-up advice (hud.md §3.16, 0x3f2..0x3fe), 320×128: the inside of the balloon.
+0x3f2 = { region = [8, 20, 176, 84], text = "Don't skip\nyour stops." }                     # 停車駅は守って下さい
+0x3f3 = { region = [8, 20, 176, 84], text = "Your braking\nis too hard." }                   # ブレーキが強すぎます
+0x3f4 = { region = [8, 20, 176, 84], text = "Obey the\nsignals." }                           # 信号は守って下さい
+0x3f5 = { region = [8, 20, 176, 84], text = "A train can't\nstop on a dime." }               # 電車は急に止まれません
+0x3f6 = { region = [8, 20, 176, 84], text = "Make use of\ncoasting." }                       # 惰性走行を使って下さい
+0x3f7 = { region = [8, 20, 176, 84], text = "Never force a level\ncrossing. It's deadly!\nStop and look first!" } # 踏切の無理な横断は…
+0x3f9 = { region = [8, 20, 176, 84], text = "Never release the brake\nbefore the door lamp\nlights up." }        # 知らせ灯点灯前は…
+0x3fa = { region = [8, 20, 176, 84], text = "Brake gently\nand smoothly..." }                # ブレーキ操作はやさしく丁寧に
+0x3fe = { region = [8, 20, 176, 84], text = "Aim for\nprecise driving!" }                    # 正確な運転を心掛けて下さいね
+
+# ---------------------------------------------------------------------------------------------
+# Station result (menus.md §9). Rows are 480 px wide with gaps where the game draws digits,
+# so only the words are replaced; Latin art (Cm, EXCELLENT!, m×N) stays.
+
+0x1a0 = "RESULT"                     # 運転評価 header, 176×48
+0x1c9 = { parts = [{ region = [12, 0, 196, 32], text = "Stop point", align = "left" }, { region = [384, 0, 96, 32], text = "PASS!" }] }   # 停止位置 nn Cm 合格!
+0x1a6 = { parts = [{ region = [12, 0, 196, 32], text = "Stop point", align = "left" }, { region = [360, 0, 120, 32], text = "PASS!" }] }   # 停止位置 … 合格!
+0x1cc = { parts = [{ region = [0, 0, 128, 32], text = "Stop point", align = "left" }, { region = [372, 0, 104, 32], text = "PASS!!" }] }   # 停止位置 EXCELLENT! … Cm 合格!!
+0x1c0 = "Re-powered in platform"     # 駅構内再加速 re-power penalty row, 192×32
+0x1c4 = "Penalty"                    # 減点, 64×32
+0x1bf = "sec"                        # 秒, 48×32
+0x1ca = "Emergency stop"             # 非常制動停車 EB row, 192×32
+0x1c3 = "None"                       # なし no penalty, 64×32
+0x1a9 = { parts = [{ region = [8, 14, 80, 34], text = "Total" }, { region = [96, 14, 144, 34], text = "minus" }, { region = [428, 14, 52, 34], text = "sec" }] }  # 合計 マイナス … 秒, 480×48
+0x1a3 = { parts = [{ region = [0, 0, 180, 32], text = "Overrun", align = "left" }, { region = [428, 0, 52, 32], text = "sec" }] }  # オーバーラン … m×1秒
+0x1a4 = { parts = [{ region = [0, 0, 180, 32], text = "Overrun", align = "left" }, { region = [428, 0, 52, 32], text = "sec" }] }  # オーバーラン … m×2秒
+0x1a5 = { parts = [{ region = [0, 0, 180, 32], text = "Overrun", align = "left" }, { region = [428, 0, 52, 32], text = "sec" }] }  # オーバーラン … m×3秒
+# Result words whose caller was not traced (same sheet family):
+0x1a1 = { region = [16, 0, 104, 32], text = "Timetable" }       # ダイヤ, 128×32
+0x1a2 = { parts = [{ region = [16, 0, 104, 32], text = "Timetable" }, { region = [236, 0, 76, 32], text = "late" }, { region = [428, 0, 52, 32], text = "sec" }] }  # ダイヤ … 遅れ … 秒
+0x1a7 = "On time!"                   # 定刻!, 80×32
+0x1a8 = "Early"                      # 早着, 64×32
+0x1cb = "Behind schedule"            # ダイヤ遅れ, 176×32
+0x1c1 = "Entered too fast"           # 駅進入速度超過, 224×32
+0x1c2 = "Pass!"                      # 合格!, 80×32
+
+# ---------------------------------------------------------------------------------------------
+# Continue, run end (menus.md §10, §11.3)
+
+0x24a = { region = [0, 0, 160, 32], text = "KEEP GOING?" }      # 運転継続? (CONTINUE stays), 160×48
+0x24d = "RESUMING"                   # 運転再開 continue chosen, 160×32
+0x3f8 = { region = [8, 20, 160, 80], text = "Press START\nto continue!" }    # スタートボタンを押して下さい (コンティニュー スタート)
+0x250 = { region = [0, 0, 160, 32], text = "RUN HALTED" }       # 運転中止 (GAME OVER stays), 160×48
+0x251 = { region = [0, 0, 160, 32], text = "RUN COMPLETE" }     # 運転終了 (GAME OVER stays), 160×48
+0x3fd = { region = [8, 20, 176, 84], text = "A railfan's\ndream run!" }     # 鉄ちゃん感動です! grade 100
+0x3fb = { region = [8, 20, 176, 84], text = "Superb\ndriving!" }            # 素晴らしい運転でした! grade ≥ 90
+# Not traced (likely unused on PC):
+0x24c = "Hazard avoided: PASS!"      # 危険回避合格!, 224×32
+0x24e = "ACCIDENT"                   # 事故, 192×64
+0x24f = { parts = [{ region = [0, 0, 192, 64], text = "ACCIDENT" }, { region = [0, 64, 192, 32], text = "Too fast!" }] }  # 事故 速度の出し過ぎ, 192×96
+
+# Report card (menus.md §11.1), 480×256 table: header, five row labels, total.
+0x444 = { parts = [
+    { region = [120, 4, 240, 40], text = "DRIVING REPORT" },                # 運転評価
+    { region = [6, 52, 272, 26], text = "Timekeeping" },                    # ダイヤの正確さ
+    { region = [6, 84, 272, 26], text = "Braking (ride comfort)" },         # ブレーキ(乗り心地)
+    { region = [6, 116, 272, 26], text = "Stopping accuracy" },             # 停止位置の正確さ
+    { region = [6, 148, 272, 26], text = "Signals and signs" },             # 信号・標識を守る
+    { region = [6, 180, 272, 26], text = "Safety awareness" },              # 安全性への配慮
+    { region = [120, 214, 180, 40], text = "OVERALL" },                     # 総合評価
+    { region = [404, 214, 60, 40], text = "pts" },                          # 点
+] }
+# Grade stamps, 32×32 red circles; the kanji fills the circle, so the whole stamp becomes a letter.
+0x445 = "A"                          # 優 (part ≥ 18 of 24)
+0x446 = "B"                          # 良 (12–17)
+0x447 = "C"                          # 可 (6–11)
+0x448 = "D"                          # lowest grade (0–5)
+
+# ---------------------------------------------------------------------------------------------
+# Title and pre-run screens (menus.md §2, §7)
+
+0x246 = "Press the START button."    # スタートボタンを押して下さい press-START screen, 432×32
+0x247 = "Thank you for riding with us."  # ご乗車ありがとうございます, 400×32
+0x249 = "INSPECTION"                 # 仕業検査 lever check, 176×48
+0x248 = "Set each lever to\nits start position."  # 各レバーをスタート位置に合わせて下さい, 352×64
+0x3d8 = { region = [84, 4, 244, 32], text = "DEPARTURES" }  # 発車案内 board header, 416×160 (est.)
+
+# Departure-board flaps (menus.md §7: lists 0x466fa0 series, 0x466fd8 type, 0x466ff8 stations).
+0x3c9 = { region = [4, 0, 120, 38], text = "Tokyo" }                      # 東京
+0x3ca = { region = [4, 0, 120, 38], text = "Ueno" }                       # 上野
+0x3cb = { region = [4, 0, 120, 38], text = "Yokohama" }                   # 横浜
+0x3cc = { region = [4, 0, 120, 38], text = "Osaka" }                      # 大阪
+0x3cd = { region = [4, 0, 120, 38], text = "Shinjuku" }                   # 新宿
+0x3ce = { region = [4, 0, 120, 38], text = "Kobe" }                       # 神戸
+0x3cf = { region = [4, 0, 120, 38], text = "RAPID" }                      # 快速
+0x3d0 = { region = [4, 0, 120, 38], text = "LOCAL" }                      # 普通
+0x3d1 = { region = [4, 0, 120, 38], text = "223 series" }                 # 223系
+0x3d2 = { region = [4, 0, 120, 38], text = "209 series" }                 # 209系
+0x3d3 = { region = [4, 0, 120, 38], text = "221 series" }                 # 221系
+0x3d4 = { region = [4, 0, 120, 38], text = "205 series" }                 # 205系
+0x3d9 = { region = [4, 0, 120, 38], text = "Akita" }                      # 秋田
+0x3da = { region = [4, 0, 120, 38], text = "Ōmagari" }                    # 大曲
+0x3db = { region = [4, 0, 120, 38], text = "Morioka" }                    # 盛岡
+0x3dc = { region = [4, 0, 120, 38], text = "Shin-Hanamaki" }              # 新花巻
+0x3dd = { region = [4, 0, 120, 38], text = "Naoetsu" }                    # 直江津
+0x3de = { region = [4, 0, 120, 38], text = "Muikamachi" }                 # 六日町
+0x3df = { region = [4, 0, 120, 38], text = "Echigo-Yuzawa" }              # 越後湯沢
+0x3e0 = { region = [4, 0, 120, 38], text = "681 series" }                 # 681系
+0x3e1 = { region = [4, 0, 120, 38], text = "485 series" }                 # 485系
+0x3e2 = { region = [4, 0, 120, 38], text = "200 series" }                 # 200系
+0x3e3 = { region = [4, 0, 120, 38], text = "E2' series" }                 # E2'系
+0x3e4 = { region = [4, 0, 120, 38], text = "E3 series" }                  # E3系
+0x3e5 = { region = [4, 0, 120, 38], text = "207 series" }                 # 207系
+0x3e6 = { region = [4, 0, 120, 38], text = "201 series" }                 # 201系
+0x3e7 = { region = [4, 0, 120, 38], text = "HK100" }                      # HK100形
+0x3e8 = { region = [4, 0, 120, 38], text = "701 series" }                 # 701系
+0x3e9 = { region = [4, 0, 120, 38], text = "Ltd. Exp. Hakutaka" }         # 特急はくたか
+0x3ea = { region = [4, 0, 120, 38], text = "Komachi" }                    # こまち
+0x3eb = { region = [4, 0, 120, 38], text = "Yamabiko" }                   # やまびこ
+0x3ec = { region = [4, 0, 120, 38], text = "SPECIAL RAPID" }              # 新快速
+0x3ed = { region = [4, 0, 120, 38], text = "Shinagawa" }                  # 品川
+0x3ee = { region = [4, 0, 120, 38], text = "Uragawara" }                  # うらがわら
+0x3ef = { region = [4, 0, 120, 38], text = "Shibuya" }                    # 渋谷
+0x3f0 = { region = [4, 0, 120, 38], text = "Ōsaki" }                      # 大崎
+0x3f1 = { region = [4, 0, 120, 38], text = "Tazawako" }                   # 田沢湖
+
+# ---------------------------------------------------------------------------------------------
+# Route select (menus.md §6.1)
+
+0x124 = "Kantō Lines"                # 関東路線 group header, 160×48
+0x125 = "Kansai Lines"               # 関西路線
+0x126 = "Hokuriku Lines"             # 北陸路線
+0x127 = "Tōhoku Lines"               # 東北路線
+0x30f = "Difficulty"                 # 難易度, 64×16
+0x314 = "Beginner"                   # 初級 rank badge (1–2 stars), 64×32
+0x315 = "Intermediate"               # 中級 (3)
+0x316 = "Advanced"                   # 上級 (4)
+0x317 = "Expert"                     # 特級 (5)
+0x549 = "Stops at\nShizukuishi"      # 雫石停車 tag, 48×32
+0x548 = "Passes\nShizukuishi"        # 雫石通過 tag, 48×32
+
+# ---------------------------------------------------------------------------------------------
+# Records / ranking (menus.md §5, §11.2)
+
+0x41d = "RECORDS"                    # 乗務記録 header, 160×48
+# Header plates 0x46bc10 (line) and 0x46bc64 (series), 240×32 with a slanted bar.
+0x41f = { region = [64, 0, 176, 32], text = "Tazawako Line" }       # 田沢湖線 (bar est.)
+0x420 = { region = [64, 0, 176, 32], text = "Tōkaidō Main Line" }   # 東海道本線
+0x421 = { region = [64, 0, 176, 32], text = "Keihin-Tōhoku Line" }  # 京浜東北線
+0x422 = { region = [64, 0, 176, 32], text = "Hokuhoku Line" }       # ほくほく線
+0x423 = { region = [64, 0, 176, 32], text = "Ōu Main Line" }        # 奥羽本線
+0x424 = { region = [64, 0, 176, 32], text = "Akita Shinkansen" }    # 秋田新幹線
+0x425 = { region = [64, 0, 176, 32], text = "Yamanote Line" }       # 山手線
+0x426 = { region = [0, 0, 176, 32], text = "209 series" }           # 209系
+0x427 = { region = [0, 0, 176, 32], text = "681 series" }           # 681系
+0x428 = { region = [0, 0, 176, 32], text = "201 series" }           # 201系
+0x429 = { region = [0, 0, 176, 32], text = "205 series" }           # 205系
+0x42a = { region = [0, 0, 176, 32], text = "485 series" }           # 485系
+0x42b = { region = [0, 0, 176, 32], text = "485 series W" }         # 485系W
+0x42c = { region = [0, 0, 176, 32], text = "485 series E" }         # 485系E
+0x42d = { region = [0, 0, 176, 32], text = "E3 series" }            # E3系
+0x42e = { region = [0, 0, 176, 32], text = "221 series" }           # 221系
+0x42f = { region = [0, 0, 176, 32], text = "207 series" }           # 207系
+0x430 = { region = [0, 0, 176, 32], text = "701 series" }           # 701系
+0x431 = { region = [0, 0, 176, 32], text = "HK100" }                # HK-100形
+0x432 = { region = [0, 0, 176, 32], text = "223 series" }           # 223系
+# Legends, 384×32: the key icons stay, the words are replaced.
+0x545 = { parts = [{ region = [34, 0, 120, 32], text = "Next", align = "left" }, { region = [196, 0, 188, 32], text = "Back to menu", align = "left" }] }  # [Enter] 次に進む [Esc] メニューに戻る
+0x546 = { parts = [{ region = [34, 0, 120, 32], text = "Next", align = "left" }, { region = [196, 0, 188, 32], text = "Back to menu", align = "left" }] }  # (A) 次に進む (B) メニューに戻る
+
+# Station names (HUD captions and banners, hud.md §3.13). Plain (green caption) and
+# highlighted (banner) variants; ids from the exe tables 0x4665c4 / 0x4668ac by name id.
+# Layout: 2 tiles high; the width is the map width (64–192 px), also stored in 0x4665c4.
+0x72 = "Akita"   # name 5, plain
+0x73 = "Akita"   # name 5, banner
+0x74 = "Yotsugoya"   # name 6, plain
+0x75 = "Yotsugoya"   # name 6, banner
+0x76 = "Wada"   # name 7, plain
+0x77 = "Wada"   # name 7, banner
+0x78 = "Ōbarino"   # name 8, plain
+0x79 = "Ōbarino"   # name 8, banner
+0x7a = "Ugo-Sakai"   # name 9, plain
+0x7b = "Ugo-Sakai"   # name 9, banner
+0x7c = "Minekichikawa"   # name 10, plain
+0x7d = "Minekichikawa"   # name 10, banner
+0x7e = "Kariwano"   # name 11, plain
+0x7f = "Kariwano"   # name 11, banner
+0x80 = "Jingūji"   # name 12, plain
+0x81 = "Jingūji"   # name 12, banner
+0x82 = "Ōmagari"   # name 13, plain
+0x83 = "Ōmagari"   # name 13, banner
+0x84 = "Kita-Ōmagari"   # name 14, plain
+0x85 = "Kita-Ōmagari"   # name 14, banner
+0x86 = "Ugo-Yotsuya"   # name 15, plain
+0x87 = "Ugo-Yotsuya"   # name 15, banner
+0x88 = "Yarimiuchi"   # name 16, plain
+0x89 = "Yarimiuchi"   # name 16, banner
+0x8a = "Ugo-Nagano"   # name 17, plain
+0x8b = "Ugo-Nagano"   # name 17, banner
+0x8c = "Uguisuno"   # name 18, plain
+0x8d = "Uguisuno"   # name 18, banner
+0x8e = "Kakunodate"   # name 19, plain
+0x8f = "Kakunodate"   # name 19, banner
+0x90 = "Shōden"   # name 20, plain
+0x91 = "Shōden"   # name 20, banner
+0x92 = "Jindai"   # name 21, plain
+0x93 = "Jindai"   # name 21, banner
+0x94 = "Sasamaki"   # name 22, plain
+0x95 = "Sasamaki"   # name 22, banner
+0x96 = "Tazawako"   # name 23, plain
+0x97 = "Tazawako"   # name 23, banner
+0x98 = "Akabuchi"   # name 24, plain
+0x99 = "Akabuchi"   # name 24, banner
+0x9a = "Harukiba"   # name 25, plain
+0x9b = "Harukiba"   # name 25, banner
+0x9c = "Shizukuishi"   # name 26, plain
+0x9d = "Shizukuishi"   # name 26, banner
+0x9e = "Koiwai"   # name 27, plain
+0x9f = "Koiwai"   # name 27, banner
+0xa0 = "Ōkama"   # name 28, plain
+0xa1 = "Ōkama"   # name 28, banner
+0xa2 = "Morioka"   # name 29, plain
+0xa3 = "Morioka"   # name 29, banner
+0xa4 = "Naoetsu"   # name 30, plain
+0xa5 = "Naoetsu"   # name 30, banner
+0xa6 = "Kuroi"   # name 31, plain
+0xa7 = "Kuroi"   # name 31, banner
+0xa8 = "Saigata"   # name 32, plain
+0xa9 = "Saigata"   # name 32, banner
+0xaa = "Kubiki"   # name 33, plain
+0xab = "Kubiki"   # name 33, banner
+0xac = "Ōike-Ikoi-no-Mori"   # name 34, plain
+0xad = "Ōike-Ikoi-no-Mori"   # name 34, banner
+0xae = "Uragawara"   # name 35, plain
+0xaf = "Uragawara"   # name 35, banner
+0xb0 = "Mushikawa-Ōsugi"   # name 36, plain
+0xb1 = "Mushikawa-Ōsugi"   # name 36, banner
+0xb2 = "Hokuhoku-Ōshima"   # name 37, plain
+0xb3 = "Hokuhoku-Ōshima"   # name 37, banner
+0xb4 = "Matsudai"   # name 38, plain
+0xb5 = "Matsudai"   # name 38, banner
+0xb6 = "Tōkamachi"   # name 39, plain
+0xb7 = "Tōkamachi"   # name 39, banner
+0xb8 = "Shinza"   # name 40, plain
+0xb9 = "Shinza"   # name 40, banner
+0xba = "Misashima"   # name 41, plain
+0xbb = "Misashima"   # name 41, banner
+0xbc = "Uonuma-Kyūryō"   # name 42, plain
+0xbd = "Uonuma-Kyūryō"   # name 42, banner
+0xbe = "Muikamachi"   # name 43, plain
+0xbf = "Muikamachi"   # name 43, banner
+0xc0 = "Shiozawa"   # name 44, plain
+0xc1 = "Shiozawa"   # name 44, banner
+0xc2 = "Ōsawa"   # name 45, plain
+0xc3 = "Ōsawa"   # name 45, banner
+0xc4 = "Ishiuchi"   # name 46, plain
+0xc5 = "Ishiuchi"   # name 46, banner
+0xc6 = "Echigo-Yuzawa"   # name 47, plain
+0xc7 = "Echigo-Yuzawa"   # name 47, banner
+0xc8 = "Tokyo"   # name 48, plain
+0xc9 = "Tokyo"   # name 48, banner
+0xca = "Yūrakuchō"   # name 49, plain
+0xcb = "Yūrakuchō"   # name 49, banner
+0xcc = "Shimbashi"   # name 50, plain
+0xcd = "Shimbashi"   # name 50, banner
+0xce = "Hamamatsuchō"   # name 51, plain
+0xcf = "Hamamatsuchō"   # name 51, banner
+0xd0 = "Tamachi"   # name 52, plain
+0xd1 = "Tamachi"   # name 52, banner
+0xd2 = "Shinagawa"   # name 53, plain
+0xd3 = "Shinagawa"   # name 53, banner
+0xd4 = "Ōsaki"   # name 54, plain
+0xd5 = "Ōsaki"   # name 54, banner
+0xd6 = "Gotanda"   # name 55, plain
+0xd7 = "Gotanda"   # name 55, banner
+0xd8 = "Meguro"   # name 56, plain
+0xd9 = "Meguro"   # name 56, banner
+0xda = "Ebisu"   # name 57, plain
+0xdb = "Ebisu"   # name 57, banner
+0xdc = "Shibuya"   # name 58, plain
+0xdd = "Shibuya"   # name 58, banner
+0xde = "Harajuku"   # name 59, plain
+0xdf = "Harajuku"   # name 59, banner
+0xe0 = "Yoyogi"   # name 60, plain
+0xe1 = "Yoyogi"   # name 60, banner
+0xe2 = "Shinjuku"   # name 61, plain
+0xe3 = "Shinjuku"   # name 61, banner
+0xe4 = "Yokohama"   # name 62, plain
+0xe5 = "Yokohama"   # name 62, banner
+0xe6 = "Higashi-Kanagawa"   # name 63, plain
+0xe7 = "Higashi-Kanagawa"   # name 63, banner
+0xe8 = "Shin-Koyasu"   # name 64, plain
+0xe9 = "Shin-Koyasu"   # name 64, banner
+0xea = "Tsurumi"   # name 65, plain
+0xeb = "Tsurumi"   # name 65, banner
+0xec = "Kawasaki"   # name 66, plain
+0xed = "Kawasaki"   # name 66, banner
+0xee = "Kamata"   # name 67, plain
+0xef = "Kamata"   # name 67, banner
+0xf0 = "Ōmori"   # name 68, plain
+0xf1 = "Ōmori"   # name 68, banner
+0xf2 = "Ōimachi"   # name 69, plain
+0xf3 = "Ōimachi"   # name 69, banner
+0xf4 = "Kanda"   # name 70, plain
+0xf5 = "Kanda"   # name 70, banner
+0xf6 = "Akihabara"   # name 71, plain
+0xf7 = "Akihabara"   # name 71, banner
+0xf8 = "Okachimachi"   # name 72, plain
+0xf9 = "Okachimachi"   # name 72, banner
+0xfa = "Ueno"   # name 73, plain
+0xfb = "Ueno"   # name 73, banner
+0xfc = "Osaka"   # name 74, plain
+0xfd = "Osaka"   # name 74, banner
+0xfe = "Tsukamoto"   # name 75, plain
+0xff = "Tsukamoto"   # name 75, banner
+0x100 = "Amagasaki"   # name 76, plain
+0x101 = "Amagasaki"   # name 76, banner
+0x102 = "Tachibana"   # name 77, plain
+0x103 = "Tachibana"   # name 77, banner
+0x104 = "Kōshienguchi"   # name 78, plain
+0x105 = "Kōshienguchi"   # name 78, banner
+0x106 = "Nishinomiya"   # name 79, plain
+0x107 = "Nishinomiya"   # name 79, banner
+0x108 = "Ashiya"   # name 80, plain
+0x109 = "Ashiya"   # name 80, banner
+0x10a = "Kōnan-Yamate"   # name 81, plain
+0x10b = "Kōnan-Yamate"   # name 81, banner
+0x10c = "Settsu-Motoyama"   # name 82, plain
+0x10d = "Settsu-Motoyama"   # name 82, banner
+0x10e = "Sumiyoshi"   # name 83, plain
+0x10f = "Sumiyoshi"   # name 83, banner
+0x110 = "Rokkōmichi"   # name 84, plain
+0x111 = "Rokkōmichi"   # name 84, banner
+0x112 = "Nada"   # name 85, plain
+0x113 = "Nada"   # name 85, banner
+0x114 = "Sannomiya"   # name 86, plain
+0x115 = "Sannomiya"   # name 86, banner
+0x116 = "Motomachi"   # name 87, plain
+0x117 = "Motomachi"   # name 87, banner
+0x118 = "Kobe"   # name 88, plain
+0x119 = "Kobe"   # name 88, banner
+0x11a = "Shin-Hanamaki"   # name 89, plain
+0x11b = "Shin-Hanamaki"   # name 89, banner
+
+# Vertical station plates, top right (hud.md §3.7: 0x46645c by name id). 32×96 px; the
+# text runs top to bottom like the original.
+0x4b9 = { text = "Akita", vertical = true }   # name 5
+0x4ba = { text = "Yotsugoya", vertical = true }   # name 6
+0x4bb = { text = "Wada", vertical = true }   # name 7
+0x4bc = { text = "Ōbarino", vertical = true }   # name 8
+0x4bd = { text = "Ugo-Sakai", vertical = true }   # name 9
+0x4be = { text = "Minekichikawa", vertical = true }   # name 10
+0x4bf = { text = "Kariwano", vertical = true }   # name 11
+0x4c0 = { text = "Jingūji", vertical = true }   # name 12
+0x4c1 = { text = "Ōmagari", vertical = true }   # name 13
+0x4c2 = { text = "Kakunodate", vertical = true }   # name 19
+0x4c3 = { text = "Tazawako", vertical = true }   # name 23
+0x4c4 = { text = "Akabuchi", vertical = true }   # name 24
+0x4c5 = { text = "Harukiba", vertical = true }   # name 25
+0x4c6 = { text = "Shizukuishi", vertical = true }   # name 26
+0x4c7 = { text = "Koiwai", vertical = true }   # name 27
+0x4c8 = { text = "Ōkama", vertical = true }   # name 28
+0x4c9 = { text = "Morioka", vertical = true }   # name 29
+0x4cb = { text = "Naoetsu", vertical = true }   # name 30
+0x4cc = { text = "Saigata", vertical = true }   # name 32
+0x4cd = { text = "Kubiki", vertical = true }   # name 33
+0x4ce = { text = "Uragawara", vertical = true }   # name 35
+0x4cf = { text = "Hokuhoku-Ōshima", vertical = true }   # name 37
+0x4d0 = { text = "Matsudai", vertical = true }   # name 38
+0x4d1 = { text = "Tōkamachi", vertical = true }   # name 39
+0x4d2 = { text = "Muikamachi", vertical = true }   # name 43
+0x4d3 = { text = "Tokyo", vertical = true }   # name 48
+0x4d4 = { text = "Yūrakuchō", vertical = true }   # name 49
+0x4d5 = { text = "Shimbashi", vertical = true }   # name 50
+0x4d6 = { text = "Hamamatsuchō", vertical = true }   # name 51
+0x4d7 = { text = "Tamachi", vertical = true }   # name 52
+0x4d8 = { text = "Shinagawa", vertical = true }   # name 53
+0x4d9 = { text = "Ōsaki", vertical = true }   # name 54
+0x4da = { text = "Gotanda", vertical = true }   # name 55
+0x4db = { text = "Meguro", vertical = true }   # name 56
+0x4dc = { text = "Ebisu", vertical = true }   # name 57
+0x4dd = { text = "Shibuya", vertical = true }   # name 58
+0x4de = { text = "Harajuku", vertical = true }   # name 59
+0x4df = { text = "Yoyogi", vertical = true }   # name 60
+0x4e0 = { text = "Shinjuku", vertical = true }   # name 61
+0x4e1 = { text = "Yokohama", vertical = true }   # name 62
+0x4e2 = { text = "Higashi-Kanagawa", vertical = true }   # name 63
+0x4e3 = { text = "Shin-Koyasu", vertical = true }   # name 64
+0x4e4 = { text = "Tsurumi", vertical = true }   # name 65
+0x4e5 = { text = "Kawasaki", vertical = true }   # name 66
+0x4e6 = { text = "Kamata", vertical = true }   # name 67
+0x4e7 = { text = "Ōmori", vertical = true }   # name 68
+0x4e8 = { text = "Ōimachi", vertical = true }   # name 69
+0x4e9 = { text = "Akihabara", vertical = true }   # name 71
+0x4ea = { text = "Ueno", vertical = true }   # name 73
+0x4eb = { text = "Osaka", vertical = true }   # name 74
+0x4ec = { text = "Tsukamoto", vertical = true }   # name 75
+0x4ed = { text = "Amagasaki", vertical = true }   # name 76
+0x4ee = { text = "Tachibana", vertical = true }   # name 77
+0x4ef = { text = "Kōshienguchi", vertical = true }   # name 78
+0x4f0 = { text = "Nishinomiya", vertical = true }   # name 79
+0x4f1 = { text = "Ashiya", vertical = true }   # name 80
+0x4f2 = { text = "Kōnan-Yamate", vertical = true }   # name 81
+0x4f3 = { text = "Settsu-Motoyama", vertical = true }   # name 82
+0x4f4 = { text = "Sumiyoshi", vertical = true }   # name 83
+0x4f5 = { text = "Rokkōmichi", vertical = true }   # name 84
+0x4f6 = { text = "Nada", vertical = true }   # name 85
+0x4f7 = { text = "Sannomiya", vertical = true }   # name 86
+0x4f8 = { text = "Motomachi", vertical = true }   # name 87
+0x4f9 = { text = "Kobe", vertical = true }   # name 88
+0x4ca = { text = "Shin-Hanamaki", vertical = true }   # name 89
+
+# =============================================================================================
+# String sheets (menus.md §1.2). Integer keys are descriptor indices into the sheet's table in
+# the exe (see SHEETS in crates/ddg-game/src/locale.rs); named keys give the rectangle in tiles.
+
+# Title menu items (0x47c778), 512×96 each: the big katakana only; the number on the left and
+# the small Latin subtitle stay.
+[sheet.0x513]
+0 = { region = [88, 8, 408, 64], text = "ARCADE MODE" }        # アーケードモード
+1 = { region = [88, 8, 408, 64], text = "GAME SETTINGS" }      # ゲーム設定
+2 = { region = [88, 8, 408, 64], text = "RANKINGS" }           # ランキングを見る
+3 = { region = [88, 8, 408, 64], text = "QUIT GAME" }          # ゲーム終了
+4 = { region = [88, 8, 408, 64], text = "CONTROLLER SETUP" }   # 専用コントローラー設定 (input mode 6)
+
+# Options labels and values (0x47c584), selected colouring. Labels 192×32, values 240×32
+# (10–13 are 32×32).
+[sheet.0x4fa]
+0 = { text = "Controls", align = "left" }                       # コントロール
+1 = { text = "Difficulty", align = "left" }                     # 難易度
+2 = { text = "Vibration", align = "left" }                      # 振動
+3 = { text = "Sound", align = "left" }                          # サウンド
+4 = { text = "Speedometer", align = "left" }                    # 速度メーター
+5 = { text = "Distance meter", align = "left" }                 # 距離メーター
+6 = { text = "Easy", align = "left" }                           # イージー
+7 = { text = "Normal", align = "left" }                         # ノーマル
+8 = { text = "Hard", align = "left" }                           # ハード
+9 = { text = "Very Hard", align = "left" }                      # ベリーハード
+10 = { text = "Off", align = "left" }                           # 切 (vibration)
+11 = { text = "Low", align = "left" }                           # 弱
+12 = { text = "Mid", align = "left" }                           # 並
+13 = { text = "High", align = "left" }                          # 強
+14 = { text = "On", align = "left" }                            # オン
+15 = { text = "Off", align = "left" }                           # オフ
+16 = { text = "Hidden", align = "left" }                        # 非表示
+17 = { text = "cm", align = "left" }                            # cm表示
+18 = { text = "m", align = "left" }                             # m表示
+19 = { text = "Big digital", align = "left" }                   # デカデジ
+20 = { text = "Load", align = "left" }                          # ロードする (in no item list)
+21 = { text = "Save", align = "left" }                          # セーブする (in no item list)
+22 = { text = "Keyboard A", align = "left" }                    # キーボード A
+23 = { text = "Keyboard B", align = "left" }
+24 = { text = "Keyboard C", align = "left" }
+25 = { text = "Keyboard D", align = "left" }
+26 = { text = "Gamepad", align = "left" }                       # ジョイパッド
+27 = { text = "Joystick", align = "left" }                      # ジョイスティック
+28 = { text = "DDG controller", align = "left" }                # 専用コントローラ
+29 = { text = "Port A, socket 1", align = "left" }              # ポートA拡張ソケット1 (console leftover)
+31 = { text = "Port B, socket 1", align = "left" }              # ポートB拡張ソケット1 (console leftover)
+
+# The same, normal colouring (0x47c664).
+[sheet.0x4fb]
+0 = { text = "Controls", align = "left" }
+1 = { text = "Difficulty", align = "left" }
+2 = { text = "Vibration", align = "left" }
+3 = { text = "Sound", align = "left" }
+4 = { text = "Speedometer", align = "left" }
+5 = { text = "Distance meter", align = "left" }
+6 = { text = "Easy", align = "left" }
+7 = { text = "Normal", align = "left" }
+8 = { text = "Hard", align = "left" }
+9 = { text = "Very Hard", align = "left" }
+10 = { text = "Off", align = "left" }
+11 = { text = "Low", align = "left" }
+12 = { text = "Mid", align = "left" }
+13 = { text = "High", align = "left" }
+14 = { text = "On", align = "left" }
+15 = { text = "Off", align = "left" }
+16 = { text = "Hidden", align = "left" }
+17 = { text = "cm", align = "left" }
+18 = { text = "m", align = "left" }
+19 = { text = "Big digital", align = "left" }
+20 = { text = "Load", align = "left" }
+21 = { text = "Save", align = "left" }
+22 = { text = "Keyboard A", align = "left" }
+23 = { text = "Keyboard B", align = "left" }
+24 = { text = "Keyboard C", align = "left" }
+25 = { text = "Keyboard D", align = "left" }
+26 = { text = "Gamepad", align = "left" }
+27 = { text = "Joystick", align = "left" }
+28 = { text = "DDG controller", align = "left" }
+29 = { text = "Port A, socket 1", align = "left" }
+31 = { text = "Port B, socket 1", align = "left" }
+
+# Pause and dialog texts (0x48bbb0). Odd item indices are the highlighted variants. 0 (star
+# cursor) and 1 ("PAUSE") are not text to translate.
+[sheet.0x544]
+2 = "Quit this run?"                 # 運転を中止しますか?, 336×32
+3 = "Back to the first station?"     # 始発駅に戻りますか?, 336×32
+4 = "Resume"                         # 運転再開, 192×32
+5 = "Resume"
+6 = "Quit run"                        # 運転中止
+7 = "Quit run"
+8 = "Restart line"                   # 始発駅に戻る
+9 = "Restart line"
+10 = "Quit the game?"                # 終了しますか?
+11 = "Quit the game?"
+12 = "Yes"                           # はい, 96×32
+13 = "Yes"
+14 = "No"                            # いいえ
+15 = "No"
+# Calibration prompts (input.md §5), 176×32: the arrow on the left stays.
+16 = { region = [88, 0, 84, 32], text = "Up" }      # 上
+17 = { region = [88, 0, 84, 32], text = "Up" }
+18 = { region = [88, 0, 84, 32], text = "Down" }    # 下
+19 = { region = [88, 0, 84, 32], text = "Down" }
+20 = { region = [88, 0, 84, 32], text = "Left" }    # 左
+21 = { region = [88, 0, 84, 32], text = "Left" }
+22 = { region = [88, 0, 84, 32], text = "Right" }   # 右
+23 = { region = [88, 0, 84, 32], text = "Right" }
+24 = "Reset to default"              # 標準に戻す
+25 = "Reset to default"
+26 = "Finish setup"                  # 調整終了
+27 = "Finish setup"
+28 = "Record this run?"              # 運転を記録しますか? (no caller found), 336×32
+
+# Screen headers, 288×48. 0 = 0x48c584, 1 = 0x48c58a; the rest have no known descriptor.
+[sheet.0x54d]
+0 = { text = "SELECT LINE", align = "left" }                    # 路線選択
+1 = { text = "SELECT TRAIN", align = "left" }                   # 電車選択
+main_menu = { rect = [0, 0, -1, 3], align = "left", text = "MAIN MENU" }              # メインメニュー
+controls = { rect = [0, 3, -1, 3], align = "left", text = "CONTROLS" }                # コントロール
+difficulty = { rect = [0, 6, -1, 3], align = "left", text = "DIFFICULTY" }            # 難易度
+vibration = { rect = [0, 9, -1, 3], align = "left", text = "VIBRATION" }              # 振動
+sound = { rect = [0, 12, -1, 3], align = "left", text = "SOUND" }                     # サウンド
+speedometer = { rect = [0, 15, -1, 3], align = "left", text = "SPEEDOMETER" }         # 速度メーター
+distance_meter = { rect = [0, 18, -1, 3], align = "left", text = "DISTANCE METER" }   # 距離メーター
+load_save = { rect = [0, 21, -1, 3], align = "left", text = "LOAD / SAVE" }           # ロード・セーブ
+game_settings = { rect = [0, 24, -1, 3], align = "left", text = "GAME SETTINGS" }     # ゲーム設定
+power_setup = { rect = [0, 27, -1, 3], align = "left", text = "POWER LEVER SETUP" }   # マスコン調整
+brake_setup = { rect = [0, 30, -1, 3], align = "left", text = "BRAKE LEVER SETUP" }   # ブレーキ調整
+
+# Name-entry legends (0x486184 keyboard, 0x48618a lever), 176×64 each.
+[sheet.0x53f]
+0 = "Select: ← → keys\nConfirm: Enter"          # 選択: カーソルキー左右 / 決定: Enter ボタン
+1 = "Select: brake lever\nConfirm: A button"    # 選択: ブレーキ・スティック / 決定: A ボタン
+pad = { rect = [0, 8, -1, 4], text = "Select: D-pad ← →\nConfirm: A button" }  # 選択: 方向ボタン左右 (no known descriptor)
+
+# Legend word sheet, 192×160 (options controller page 0x42a820; the descriptors were not found,
+# so these rectangles are guesses except the replay mark, which hud.md §3.16 gives).
+[sheet.0x50b]
+replay = { rect = [6, 0, 6, 2], region = [13, 4, 72, 23], style = "plain", text = "AUTO" }   # 自動運転 replay mark (slot 0x86, route select); inside its red frame
+select = { rect = [0, 0, 6, 2], text = "Select" }     # 選択
+cancel = { rect = [0, 2, 6, 2], text = "Cancel" }     # キャンセル
+confirm = { rect = [0, 4, 6, 2], text = "OK" }        # 決定
+finish = { rect = [0, 6, 6, 2], text = "Done" }       # おわり
+mode = { rect = [0, 8, 6, 2], text = "Mode" }         # モード切替

@@ -10,6 +10,7 @@ mod gamepad;
 mod hints;
 mod hud;
 mod input;
+mod locale;
 mod play;
 mod popups;
 mod save;

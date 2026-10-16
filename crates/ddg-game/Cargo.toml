@@ -19,3 +19,4 @@ winit.workspace = true
 wgpu.workspace = true
 glam.workspace = true
 gilrs.workspace = true
+toml.workspace = true
