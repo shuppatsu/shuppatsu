@@ -33,8 +33,8 @@ name = "English"
 0x206 = "Time"                       # 現在時刻 current-time label, 80×16
 0x207 = "Next Arr."                  # 次駅到着時刻 scheduled arrival label, 112×16
 0x208 = "Next Pass"                  # 次駅通過時刻 scheduled passing label, 112×16
-0x40d = "sec"                        # 秒 after the remaining time (first frame), 48×48
-0x40e = "sec"                        # 秒 after the remaining time, 48×48
+0x40d = { region = [6, 2, 36, 36], style = "boxed", text = "sec" }  # 秒 after the remaining time (first frame), 48×48 (its box kept)
+0x40e = { region = [6, 2, 36, 36], style = "boxed", text = "sec" }  # 秒 after the remaining time, 48×48 (its box kept)
 0x261 = "Time Left"                  # 持ち時間 remaining-time label, 128×32
 
 # Line + rolling-stock plate (hud.md §3.8, menus.md §6.1), 176×16.

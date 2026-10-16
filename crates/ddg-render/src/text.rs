@@ -610,16 +610,24 @@ fn render_part(
         let v = region_art(px, py);
         v != 0 && (!boxed || v != pattern[parity(px, py)])
     };
-    let (mut lo, mut hi) = (usize::MAX, 0);
+    // Its ink box `[x0, x1) × [y0, y1)` in region pixels.
+    let (mut x0, mut x1, mut y0, mut y1) = (w, 0, h, 0);
     for py in 0..h {
         for px in 0..w {
             if lettering(px, py) {
-                let k = if part.vertical { px } else { py };
-                lo = lo.min(k);
-                hi = hi.max(k);
+                x0 = x0.min(px);
+                x1 = x1.max(px + 1);
+                y0 = y0.min(py);
+                y1 = y1.max(py + 1);
             }
         }
     }
+    let inked = x0 < x1;
+    let (lo, hi) = match (inked, part.vertical) {
+        (false, _) => (1, 0),
+        (true, false) => (y0, y1 - 1),
+        (true, true) => (x0, x1 - 1),
+    };
     // The output is `scale` times finer than the art; art lookups use original pixels.
     let s = scale;
     let (sw, sh) = (w * s, h * s);
@@ -629,16 +637,49 @@ fn render_part(
         LATIN_CAP_OF_LETTERING
     };
     let cap_px = (lo <= hi).then(|| (hi - lo + 1) as f32 * share * s as f32);
-    let coverage = rasterise_spaced(
+    // The text keeps the original's margins: it is laid out in the lettering's ink box, which
+    // may grow along the reading direction up to the smaller of the original's two margins
+    // there, but never across it (so it cannot reach a neighbouring HUD element).
+    // A solid backdrop is the text's own box: it may use all of it.
+    let own_box = boxed && part.backdrop == Backdrop::Solid;
+    let (lx0, lx1, ly0, ly1) = if !inked || own_box {
+        (0, w, 0, h)
+    } else if part.vertical {
+        let m = y0.min(h - y1);
+        (x0, x1, m, h - m)
+    } else {
+        let m = x0.min(w - x1);
+        (m, w - m, y0, y1)
+    };
+    // A plain outline is one original pixel wide and the original's ink box includes its
+    // outline: keep the fill that far inside (the rasteriser already pads one canvas pixel).
+    let inset = if !boxed && part.outline {
+        s.saturating_sub(PAD)
+    } else {
+        0
+    };
+    let (ox, oy) = (lx0 * s + inset, ly0 * s + inset);
+    let lw = ((lx1 - lx0) * s).saturating_sub(2 * inset);
+    let lh = ((ly1 - ly0) * s).saturating_sub(2 * inset);
+    // One line is fitted to the ink box by its ink, not by the font's line height (which
+    // would leave it well short of the original lettering's height).
+    let one_line = !part.text.contains('\n');
+    let line_em = part.line_height.or(one_line.then_some(1.0));
+    let laid = rasterise_spaced(
         &part.text,
-        sw,
-        sh,
+        lw,
+        lh,
         part.align,
         part.vertical,
         glyphs,
         cap_px,
-        part.line_height,
+        line_em,
     );
+    let mut coverage = vec![0u8; sw * sh];
+    for row in 0..lh {
+        let o = (oy + row) * sw + ox;
+        coverage[o..o + lw].copy_from_slice(&laid[row * lw..(row + 1) * lw]);
+    }
     let mut base = vec![0u8; sw * sh];
     let fg = if boxed {
         // The backdrop's opaque colour: a plate's face, or the dark half of a dither.
@@ -869,6 +910,33 @@ pub(crate) mod tests {
         assert_eq!(
             dither.base.iter().filter(|&&b| b == 0).count(),
             4 * w * h / 2
+        );
+    }
+
+    #[test]
+    fn text_stays_in_the_original_ink_box() {
+        // Lettering 7 in x 10..30, y 5..15 of a 40×20 region with nothing else.
+        let (w, h) = (40, 20);
+        let art: Vec<u8> = (0..w * h)
+            .map(|i| u8::from((10..30).contains(&(i % w)) && (5..15).contains(&(i / w))) * 7)
+            .collect();
+        let part = TextPart {
+            text: "A long English label".into(),
+            style: Style::Plain,
+            ..TextPart::default()
+        };
+        let p = render_part(&part, &art, w, h, &BoxGlyphs, 2).unwrap();
+        let (sw, sh) = (w * 2, h * 2);
+        let inked: Vec<(usize, usize)> = (0..sh)
+            .flat_map(|y| (0..sw).map(move |x| (x, y)))
+            .filter(|&(x, y)| p.coverage[y * sw + x] > 0)
+            .collect();
+        assert!(!inked.is_empty());
+        // Across: the original rows only; along: the region less the smaller margin (10).
+        assert!(
+            inked
+                .iter()
+                .all(|&(x, y)| (20..60).contains(&x) && (10..30).contains(&y))
         );
     }
 
