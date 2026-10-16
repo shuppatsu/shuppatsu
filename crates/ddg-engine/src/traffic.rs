@@ -423,6 +423,11 @@ impl Traffic {
         self.seek(events, station);
     }
 
+    /// Sets the mask state `0x857216` (2 after stage 6's bonus game with four marks).
+    pub fn set_state(&mut self, state: u8) {
+        self.state = state;
+    }
+
     /// The station result path of 0x4080d0: `0x857216 = (continues < 1)`.
     pub fn after_arrival(&mut self, continues: i32) {
         self.state = u8::from(continues < 1);

@@ -218,6 +218,8 @@ pub struct RuleTables {
     pub block_length_m: [i16; STAGE_COUNT],
     /// 0x459cf8: first station where scripted weather may start (99 = never).
     pub weather_station: [i16; STAGE_COUNT],
+    /// The bonus game's stations and camera (0x459e10, 0x4693c8; docs/re/menus.md §12.1).
+    pub bonus: crate::bonus::BonusTables,
     /// 0x459dc0: weather duration per stage, ticks.
     pub weather_ticks: [i32; STAGE_COUNT],
     /// 0x4656c4 (stride 0x20): stage kind; 1 = lesson stage, > 3 = special ending.
@@ -348,6 +350,7 @@ impl RuleTables {
             early_ticks,
             block_length_m: per_stage_i16(0x459cd0)?,
             weather_station: per_stage_i16(0x459cf8)?,
+            bonus: crate::bonus::BonusTables::read(exe)?,
             weather_ticks,
             stage_kind,
             aspect_patterns,
@@ -732,6 +735,8 @@ pub enum RuleEvent {
     CouplingStarted,
     /// Something of the coupling minigame for the presentation (sounds, result, jolts).
     Coupling(CouplingEvent),
+    /// Something of the bonus game (0x41b810) for the presentation.
+    Bonus(crate::bonus::BonusEvent),
 }
 
 /// Result of a station stop, computed in the stop handler 0x40a0a0.
@@ -1065,6 +1070,9 @@ pub struct Rules {
     pub vehicle_code: Option<u32>,
     /// The train type `0x84c3fc` after a `Vehicle_Set` of the bonus section.
     pub train_type: Option<usize>,
+    /// `0x855ff8 & 0x2000000`: stage 6's extra section after its bonus game (four marks or
+    /// more; the other train set 0x16 is loaded).
+    pub extra_section: bool,
     /// Select stage 20 (`0x48ddf0`): stage 10 runs on past station 8.
     pub select_variant: bool,
     /// The last [`Rules::finish_station`] jumped to the bonus section (stage 1, station 24):
@@ -1209,6 +1217,7 @@ impl Rules {
             vehicle_code: None,
             train_type: None,
             select_variant: false,
+            extra_section: false,
             bonus_jump: false,
         };
         r.start_run();
@@ -2922,6 +2931,12 @@ impl Rules {
         }
     }
 
+    /// The bonus game's reward (0x41b810: `TimeMsg_Show(0x103, points, 0x3c)`): ボーナス and
+    /// `points` seconds into the pending time.
+    pub fn award_bonus(&mut self, out: &mut TickOutput, points: i32) {
+        self.time(out, TimeReason::Horn, points);
+    }
+
     /// `Vehicle_Set(code)` 0x410320 together with the train type `0x84c3fc`.
     fn set_vehicle(&mut self, code: u32, train_type: usize) {
         self.vehicle_code = Some(code);
@@ -3075,6 +3090,11 @@ impl Rules {
     /// Stage index and difficulty of the run.
     pub fn stage(&self) -> (usize, usize) {
         (self.stage, self.difficulty)
+    }
+
+    /// The exe tables the rules run on.
+    pub fn tables(&self) -> &RuleTables {
+        &self.tables
     }
 
     /// The stage's rank / kind (i32 at 0x4656c4 + stage × 0x20; also read by the 50 m leg
@@ -3552,6 +3572,10 @@ mod tests {
             ],
             block_length_m: [330; STAGE_COUNT],
             weather_station: [99; STAGE_COUNT],
+            bonus: crate::bonus::BonusTables {
+                stations: vec![99; STAGE_COUNT],
+                keys: [[0.0; 7]; 5],
+            },
             weather_ticks: [9000; STAGE_COUNT],
             stage_kind: [3; STAGE_COUNT],
             aspect_patterns: [

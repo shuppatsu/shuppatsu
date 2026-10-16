@@ -748,6 +748,10 @@ mod tests {
             early_ticks: std::array::from_fn(|i| diff(240 + 60 * i as i16)),
             block_length_m: [330; STAGE_COUNT],
             weather_station: [99; STAGE_COUNT],
+            bonus: ddg_engine::bonus::BonusTables {
+                stations: vec![99; STAGE_COUNT],
+                keys: [[0.0; 7]; 5],
+            },
             weather_ticks: [9000; STAGE_COUNT],
             stage_kind: [3; STAGE_COUNT],
             aspect_patterns: [[1, 2, 4, 4, 4]; 8],

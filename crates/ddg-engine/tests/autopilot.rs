@@ -11,6 +11,7 @@
 
 mod support;
 
+use ddg_engine::bonus::BonusEvent;
 use ddg_engine::coupling::CouplingEvent;
 use ddg_engine::drive::{Drive, DrivePhase};
 use ddg_engine::physics::TrainTables;
@@ -160,6 +161,12 @@ fn run_stage(data: &Data, stage: usize, difficulty: usize) -> RunReport {
                 }
                 RuleEvent::Coupling(CouplingEvent::Result(r)) => {
                     rep.notes.push(format!("coupling {r:?}"));
+                }
+                RuleEvent::Bonus(BonusEvent::Result(r)) => {
+                    rep.notes.push(format!("bonus game {r:?}"));
+                }
+                RuleEvent::Bonus(BonusEvent::Points(p)) => {
+                    rep.notes.push(format!("bonus {p} s"));
                 }
                 RuleEvent::AtsBell => rep.ats_trips += 1,
                 RuleEvent::Time {

@@ -178,6 +178,23 @@ impl Autopilot {
         i
     }
 
+    /// The bonus game: creep onto the car at about 1.5 km/h.
+    fn bonus(&mut self, d: &Drive) -> DriverInput {
+        let Some(b) = d.bonus() else {
+            return self.set(0, 8);
+        };
+        let gap_m = (b.pair_z + 0.4) * 5.0;
+        let target = if gap_m > 2.0 { 7.0 } else { 3.0 };
+        let kmh = b.train.speed * 3.6;
+        if kmh < target - 0.5 {
+            self.set(1, 0)
+        } else if kmh > target + 0.3 {
+            self.set(0, if kmh > target + 1.5 { 4 } else { 2 })
+        } else {
+            self.set(0, 0)
+        }
+    }
+
     /// The controls for the next tick: notches, plus the horn at whistle signs (held while one
     /// is required, pressed in a horn bonus zone) and the ATS acknowledgement.
     pub fn control(&mut self, d: &Drive) -> DriverInput {
@@ -207,6 +224,7 @@ impl Autopilot {
             }
             DrivePhase::Holding | DrivePhase::GameOver => return self.set(0, 8),
             DrivePhase::Coupling => return self.couple(d, mps),
+            DrivePhase::Bonus => return self.bonus(d),
             DrivePhase::PreDeparture | DrivePhase::Driving => {}
         }
 

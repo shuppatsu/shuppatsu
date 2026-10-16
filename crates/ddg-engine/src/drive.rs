@@ -29,6 +29,7 @@
 //! No serde derives: the state holds a parsed [`Route`] and the rule tables, whose types live in
 //! `ddg-formats` without serde. A trace of [`Drive`] state can be written from the accessors.
 
+use crate::bonus::{self, BonusEvent, BonusGame};
 use crate::demo::{DemoInputs, DemoKind, DemoTables};
 use crate::physics::{Controls, TickContext, TrainSpec, TrainState, TrainTables, gradient_at};
 use crate::rules::{
@@ -98,6 +99,9 @@ pub enum DrivePhase {
     /// The coupling minigame after a perfect stop at a coupling station; see
     /// [`Rules::coupling`](crate::rules::Rules::coupling).
     Coupling,
+    /// The bonus game (0x41b540) between a station result and the next segment; see
+    /// [`Drive::bonus`].
+    Bonus,
     /// Stopped at a station and evaluated: show the result, then call [`Drive::finish_station`].
     Arrived,
     /// Out of time. The train coasts to a stop if it was moving; offer
@@ -226,6 +230,12 @@ pub struct Drive {
     train_models: TrainModels,
     /// An attract demo drive in progress ([`Drive::start_demo`]).
     demo: Option<Demo>,
+    /// The bonus game (0x41b540): due after the next idle tick, running, and the vehicle code
+    /// to restore, the horn of the last tick.
+    bonus_due: bool,
+    bonus: Option<BonusGame>,
+    bonus_saved_vehicle: Option<u32>,
+    bonus_horn: bool,
 }
 
 impl std::fmt::Debug for Drive {
@@ -312,6 +322,10 @@ impl Drive {
             traffic,
             train_models: stages.train_models.clone(),
             demo: None,
+            bonus_due: false,
+            bonus: None,
+            bonus_saved_vehicle: None,
+            bonus_horn: false,
         })
     }
 
@@ -320,6 +334,9 @@ impl Drive {
     // ----------------------------------------------------------------------------------------
 
     pub fn phase(&self) -> DrivePhase {
+        if self.bonus.is_some() {
+            return DrivePhase::Bonus;
+        }
         match self.step {
             Step::Load(_) => DrivePhase::Loading,
             Step::Run => match self.rules.phase {
@@ -617,9 +634,17 @@ impl Drive {
         self.rules.global_tick = Some(self.global_tick);
         self.prev_pos = self.walker.pos();
         let out = match self.step {
+            Step::Load(_) if self.bonus.is_some() => self.bonus_tick(input),
             Step::Load(0) => self.setup_tick(input),
             Step::Load(n) => {
                 self.step = Step::Load(n - 1);
+                if std::mem::take(&mut self.bonus_due) {
+                    // After the `Task_Tick` at 0x4088ac: 0x40ee50(0x14), BonusGame_Create.
+                    self.bonus = Some(BonusGame::new(&self.rules.tables().bonus));
+                    self.bonus_saved_vehicle = self.rules.vehicle_code;
+                    self.rules.vehicle_code = Some(bonus::VEHICLE);
+                    self.bonus_horn = false;
+                }
                 match self.pending_continue {
                     Some(0) => {
                         self.pending_continue = None;
@@ -681,6 +706,11 @@ impl Drive {
         if result.outcome == StationOutcome::Continue {
             self.prepare_segment(self.rules.station, LOAD_TICKS_AFTER_STATION)?;
         }
+        // Stage_Run: the bonus game after the result of its station, without a continue.
+        let stage = self.rules.stage().0;
+        self.bonus_due = result.outcome == StationOutcome::Continue
+            && self.rules.continues == 0
+            && self.rules.tables().bonus.at(stage, self.rules.station);
         self.coasting = false;
         self.game_over_ticks = 0;
         Ok(result)
@@ -963,6 +993,64 @@ impl Drive {
             atc_tripped: atc,
             segment_started: false,
         }
+    }
+
+    /// One `Task_Tick` of the bonus game: its physics task and the bonus task; the player
+    /// train is held, the HUD transfers the pending time.
+    fn bonus_tick(&mut self, input: DriverInput) -> DriveTick {
+        let Some(mut b) = self.bonus.take() else {
+            return DriveTick::default();
+        };
+        let spec = self
+            .specs
+            .get(bonus::TRAIN_TYPE)
+            .copied()
+            .unwrap_or(self.spec);
+        let released = self.bonus_horn && !input.horn_held;
+        self.bonus_horn = input.horn_held;
+        let events = b.tick(
+            &spec,
+            input.power,
+            input.brake,
+            (input.horn_pressed, released),
+        );
+        let rin = self.rule_input(&input);
+        let mut out = self.rules.idle_tick(&rin, None);
+        for e in events {
+            if let BonusEvent::Points(p) = e {
+                self.rules.award_bonus(&mut out, p);
+            }
+            out.events.push(RuleEvent::Bonus(e));
+        }
+        if b.done() {
+            // Destroy 0x41c2e0: the stage's vehicle again. Stage 6 with four marks or more
+            // goes on with the other train set and traffic mask state 2 (0x4080d0).
+            self.rules.vehicle_code = self.bonus_saved_vehicle.take();
+            let (stage, station) = (self.rules.stage().0, self.rules.station);
+            let marks: i32 = self
+                .rules
+                .marks
+                .iter()
+                .take(station)
+                .map(|&m| i32::from(m))
+                .sum();
+            if stage == 6 && marks >= 4 {
+                self.traffic.set_state(2);
+                self.rules.extra_section = true;
+            }
+        } else {
+            self.bonus = Some(b);
+        }
+        DriveTick {
+            events: out.events,
+            atc_tripped: false,
+            segment_started: false,
+        }
+    }
+
+    /// The bonus game while it runs.
+    pub fn bonus(&self) -> Option<&BonusGame> {
+        self.bonus.as_ref()
     }
 
     fn idle_tick(&mut self, input: DriverInput) -> DriveTick {
