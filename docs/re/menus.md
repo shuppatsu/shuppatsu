@@ -348,7 +348,19 @@ Created after the arrival wait (rules.md §7.3 gives the deductions). Timing and
   | 120 | — | task ends; destroy stops 0x195/0x2d, clears `0x40` |
 
 * Skip: confirm or cancel pressed with the counter in 1..80 jumps to 80; pressed after 80 jumps
-  to 120. Total length ≈ 97 + 120 = 217 ticks without skipping. **confirmed**
+  to 120 (the check runs after the counter is incremented). **confirmed**
+* Correction (0x413f30, implemented in `crates/ddg-game/src/screens/result.rs`): the EB row's
+  step sets the counter from 20 to **30** before drawing, so the "30" and "40" rows of the table
+  above are counter values, reached on phase-B ticks 20 and 30; lesson stages jump straight to
+  40 at tick 20. Without skipping the screen lasts 96 + 20 + 90 + 1 = **207 ticks** (lesson
+  stages 197). A skip to 80 before the EB row has run is undone by that bump (the counter goes
+  back to 30), so an early press only shortens the screen by a few ticks; a second press after 80
+  ends it. **confirmed** (code reading; unit-tested, not checked against the running game)
+* The result camera preset 0x419730 is not a simple camera change: it creates a task
+  (update 0x41a010, destroy 0x41a470) that picks one of four scripted views from the timetable
+  row field +0x40 (camera constants 0x84c100–0x84c144, curve tables 0x469454–0x469514, a
+  per-stage spline 0x45735c by 0x4596e0) and rebuilds 121 heights at 0x850300; the monitor frame
+  tbl 0x25e is drawn around it. **Open:** not traced or built; the port keeps the cab view.
 * **Finding for rules.md §7.3:** the overrun deduction shown and charged is `metres ×
   0x856fb8`, where `0x856fb8 = 0x459910[stage][difficulty]` (i16, values 1–3, set in 0x40d040),
   not always 1 s per metre. The banner names the factor (m×1秒 / m×2秒 / m×3秒 = tbl
@@ -361,8 +373,8 @@ Created after the arrival wait (rules.md §7.3 gives the deductions). Timing and
   station flow, and no replay is playing). Clears the HUD flags. **confirmed**
 * Layout: tbl 0x24a at (x0+240, y0+200) slot 0x37; the countdown is drawn with the HUD
   remaining-time digit slots 0x18–0x1a (all three show the same digit `t/40`, tbl 0x401+…), so
-  it counts **9 → 0, 40 ticks per digit** from 399, blinking 0x40b/0x40c in the last 4 ticks of
-  each digit. Free play (§2) means the "press START" branch always applies: tbl 0x3f8 at (304,344)
+  it counts **9 → 0, 40 ticks per digit** from 399, blinking 0x40b/0x40c in the **first** 4 ticks of
+  each digit (`t % 40` ≥ 36 while the counter counts down; digit 9 shows from 395). Free play (§2) means the "press START" branch always applies: tbl 0x3f8 at (304,344)
   slot 0x38. **confirmed**
 * Confirm (0x1000) → continue chosen: tbl 0x24d at (240,200), counter reset to 0. Horn button
   (0x100) skips to the next digit. At 0: digits 0, tbl 0x491 (continue) or 0x492 (no) at
