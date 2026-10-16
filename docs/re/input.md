@@ -317,3 +317,107 @@ physics consumes the input at the same frame cadence.
    indirect calls at runtime.
 4. Frame rate (ms per poll) is outside this note.
 5. What does the J-key/0x829d16 path do, and should it be kept?
+
+## 10. Port notes (ddg-game)
+
+Implementation: `crates/ddg-game/src/input.rs` (keyboard, shared button word) and
+`crates/ddg-game/src/gamepad.rs` (joystick modes, calibration, modern controllers).
+
+### 10.1 What is read from the exe at runtime
+
+- Binding table rows 0–6 (0x47c980). The keyboard always uses the mode-0 button slots [4..13]
+  (the absolute-address quirk of §4). The joystick uses its own row.
+- Default calibration: 17 × i32 at 0x48c434 (6 mascon, 11 brake).
+- The 0x4341c0 thresholds are taken from the instruction immediates, and the opcode bytes are
+  checked first, so a different exe fails loudly instead of decoding garbage. **confirmed**
+  (`gamepad::tests::tables_from_exe` matches §4.3–4.5):
+
+| Constant | Instruction | Value |
+|---|---|---|
+| mode 4 X−/X+ | 0x43425f `cmp eax,imm32; jg`, 0x43426f `cmp eax,imm32; jl` | −500 / 500 (axis ≤ −500 or ≥ 500) |
+| mode 4 Y−/Y+ | 0x434282, 0x434292 | −500 / 500 |
+| mode 5 brake chain (B10..B1) | 0x434442 … 0x43450d (`3d` imm32), 0x434527 (`83 f8` imm8) | −950, −850, …, −150, −50 (`y < limit`) |
+| mode 5 power chain (P5..P1) | 0x43453e … 0x43458e, 0x4345a8 (imm8) | 900, 700, 500, 300, 100 (`y > limit`) |
+| mode 6 mascon gate | 0x43431c `cmp ebx,imm32; jle` | 950 (decode while y ≤ 950) |
+| mode 6 brake margin | 0x43436e `add eax,imm8` | 50 (decode while x ≤ cal[10]+50) |
+| mode 6 EB debounce | 0x4343d6 `cmp eax,imm8; jg` | 5 (EB after the 6th poll) |
+
+The mode 5 split between the brake and power chains is `y < 0` (0x43443a, `cmp eax,edx` with
+edx = 0). The repeat rule (press, then from frame 9 every 3rd frame) is the same code pattern
+repeated inline. It is kept as a constant in `input::repeat_pulse`.
+
+### 10.2 Behaviour reproduced
+
+- Mode 4: the axes set virtual buttons 16–19, OR'd over the device buttons. The levers and the menu
+  pulses then run through the keyboard repeat rules, including "press reaches EB, repeat stops at B8".
+- Mode 5: Y < 0 picks the brake chain with power = 0, otherwise the power chain with brake = 0.
+- Mode 6: nearest calibrated value, with ties going to the lower index. Each handle has its gate and
+  holds its value outside it. EB needs 6 consecutive polls (the counter clamps to 5 after applying),
+  and any other position applies at once and resets the counter. Code 10 is unreachable with a
+  game-written calibration.
+- Station start: P0/EB is forced only in digital modes. Modes 5 and 6 keep the handle (0x4332c0).
+- Button word: per-device edges (pressed = held & ¬prev). In joystick modes the keyboard still
+  contributes Esc → pause+cancel, Enter → menu confirm (0x1000 only, so **not** the driving A
+  button 0x100000), and R → 0x4000. Keyboard Space does **not** horn in joystick modes.
+- Shift override: `Controls::poll(down, shift_allowed)`. Shift skips the joystick poll and the
+  keyboard word becomes active. The levers hold.
+- Mode fallback: if a joystick mode is selected with no gamepad connected at start, the port drops
+  to keyboard mode 0, as `input_init` does.
+- Calibration (`Calibrator`): 6 mascon Y samples, then 10 brake X samples, each on a menu-confirm
+  edge. Confirm wins over cancel in the same tick, and cancel aborts. cal[10] = cal[9].
+  `joystick.dat` is the same 68-byte LE image. A short file only overlays the whole i32s it contains
+  (like the two `fread`s into the live table).
+- `ButtonState` now also carries `menu_confirm_pressed` (0x1000), `pause_pressed` (0x800000)
+  and the whole `word` (held/pressed/released, active-high, bits in `input::bits`).
+
+### 10.3 Port choices (deviations, each a candidate config option)
+
+| Choice | Original | Port | Why |
+|---|---|---|---|
+| Unplugged mid-run | GetDeviceState fails twice, so the stale word is kept, edges included | levers hold, buttons release | a stale "pressed" edge would re-fire every tick |
+| Calibration file location | current directory | caller passes the path (`--joystick-dat`) | no writes into the install dir |
+| gilrs filters | DirectInput, no dead zone | gilrs default filters off (no dead zone or jitter filter) | keeps the thresholds meaningful |
+| FF ramp effect | created, never started (§1 0x434940 has no callers) | not implemented | dead code in the original |
+
+### 10.4 Modern controllers (enhancements, all opt-in)
+
+**Generic gamepad (`PadProfile::Generic`)**: produces a `DIJOYSTATE`-like `JoyState`:
+- X/Y come from the left stick, scaled to ±1000. +Y is stick **back**, as in DirectInput, so back means power+
+  in mode 4 and the power side in mode 5, like the arcade one-handle lever. The d-pad (buttons or
+  hat axes) overrides the stick with ±1000.
+- Face buttons are placed on the DirectInput index that the mode's binding row names, so roles
+  are the same in every mode: **South (A/✕) = A + menu confirm, East (B/○) = horn + cancel
+  (shared, as in the original), Start = pause.**
+- In mode 6, a USB lever device that reports its handles as two plain axes (gameport-style) works
+  through the faithful nearest-calibrated path after `ddg-game pad calibrate`.
+- Device choice: the first gamepad with force feedback, otherwise the first one (like 0x433d60).
+  Hot-plug re-picks.
+
+**Button-combination controllers (`PadProfile::Combo`)**: the PS1/PS2 Densha de GO! two-handle
+controllers (and similar), seen through a PS→USB adapter, report notch positions as **combinations of
+buttons/d-pad** rather than axes. The local research came up with:
+- gilrs' bundled SDL_GameControllerDB has no Densha de GO! entries. The only Taito entries are Egret II.
+- The hwdata `usb.ids` lists Taito Corp. as VID **0x0ae4**, with no product IDs.
+- No offline source gives the combination tables, so **no built-in table is shipped**. Any table
+  written from memory would be unverified.
+
+Instead the port **learns** the table: `ddg-game pad learn --combo <file>` records the set of
+active raw inputs at P0..P5 (brake handle left alone) and at B0..EB (power handle left alone).
+Raw inputs are gilrs button codes, plus axis codes past ±0.5 for hat-style d-pads. An input
+belongs to a handle if it changes across that handle's positions. Inputs that never change are
+ignored. When decoding, an exact match on the handle's inputs gives the notch. An unknown pattern
+(mid-transition) holds the handle. The notches go through mode 6, so the EB debounce and the
+"analog lever" behaviour (no forced EB at station start, pause cursor follows the mascon) apply.
+The file format is text, starting with `ddg-combo 1`, then `power <n> <hex inputs…>` and `brake <n> …`.
+
+**Needs hardware**: everything in 10.4, and the generic mapping on a real pad (stick sign
+conventions per gilrs backend). It also needs: whether a USB one-handle controller (for example the Switch-era
+ones) reports its lever as an axis compatible with mode 5's fixed thresholds or needs a calibrated
+one-handle mode (not implemented, open), and the button mapping for the combination pads
+(currently South/East/Start, excluding any input a handle uses).
+
+### 10.5 Tools
+
+`ddg-game pad monitor|calibrate|learn [--mode 4..6] [--joystick-dat F] [--combo F]`.
+`monitor` prints notch and word changes (Enter = station-start reset). `calibrate` runs the
+ADJUSTMENT sequence with Enter as the confirm and writes `joystick.dat`. `learn` records a combination table.
