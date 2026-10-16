@@ -421,6 +421,9 @@ pub struct LocaleConfig {
     pub font: Option<PathBuf>,
     /// Extra catalogue directory (`<dir>/<lang>.toml` overrides the built-in one).
     pub dir: Option<PathBuf>,
+    /// Enhancement `ui_scale`: the 2D layer is composed at 640×480 × this (1 = the original).
+    /// The art is enlarged with nearest neighbour; translated text gets the extra pixels.
+    pub ui_scale: usize,
 }
 
 impl Default for LocaleConfig {
@@ -429,12 +432,13 @@ impl Default for LocaleConfig {
             lang: IDENTITY_LANG.to_owned(),
             font: None,
             dir: None,
+            ui_scale: 1,
         }
     }
 }
 
 impl LocaleConfig {
-    /// `DDG_LANG`, `DDG_FONT`, `DDG_LOCALE_DIR`.
+    /// `DDG_LANG`, `DDG_FONT`, `DDG_LOCALE_DIR`, `DDG_UI_SCALE`.
     pub fn from_env() -> Self {
         let var = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty());
         let mut c = Self::default();
@@ -443,10 +447,13 @@ impl LocaleConfig {
         }
         c.font = var("DDG_FONT").map(PathBuf::from);
         c.dir = var("DDG_LOCALE_DIR").map(PathBuf::from);
+        if let Some(s) = var("DDG_UI_SCALE").and_then(|v| v.to_str()?.parse().ok()) {
+            c.ui_scale = clamp_scale(s);
+        }
         c
     }
 
-    /// Takes `--lang <code>`, `--font <file>` and `--locale-dir <dir>` out of `args`
+    /// Takes `--lang <code>`, `--font <file>`, `--locale-dir <dir>` and `--ui-scale <n>` out of `args`
     /// (they override the environment) and leaves everything else.
     pub fn take_args(&mut self, args: &mut Vec<String>) -> Result<()> {
         let mut rest = Vec::with_capacity(args.len());
@@ -457,6 +464,10 @@ impl LocaleConfig {
                 "--font" => self.font = Some(it.next().context("--font needs a file")?.into()),
                 "--locale-dir" => {
                     self.dir = Some(it.next().context("--locale-dir needs a dir")?.into())
+                }
+                "--ui-scale" => {
+                    let n = it.next().context("--ui-scale needs 1..=4")?;
+                    self.ui_scale = clamp_scale(n.parse().context("--ui-scale needs 1..=4")?);
                 }
                 _ => rest.push(a),
             }
@@ -469,6 +480,11 @@ impl LocaleConfig {
     pub fn active(&self) -> bool {
         self.lang != IDENTITY_LANG && self.font.is_some()
     }
+}
+
+/// UI scales beyond 4 only cost memory (a 2560×1920 canvas at 4).
+fn clamp_scale(s: usize) -> usize {
+    s.clamp(1, 4)
 }
 
 /// Builds the overlay for `cfg` and installs it on `bank`. Returns the number of sprites
@@ -489,7 +505,7 @@ pub fn install(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Resu
     let sheets = SheetTables::read(exe)?;
     let locale = Locale::load(&cfg.lang, cfg.dir.as_deref(), &sheets)?;
     let font = FontGlyphs::load(font_path)?;
-    let overlay = TextOverlay::build(bank, locale.overrides(), &font);
+    let overlay = TextOverlay::build_scaled(bank, locale.overrides(), &font, cfg.ui_scale);
     let n = overlay.len();
     bank.set_text(Some(overlay));
     Ok(n)

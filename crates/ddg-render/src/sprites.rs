@@ -146,6 +146,9 @@ pub struct SpriteLayer {
     pub fans: Vec<Fan>,
     /// Global shake offset (signed bytes 0x856358/0x856359).
     pub shake: (i8, i8),
+    /// Canvas pixels per original pixel. 1 is the original 640×480; 2 is the enhancement
+    /// `ui_scale` (art doubled with nearest neighbour, translated text at full resolution).
+    pub scale: usize,
 }
 
 impl Default for SpriteLayer {
@@ -155,6 +158,7 @@ impl Default for SpriteLayer {
             palettes: vec![None; PALETTE_COUNT],
             fans: Vec::new(),
             shake: (0, 0),
+            scale: 1,
         }
     }
 }
@@ -183,23 +187,41 @@ impl SpriteLayer {
         });
     }
 
-    /// Draws the layer into `canvas` (`CANVAS_W × CANVAS_H` RGBA8, cleared to transparent):
-    /// sprites in four passes (layer 3 → 0, slot high → low), then the rect layer.
+    /// A transparent canvas of [`SpriteLayer::canvas_size`].
+    pub fn new_canvas(&self) -> Vec<u8> {
+        let (w, h) = self.canvas_size();
+        vec![0; w * h * 4]
+    }
+
+    /// Canvas size in pixels for [`SpriteLayer::compose`]: 640×480 times [`SpriteLayer::scale`].
+    pub fn canvas_size(&self) -> (usize, usize) {
+        let s = self.scale.max(1);
+        (CANVAS_W * s, CANVAS_H * s)
+    }
+
+    /// Draws the layer into `canvas` ([`SpriteLayer::canvas_size`] RGBA8, cleared to
+    /// transparent): sprites in four passes (layer 3 → 0, slot high → low), then the rect layer.
     pub fn compose(&self, bank: &SpriteBank, canvas: &mut [u8]) {
-        assert_eq!(canvas.len(), CANVAS_W * CANVAS_H * 4);
+        let (cw, ch) = self.canvas_size();
+        assert_eq!(canvas.len(), cw * ch * 4);
         canvas.fill(0);
+        let c = Canvas {
+            w: cw,
+            h: ch,
+            s: self.scale.max(1),
+        };
         let (sx, sy) = (i32::from(self.shake.0), i32::from(self.shake.1));
         for layer in (0..LAYERS).rev() {
             for slot in self.slots.iter().rev().filter(|s| s.layer == layer) {
-                self.blit(bank, slot, sx, sy, canvas);
+                self.blit(bank, slot, sx, sy, c, canvas);
             }
         }
         for fan in &self.fans {
-            fill_fan(fan, sx, sy, canvas);
+            fill_fan(fan, sx, sy, c, canvas);
         }
     }
 
-    fn blit(&self, bank: &SpriteBank, slot: &Slot, sx: i32, sy: i32, canvas: &mut [u8]) {
+    fn blit(&self, bank: &SpriteBank, slot: &Slot, sx: i32, sy: i32, c: Canvas, canvas: &mut [u8]) {
         let Ok(id) = usize::try_from(slot.tilemap) else {
             return;
         };
@@ -223,8 +245,11 @@ impl SpriteLayer {
                 h: slot.h,
             };
             let tbl = u16::try_from(slot.tilemap).ok()?;
+            // Parts rendered for another scale would not line up; draw the art then.
+            (t.scale() == c.s).then_some(())?;
             t.get(&(tbl, rect.resolve(map.width, map.height)?))
         });
+        let s = c.s as i32;
         let (sx0, sy0) = (i32::from(slot.x) + sx, i32::from(slot.y) + sy);
         for ty in 0..h {
             for tx in 0..w {
@@ -239,47 +264,66 @@ impl SpriteLayer {
                 let ox = sx0 + tx * ts;
                 let oy = sy0 + ty * ts;
                 for py in 0..ts {
-                    let y = oy + py;
-                    if !(0..CANVAS_H as i32).contains(&y) {
-                        continue;
-                    }
                     for px in 0..ts {
-                        let x = ox + px;
                         let index = tile[(py * ts + px) as usize];
-                        if index == 0 || !(0..CANVAS_W as i32).contains(&x) {
+                        if index == 0 {
                             continue;
                         }
                         let (lx, ly) = ((tx * ts + px) as usize, (ty * ts + py) as usize);
-                        if text.is_some_and(|parts| parts.iter().any(|p| p.contains(lx, ly))) {
+                        let (bx, by) = (lx * c.s, ly * c.s);
+                        if text.is_some_and(|parts| parts.iter().any(|p| p.contains(bx, by))) {
                             continue;
                         }
-                        let o = (y as usize * CANVAS_W + x as usize) * 4;
-                        canvas[o..o + 4].copy_from_slice(&palette.rgba(index));
+                        // One original pixel becomes an s × s block.
+                        let rgba = palette.rgba(index);
+                        for dy in 0..s {
+                            let y = (oy + py) * s + dy;
+                            if !(0..c.h as i32).contains(&y) {
+                                continue;
+                            }
+                            for dx in 0..s {
+                                let x = (ox + px) * s + dx;
+                                if !(0..c.w as i32).contains(&x) {
+                                    continue;
+                                }
+                                let o = (y as usize * c.w + x as usize) * 4;
+                                canvas[o..o + 4].copy_from_slice(&rgba);
+                            }
+                        }
                     }
                 }
             }
         }
         if let Some(parts) = text {
-            draw_parts(parts, palette, sx0, sy0, canvas, CANVAS_W, CANVAS_H);
+            draw_parts(parts, palette, sx0 * s, sy0 * s, canvas, c.w, c.h);
         }
     }
 }
 
 /// Fills a convex fan, sampling pixel centres (D3D's top-left fill convention is approximated
 /// by the half-pixel centre test). Opaque; the original's alpha byte is not used (guess).
-fn fill_fan(fan: &Fan, sx: i32, sy: i32, canvas: &mut [u8]) {
+fn fill_fan(fan: &Fan, sx: i32, sy: i32, c: Canvas, canvas: &mut [u8]) {
     let n = usize::from(fan.count);
+    let s = c.s as f32;
     let pts: Vec<[f32; 2]> = fan.points[..n]
         .iter()
-        .map(|p| [(p[0] + sx) as f32, (p[1] + sy) as f32])
+        .map(|p| [(p[0] + sx) as f32 * s, (p[1] + sy) as f32 * s])
         .collect();
     let [_, r, g, b] = fan.argb.to_be_bytes();
     for i in 1..n - 1 {
-        fill_triangle([pts[0], pts[i], pts[i + 1]], [r, g, b, 255], canvas);
+        fill_triangle([pts[0], pts[i], pts[i + 1]], [r, g, b, 255], c, canvas);
     }
 }
 
-fn fill_triangle(t: [[f32; 2]; 3], rgba: [u8; 4], canvas: &mut [u8]) {
+/// The composed canvas: size in pixels and pixels per original pixel.
+#[derive(Clone, Copy, Debug)]
+struct Canvas {
+    w: usize,
+    h: usize,
+    s: usize,
+}
+
+fn fill_triangle(t: [[f32; 2]; 3], rgba: [u8; 4], c: Canvas, canvas: &mut [u8]) {
     let edge = |a: [f32; 2], b: [f32; 2], p: [f32; 2]| {
         (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
     };
@@ -288,9 +332,9 @@ fn fill_triangle(t: [[f32; 2]; 3], rgba: [u8; 4], canvas: &mut [u8]) {
         return;
     }
     let min_x = t.iter().map(|p| p[0]).fold(f32::MAX, f32::min).max(0.0) as usize;
-    let max_x = (t.iter().map(|p| p[0]).fold(f32::MIN, f32::max).ceil() as usize).min(CANVAS_W);
+    let max_x = (t.iter().map(|p| p[0]).fold(f32::MIN, f32::max).ceil() as usize).min(c.w);
     let min_y = t.iter().map(|p| p[1]).fold(f32::MAX, f32::min).max(0.0) as usize;
-    let max_y = (t.iter().map(|p| p[1]).fold(f32::MIN, f32::max).ceil() as usize).min(CANVAS_H);
+    let max_y = (t.iter().map(|p| p[1]).fold(f32::MIN, f32::max).ceil() as usize).min(c.h);
     for y in min_y..max_y {
         for x in min_x..max_x {
             let p = [x as f32 + 0.5, y as f32 + 0.5];
@@ -300,7 +344,7 @@ fn fill_triangle(t: [[f32; 2]; 3], rgba: [u8; 4], canvas: &mut [u8]) {
                 edge(t[0], t[1], p),
             ];
             if w.iter().all(|&v| v * area >= 0.0) {
-                let o = (y * CANVAS_W + x) * 4;
+                let o = (y * c.w + x) * 4;
                 canvas[o..o + 4].copy_from_slice(&rgba);
             }
         }
@@ -422,6 +466,33 @@ mod tests {
         l.slots[0].w = 2;
         l.compose(&b, &mut c);
         assert_eq!(pixel(&c, 100, 100), [0, 255, 0, 255]);
+    }
+
+    #[test]
+    fn scale_two_doubles_pixels_and_fans() {
+        let b = bank(1);
+        let mut l = SpriteLayer {
+            scale: 2,
+            ..SpriteLayer::default()
+        };
+        l.palettes[0] = Some(palette());
+        l.slots[0] = Slot::new(0, 10, 10, 0, 0, true);
+        l.add_fan(
+            &[[100, 100], [110, 100], [110, 110], [100, 110]],
+            0xff_12_34_56,
+        );
+        let (w, h) = l.canvas_size();
+        assert_eq!((w, h), (1280, 960));
+        let mut c = vec![0; w * h * 4];
+        l.compose(&b, &mut c);
+        let px = |x: usize, y: usize| -> [u8; 4] { c[(y * w + x) * 4..][..4].try_into().unwrap() };
+        // The 16×16 tile at (10, 10) covers 20..52 on the 2× canvas.
+        assert_eq!(px(20, 20), [0, 255, 0, 255]);
+        assert_eq!(px(51, 51), [0, 255, 0, 255]);
+        assert_eq!(px(19, 20), [0, 0, 0, 0]);
+        assert_eq!(px(52, 52), [0, 0, 0, 0]);
+        assert_eq!(px(210, 210), [0x12, 0x34, 0x56, 255]);
+        assert_eq!(px(221, 210), [0, 0, 0, 0]);
     }
 
     #[test]

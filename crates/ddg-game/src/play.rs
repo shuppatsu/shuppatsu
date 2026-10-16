@@ -33,7 +33,7 @@ use ddg_formats::scene::{DRIVING_FOV_Y_DEG, TrackPos};
 use ddg_formats::stages::StageTables;
 use ddg_render::FrameGeometry;
 use ddg_render::camera::ORIGINAL_STRETCH;
-use ddg_render::sprites::{CANVAS_H, CANVAS_W, Slot, SpriteBank, SpriteLayer};
+use ddg_render::sprites::{Slot, SpriteBank, SpriteLayer};
 use std::time::{Duration, Instant};
 
 mod bonus;
@@ -237,6 +237,8 @@ impl Play {
 
         layer.slots.fill(Slot::CLEAR);
         layer.fans.clear();
+        layer.scale = opts.locale.ui_scale;
+        let canvas = layer.new_canvas();
         Hud::install_palettes(&exe, &mut layer)?;
         // The horn hint names the B button with a joystick in modes 5–6 (`FUN_00433270`).
         let mut cab = CabHud::new(&exe, opts.stage, matches!(opts.control_mode, 5 | 6))?;
@@ -290,7 +292,7 @@ impl Play {
             flow,
             layer,
             bank,
-            canvas: vec![0; CANVAS_W * CANVAS_H * 4],
+            canvas,
             canvas_dirty: true,
             tolerance_m,
             last_events: Vec::new(),
@@ -1134,6 +1136,7 @@ impl Play {
             "ddg-game play",
             self.opts.size,
             self.opts.uncapped,
+            self.opts.locale.ui_scale,
         )?);
         self.configure_gpu();
         Ok(())

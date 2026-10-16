@@ -36,6 +36,7 @@ impl Gpu {
         title: &str,
         size: (u32, u32),
         uncapped: bool,
+        ui_scale: usize,
     ) -> Result<Self> {
         let attrs = Window::default_attributes()
             .with_title(title)
@@ -72,7 +73,7 @@ impl Gpu {
         }
         surface.configure(&device, &config);
         let renderer = Renderer::new(&device, config.format);
-        let overlay = Overlay::new(&device, config.format);
+        let overlay = Overlay::with_scale(&device, config.format, ui_scale);
         eprintln!(
             "present mode {:?}, format {:?}, {}x{}",
             config.present_mode, config.format, config.width, config.height

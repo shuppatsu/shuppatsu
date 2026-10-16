@@ -1,6 +1,8 @@
 //! Headless rendering of a single frame to a PPM file, for automated visual checks.
 
 use anyhow::{Context, Result};
+
+const CANVAS_PIXELS: usize = ddg_render::sprites::CANVAS_W * ddg_render::sprites::CANVAS_H;
 use ddg_render::Renderer;
 
 /// Renders the scene at `pos` (`width`×`height`; black without a scene) with the canvas over
@@ -72,7 +74,9 @@ pub fn render_to_ppm_with(
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
     draw(&device, &queue, &view, format);
     if let Some(canvas) = hud {
-        let overlay = ddg_render::overlay::Overlay::new(&device, format);
+        // The canvas is 640×480 × the UI scale.
+        let scale = ((canvas.len() / (CANVAS_PIXELS * 4)) as f64).sqrt().round() as usize;
+        let overlay = ddg_render::overlay::Overlay::with_scale(&device, format, scale);
         overlay.upload(&queue, canvas);
         overlay.render(
             &device,

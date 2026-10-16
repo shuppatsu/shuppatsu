@@ -333,7 +333,7 @@ struct HudView {
 impl HudView {
     fn load(data: &scene::GameData, locale: &locale::LocaleConfig) -> Result<Self> {
         use ddg_formats::cg;
-        use ddg_render::sprites::{CANVAS_H, CANVAS_W, SpriteBank, SpriteLayer};
+        use ddg_render::sprites::{SpriteBank, SpriteLayer};
         let exe_bytes = data.exe()?;
         let exe = ddg_formats::exe::Exe::parse(&exe_bytes)?;
         let cg_bytes = data.read("cg.rom")?;
@@ -342,7 +342,11 @@ impl HudView {
             cg::parse_tbl(&data.read("tbl.rom")?)?,
         );
         locale::install(locale, &exe, &mut bank)?;
-        let mut layer = SpriteLayer::default();
+        let mut layer = SpriteLayer {
+            scale: locale.ui_scale,
+            ..SpriteLayer::default()
+        };
+        let canvas = layer.new_canvas();
         hud::Hud::install_palettes(&exe, &mut layer)?;
         let hud = hud::Hud::new(&exe, 0)?;
         hud.create(&mut layer);
@@ -367,7 +371,7 @@ impl HudView {
             layer,
             hud,
             state,
-            canvas: vec![0; CANVAS_W * CANVAS_H * 4],
+            canvas,
             dirty: true,
         })
     }
@@ -399,6 +403,7 @@ impl App {
             "ddg-game view",
             self.opts.size,
             self.opts.uncapped,
+            self.opts.locale.ui_scale,
         )?;
         configure_renderer(&mut gpu.renderer, &self.opts);
         gpu.renderer

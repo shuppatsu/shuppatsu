@@ -32,7 +32,7 @@ use crate::window::Gpu;
 use anyhow::{Context, Result};
 use ddg_engine::demo::DemoKind;
 use ddg_formats::exe::Exe;
-use ddg_render::sprites::{CANVAS_H, CANVAS_W, SpriteLayer};
+use ddg_render::sprites::SpriteLayer;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
@@ -191,7 +191,11 @@ impl App {
         if let Some(s) = sound.as_mut() {
             s.set_enabled(save.eeprom.options().sound == 0);
         }
-        let mut layer = SpriteLayer::default();
+        let mut layer = SpriteLayer {
+            scale: opts.locale.ui_scale,
+            ..SpriteLayer::default()
+        };
+        let canvas = layer.new_canvas();
         crate::hud::Hud::install_palettes(&exe, &mut layer)?;
         let front = FrontTables::read(&exe)?;
         let screens = ScreenTables::read(&exe)?;
@@ -229,7 +233,7 @@ impl App {
             down: [false; 256],
             menu_input: MenuInput::NONE,
             script,
-            canvas: vec![0; CANVAS_W * CANVAS_H * 4],
+            canvas,
             canvas_dirty: true,
             ticks: 0,
             accumulator: Duration::ZERO,
@@ -840,7 +844,13 @@ impl ApplicationHandler for App {
         let Some(r) = self.res.as_mut() else {
             return;
         };
-        match Gpu::create(event_loop, "ddg-game", self.opts.size, self.opts.uncapped) {
+        match Gpu::create(
+            event_loop,
+            "ddg-game",
+            self.opts.size,
+            self.opts.uncapped,
+            self.opts.locale.ui_scale,
+        ) {
             Ok(gpu) => {
                 gpu.window.request_redraw();
                 r.gpu = Some(gpu);

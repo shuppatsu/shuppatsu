@@ -290,7 +290,8 @@ pub fn rasterise(
 /// A part ready to draw: palette indices per pixel, so any palette can colour it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderedPart {
-    /// `[x, y, w, h]` relative to the sprite's source rectangle, in pixels.
+    /// `[x, y, w, h]` relative to the sprite's source rectangle, in canvas pixels (original
+    /// pixels × the overlay's scale).
     pub region: [u16; 4],
     /// Under-colour per pixel: 0 = keep what is below, else a palette index (box or outline).
     pub base: Vec<u8>,
@@ -313,6 +314,8 @@ pub type SpriteKey = (u16, (u8, u8, u8, u8));
 #[derive(Clone, Debug, Default)]
 pub struct TextOverlay {
     parts: HashMap<SpriteKey, Vec<RenderedPart>>,
+    /// Canvas pixels per original pixel the parts were rendered at (see `SpriteLayer::scale`).
+    scale: usize,
 }
 
 impl TextOverlay {
@@ -323,6 +326,18 @@ impl TextOverlay {
         overrides: impl IntoIterator<Item = (u16, SubRect, &'a TextOverride)>,
         glyphs: &dyn GlyphSource,
     ) -> Self {
+        Self::build_scaled(bank, overrides, glyphs, 1)
+    }
+
+    /// [`TextOverlay::build`] for a canvas with `scale` pixels per original pixel: the text is
+    /// rasterised at that resolution inside the same rectangles (enhancement `ui_scale`).
+    pub fn build_scaled<'a>(
+        bank: &SpriteBank,
+        overrides: impl IntoIterator<Item = (u16, SubRect, &'a TextOverride)>,
+        glyphs: &dyn GlyphSource,
+        scale: usize,
+    ) -> Self {
+        let scale = scale.max(1);
         let mut parts = HashMap::new();
         for (tbl, rect, o) in overrides {
             let Some(map) = bank.tilemaps.get(usize::from(tbl)) else {
@@ -336,13 +351,17 @@ impl TextOverlay {
             let rendered = o
                 .parts
                 .iter()
-                .filter_map(|p| render_part(p, &art, pw, ph, glyphs))
+                .filter_map(|p| render_part(p, &art, pw, ph, glyphs, scale))
                 .collect::<Vec<_>>();
             if !rendered.is_empty() {
                 parts.insert((tbl, r), rendered);
             }
         }
-        Self { parts }
+        Self { parts, scale }
+    }
+
+    pub fn scale(&self) -> usize {
+        self.scale
     }
 
     pub fn get(&self, key: &SpriteKey) -> Option<&[RenderedPart]> {
@@ -364,6 +383,7 @@ fn render_part(
     art_w: usize,
     art_h: usize,
     glyphs: &dyn GlyphSource,
+    scale: usize,
 ) -> Option<RenderedPart> {
     let [x, y, w, h] = part.region.unwrap_or([0, 0, art_w as u16, art_h as u16]);
     // Clip the region to the sprite.
@@ -405,8 +425,11 @@ fn render_part(
         Style::Plain => false,
         Style::Auto => edge_opaque as f32 > BOXED_EDGE * edge_n as f32,
     };
-    let coverage = rasterise(&part.text, w, h, part.align, part.vertical, glyphs);
-    let mut base = vec![0u8; w * h];
+    // The output is `scale` times finer than the art; art lookups use original pixels.
+    let s = scale;
+    let (sw, sh) = (w * s, h * s);
+    let coverage = rasterise(&part.text, sw, sh, part.align, part.vertical, glyphs);
+    let mut base = vec![0u8; sw * sh];
     let fg = if boxed {
         // The backdrop is the commonest value along the region's edge per 2×2 parity class
         // (a plate's face is one colour; a caption band's dither alternates colours or
@@ -417,10 +440,11 @@ fn render_part(
                 .max_by_key(|&i| class[c][usize::from(i)])
                 .unwrap_or(0)
         });
-        for py in 0..h {
-            for px in 0..w {
-                if region_art(px, py) != 0 {
-                    base[py * w + px] = pattern[parity(px, py)];
+        for py in 0..sh {
+            for px in 0..sw {
+                let (ax, ay) = (px / s, py / s);
+                if region_art(ax, ay) != 0 {
+                    base[py * sw + px] = pattern[parity(ax, ay)];
                 }
             }
         }
@@ -433,15 +457,17 @@ fn render_part(
     } else {
         if part.outline && second != dominant {
             let solid = |px: isize, py: isize| {
-                (0..w as isize).contains(&px)
-                    && (0..h as isize).contains(&py)
-                    && coverage[py as usize * w + px as usize] >= 128
+                (0..sw as isize).contains(&px)
+                    && (0..sh as isize).contains(&py)
+                    && coverage[py as usize * sw + px as usize] >= 128
             };
-            for py in 0..h as isize {
-                for px in 0..w as isize {
-                    let near = (-1..=1).any(|dy| (-1..=1).any(|dx| solid(px + dx, py + dy)));
+            // One original pixel thick at any scale.
+            let r = s as isize;
+            for py in 0..sh as isize {
+                for px in 0..sw as isize {
+                    let near = (-r..=r).any(|dy| (-r..=r).any(|dx| solid(px + dx, py + dy)));
                     if near {
-                        base[py as usize * w + px as usize] = second;
+                        base[py as usize * sw + px as usize] = second;
                     }
                 }
             }
@@ -449,7 +475,7 @@ fn render_part(
         dominant
     };
     Some(RenderedPart {
-        region: [x as u16, y as u16, w as u16, h as u16],
+        region: [(x * s) as u16, (y * s) as u16, sw as u16, sh as u16],
         base,
         coverage,
         fg,

@@ -36,10 +36,24 @@ pub struct Overlay {
     pipeline: wgpu::RenderPipeline,
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
+    size: (u32, u32),
 }
 
 impl Overlay {
     pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
+        Self::with_scale(device, target_format, 1)
+    }
+
+    /// An overlay for a canvas of 640×480 × `scale` (see `SpriteLayer::scale`).
+    pub fn with_scale(
+        device: &wgpu::Device,
+        target_format: wgpu::TextureFormat,
+        scale: usize,
+    ) -> Self {
+        let size = (
+            (CANVAS_W * scale.max(1)) as u32,
+            (CANVAS_H * scale.max(1)) as u32,
+        );
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("overlay shader"),
             source: wgpu::ShaderSource::Wgsl(SHADER.into()),
@@ -68,8 +82,8 @@ impl Overlay {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("overlay canvas"),
             size: wgpu::Extent3d {
-                width: CANVAS_W as u32,
-                height: CANVAS_H as u32,
+                width: size.0,
+                height: size.1,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -134,10 +148,11 @@ impl Overlay {
             pipeline,
             texture,
             bind_group,
+            size,
         }
     }
 
-    /// Uploads a composed canvas (`CANVAS_W × CANVAS_H` RGBA8).
+    /// Uploads a composed canvas of this overlay's size (RGBA8).
     pub fn upload(&self, queue: &wgpu::Queue, rgba: &[u8]) {
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
@@ -149,12 +164,12 @@ impl Overlay {
             rgba,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(CANVAS_W as u32 * 4),
-                rows_per_image: Some(CANVAS_H as u32),
+                bytes_per_row: Some(self.size.0 * 4),
+                rows_per_image: Some(self.size.1),
             },
             wgpu::Extent3d {
-                width: CANVAS_W as u32,
-                height: CANVAS_H as u32,
+                width: self.size.0,
+                height: self.size.1,
                 depth_or_array_layers: 1,
             },
         );
