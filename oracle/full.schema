@@ -126,3 +126,10 @@ stat10             0x857078 i32
 stat11             0x85707c i32
 # HUD signal slot 0x60 tilemap (slot records 0x816f88 + 16*slot, +0xa; hud.md §3.9)
 hud_signal_tbl     0x817592 i16
+# --- AI trains and 3D signals (docs/re/traffic.md) ---
+# Car positions live in task list 5 (0x84c1bc) and need a list walk in the hook (open).
+traffic_cursor     0x856d90 u32   # next traffic event (pointer into 0x4858a0[stage])
+traffic_state      0x857216 i16   # event mask bit: 1 fresh / 0 after a continue / 2 stage-6 variant
+signal_model       0x85744c i32   # frame the animated 3D signals show
+scripted_train     0x857000 i16   # passing-train spawn of the armed scripted signal
+scripted_train_m   0x8570cc i16   # its distance

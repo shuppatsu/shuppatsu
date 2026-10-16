@@ -585,6 +585,7 @@ impl Play {
         let before = crate::sound::Before::of(&self.drive);
         let out = self.drive.tick(self.latched);
         self.scene.traffic = self.drive.traffic_poses(1.0);
+        self.scene.signal_model = usize::from(self.drive.rules().signal_model);
         if let Some(s) = self.sound.as_mut() {
             s.events(&out.events);
             s.after_tick(

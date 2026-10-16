@@ -94,6 +94,8 @@ pub struct RouteScene {
     pub hide_panorama: bool,
     /// AI-train cars to draw this frame ([`ddg_engine::drive::Drive::traffic_poses`]).
     pub traffic: Vec<ddg_engine::traffic::CarPose>,
+    /// Frame of the animated 3D signals: the rules' `signal_model` (`0x85744c`).
+    pub signal_model: usize,
 }
 
 impl RouteScene {
@@ -167,6 +169,7 @@ impl RouteScene {
             gradient_fade: None,
             hide_panorama: false,
             traffic: Vec::new(),
+            signal_model: 0,
         })
     }
 
@@ -216,7 +219,14 @@ impl RouteScene {
         let live = scene::live_at(&self.intervals, pos.engine_index);
         for s in scene::scenery_from(&self.route, &self.tables, self.ctx, pos.engine_index, live) {
             let m = Mat4::from_cols_array(&s.transform.to_cols_array());
-            frame.add_instance(&self.library, s.part_id, &m);
+            // Animated signal parts (classes 0–5) show frame `0x85744c` (0x401140).
+            let part = match self.tables.animated(s.part_id) {
+                Some(a) if s.animated && a.class < 6 => {
+                    a.frames.get(self.signal_model).copied().unwrap_or(s.part_id)
+                }
+                _ => s.part_id,
+            };
+            frame.add_instance(&self.library, part, &m);
         }
         crate::traffic::add_cars(self, frame, pos, &self.traffic);
 

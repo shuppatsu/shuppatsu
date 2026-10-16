@@ -18,6 +18,7 @@ use ddg_formats::FormatError;
 use ddg_formats::exe::Exe;
 use ddg_formats::stages::{CourseEvent, DIFFICULTY_COUNT, STAGE_COUNT, Stage, TimetableRow};
 
+use crate::stop_replay::{RecordInput, StopRecord};
 use crate::traffic::{PassingSound, PassingTrain, SpawnRequest};
 
 /// Errors raised while preparing the rules for a stage.
@@ -885,6 +886,8 @@ pub struct Rules {
     pub dist_m: f32,
     pub dist_round_m: i32,
     pub odometer_m: f32,
+    /// Distance-to-stop samples for the station-result replay (ring `0x850300`, 0x409fc0).
+    pub stop_record: StopRecord,
 
     course_cursor: usize,
     limit_cursor: usize,
@@ -993,6 +996,12 @@ pub struct Rules {
     /// `Task_Tick` increments it); set by [`crate::drive::Drive`]. `None` = unknown: the
     /// station-based weather starts of 0x40d340 / 0x40d620, which test it, are skipped.
     pub global_tick: Option<u32>,
+    /// The aspect the 3D signal models show (`0x85744c`, frame index of the animated signal
+    /// parts): the last `Signal_Show` aspect, 5 for a green under display variant 1, 4 (red) once
+    /// the approach to a stopping station reaches state 4 (0x40c4e0).
+    pub signal_model: u8,
+    /// The station HUD reached state 4 this leg (`0x856d68`, reset by 0x40cf40 / 0x40d620).
+    platform_red: bool,
     /// Notch-slam cooldown (`0x8571f8`).
     pub jolt_cooldown: i32,
     /// Departure task (0x413370): counter (task+0x34), offset (+0x38), false-start freeze
@@ -1079,6 +1088,7 @@ impl Rules {
             dist_m: 0.0,
             dist_round_m: 0,
             odometer_m: 0.0,
+            stop_record: StopRecord::default(),
             course_cursor: 0,
             limit_cursor: 0,
             blocks: Vec::new(),
@@ -1140,6 +1150,8 @@ impl Rules {
             departure_done: false,
             weather_on: false,
             global_tick: None,
+            signal_model: 0,
+            platform_red: false,
             weather_level: 0,
             weather_ticks: 0,
             wet_rails: false,
@@ -1237,6 +1249,7 @@ impl Rules {
 
     /// 0x40cf40: per-segment reset.
     fn reset_segment_state(&mut self) {
+        self.platform_red = false;
         self.obstacle = 0;
         self.green_hint = -1;
         self.horn_deadline = 0;
@@ -1830,6 +1843,12 @@ impl Rules {
         if aspect > 4 {
             return false;
         }
+        // 0x411500: `0x85744c = aspect`; 5 for a green with variant 1 in modes 0–2.
+        self.signal_model = if aspect == 0 && variant & 1 != 0 && (0..=2).contains(&mode) {
+            5
+        } else {
+            aspect as u8
+        };
         // The hint goes out before the "already shown" test (0x411760).
         if aspect == 0 && self.green_hint != -1 {
             self.hint(out, self.green_hint, 0, GREEN_HINT_DISTANCE_M);
@@ -2030,6 +2049,7 @@ impl Rules {
         } else {
             self.early_ticks = 0;
         }
+        self.platform_red = false;
         self.station += 1;
         self.scheduled = self.target_row().time_ticks;
         self.final_station = self.is_final_next();
@@ -2054,6 +2074,13 @@ impl Rules {
             self.speed_mps = 0.0;
             out.force_stop = true;
         }
+        self.stop_record.record(RecordInput {
+            dist_m: self.dist_m,
+            target_stops: self.target_stops,
+            obstacle: self.obstacle,
+            obstacle_odo: self.obstacle_odo,
+            odometer_m: self.odometer_m,
+        });
     }
 
     /// 0x40acd0: one course event per tick, plus horn and no-power-section bookkeeping.
@@ -2391,6 +2418,15 @@ impl Rules {
             }
         }
 
+        // 0x40c4e0, station HUD state 0x856d68 3 → 4 (`0x85708c ≤ f5 − 10`): at a stopping
+        // station the 3D signals turn red. Once per leg; the HUD states before it are not
+        // modelled (they only gate this by one tick each).
+        if !self.platform_red && self.dist_m <= (self.target_row().params[1] - 10) as f32 {
+            self.platform_red = true;
+            if self.target_stops {
+                self.signal_model = 4;
+            }
+        }
         // Approach state: 1 → 2, below 80 % of f6 → 3, past −20 m → 4.
         let f6 = self.target_row().params[2] as f32;
         if self.approach == 1 {

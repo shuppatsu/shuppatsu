@@ -301,6 +301,8 @@ fn engine_values(d: &Drive, bases: (u32, u32)) -> Vec<(&'static str, Out)> {
     let (stage, difficulty) = r.stage();
     v.extend([
         ("global_tick", I(d.global_tick().into())),
+        ("traffic_state", I(d.traffic().state.into())),
+        ("signal_model", I(r.signal_model.into())),
         ("gradient", F(d.gradient())),
         ("heading", F(d.heading())),
         ("units_to_stop", F(d.units_to_stop())),
