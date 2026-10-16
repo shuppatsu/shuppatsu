@@ -9,10 +9,12 @@ mod cab;
 mod captions;
 mod coupling_hud;
 mod departure_hud;
+mod desktop;
 mod front;
 mod gamepad;
 mod hints;
 mod hud;
+mod identity;
 mod input;
 mod locale;
 mod play;
@@ -52,6 +54,8 @@ usage: ddg-game [options] [--joystick-dat <file>] [--combo <file>] [--mute]
        ddg-game view <route.com> [options]
        ddg-game shot <route.com> --at <metres> --out <file.ppm> [options]
        ddg-game pad <monitor|calibrate|learn> [--mode <4..6>] [--joystick-dat <file>] [--combo <file>]
+       ddg-game install-desktop [--exec <path>] [--exe <dengo3k.exe>] [--uninstall]
+                     desktop entry + icon under $XDG_DATA_HOME (opt-in; see --help)
 
 options:
   --speed <km/h>           fly-through speed (default 80)
@@ -63,6 +67,7 @@ options:
   --gradient-variant <0|1> sky/ground gradient set (1 = the timed alternate set)
   --fog                    linear fog as DengoSetting's FOGENABLE (off on a fresh install)
   --hud                    the driving HUD over the view (test values)
+  --debug-title            live debug text in the window title (env DDG_DEBUG_TITLE=1)
   --size <WxH>             window/frame size (default 1280x800, 16:10)
   --lang <code>            text-sprite language (default ja = the original art; env DDG_LANG)
   --font <file>            TTF/OTF font for translated text sprites (env DDG_FONT)
@@ -113,6 +118,7 @@ fn parse_play_args() -> Result<play::PlayOptions> {
     let mut args: Vec<String> = std::env::args().skip(2).collect();
     let mut locale = locale::LocaleConfig::from_env();
     locale.take_args(&mut args)?;
+    identity::take_debug_title_flag(&mut args);
     let mut opts = play::PlayOptions {
         stage: args
             .first()
@@ -184,6 +190,7 @@ fn parse_app_args() -> Result<app::AppOptions> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let mut locale = locale::LocaleConfig::from_env();
     locale.take_args(&mut args)?;
+    identity::take_debug_title_flag(&mut args);
     let mut opts = app::AppOptions {
         size: (1280, 800),
         uncapped: false,
@@ -238,6 +245,7 @@ fn parse_args() -> Result<Options> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let mut locale = locale::LocaleConfig::from_env();
     locale.take_args(&mut args)?;
+    identity::take_debug_title_flag(&mut args);
     let shot = match args.first().map(String::as_str) {
         Some("view") => false,
         Some("shot") => true,
@@ -553,15 +561,18 @@ impl App {
         if elapsed >= Duration::from_secs(1) {
             let fps = self.frames as f32 / elapsed.as_secs_f32();
             let km = self.cur * METRES_PER_UNIT / 1000.0;
-            gpu.window.set_title(&format!(
-                "ddg-game view {} | {fps:.0} fps, worst {:.1} ms (compose {:.2} ms) | {} tris | {km:.2} km at {:.0} km/h{}",
-                self.opts.route,
-                self.worst_frame.as_secs_f32() * 1000.0,
-                self.worst_compose.as_secs_f32() * 1000.0,
-                self.frame.triangle_count(),
-                self.speed_kmh,
-                if self.paused { " (paused)" } else { "" }
-            ));
+            identity::set_debug_title(
+                &gpu.window,
+                &format!(
+                    "ddg-game view {} | {fps:.0} fps, worst {:.1} ms (compose {:.2} ms) | {} tris | {km:.2} km at {:.0} km/h{}",
+                    self.opts.route,
+                    self.worst_frame.as_secs_f32() * 1000.0,
+                    self.worst_compose.as_secs_f32() * 1000.0,
+                    self.frame.triangle_count(),
+                    self.speed_kmh,
+                    if self.paused { " (paused)" } else { "" }
+                ),
+            );
             self.frames = 0;
             self.frame_window_start = now;
             self.worst_frame = Duration::ZERO;
@@ -641,6 +652,10 @@ fn main() -> Result<()> {
     }
     if std::env::args().nth(1).as_deref() == Some("play") {
         return play::run(parse_play_args()?);
+    }
+    if std::env::args().nth(1).as_deref() == Some("install-desktop") {
+        let args: Vec<String> = std::env::args().skip(2).collect();
+        return desktop::run(&args);
     }
     if std::env::args().nth(1).as_deref() == Some("pad") {
         let data = scene::GameData::from_env()?;

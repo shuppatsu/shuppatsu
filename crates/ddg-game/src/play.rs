@@ -1250,14 +1250,17 @@ impl Play {
         if now - self.title_at >= Duration::from_millis(500) {
             self.title_at = now;
             let (station, _) = self.drive.next_station();
-            gpu.window.set_title(&format!(
-                "ddg-game play | {:?}{} | {:.1} km/h | next {} | {} m",
-                self.drive.phase(),
-                if self.flow.paused() { " (paused)" } else { "" },
-                self.drive.speed_kmh(),
-                self.drive.station_name(station).unwrap_or("?"),
-                self.drive.rules().dist_round_m,
-            ));
+            crate::identity::set_debug_title(
+                &gpu.window,
+                &format!(
+                    "ddg-game play | {:?}{} | {:.1} km/h | next {} | {} m",
+                    self.drive.phase(),
+                    if self.flow.paused() { " (paused)" } else { "" },
+                    self.drive.speed_kmh(),
+                    self.drive.station_name(station).unwrap_or("?"),
+                    self.drive.rules().dist_round_m,
+                ),
+            );
         }
         Ok(())
     }

@@ -39,8 +39,9 @@ impl Gpu {
         ui_scale: usize,
     ) -> Result<Self> {
         let attrs = Window::default_attributes()
-            .with_title(title)
+            .with_title(crate::identity::initial_title(title))
             .with_inner_size(winit::dpi::PhysicalSize::new(size.0, size.1));
+        let attrs = crate::identity::apply(attrs);
         let window = Arc::new(event_loop.create_window(attrs)?);
         let instance = wgpu::Instance::new(
             wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(window.clone())),
