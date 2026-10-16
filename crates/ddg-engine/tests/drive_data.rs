@@ -93,3 +93,58 @@ fn every_stage_departs_and_follows_its_track() {
         assert_ne!(d.pos(), d.prev_pos());
     }
 }
+
+/// AI trains (docs/re/traffic.md): the first traffic events of stages 0 and 10 spawn their
+/// cars on the way to the first stop, the moving ones run along their track and poses exist.
+#[test]
+fn traffic_events_spawn_and_move() {
+    let Some(dir) = install_dir() else { return };
+    let bytes = std::fs::read(dir.join("BIN/dengo3k.exe")).unwrap();
+    let exe = Exe::parse(&bytes).unwrap();
+    let train = TrainTables::read(&exe).unwrap();
+    let rules = RuleTables::read(&exe).unwrap();
+    let stages = StageTables::read(&exe).unwrap();
+    for stage in [0, 10] {
+        let mut d = Drive::new(
+            &train,
+            &rules,
+            &stages,
+            stage,
+            1,
+            0,
+            loader(dir.join("DATA")),
+        )
+        .unwrap();
+        let (mut spawned, mut moved, mut posed) = (0, false, false);
+        for tick in 0..3000 {
+            let power = if d.speed_kmh() < 60.0 { 4 } else { 0 };
+            let before: Vec<_> = d.traffic().cars().iter().map(|c| c.track()).collect();
+            d.tick(DriverInput {
+                power: if tick < 400 { 0 } else { power },
+                ..DriverInput::default()
+            });
+            let cars = d.traffic().cars();
+            spawned = spawned.max(cars.len());
+            moved |= cars.len() == before.len()
+                && cars
+                    .iter()
+                    .zip(&before)
+                    .any(|(c, b)| c.speed_kmh() > 1.0 && c.track() != *b);
+            posed |= !d.traffic_poses(0.5).is_empty();
+            if d.phase() != DrivePhase::Driving
+                && d.phase() != DrivePhase::PreDeparture
+                && tick > 400
+            {
+                break;
+            }
+        }
+        eprintln!(
+            "stage {stage}: up to {spawned} AI cars, cursor {}",
+            d.traffic().cursor()
+        );
+        assert!(spawned > 0, "stage {stage}: no AI train");
+        assert!(moved, "stage {stage}: no AI car moved");
+        assert!(posed, "stage {stage}: no AI car pose");
+        assert!(d.traffic().cursor() > 0, "stage {stage}");
+    }
+}

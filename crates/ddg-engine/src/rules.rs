@@ -18,6 +18,8 @@ use ddg_formats::FormatError;
 use ddg_formats::exe::Exe;
 use ddg_formats::stages::{CourseEvent, DIFFICULTY_COUNT, STAGE_COUNT, Stage, TimetableRow};
 
+use crate::traffic::{PassingSound, PassingTrain, SpawnRequest};
+
 /// Errors raised while preparing the rules for a stage.
 #[derive(Debug, thiserror::Error)]
 pub enum RulesError {
@@ -102,6 +104,10 @@ const MAX_BLOCKS: usize = 40;
 /// Ticks at the end of the red-signal / ATS recovery in which 0x40a0a0 no longer zeroes the
 /// speed: 10 `Task_Tick`s after the 60-tick standstill (0x40a548) plus the loop's own.
 pub const RECOVERY_RELEASE_TICKS: u32 = 11;
+/// Standstill of the red-signal / ATS recovery (0x40a0a0: loop of 0x3c `Task_Tick`s).
+const RECOVERY_STANDSTILL_TICKS: u32 = 60;
+/// A scripted stop first stands for 0x1e ticks, then for the passing train's hold (0x40a0a0).
+const PASSING_STANDSTILL_TICKS: u32 = 30;
 /// Hold ticks left when the obstacle recovery shows its green signal: it precedes the final
 /// 30 standstill `Task_Tick`s of 0x40a0a0's obstacle branch and the driving loop's own one.
 const OBSTACLE_SIGNAL_AT: u32 = 31;
@@ -970,6 +976,12 @@ pub struct Rules {
     pub obstacle_armed: bool,
     pub obstacle_used: bool,
     pub obstacle_odo: f32,
+    /// A scripted signal painted a train ahead (`0x855ff8` bit 31): its passing-train spawn
+    /// index (`0x857000`) and distance (`0x8570cc`). Cleared by the next red / ATS stop.
+    pub passing_train: Option<(i16, i16)>,
+    /// Set by a red-signal recovery that sends that train past; [`crate::drive::Drive`] takes
+    /// it and schedules the spawn.
+    pub passing_spawn: Option<PassingTrain>,
     /// Derailment speed, km/h (`0x84c424`).
     pub derail_kmh: f32,
     /// Weather: active (`0x84c3a0`), level (`0x857230`), ticks (`0x856fa8`), wet rails (`0x84c2e0`).
@@ -1113,6 +1125,8 @@ impl Rules {
             obstacle_armed: false,
             obstacle_used: false,
             obstacle_odo: 0.0,
+            passing_train: None,
+            passing_spawn: None,
             derail_kmh: DERAIL_NONE_KMH,
             jolt_cooldown: COOLDOWN_START,
             departure_counter: 0,
@@ -1683,6 +1697,8 @@ impl Rules {
                 .copied();
             if let Some(s) = found {
                 if s.kind == 0 {
+                    // 0x40b970: `0x855ff8 |= 0x80000000`, 0x857000 / 0x8570cc for 0x40a0a0.
+                    self.passing_train = Some((s.train, s.train_distance));
                     let (pat, count) = if self.stage == 4 {
                         (self.tables.scripted_patterns[1], 3)
                     } else {
@@ -2393,17 +2409,58 @@ impl Rules {
 
     /// The red-signal / ATS branch of 0x40a0a0.
     fn signal_stop_recovery(&mut self, out: &mut TickOutput) {
+        let ats_stop = self.ats > 0;
         self.clear_signals();
         self.ats = 0;
         self.ats_chime_from = -1;
         out.events.push(RuleEvent::SignalsReset);
-        // The first of the 60 standstill ticks (0x40a238: 0x857234 = 0 before each `Task_Tick`).
+        // The first of the standstill ticks (0x40a238: 0x857234 = 0 before each `Task_Tick`).
         self.speed_mps = 0.0;
         out.force_stop = true;
+        // A scripted "train ahead" stop: 30 standstill ticks, then the train passes
+        // (0x40a0a0). An ATS stop drops the flag first.
+        let scripted = self.passing_train.take().filter(|_| !ats_stop);
+        let standstill = match scripted {
+            Some((train, distance)) => {
+                let (hold, passing) = self.passing_hold(train, distance);
+                self.passing_spawn = passing;
+                PASSING_STANDSTILL_TICKS + hold
+            }
+            None => RECOVERY_STANDSTILL_TICKS,
+        };
         self.phase = Phase::Holding {
-            ticks: 60 + 10,
+            ticks: standstill + RECOVERY_RELEASE_TICKS - 1,
             then: AfterHold::Resume,
         };
+    }
+
+    /// 0x40a0a0: the second part of a scripted stop's standstill and the train that
+    /// passes during it, when the train stopped 1–30 m before `train_distance` (as distance to
+    /// the stop). Spawn index 1 depends on where in that range; 0x38 has its own model.
+    fn passing_hold(&self, train: i16, train_distance: i16) -> (u32, Option<PassingTrain>) {
+        let d = self.dist_round_m - i32::from(train_distance);
+        if !(1..=30).contains(&d) {
+            return (RECOVERY_STANDSTILL_TICKS, None);
+        }
+        let passing = |speed_kmh, model, sound| PassingTrain {
+            request: SpawnRequest {
+                spawn: train,
+                flags: 1,
+                speed_kmh,
+                param: 0,
+                model,
+            },
+            after_ticks: PASSING_STANDSTILL_TICKS,
+            sound,
+        };
+        match train {
+            0x38 => (360, Some(passing(160, 0x42, PassingSound::None))),
+            1 if !(17..=22).contains(&d) => {
+                (200, Some(passing(100, 0xf, PassingSound::HornAndRumble)))
+            }
+            1 => (300, Some(passing(120, -1, PassingSound::Horn))),
+            _ => (360, Some(passing(80, -1, PassingSound::None))),
+        }
     }
 
     /// The end of the red-signal / ATS recovery (0x40a45e, after the 60 standstill ticks): is a
@@ -3617,5 +3674,38 @@ mod tests {
         r.build_blocks();
         r.advice_hints(&mut out, false);
         assert_eq!(out.events.len(), 1);
+    }
+
+    #[test]
+    fn scripted_stop_holds_for_the_passing_train() {
+        let mut r = rules(Vec::new(), Vec::new());
+        let mut out = TickOutput::default();
+        // Plain red stop: 60 standstill ticks.
+        r.signal_stop_recovery(&mut out);
+        assert!(matches!(r.phase, Phase::Holding { ticks: 70, .. }));
+        assert_eq!(r.passing_spawn, None);
+        // Stage 4's scripted signal: train 1 at 2410 m; stopped 20 m before it → 120 km/h,
+        // 300 ticks, horn.
+        r.passing_train = Some((1, 2410));
+        r.dist_round_m = 2430;
+        r.signal_stop_recovery(&mut out);
+        assert!(matches!(r.phase, Phase::Holding { ticks: 340, .. }));
+        let p = r.passing_spawn.take().unwrap();
+        assert_eq!((p.request.speed_kmh, p.request.model), (120, -1));
+        assert_eq!((p.after_ticks, p.sound), (30, PassingSound::Horn));
+        assert_eq!(r.passing_train, None);
+        // Out of range: 30 + 60 ticks, no train.
+        r.passing_train = Some((0x38, 1932));
+        r.dist_round_m = 1900;
+        r.signal_stop_recovery(&mut out);
+        assert!(matches!(r.phase, Phase::Holding { ticks: 100, .. }));
+        assert_eq!(r.passing_spawn, None);
+        // An ATS stop forgets the train.
+        r.passing_train = Some((0x38, 1932));
+        r.dist_round_m = 1940;
+        r.ats = 4;
+        r.signal_stop_recovery(&mut out);
+        assert!(matches!(r.phase, Phase::Holding { ticks: 70, .. }));
+        assert_eq!((r.passing_train, r.passing_spawn), (None, None));
     }
 }

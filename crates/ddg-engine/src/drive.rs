@@ -34,10 +34,12 @@ use crate::rules::{
     Buttons, Phase, RuleEvent, RuleTables, Rules, RulesError, StationOutcome, StationResult,
     TickInput, TickOutput, TrainReadout,
 };
+use crate::traffic::{CarPose, Traffic, TrafficEnv, TrafficSound};
 use ddg_formats::FormatError;
 use ddg_formats::route::{Route, UNITS_PER_POINT};
-use ddg_formats::scene::{CabWalker, TrackPos};
+use ddg_formats::scene::{CabWalker, TrackPos, cab_camera};
 use ddg_formats::stages::{Stage, StageTables, TimetableRow};
+use ddg_formats::traffic::TrainModels;
 
 /// Error returned by a [`RouteLoader`].
 pub type LoadError = Box<dyn std::error::Error + Send + Sync>;
@@ -211,6 +213,9 @@ pub struct Drive {
     tick_count: u64,
     /// Idle ticks until the deferred continue rewind (0x40d930).
     pending_continue: Option<u32>,
+    /// AI trains (task list 5) and their model table.
+    traffic: Traffic,
+    train_models: TrainModels,
 }
 
 impl std::fmt::Debug for Drive {
@@ -263,6 +268,7 @@ impl Drive {
         let heading = 0.0;
         let mut train = TrainState::new(params, heading);
         train.odometer = rules.odometer_m;
+        let traffic = Traffic::new(&stage_data.traffic_events, start_station);
         Ok(Self {
             rules,
             train,
@@ -291,6 +297,8 @@ impl Drive {
             odometer_settled: false,
             tick_count: 0,
             pending_continue: None,
+            traffic,
+            train_models: stages.train_models.clone(),
         })
     }
 
@@ -458,6 +466,23 @@ impl Drive {
         self.tick_count
     }
 
+    /// The AI trains: cars, event cursor, traffic state (`docs/re/traffic.md`).
+    pub fn traffic(&self) -> &Traffic {
+        &self.traffic
+    }
+
+    /// Where to draw the AI-train cars, `alpha` of the way from the tick before to the last
+    /// tick (interpolated along the track).
+    pub fn traffic_poses(&self, alpha: f32) -> Vec<CarPose> {
+        self.traffic.poses(&self.route, alpha)
+    }
+
+    /// The AI-train sound commands of the last tick (passing cars, the recovery's passing
+    /// train). Presentation only.
+    pub fn traffic_sounds(&self) -> &[TrafficSound] {
+        self.traffic.sounds()
+    }
+
     /// Sets the HUD task's tick counter (task+0x34 of 0x40f7e0's task). The remaining-time
     /// transfer runs on every third tick of that counter, which starts at the stage load, a
     /// number of ticks before the route load that depends on how long the stage intro ran.
@@ -473,6 +498,7 @@ impl Drive {
     /// Runs one 1/30 s tick.
     pub fn tick(&mut self, input: DriverInput) -> DriveTick {
         self.tick_count += 1;
+        self.traffic.begin_tick();
         self.prev_pos = self.walker.pos();
         match self.step {
             Step::Load(0) => self.setup_tick(input),
@@ -482,6 +508,8 @@ impl Drive {
                     Some(0) => {
                         self.pending_continue = None;
                         self.rules.continue_run();
+                        self.traffic
+                            .rewind(&self.stage_data.traffic_events, self.rules.station);
                         self.train.odometer = self.rules.odometer_m;
                     }
                     Some(k) => self.pending_continue = Some(k - 1),
@@ -506,6 +534,8 @@ impl Drive {
         }
         self.settle_odometer();
         let result = self.rules.finish_station();
+        // 0x4080d0 after the station result: `0x857216 = (0x8570b8 < 1)`.
+        self.traffic.after_arrival(self.rules.continues);
         if result.outcome == StationOutcome::Continue {
             self.prepare_segment(self.rules.station, LOAD_TICKS_AFTER_STATION)?;
         }
@@ -536,6 +566,8 @@ impl Drive {
             CONTINUE_REWIND_DELAY + LOAD_TICKS_AFTER_CONTINUE + extra,
         )?;
         self.pending_continue = Some(CONTINUE_REWIND_DELAY);
+        // Task list 5 is cleared when the continue screen closes (0x4080d0).
+        self.traffic.clear();
         self.coasting = false;
         self.game_over_ticks = 0;
         Ok(())
@@ -692,6 +724,40 @@ impl Drive {
         }
     }
 
+    /// 0x40b710 (driving-loop iterations and the setup's priming call), and the passing train
+    /// a red-signal recovery of this tick asked for (0x40a0a0).
+    fn traffic_events(&mut self, loop_body: bool) {
+        let env = TrafficEnv {
+            route: &self.route,
+            models: &self.train_models,
+            obstacle_armed: self.rules.obstacle_armed,
+            dist_round_m: self.rules.dist_round_m,
+            tick: self.tick_count,
+        };
+        if loop_body {
+            self.traffic
+                .event_step(&self.stage_data.traffic_events, self.rules.station, &env);
+        }
+        if let Some(p) = self.rules.passing_spawn.take() {
+            self.traffic.schedule_passing(p);
+        }
+    }
+
+    /// The car tasks of this tick's `Task_Tick` and their draw-step sounds for the camera
+    /// after it (eye height 0: it does not change the view-space depth the sounds test).
+    fn traffic_task(&mut self) {
+        let env = TrafficEnv {
+            route: &self.route,
+            models: &self.train_models,
+            obstacle_armed: self.rules.obstacle_armed,
+            dist_round_m: self.rules.dist_round_m,
+            tick: self.tick_count,
+        };
+        self.traffic.task_step(&env);
+        let camera = cab_camera(&self.route, self.walker.pos(), 0.0, 0.0);
+        self.traffic.draw_step(&self.route, &camera);
+    }
+
     /// The in-cab camera task (0x41d160).
     fn camera(&mut self) {
         let step = self.train.units_per_tick;
@@ -704,6 +770,7 @@ impl Drive {
     fn idle_tick(&mut self, input: DriverInput) -> DriveTick {
         let rin = self.rule_input(&input);
         let atc = self.physics(&input, false, false);
+        self.traffic_task();
         let out = self.rules.idle_tick(&rin, Some(&self.readout()));
         DriveTick {
             events: out.events,
@@ -718,6 +785,7 @@ impl Drive {
         if let Some((com, route)) = self.next_route.take() {
             self.com = com;
             self.route = route;
+            self.traffic.clear();
         }
         let stage = self.rules.stage().0;
         // Checked when the segment was prepared.
@@ -733,9 +801,12 @@ impl Drive {
 
         let rin = self.rule_input(&input);
         let mut out = self.rules.segment_setup(&rin);
+        // The priming call of 0x40b710 after 0x40dad0's.
+        self.traffic_events(true);
         let atc = self.physics(&input, false, false);
         self.camera();
         self.prev_pos = self.walker.pos();
+        self.traffic_task();
         self.rules.end_tick(&mut out, Some(&self.readout()));
         DriveTick {
             events: out.events,
@@ -766,6 +837,8 @@ impl Drive {
                 }
                 if self.arrived_ticks == ARRIVAL_ODOMETER_TICK {
                     self.settle_odometer();
+                    // Task list 5 is cleared right after (0x4080d0).
+                    self.traffic.clear();
                 }
             }
             _ => {}
@@ -782,6 +855,7 @@ impl Drive {
         {
             self.pass_station();
         }
+        self.traffic_events(loop_body);
         if loop_body {
             let rank = self.rules.stage_rank();
             let fired = self.train.leg_marker(rank);
@@ -797,6 +871,7 @@ impl Drive {
         let driving = self.rules.train_driving() || (game_over && self.coasting);
         let atc = self.physics(&input, driving, game_over);
         self.camera();
+        self.traffic_task();
         self.rules.end_tick(&mut out, Some(&self.readout()));
         if self.coasting && self.game_over_ticks + 1 == GAME_OVER_DRAIN_TICKS {
             // 0x4085d0 after the 20th `Task_Tick` (the game-over tick is the first), then
