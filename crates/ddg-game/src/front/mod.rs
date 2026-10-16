@@ -255,6 +255,21 @@ mod slot {
     pub const CURSOR: usize = 0x92;
 }
 
+/// Enhancement `wide_menus` (menus.md §14): the menu backdrops a wide canvas continues
+/// sideways: the patterned background tbl 0x501 and the black header bands (tbl 0x515 and
+/// the per-page bars of 0x42a820). Their repeat comes from the tile ids ([`Repeat::of`]);
+/// everything else on the menus stays in the centred 4:3 layout.
+///
+/// [`Repeat::of`]: ddg_render::sprites::Repeat::of
+pub fn mark_backdrops(bank: &mut ddg_render::sprites::SpriteBank, t: &FrontTables) {
+    let maps = [tbl::BACKGROUND, tbl::ROUTE_BAR]
+        .into_iter()
+        .chain(t.header_tbl.iter().copied());
+    for m in maps.filter_map(|m| u16::try_from(m).ok()) {
+        bank.set_wide_fill(m);
+    }
+}
+
 /// The legend set for the control mode: keyboard modes, the pad (mode 4) or the levers (5/6).
 fn legend_set(l: &Legends<TextDesc>, mode: u8) -> (TextDesc, TextDesc, TextDesc) {
     match mode {

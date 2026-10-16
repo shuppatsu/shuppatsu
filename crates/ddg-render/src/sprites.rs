@@ -171,6 +171,49 @@ pub struct SpriteBank {
     text: Option<TextOverlay>,
     /// The font of [`WidgetKind::Text`] labels; `None` draws no labels.
     labels: Option<LabelFont>,
+    /// Enhancement `wide_menus`: backdrops continued sideways on a wide canvas, by tilemap id
+    /// ([`SpriteBank::set_wide_fill`]).
+    wide_fill: Vec<(u16, Repeat)>,
+}
+
+/// A horizontally periodic run of a tilemap's columns: columns `start..` up to the right
+/// edge repeat every `period` columns (enhancement `wide_menus`). A wide canvas continues
+/// such a backdrop past both edges of the 4:3 design by mapping every column outside the map
+/// into the run, so the tiling keeps the phase of the original's centred picture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Repeat {
+    pub start: i32,
+    pub period: i32,
+}
+
+impl Repeat {
+    /// The shortest period of the columns at the right edge of `map`, found in its tile ids.
+    /// The run must check at least half a period of columns against the period before it, so
+    /// a map that is not a pattern (a framed panel) gets `None` and stays centred. A uniform
+    /// edge (a solid band) has period 1.
+    pub fn of(map: &Tilemap) -> Option<Self> {
+        let (w, h) = (usize::from(map.width), usize::from(map.height));
+        let same =
+            |a: usize, b: usize| (0..h).all(|r| map.tiles[r * w + a] == map.tiles[r * w + b]);
+        (1..=w / 2).find_map(|p| {
+            // Grow the run leftwards from the right edge while column c matches c + p.
+            let mut start = w - p;
+            while start > 0 && same(start - 1, start - 1 + p) {
+                start -= 1;
+            }
+            let checked = w - p - start;
+            (checked > 0 && checked >= p.div_ceil(2)).then_some(Self {
+                start: start as i32,
+                period: p as i32,
+            })
+        })
+    }
+
+    /// The map column drawn at column `col` (any integer; columns of the run map to
+    /// themselves).
+    pub fn source(&self, col: i32) -> i32 {
+        self.start + (col - self.start).rem_euclid(self.period)
+    }
 }
 
 impl SpriteBank {
@@ -184,7 +227,29 @@ impl SpriteBank {
             tilemaps,
             text: None,
             labels: None,
+            wide_fill: Vec::new(),
         }
+    }
+
+    /// Enhancement `wide_menus`: marks tilemap `tbl` as a backdrop that a wide canvas
+    /// continues sideways, repeating its pattern ([`Repeat::of`]), wherever a slot shows the
+    /// whole map across the 4:3 design. Returns whether the map has a pattern to repeat; one
+    /// without keeps the original's centred picture.
+    pub fn set_wide_fill(&mut self, tbl: u16) -> bool {
+        let Some(r) = self.tilemaps.get(usize::from(tbl)).and_then(Repeat::of) else {
+            return false;
+        };
+        if !self.wide_fill.iter().any(|&(t, _)| t == tbl) {
+            self.wide_fill.push((tbl, r));
+        }
+        true
+    }
+
+    fn wide_fill(&self, tbl: u16) -> Option<Repeat> {
+        self.wide_fill
+            .iter()
+            .find(|&&(t, _)| t == tbl)
+            .map(|&(_, r)| r)
     }
 
     fn tile(&self, id: u16) -> Option<&[u8; TILE_PIXELS]> {
@@ -470,9 +535,20 @@ impl SpriteLayer {
         });
         let s = c.s as i32;
         let (sx0, sy0) = (i32::from(slot.x) + sx, i32::from(slot.y) + sy);
+        // The columns to draw: the slot's own and, for a backdrop on a wide canvas, its
+        // continuation past both edges of the design (enhancement `wide_menus`).
+        let mut cols: Vec<(i32, i32)> = (0..w).map(|tx| (tx, c0 + tx)).collect();
+        if let Some(rep) = self.backdrop_repeat(bank, slot, mw) {
+            // The original pixels the canvas shows: [-shift / s, (c.w - shift) / s).
+            let left = (-shift).div_euclid(s);
+            let right = (c.w as i32 - shift + s - 1).div_euclid(s);
+            let first = (left - sx0).div_euclid(ts);
+            let last = (right - sx0 - 1).div_euclid(ts);
+            cols.extend((first..0).chain(mw..=last).map(|tx| (tx, rep.source(tx))));
+        }
         for ty in 0..h {
-            for tx in 0..w {
-                let (mc, mr) = (c0 + tx, r0 + ty);
+            for &(tx, mc) in &cols {
+                let mr = r0 + ty;
                 if mc >= mw || mr >= mh {
                     continue;
                 }
@@ -488,9 +564,12 @@ impl SpriteLayer {
                         if index == 0 {
                             continue;
                         }
-                        let (lx, ly) = ((tx * ts + px) as usize, (ty * ts + py) as usize);
-                        let (bx, by) = (lx * c.s, ly * c.s);
-                        if text.is_some_and(|parts| parts.iter().any(|p| p.contains(bx, by))) {
+                        // Translated text only covers the slot's own columns.
+                        let lx = (tx * ts + px) as usize;
+                        let (bx, by) = (lx * c.s, (ty * ts + py) as usize * c.s);
+                        if (0..w).contains(&tx)
+                            && text.is_some_and(|parts| parts.iter().any(|p| p.contains(bx, by)))
+                        {
                             continue;
                         }
                         // One original pixel becomes an s × s block.
@@ -516,6 +595,19 @@ impl SpriteLayer {
         if let Some(parts) = text {
             draw_parts(parts, palette, sx0 * s + shift, sy0 * s, canvas, c.w, c.h);
         }
+    }
+
+    /// Enhancement `wide_menus`: the repeat of a backdrop slot on a wide canvas. Only a slot
+    /// showing a whole marked map ([`SpriteBank::set_wide_fill`]) across the full 640-px
+    /// design is continued; everything else keeps its 4:3 place.
+    fn backdrop_repeat(&self, bank: &SpriteBank, slot: &Slot, mw: i32) -> Option<Repeat> {
+        let whole = slot.col <= 0 && slot.row <= 0 && slot.w <= 0 && slot.h <= 0;
+        let x = i32::from(slot.x);
+        let spans = x <= 0 && x + mw * TILE_SIZE as i32 >= CANVAS_W as i32;
+        if self.wide == 0 || !whole || !spans {
+            return None;
+        }
+        bank.wide_fill(u16::try_from(slot.tilemap).ok()?)
     }
 }
 
@@ -765,6 +857,7 @@ mod tests {
             }],
             text: None,
             labels: None,
+            wide_fill: Vec::new(),
         }
     }
 
@@ -1019,6 +1112,61 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn repeats_are_found_in_the_tile_ids() {
+        let map = |width: u8, row: &[u16]| Tilemap {
+            width,
+            height: 1,
+            tiles: row.to_vec(),
+        };
+        // A pattern of period 3 after a different first block (the 0x501 shape).
+        let r = Repeat::of(&map(8, &[9, 9, 9, 1, 2, 3, 1, 2])).unwrap();
+        assert_eq!((r.start, r.period), (3, 3));
+        assert_eq!([-1, 0, 2, 3, 8, 9].map(|c| r.source(c)), [5, 3, 5, 3, 5, 3]);
+        // A uniform edge (a header band) repeats its last column.
+        let r = Repeat::of(&map(6, &[4, 7, 7, 1, 1, 1])).unwrap();
+        assert_eq!((r.start, r.period, r.source(-3), r.source(6)), (3, 1, 3, 3));
+        // A frame is no pattern.
+        assert_eq!(Repeat::of(&map(6, &[1, 2, 2, 2, 2, 3])), None);
+    }
+
+    #[test]
+    fn backdrops_continue_past_the_design_on_a_wide_canvas() {
+        // A 40 × 1 map: column c shows tile 1 + c % 2 (period 2), so index 1 or 2.
+        let mut b = bank(1);
+        b.tiles.push(Some(Box::new([2; TILE_PIXELS])));
+        b.tilemaps[0] = Tilemap {
+            width: 40,
+            height: 1,
+            tiles: (0..40).map(|c| 1 + c % 2).collect(),
+        };
+        assert!(b.set_wide_fill(0));
+        let mut l = SpriteLayer::default();
+        l.palettes[0] = Some(palette());
+        l.fit_window(1280, 720);
+        assert_eq!(l.wide, 213);
+        l.slots[0] = Slot::new(0, 0, 0, 0, 3, true);
+        let (w, h) = l.canvas_size();
+        let mut c = vec![0; w * h * 4];
+        l.compose(&b, &mut c);
+        let px = |x: usize| -> [u8; 4] { c[x * 4..][..4].try_into().unwrap() };
+        let (green, red) = ([0, 255, 0, 255], [255, 0, 0, 255]);
+        // The design starts at 106: green there, red 16 px to the left (phase kept).
+        assert_eq!((px(106), px(105), px(90), px(89)), (green, red, red, green));
+        // Column -7 (odd) at the left edge, 46 (even) at the right one.
+        assert_eq!((px(0), px(w - 1)), (red, green));
+        // A slot that does not span the design, or a part of the map, is not continued.
+        l.slots[0].x = 8;
+        l.compose(&b, &mut c);
+        assert_eq!(c[..4], [0; 4]);
+        l.slots[0] = Slot {
+            w: 4,
+            ..Slot::new(0, 0, 0, 0, 3, true)
+        };
+        l.compose(&b, &mut c);
+        assert_eq!(c[..4], [0; 4]);
     }
 
     #[test]

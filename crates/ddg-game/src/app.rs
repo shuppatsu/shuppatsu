@@ -8,7 +8,8 @@
 //! the input and the sound device, and lends them to a run ([`play::Shared`]). The front-end
 //! screens tick at the original's 33 ms, read the button edges polled at the end of the
 //! previous tick, and draw the 640×480 canvas centred over black (`0x855ffc & 0x1000`; the
-//! port always centres it).
+//! port always centres it). On a wide window the canvas takes its shape and the menu backdrops
+//! continue to the edges (`wide_menus`, menus.md §14).
 
 use crate::front::attract::{
     Attract, AttractCounters, AttractEnv, AttractStep, AttractTables, DemoKind as AttractDemo,
@@ -182,7 +183,7 @@ impl App {
         let mut pad = opts.pad.clone();
         pad.joystick_dat = joystick_dat(&opts.pad);
         let controls = Controls::new(&exe, usize::from(save.eeprom.options().control_mode), &pad)?;
-        let bank = play::load_bank(&data, &exe, &opts.locale)?;
+        let mut bank = play::load_bank(&data, &exe, &opts.locale)?;
         let mut sound = if headless || opts.mute {
             None
         } else {
@@ -198,6 +199,7 @@ impl App {
         let canvas = layer.new_canvas();
         crate::hud::Hud::install_palettes(&exe, &mut layer)?;
         let front = FrontTables::read(&exe)?;
+        crate::front::mark_backdrops(&mut bank, &front);
         let screens = ScreenTables::read(&exe)?;
         let defs = Defs {
             cursor_x: crate::front::cursor_x(&front, map_size(&bank, TBL_CURSOR).0),
@@ -213,7 +215,7 @@ impl App {
             None => play::Script::default(),
         };
         let now = Instant::now();
-        Ok(Self {
+        let mut app = Self {
             defs,
             res: Some(Shared {
                 data,
@@ -240,7 +242,9 @@ impl App {
             last_frame: now,
             error: None,
             opts,
-        })
+        };
+        app.fit_front()?;
+        Ok(app)
     }
 
     fn res(&mut self) -> &mut Shared {
@@ -756,6 +760,7 @@ impl App {
         let mut shared = p.into_shared();
         crate::front::clear_all(&mut shared.layer);
         self.res = Some(shared);
+        self.fit_front()?;
         self.menu_input = MenuInput::NONE;
         self.accumulator = Duration::ZERO;
         self.last_frame = Instant::now();
@@ -766,13 +771,44 @@ impl App {
         matches!(self.screen, Screen::Quit)
     }
 
-    /// The front end's canvas: the centred 4:3 one at the UI scale (menus never widen).
+    /// The front end's canvas: 640×480 at the UI scale, widened to the window's shape so the
+    /// menu backdrops reach its edges (enhancement `wide_menus`; the screens stay centred).
     fn canvas_size(&self) -> (usize, usize) {
-        let s = self.opts.locale.ui_scale.max(1);
-        (
-            ddg_render::sprites::CANVAS_W * s,
-            ddg_render::sprites::CANVAS_H * s,
+        self.res.as_ref().map_or_else(
+            || {
+                let s = self.opts.locale.ui_scale.max(1);
+                (
+                    ddg_render::sprites::CANVAS_W * s,
+                    ddg_render::sprites::CANVAS_H * s,
+                )
+            },
+            |r| r.layer.canvas_size(),
         )
+    }
+
+    /// Fits the front end's canvas to the window (the headless size without one): the
+    /// canvas multiple follows its height (presentation.rs) and the width its shape, so wide
+    /// windows show the menu backdrops continued sideways (`wide_menus`, menus.md §14).
+    fn fit_front(&mut self) -> Result<()> {
+        let Some(r) = self.res.as_mut() else {
+            return Ok(());
+        };
+        let window = r.gpu.as_ref().map_or(self.opts.size, Gpu::size);
+        crate::presentation::fit_layer(
+            &mut self.opts.locale,
+            &r.data,
+            &mut r.bank,
+            &mut r.layer,
+            window,
+            true,
+        )?;
+        let (w, h) = r.layer.canvas_size();
+        if self.canvas.len() != w * h * 4 {
+            self.canvas = r.layer.new_canvas();
+            r.layer.compose(&r.bank, &mut self.canvas);
+            self.canvas_dirty = true;
+        }
+        Ok(())
     }
 
     /// Headless: runs `ticks` app ticks and renders the frame.
@@ -812,26 +848,8 @@ impl App {
                 return Ok(());
             }
         }
+        self.fit_front()?;
         let mut dirty = std::mem::take(&mut self.canvas_dirty);
-        // The canvas multiple follows the window (presentation.rs); menus never widen.
-        if let Some(r) = self.res.as_mut()
-            && let Some(window) = r.gpu.as_ref().map(Gpu::size)
-        {
-            crate::presentation::fit_layer(
-                &mut self.opts.locale,
-                &r.data,
-                &mut r.bank,
-                &mut r.layer,
-                window,
-                false,
-            )?;
-            let (w, h) = r.layer.canvas_size();
-            if self.canvas.len() != w * h * 4 {
-                self.canvas = r.layer.new_canvas();
-                r.layer.compose(&r.bank, &mut self.canvas);
-                dirty = true;
-            }
-        }
         let size = self.canvas_size();
         let Some(gpu) = self.res.as_mut().and_then(|r| r.gpu.as_mut()) else {
             return Ok(());
