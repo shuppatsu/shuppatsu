@@ -755,6 +755,7 @@ mod tests {
             scripted_signals: Vec::<ScriptedSignal>::new(),
             signal_speed_kmh: [70.0, 45.0, 25.0],
             signal_sets: [[0, 1]; STAGE_COUNT],
+            advice_kmh: [[0; 10]; STAGE_COUNT],
         }
     }
 

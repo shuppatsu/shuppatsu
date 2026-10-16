@@ -784,7 +784,8 @@ impl Drive {
         }
         if loop_body {
             let rank = self.rules.stage_rank();
-            self.train.leg_marker(rank);
+            let fired = self.train.leg_marker(rank);
+            self.rules.advice_hints(&mut out, fired);
         }
         if out.force_stop {
             self.train.speed = 0.0;

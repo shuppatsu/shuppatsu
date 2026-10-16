@@ -219,6 +219,9 @@ pub struct RuleTables {
     /// 0x466c08: per stage `[three_lamp_set, repeater_set]` (i32 pairs, stride 8), the sprite
     /// sets `Signal_Show` 0x411500 uses for display variant 1 and for repeaters.
     pub signal_sets: [[i32; 2]; STAGE_COUNT],
+    /// Navigator advice speeds per stage (via its train type), km/h: `[n * 2 + wet]` for
+    /// `n` 0..=4 (`FUN_00422990`, 0x472278).
+    pub advice_kmh: [[i32; 10]; STAGE_COUNT],
 }
 
 /// Addresses of the early-running threshold tables, in [`RuleTables::early_ticks`] order.
@@ -295,7 +298,18 @@ impl RuleTables {
             *v = [r.i32(8 * i)?, r.i32(8 * i + 4)?];
         }
 
+        let mut advice_kmh = [[0i32; 10]; STAGE_COUNT];
+        let types = exe.reader_at(STAGE_TRAIN_TYPE_VA, 4 * STAGE_COUNT, "rule table")?;
+        for (stage, row) in advice_kmh.iter_mut().enumerate() {
+            let ty = u32::try_from(types.i32(4 * stage)?).unwrap_or(0);
+            let r = exe.reader_at(ADVICE_SPEEDS_VA + 40 * ty, 40, "rule table")?;
+            for (i, v) in row.iter_mut().enumerate() {
+                *v = r.i32(4 * i)?;
+            }
+        }
+
         Ok(Self {
+            advice_kmh,
             limit_margin_kmh: t(0x459870)?,
             stop_tolerance_m: t(0x4597d0)?,
             start_time_s: t(0x4599b0)?,
@@ -362,6 +376,33 @@ const SIGNAL_DELAY_TICKS: i32 = 5;
 const SIGNAL_HANDOVER_TICKS: i32 = 5;
 /// Showing a green releases the pending green-signal hint as `Hint_Show(id, 0, 220)` (0x411774).
 const GREEN_HINT_DISTANCE_M: i32 = 0xdc;
+/// ATS trip above the signal speed: `Hint_Show(5, 0x5a, 0)` when the speed exceeds the signal
+/// limit + 0.3 m/s (double at 0x458af8), else `Hint_Show(-1)` (0x40c4e0).
+const ATS_HINT_ID: i16 = 5;
+const ATS_HINT_MARGIN_MPS: f32 = 0.3;
+const ATS_HINT_TICKS: i32 = 0x5a;
+/// Stage-5 hint id 6 "do not accelerate yet" inside a signal restriction (0x40b780): shown
+/// until 2 m past the block's sighting point.
+const SIGNAL_HINT_ID: i16 = 6;
+const SIGNAL_HINT_EXTRA_M: i32 = 2;
+/// Navigator advice (0x40c4e0 tail): only on stages of rank ≤ 3 (`0x4656c4`), late/early
+/// advice for 0x5a ticks, pass advice for 0x96 m, stop advice for 0x78 m.
+const ADVICE_MAX_RANK: i32 = 3;
+const ADVICE_TICKS: i32 = 0x5a;
+const ADVICE_PASS_DISTANCE_M: i32 = 0x96;
+const ADVICE_STOP_DISTANCE_M: i32 = 0x78;
+/// The pass advice compares the speed in m/s with the table km/h × 0.25 (double 0.25 at
+/// 0x459520, used as f32).
+const ADVICE_PASS_FACTOR: f32 = 0.25;
+/// Advice speeds (`FUN_00422990`): i32 at 0x472278 + 4 × (2n + 10 × train type), the next i32
+/// for wet rails (`0x857230 > 1`); train type per stage at 0x472228 (0x4229c0).
+const ADVICE_SPEEDS_VA: u32 = 0x472278;
+const STAGE_TRAIN_TYPE_VA: u32 = 0x472228;
+/// Departure task hints on the lesson stage's first station (0x413370): `(offset, id, ticks,
+/// distance)`; and the stage-1 bonus section's hint 0x10 at station 0x18.
+const DEPART_LESSON_HINTS: [(i32, i16, i32, i32); 3] =
+    [(0x14, 0, 0x78, 0), (0x8c, 9, 0x50, 0), (0xdc, 0x13, 0, 5)];
+const DEPART_BONUS_HINT: (i32, i16, i32, i32) = (0x14, 0x10, 0xb4, 0);
 
 /// The sprite `Signal_Show` (0x411500) picks for `aspect` 0..=4 (without the forced bit),
 /// display `mode` (0 block, 1 home, 2 starting, 3 repeater), display variant `0x8570c2` and the
@@ -626,13 +667,23 @@ pub enum RuleEvent {
     },
     /// `Signal_Show(-1, …)`: the signal sprite stops at the next HUD update.
     SignalHidden,
-    /// `Hint_Show(id, ticks, distance)` 0x411f20 (hud.md §3.12). Raised only for the pending
-    /// green-signal hint (`0x857224`, course event 20) that a green signal releases.
+    /// `Hint_Show(id, ticks, distance)` 0x411f20 (hud.md §3.12): a navigator hint. Raised by
+    /// the green signal that releases the pending hint (`0x857224`), course event 9, the
+    /// departure task (lesson stage), the ATS trip (id 5), the stage-5 signal hint (id 6), the
+    /// late/early advice (ids 0x20/0x21) and the pass/stop advice (ids 0x1d/0x1e). Not raised
+    /// while the ATS awaits confirmation or brakes (`0x857206 ≥ 2`), as 0x411f20 ignores calls
+    /// then.
     HintShown {
         id: i16,
+        /// Shown for this many ticks after the 5-tick delay when `distance_m` is 0.
         ticks: i32,
+        /// Shown until the odometer passes `start_m + distance_m`, 0 = use `ticks`.
         distance_m: i32,
+        /// Truncated odometer `0x857004` at the call.
+        start_m: i32,
     },
+    /// `Hint_Show(-1, …)`: the hint on screen ends at its next update.
+    HintHidden,
     /// A speed limit sign: limit in km/h, notice distance and enforcement offset in m.
     SpeedLimit {
         kmh: i32,
@@ -860,6 +911,9 @@ pub struct Rules {
     /// Pending green-signal hint (`0x857224`, i16, −1 none): course event 20, shown by the next
     /// green signal.
     pub green_hint: i16,
+    /// The pass/stop advice was shown since the last signal set-up (`0x856fae`, cleared by
+    /// 0x40b970).
+    pub advice_shown: bool,
     /// Signal speeds per aspect, km/h (stack array in 0x40b970 / 0x40c010).
     speed_by_aspect: [f32; 5],
 
@@ -1025,6 +1079,7 @@ impl Rules {
             signal_hud_pending: false,
             signal_hide_pending: false,
             green_hint: -1,
+            advice_shown: false,
             speed_by_aspect: [GREEN_KMH, 0.0, 0.0, 0.0, 0.0],
             limit_mps: NO_LIMIT_MPS,
             limit_state: 0,
@@ -1214,6 +1269,17 @@ impl Rules {
             self.departure_freeze = DEPART_FREEZE;
             self.stat(8, 2);
         }
+        // Navigator hints of the lesson stage's first station and the stage-1 bonus section.
+        let lesson = self.stage_rank() == 1 && self.station == 0;
+        for (at, id, ticks, distance) in DEPART_LESSON_HINTS {
+            if lesson && c == base + at {
+                self.hint(out, id, ticks, distance);
+            }
+        }
+        let (at, id, ticks, distance) = DEPART_BONUS_HINT;
+        if self.stage == 1 && self.station == 0x18 && c == base + at {
+            self.hint(out, id, ticks, distance);
+        }
         if c == base + DEPART_CHECK_AT && self.departure_released > 0 {
             // Brake released during the last 40 ticks of the countdown (0x4136fd).
             self.stat(2, 1);
@@ -1257,6 +1323,92 @@ impl Rules {
             self.pending_s += seconds;
         }
         out.events.push(RuleEvent::Time { reason, seconds });
+    }
+
+    /// `Hint_Show(id, ticks, distance)` 0x411f20: the whole call is skipped while the ATS
+    /// awaits confirmation or brakes (`0x857206 < 2` test); id −1 cancels the hint on screen.
+    fn hint(&mut self, out: &mut TickOutput, id: i16, ticks: i32, distance_m: i32) {
+        if self.ats >= 2 {
+            return;
+        }
+        if id < 0 {
+            out.events.push(RuleEvent::HintHidden);
+            return;
+        }
+        out.events.push(RuleEvent::HintShown {
+            id,
+            ticks,
+            distance_m,
+            start_m: trunc(f64::from(self.odometer_m)),
+        });
+    }
+
+    /// The navigator advice at the end of 0x40c4e0, run only in the driving loop body, after
+    /// the 50 m leg marker of the train (`Train::leg_marker`, which fired when `leg_marker`
+    /// is true): running late / early (ids 0x20 / 0x21), then once per signal set-up
+    /// (`0x856fae`) "the next station is passed" (0x1d) or "is a stop" (0x1e) when the speed
+    /// fits the distance left.
+    pub fn advice_hints(&mut self, out: &mut TickOutput, leg_marker: bool) {
+        if self.stage_rank() > ADVICE_MAX_RANK {
+            return;
+        }
+        if leg_marker {
+            if (self.late_s < -2 || self.early_ticks > 0xb3)
+                && self.restricted_blocks == 0
+                && self.aspect == 0
+            {
+                self.hint(out, 0x21, ADVICE_TICKS, 0);
+            }
+            if self.late_s > 3 {
+                self.hint(out, 0x20, ADVICE_TICKS, 0);
+            }
+        }
+        if self.advice_shown {
+            return;
+        }
+        let d = self.dist_round_m;
+        let speed = self.speed_mps;
+        let wet = usize::from(self.weather_level > 1);
+        let kmh = |n: usize| self.tables.advice_kmh[self.stage][n * 2 + wet];
+        let mut shows = 0;
+        if !self.target_stops {
+            // Passing: slow enough, braking, green and under both limits (f32 maths).
+            let ok = |n: usize| {
+                let v = kmh(n) as f32 * ADVICE_PASS_FACTOR;
+                speed <= v
+                    && self.input_brake > 0
+                    && self.aspect == 0
+                    && v < self.signal_limit_mps
+                    && v < self.limit_mps
+            };
+            if (300..=400).contains(&d) && ok(2) {
+                shows += 1;
+            }
+            if (200..=300).contains(&d) && ok(1) {
+                shows += 1;
+            }
+            for _ in 0..shows {
+                self.hint(out, 0x1d, 0, ADVICE_PASS_DISTANCE_M);
+            }
+        } else {
+            // Stopping: still too fast for the distance left.
+            let fast = |n: usize| f64::from(speed) >= f64::from(kmh(n)) * KMH_TO_MPS;
+            if (500..=600).contains(&d) && fast(4) {
+                shows += 1;
+            }
+            if (300..=400).contains(&d) && fast(2) {
+                shows += 1;
+            }
+            if (200..=300).contains(&d) && fast(1) {
+                shows += 1;
+            }
+            for _ in 0..shows {
+                self.hint(out, 0x1e, 0, ADVICE_STOP_DISTANCE_M);
+            }
+        }
+        if shows > 0 {
+            self.advice_shown = true;
+        }
     }
 
     /// 0x40dd60: statistics, except on stage 2 station 24 (the bonus section).
@@ -1397,6 +1549,7 @@ impl Rules {
     /// 0x40b970: builds the signal blocks for the segment and picks the aspects.
     fn build_blocks(&mut self) {
         self.signals_pending = false;
+        self.advice_shown = false;
         let margin = self.table(&self.tables.limit_margin_kmh) as f32;
         let [s1, s2, s3] = self.tables.signal_speed_kmh;
         self.speed_by_aspect = [GREEN_KMH, margin + s1, margin + s2, margin + s3, 0.0];
@@ -1658,11 +1811,7 @@ impl Rules {
         }
         // The hint goes out before the "already shown" test (0x411760).
         if aspect == 0 && self.green_hint != -1 {
-            out.events.push(RuleEvent::HintShown {
-                id: self.green_hint,
-                ticks: 0,
-                distance_m: GREEN_HINT_DISTANCE_M,
-            });
+            self.hint(out, self.green_hint, 0, GREEN_HINT_DISTANCE_M);
             self.green_hint = -1;
         }
         let sets = self.tables.signal_sets[self.stage];
@@ -1961,6 +2110,7 @@ impl Rules {
                 }
                 22 => self.weather_on = false,
                 20 => self.green_hint = a,
+                9 => self.hint(out, a, i32::from(b), i32::from(c)),
                 _ => out.events.push(RuleEvent::Script {
                     kind: e.kind,
                     args: e.args,
@@ -2074,6 +2224,11 @@ impl Rules {
         }
         if self.speed_mps <= self.signal_limit_mps {
             if self.signal_limit_mps - SIGNAL_HINT_MPS < self.speed_mps && self.stage == 5 {
+                // Until 2 m past the sighting point of the current block (block 1 for block 2).
+                let k = if self.block == 2 { 1 } else { self.block };
+                let pos = self.blocks.get(k).map_or(0, |b| b.sight_pos_m);
+                let d = self.dist_round_m - pos + SIGNAL_HINT_EXTRA_M;
+                self.hint(out, SIGNAL_HINT_ID, 0, d);
                 self.signal_state = 2;
             }
             return;
@@ -2133,6 +2288,11 @@ impl Rules {
             out.events.push(RuleEvent::AtsBell);
             self.ats_chime_from = -1;
             if self.dist_m >= 0.0 {
+                if self.speed_mps <= self.signal_limit_mps + ATS_HINT_MARGIN_MPS {
+                    self.hint(out, -1, -1, -1);
+                } else {
+                    self.hint(out, ATS_HINT_ID, ATS_HINT_TICKS, 0);
+                }
                 self.stat(7, i32::from(self.aspect) * 2);
                 self.ats = if self.aspect == 4 { 4 } else { 2 };
                 if self.ats == 4 {
@@ -2969,6 +3129,7 @@ mod tests {
             scripted_signals: Vec::new(),
             signal_speed_kmh: [70.0, 45.0, 25.0],
             signal_sets: [[0, 1]; STAGE_COUNT],
+            advice_kmh: [[0; 10]; STAGE_COUNT],
         }
     }
 
@@ -3336,6 +3497,7 @@ mod tests {
                         id: 7,
                         ticks: 0,
                         distance_m: 220,
+                        start_m: 0,
                     }
                 ),
                 (
@@ -3403,5 +3565,57 @@ mod tests {
                 ..
             }]
         ));
+    }
+
+    #[test]
+    fn course_hints_are_dropped_while_the_ats_awaits_confirmation() {
+        let ev9 = ev(1, 900, 9, [3, 60, 0]);
+        let mut r = rules(vec![ev9], vec![]);
+        r.odometer_m = 120.7;
+        let mut out = TickOutput::default();
+        r.hint(&mut out, 3, 60, 0);
+        assert_eq!(
+            out.events,
+            [RuleEvent::HintShown {
+                id: 3,
+                ticks: 60,
+                distance_m: 0,
+                start_m: 120,
+            }]
+        );
+        r.ats = 2;
+        let mut out = TickOutput::default();
+        r.hint(&mut out, 3, 60, 0);
+        r.hint(&mut out, -1, -1, -1);
+        assert!(out.events.is_empty());
+        r.ats = 1;
+        r.hint(&mut out, -1, -1, -1);
+        assert_eq!(out.events, [RuleEvent::HintHidden]);
+    }
+
+    #[test]
+    fn stop_advice_shows_once_per_signal_setup() {
+        let mut r = rules(vec![], vec![]);
+        r.tables.advice_kmh[3] = [55, 50, 76, 70, 85, 79, 93, 87, 100, 94];
+        r.target_stops = true;
+        r.dist_round_m = 550;
+        r.speed_mps = 100.0 / 3.6 + 0.01;
+        let mut out = TickOutput::default();
+        r.advice_hints(&mut out, false);
+        assert!(matches!(
+            out.events[..],
+            [RuleEvent::HintShown {
+                id: 0x1e,
+                distance_m: 120,
+                ..
+            }]
+        ));
+        let mut out = TickOutput::default();
+        r.dist_round_m = 350;
+        r.advice_hints(&mut out, false);
+        assert!(out.events.is_empty(), "once until the next signal set-up");
+        r.build_blocks();
+        r.advice_hints(&mut out, false);
+        assert_eq!(out.events.len(), 1);
     }
 }
