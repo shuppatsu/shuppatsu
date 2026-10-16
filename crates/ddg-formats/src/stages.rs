@@ -316,6 +316,17 @@ fn read_timetable(exe: &Exe<'_>, va: u32) -> Result<Vec<TimetableRow>> {
     ))
 }
 
+/// A course-event list (6 × i16 records, terminated by station 99) at
+/// `va`; for lists outside the stage tables, such as the attract lesson demo's at 0x459338.
+pub fn read_course_events(exe: &Exe<'_>, va: u32) -> Result<Vec<CourseEvent>> {
+    read_events(exe, va, |r: [i16; 6]| CourseEvent {
+        station: r[0],
+        distance_m: r[1],
+        kind: r[2],
+        args: [r[3], r[4], r[5]],
+    })
+}
+
 fn read_events<const N: usize, T>(
     exe: &Exe<'_>,
     va: u32,

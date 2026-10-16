@@ -1,6 +1,7 @@
 //! Deterministic train simulation: physics, signals, timetable, scoring.
 
 pub mod coupling;
+pub mod demo;
 pub mod drive;
 pub mod physics;
 pub mod rules;

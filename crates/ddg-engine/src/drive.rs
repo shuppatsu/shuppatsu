@@ -29,6 +29,7 @@
 //! No serde derives: the state holds a parsed [`Route`] and the rule tables, whose types live in
 //! `ddg-formats` without serde. A trace of [`Drive`] state can be written from the accessors.
 
+use crate::demo::{DemoInputs, DemoKind, DemoTables};
 use crate::physics::{Controls, TickContext, TrainSpec, TrainState, TrainTables, gradient_at};
 use crate::rules::{
     Buttons, Phase, RuleEvent, RuleTables, Rules, RulesError, StationOutcome, StationResult,
@@ -223,6 +224,8 @@ pub struct Drive {
     /// AI trains (task list 5) and their model table.
     traffic: Traffic,
     train_models: TrainModels,
+    /// An attract demo drive in progress ([`Drive::start_demo`]).
+    demo: Option<Demo>,
 }
 
 impl std::fmt::Debug for Drive {
@@ -308,6 +311,7 @@ impl Drive {
             global_tick: 0,
             traffic,
             train_models: stages.train_models.clone(),
+            demo: None,
         })
     }
 
@@ -505,8 +509,55 @@ impl Drive {
     // Flow
     // ----------------------------------------------------------------------------------------
 
+    /// Turns this run, freshly made by [`Drive::new`] at station 0, into an attract demo drive
+    /// (0x40e4b0 / 0x40e6e0): the segment is set up at once, the train runs on the exe's input
+    /// table and [`Drive::tick`] runs the demo task instead of the stage loop. The demo ends
+    /// when [`Drive::demo_finished`].
+    pub fn start_demo(&mut self, kind: DemoKind, tables: &DemoTables) {
+        let stage = self.rules.stage().0;
+        let stop =
+            segment_for(&self.stage_data, stage, self.rules.station).map_or(0, |(_, s)| s as usize);
+        self.stop_index = stop;
+        self.walker = CabWalker::at_segment_start(&self.route, stop);
+        self.prev_pos = self.walker.pos();
+        if let (Some(&a), Some(&b)) = (self.route.stops.get(stop), self.route.stops.get(stop + 1)) {
+            self.units_to_stop = ((b as f64 - a as f64) * f64::from(UNITS_PER_POINT)) as f32;
+        }
+        self.step = Step::Run;
+        let rin = self.rule_input(&DriverInput::default());
+        let course = (kind == DemoKind::Lesson).then(|| tables.lesson_course.clone());
+        self.rules.start_demo(&rin, course);
+        self.demo = Some(Demo {
+            kind,
+            counter: 0,
+            inputs: DemoInputs::default(),
+            tables: tables.clone(),
+            last: DriverInput::default(),
+        });
+    }
+
+    /// The demo drive's task has ended (its counter reached [`DemoKind::ticks`]).
+    pub fn demo_finished(&self) -> bool {
+        self.demo
+            .as_ref()
+            .is_some_and(|d| d.counter >= d.kind.ticks())
+    }
+
+    /// The demo's notches and horn of the last tick (for the cab and the sounds).
+    pub fn demo_controls(&self) -> Option<DriverInput> {
+        self.demo.as_ref().map(|d| d.last)
+    }
+
+    /// The demo drive's counter (task+0x30), `None` outside a demo.
+    pub fn demo_counter(&self) -> Option<u32> {
+        self.demo.as_ref().map(|d| d.counter)
+    }
+
     /// Runs one 1/30 s tick.
     pub fn tick(&mut self, input: DriverInput) -> DriveTick {
+        if self.demo.is_some() {
+            return self.demo_tick();
+        }
         self.tick_count += 1;
         self.traffic.begin_tick();
         self.rules.global_tick = Some(self.global_tick);
@@ -815,6 +866,51 @@ impl Drive {
         self.heading = crate::physics::heading_at(&self.route, self.walker.pos());
     }
 
+    /// One `Task_Tick` of a demo drive: the train task on the table's notches (driving flag
+    /// set), the camera, then the demo task (0x40e630 / 0x40e860) with its rule calls, the
+    /// AI-train events of the route demo, and the car tasks. 0x407c10 does not run, so the
+    /// gradient stays 0.
+    fn demo_tick(&mut self) -> DriveTick {
+        self.tick_count += 1;
+        self.traffic.begin_tick();
+        self.rules.global_tick = Some(self.global_tick);
+        self.prev_pos = self.walker.pos();
+        let Some(mut d) = self.demo.take() else {
+            return DriveTick::default();
+        };
+        let mut out = TickOutput::default();
+        let mut atc = false;
+        if d.counter < d.kind.ticks() {
+            let input = d.inputs.next(&d.tables, d.kind);
+            d.last = input;
+            atc = self.physics(&input, true, false);
+            self.camera();
+            let rin = self.rule_input(&input);
+            let lesson = d.kind == DemoKind::Lesson;
+            out = self.rules.demo_tick(&rin, lesson, d.counter);
+            if out
+                .events
+                .iter()
+                .any(|e| matches!(e, RuleEvent::StationPassed { .. }))
+            {
+                self.pass_station();
+            }
+            if !lesson {
+                self.traffic_events(true);
+            }
+            d.counter += 1;
+            self.traffic_task();
+            self.rules.end_tick(&mut out, Some(&self.readout()));
+        }
+        self.demo = Some(d);
+        self.global_tick = self.global_tick.wrapping_add(1);
+        DriveTick {
+            events: out.events,
+            atc_tripped: atc,
+            segment_started: false,
+        }
+    }
+
     fn idle_tick(&mut self, input: DriverInput) -> DriveTick {
         let rin = self.rule_input(&input);
         let atc = self.physics(&input, false, false);
@@ -934,6 +1030,15 @@ impl Drive {
             segment_started: false,
         }
     }
+}
+
+/// An attract demo drive: the demo task's counter (task+0x30) and the train task's replay.
+struct Demo {
+    kind: DemoKind,
+    counter: u32,
+    inputs: DemoInputs,
+    tables: DemoTables,
+    last: DriverInput,
 }
 
 /// `stage_select_segment` (0x408010): the segment holding `station` and the stop index in it.

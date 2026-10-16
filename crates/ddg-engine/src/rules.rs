@@ -115,6 +115,8 @@ const PASSING_STANDSTILL_TICKS: u32 = 30;
 const OBSTACLE_SIGNAL_AT: u32 = 31;
 /// Extra standstill after stopping at the final station (0x40aaa5: 0x78 `Task_Tick`s).
 const FINAL_STATION_HOLD: u32 = 0x78;
+/// Remaining time of the attract demo drives (0x40e4b0 / 0x40e6e0: `0x856fb0 = 0x1e`).
+const DEMO_REMAINING_S: i32 = 0x1e;
 /// Standstill after a successful coupling on stage 2 (0x40a0a0: 0x1e `Task_Tick`s).
 const COUPLED_HOLD: u32 = 0x1e;
 /// The stage-1 bonus section starts at this timetable row (0x40d340: `0x856d78 = 0x18`).
@@ -2990,6 +2992,66 @@ impl Rules {
             self.build_blocks();
         }
         self.distance_step(&mut out, input);
+        out
+    }
+
+    /// The start of an attract demo drive (0x40e4b0 / 0x40e6e0 after 0x40d040): the priming
+    /// 0x40dad0, the signal blocks (0x40b970), 30 s on the clock (`0x856fb0 = 0x1e`) and the
+    /// driving flag 0x200. The lesson demo replaces the course events with its own list
+    /// (`0x857088 = 0x459338`).
+    pub fn start_demo(
+        &mut self,
+        input: &TickInput,
+        lesson_course: Option<Vec<CourseEvent>>,
+    ) -> TickOutput {
+        let mut out = TickOutput::default();
+        self.latch_input(input);
+        self.distance_step(&mut out, input);
+        self.build_blocks();
+        self.signals_pending = false;
+        if let Some(c) = lesson_course {
+            self.course = c;
+            self.course_cursor = 0;
+        }
+        self.remaining_s = DEMO_REMAINING_S;
+        self.phase = Phase::Driving;
+        out
+    }
+
+    /// One update of a demo task, in `Task_Tick` after the train task: `counter` is the task's
+    /// count before this update. The route demo (task 0x40e630) runs 0x40dad0 only; the lesson
+    /// demo (task 0x40e860) first shows its scripted hints and signals (counter 30: hint 0 for
+    /// 180 ticks and a red starting signal for 150; 160: the aspect in force, forced, for 10 m;
+    /// 200: hint 9 for 90 ticks), then 0x40dad0, 0x40acd0, 0x40c010 and 0x40b780. Both advance
+    /// the clock.
+    pub fn demo_tick(&mut self, input: &TickInput, lesson: bool, counter: u32) -> TickOutput {
+        let mut out = TickOutput::default();
+        self.latch_input(input);
+        if std::mem::take(&mut self.signal_hide_pending) {
+            out.events.push(RuleEvent::SignalHidden);
+        }
+        if lesson {
+            let variant = self.signal_variant;
+            match counter {
+                0x1e => {
+                    self.hint(&mut out, 0, 0xb4, 0);
+                    self.signal_show(&mut out, 4, 2, 0x96, 0, variant);
+                }
+                0xa0 => {
+                    let aspect = i32::from(self.aspect) | SIGNAL_FORCED;
+                    self.signal_show(&mut out, aspect, 2, 0, 10, variant);
+                }
+                200 => self.hint(&mut out, 9, 0x5a, 0),
+                _ => {}
+            }
+        }
+        self.distance_step(&mut out, input);
+        if lesson {
+            self.course_event_step(&mut out, input);
+            self.signal_step(&mut out);
+            self.enforcement_step(&mut out);
+        }
+        self.clock += 1;
         out
     }
 

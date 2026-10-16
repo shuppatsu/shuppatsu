@@ -148,3 +148,53 @@ fn traffic_events_spawn_and_move() {
         assert!(d.traffic().cursor() > 0, "stage {stage}");
     }
 }
+
+/// The attract demos: the replayed notches move the train, the lesson demo shows its hints
+/// and keeps to its speed limits, and both end after their task's length.
+#[test]
+fn attract_demos_replay_their_notches() {
+    use ddg_engine::demo::{DemoKind, DemoTables};
+    use ddg_engine::rules::RuleEvent;
+    let Some(dir) = install_dir() else { return };
+    let bytes = std::fs::read(dir.join("BIN/dengo3k.exe")).unwrap();
+    let exe = Exe::parse(&bytes).unwrap();
+    let train = TrainTables::read(&exe).unwrap();
+    let rules = RuleTables::read(&exe).unwrap();
+    let stages = StageTables::read(&exe).unwrap();
+    let demos = DemoTables::read(&exe).unwrap();
+    for (stage, kind) in [
+        (1, DemoKind::Route),
+        (DemoKind::LESSON_STAGE, DemoKind::Lesson),
+    ] {
+        let mut d = Drive::new(
+            &train,
+            &rules,
+            &stages,
+            stage,
+            0,
+            0,
+            loader(dir.join("DATA")),
+        )
+        .unwrap();
+        d.start_demo(kind, &demos);
+        let start = d.dist_to_stop_m();
+        let (mut ticks, mut hints, mut overspeed) = (0, 0, 0);
+        while !d.demo_finished() {
+            for e in d.tick(DriverInput::default()).events {
+                match e {
+                    RuleEvent::HintShown { .. } => hints += 1,
+                    RuleEvent::Time { seconds, .. } if seconds < 0 => overspeed += 1,
+                    _ => {}
+                }
+            }
+            ticks += 1;
+        }
+        assert_eq!(ticks, kind.ticks(), "stage {stage}");
+        assert!(d.speed_kmh() > 30.0, "stage {stage}: {}", d.speed_kmh());
+        assert!(start - d.dist_to_stop_m() > 300.0, "stage {stage}");
+        if kind == DemoKind::Lesson {
+            assert!(hints >= 8, "{hints}");
+            assert_eq!(overspeed, 0);
+        }
+    }
+}
