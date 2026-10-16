@@ -2107,7 +2107,7 @@ impl Rules {
         self.late_s = self.clock / TICKS_PER_SECOND - self.scheduled / TICKS_PER_SECOND;
         self.stat(1, self.late_s.abs());
         if let Some(a) = self.arrivals.get_mut(self.station) {
-            *a = (self.clock, trunc(f64::from(self.dist_m)));
+            *a = (self.clock, trunc(f64::from(self.dist_m) * 100.0));
         }
         let diff = self.clock - self.scheduled;
         if (0..=29).contains(&diff) {
@@ -2796,7 +2796,7 @@ impl Rules {
             hold
         };
         if let Some(a) = self.arrivals.get_mut(self.station) {
-            *a = (self.clock, trunc(f64::from(self.dist_m)));
+            *a = (self.clock, trunc(f64::from(self.dist_m) * 100.0));
         }
         out.events.push(RuleEvent::Arrived(Arrival {
             station: self.station + 1,
