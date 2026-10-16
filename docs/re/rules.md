@@ -581,7 +581,7 @@ Hook points for event-level traces: 0x415080 (every time message: kind, seconds)
   green `(0, 0, 0, 5)` (0x40a0a0, 31 hold ticks before the end; the hold length is a guess), and
   hides (`SignalHidden`) for NaviAnim(0) at the obstacle start (0x40c4e0 → 0x410cb0) and at the
   stage-loop exit (0x4158b0 / 0x4085e0, via `leave_driving_loop`). The attract demo drive task
-  0x40e860 (list 4, stage 5) has its own two calls; the engine has no attract mode.
+  0x40e860 (list 4, stage 5) has its own two calls; `Rules::demo_tick` makes them (menus.md §2.4).
 * Green-signal hint: course event 20 sets `0x857224` (`Rules::green_hint`, reset per segment
   in 0x40cf40). The next `Signal_Show` with aspect 0, whether a no-op or not, raises
   `HintShown { id, ticks: 0, distance_m: 220 }` and clears it. This includes the departure call
