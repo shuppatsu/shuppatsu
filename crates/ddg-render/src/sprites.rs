@@ -2,6 +2,7 @@
 //! layer and the rect layer, composed on the CPU into a 640×480 RGBA canvas exactly as the
 //! original blits them into its back buffer. The canvas is then drawn as one overlay texture.
 
+use crate::text::{SubRect, TextOverlay, draw_parts};
 use ddg_formats::cg::{CgFile, Palette, TILE_PIXELS, TILE_SIZE, Tilemap};
 
 /// The HUD design size: native pixels of resolution mode 1 (hud.md §1.1).
@@ -75,6 +76,9 @@ pub struct Fan {
 pub struct SpriteBank {
     tiles: Vec<Option<Box<[u8; TILE_PIXELS]>>>,
     pub tilemaps: Vec<Tilemap>,
+    /// Opt-in translated text drawn instead of the art of some sprites (`text.rs`); `None`
+    /// draws the original art everywhere.
+    text: Option<TextOverlay>,
 }
 
 impl SpriteBank {
@@ -83,11 +87,54 @@ impl SpriteBank {
         let tiles = (0..cg.len())
             .map(|i| cg.tile(i).ok().map(Box::new))
             .collect();
-        Self { tiles, tilemaps }
+        Self {
+            tiles,
+            tilemaps,
+            text: None,
+        }
     }
 
     fn tile(&self, id: u16) -> Option<&[u8; TILE_PIXELS]> {
         self.tiles.get(usize::from(id))?.as_deref()
+    }
+
+    /// Installs (or with `None` removes) the text overrides. Build them with
+    /// [`TextOverlay::build`] from this bank.
+    pub fn set_text(&mut self, overlay: Option<TextOverlay>) {
+        self.text = overlay;
+    }
+
+    pub fn text(&self) -> Option<&TextOverlay> {
+        self.text.as_ref()
+    }
+
+    /// Palette indices of a resolved `(col, row, w, h)` tile rectangle of map `tbl`,
+    /// `w·16 × h·16` row-major; empty cells and missing tiles are 0.
+    pub(crate) fn render_rect(&self, tbl: u16, (c0, r0, w, h): (u8, u8, u8, u8)) -> Vec<u8> {
+        let (pw, ph) = (usize::from(w) * TILE_SIZE, usize::from(h) * TILE_SIZE);
+        let mut out = vec![0u8; pw * ph];
+        let Some(map) = self.tilemaps.get(usize::from(tbl)) else {
+            return out;
+        };
+        let mw = usize::from(map.width);
+        for ty in 0..usize::from(h) {
+            for tx in 0..usize::from(w) {
+                let (mc, mr) = (usize::from(c0) + tx, usize::from(r0) + ty);
+                if mc >= mw || mr >= usize::from(map.height) {
+                    continue;
+                }
+                let id = map.tiles[mr * mw + mc];
+                let Some(tile) = (id != 0).then(|| self.tile(id)).flatten() else {
+                    continue;
+                };
+                for py in 0..TILE_SIZE {
+                    let dst = (ty * TILE_SIZE + py) * pw + tx * TILE_SIZE;
+                    out[dst..dst + TILE_SIZE]
+                        .copy_from_slice(&tile[py * TILE_SIZE..(py + 1) * TILE_SIZE]);
+                }
+            }
+        }
+        out
     }
 }
 
@@ -167,6 +214,18 @@ impl SpriteLayer {
         let w = if slot.w <= 0 { mw } else { i32::from(slot.w) };
         let h = if slot.h <= 0 { mh } else { i32::from(slot.h) };
         let ts = TILE_SIZE as i32;
+        // Translated text replacing (part of) this sprite, if an overlay is installed.
+        let text = bank.text.as_ref().and_then(|t| {
+            let rect = SubRect {
+                col: slot.col,
+                row: slot.row,
+                w: slot.w,
+                h: slot.h,
+            };
+            let tbl = u16::try_from(slot.tilemap).ok()?;
+            t.get(&(tbl, rect.resolve(map.width, map.height)?))
+        });
+        let (sx0, sy0) = (i32::from(slot.x) + sx, i32::from(slot.y) + sy);
         for ty in 0..h {
             for tx in 0..w {
                 let (mc, mr) = (c0 + tx, r0 + ty);
@@ -177,8 +236,8 @@ impl SpriteLayer {
                 let Some(tile) = (id != 0).then(|| bank.tile(id)).flatten() else {
                     continue;
                 };
-                let ox = i32::from(slot.x) + sx + tx * ts;
-                let oy = i32::from(slot.y) + sy + ty * ts;
+                let ox = sx0 + tx * ts;
+                let oy = sy0 + ty * ts;
                 for py in 0..ts {
                     let y = oy + py;
                     if !(0..CANVAS_H as i32).contains(&y) {
@@ -190,11 +249,18 @@ impl SpriteLayer {
                         if index == 0 || !(0..CANVAS_W as i32).contains(&x) {
                             continue;
                         }
+                        let (lx, ly) = ((tx * ts + px) as usize, (ty * ts + py) as usize);
+                        if text.is_some_and(|parts| parts.iter().any(|p| p.contains(lx, ly))) {
+                            continue;
+                        }
                         let o = (y as usize * CANVAS_W + x as usize) * 4;
                         canvas[o..o + 4].copy_from_slice(&palette.rgba(index));
                     }
                 }
             }
+        }
+        if let Some(parts) = text {
+            draw_parts(parts, palette, sx0, sy0, canvas, CANVAS_W, CANVAS_H);
         }
     }
 }
@@ -254,6 +320,7 @@ mod tests {
                 height: 1,
                 tiles: vec![1],
             }],
+            text: None,
         }
     }
 
@@ -301,6 +368,60 @@ mod tests {
         assert!(c.iter().all(|&v| v == 0));
         l.reset_transient();
         assert_eq!(l.slots[0], Slot::CLEAR);
+    }
+
+    #[test]
+    fn text_overlay_replaces_art_inside_the_slot_only() {
+        use crate::text::{Style, SubRect, TextOverlay, TextOverride, TextPart, tests::BoxGlyphs};
+        // A 4×2-tile map: index 1 (green) everywhere, index 2 (red) in the first tile, so
+        // green is dominant and red is the outline colour.
+        let mut b = bank(1);
+        b.tiles.push(Some(Box::new([2; TILE_PIXELS])));
+        b.tilemaps[0] = Tilemap {
+            width: 4,
+            height: 2,
+            tiles: vec![2, 1, 1, 1, 1, 1, 1, 1],
+        };
+        let o = TextOverride {
+            parts: vec![TextPart {
+                // The left half only; the right half keeps the art.
+                region: Some([0, 0, 32, 32]),
+                text: "Hi".into(),
+                style: Style::Plain,
+                outline: true,
+                ..TextPart::default()
+            }],
+        };
+        let overlay = TextOverlay::build(&b, [(0, SubRect::WHOLE, &o)], &BoxGlyphs);
+        assert_eq!(overlay.len(), 1);
+        b.set_text(Some(overlay));
+        let mut l = SpriteLayer::default();
+        l.palettes[0] = Some(palette());
+        l.slots[0] = Slot::new(0, 100, 100, 0, 0, true);
+        let mut c = vec![0; CANVAS_W * CANVAS_H * 4];
+        l.compose(&b, &mut c);
+        // Outside the slot's 64×32 rectangle nothing is drawn.
+        for y in 0..CANVAS_H {
+            for x in 0..CANVAS_W {
+                if !(100..164).contains(&x) || !(100..132).contains(&y) {
+                    assert_eq!(pixel(&c, x, y)[3], 0, "({x}, {y})");
+                }
+            }
+        }
+        // The right half is untouched art (green); the left half lost its red tile corner.
+        assert_eq!(pixel(&c, 150, 110), [0, 255, 0, 255]);
+        assert_eq!(pixel(&c, 100, 100), [0, 0, 0, 0]);
+        // The text was drawn in the dominant colour somewhere in the left half.
+        let green = (100..132)
+            .flat_map(|y| (100..132).map(move |x| (x, y)))
+            .filter(|&(x, y)| pixel(&c, x, y) == [0, 255, 0, 255])
+            .count();
+        assert!(green > 0);
+        // A slot showing a different sub-rect of the same map keeps the art.
+        l.slots[0].col = 2;
+        l.slots[0].w = 2;
+        l.compose(&b, &mut c);
+        assert_eq!(pixel(&c, 100, 100), [0, 255, 0, 255]);
     }
 
     #[test]

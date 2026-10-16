@@ -8,6 +8,7 @@ pub mod gpu;
 pub mod mip;
 pub mod overlay;
 pub mod sprites;
+pub mod text;
 pub mod world;
 
 pub use camera::{Camera, Projection};
