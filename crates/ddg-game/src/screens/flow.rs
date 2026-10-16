@@ -421,6 +421,11 @@ impl StageFlow {
         };
     }
 
+    /// The slots the last [`StageFlow::draw`] wrote.
+    pub fn drawn(&self) -> &[usize] {
+        &self.drawn
+    }
+
     /// Clears the slots the last [`StageFlow::draw`] wrote (screens end or change slots).
     /// Call before the HUD writes its slots.
     pub fn clear_drawn(&mut self, layer: &mut SpriteLayer) {

@@ -33,7 +33,7 @@ use ddg_formats::scene::{DRIVING_FOV_Y_DEG, TrackPos};
 use ddg_formats::stages::StageTables;
 use ddg_render::FrameGeometry;
 use ddg_render::camera::ORIGINAL_STRETCH;
-use ddg_render::sprites::{Slot, SpriteBank, SpriteLayer};
+use ddg_render::sprites::{Anchor, Slot, SpriteBank, SpriteLayer};
 use std::time::{Duration, Instant};
 
 mod bonus;
@@ -239,6 +239,12 @@ impl Play {
         layer.fans.clear();
         layer.widgets.clear();
         layer.scale = opts.locale.ui_scale;
+        layer.wide = 0;
+        layer.centre_all();
+        if wide_hud(&opts) {
+            let (w, h) = gpu.as_ref().map_or(opts.size, Gpu::size);
+            layer.fit_window(w, h);
+        }
         let canvas = layer.new_canvas();
         Hud::install_palettes(&exe, &mut layer)?;
         // The horn hint names the B button with a joystick in modes 5–6 (`FUN_00433270`).
@@ -254,10 +260,16 @@ impl Play {
             1 => DistanceReadout::Centimetres,
             _ => DistanceReadout::Metres,
         };
-        if opts.locale.active() && bank.has_label_font() {
-            let names = crate::locale::station_plate_names(&opts.locale)?;
+        // Enhancement `wide_plates`: horizontal plates from `ui_scale` 2, with romaji when a
+        // translation is drawn; `ui_scale` 1 keeps the original vertical plates.
+        if opts.locale.ui_scale >= 2 {
+            let names = if bank.has_label_font() {
+                crate::locale::station_plate_names(&opts.locale)?
+            } else {
+                Default::default()
+            };
             cab.hud
-                .use_english_plates(&bank, &names, opts.locale.ui_scale);
+                .use_horizontal_plates(&bank, &names, opts.locale.ui_scale);
         }
         cab.create(&mut layer);
         let screen_tables = ScreenTables::read(&exe)?;
@@ -338,6 +350,8 @@ impl Play {
             s.end_stage();
         }
         let mut layer = self.layer;
+        layer.wide = 0;
+        layer.centre_all();
         layer.slots.fill(Slot::CLEAR);
         layer.fans.clear();
         layer.widgets.clear();
@@ -436,7 +450,7 @@ impl Play {
                         None => crate::shot::clear_black(device, queue, view),
                     }
                 },
-                Some(&self.canvas),
+                Some((&self.canvas, self.layer.canvas_size())),
                 out,
             );
         }
@@ -457,7 +471,7 @@ impl Play {
                 r.band_top = HUD_BAND_TOP;
                 r.effects = effects;
             },
-            Some(&self.canvas),
+            Some((&self.canvas, self.layer.canvas_size())),
             out,
         )
     }
@@ -488,6 +502,12 @@ impl Play {
             _ => {}
         }
     }
+}
+
+/// Enhancement `wide_hud` (docs/re/hud.md §6.4): from `ui_scale` 2 the HUD canvas spans the
+/// window and the driving HUD's groups keep to its edges. `ui_scale` 1 is the original 4:3.
+fn wide_hud(opts: &PlayOptions) -> bool {
+    opts.locale.ui_scale >= 2
 }
 
 fn visibility(opts: &PlayOptions) -> Visibility {
@@ -652,6 +672,8 @@ pub struct Play {
 impl Play {
     /// One 33 ms tick: a frozen pause tick, or a simulation tick with the stage flow.
     fn tick(&mut self) -> Result<()> {
+        // The driving HUD anchors its slots again in `update_hud`; everything else is centred.
+        self.layer.centre_all();
         if self.demo.is_some() {
             return self.demo_tick();
         }
@@ -992,6 +1014,7 @@ impl Play {
     fn draw_frozen(&mut self) {
         self.flow.clear_drawn(&mut self.layer);
         self.flow.draw(&mut self.layer);
+        self.centre_screen();
         self.layer.compose(&self.bank, &mut self.canvas);
         self.canvas_dirty = true;
     }
@@ -1015,11 +1038,34 @@ impl Play {
         self.cab
             .tick(&snap, &input, &self.last_events, &mut self.layer);
         self.flow.draw(&mut self.layer);
+        self.centre_screen();
         self.layer.compose(&self.bank, &mut self.canvas);
         self.canvas_dirty = true;
     }
 
+    /// The stage flow's screens (pause, result, continue) stay a centred 4:3 over the HUD.
+    fn centre_screen(&mut self) {
+        for &i in self.flow.drawn() {
+            if let Some(a) = self.layer.anchors.get_mut(i) {
+                *a = Anchor::Centre;
+            }
+        }
+    }
+
+    /// Enhancement `wide_hud`: the canvas follows the window's shape; a new size recomposes.
+    fn fit_canvas(&mut self) {
+        let Some((w, h)) = self.gpu.as_ref().map(Gpu::size) else {
+            return;
+        };
+        if wide_hud(&self.opts) && self.layer.fit_window(w, h) {
+            self.canvas = self.layer.new_canvas();
+            self.layer.compose(&self.bank, &mut self.canvas);
+            self.canvas_dirty = true;
+        }
+    }
+
     pub fn redraw(&mut self) -> Result<()> {
+        self.fit_canvas();
         let now = Instant::now();
         let dt = now - self.last_frame;
         self.last_frame = now;
@@ -1110,14 +1156,16 @@ impl Play {
                 .renderer
                 .render(&gpu.device, &gpu.queue, &view, (width, height), &camera),
         }
-        if std::mem::take(&mut self.canvas_dirty) {
+        let size = self.layer.canvas_size();
+        let resized = gpu.overlay.resize(&gpu.device, size);
+        if std::mem::take(&mut self.canvas_dirty) || resized {
             gpu.overlay.upload(&gpu.queue, &self.canvas);
         }
         gpu.overlay.render(
             &gpu.device,
             &gpu.queue,
             &view,
-            ddg_render::overlay::canvas_rect(width, height),
+            ddg_render::overlay::canvas_rect_for(width, height, size),
         );
         gpu.window.pre_present_notify();
         gpu.queue.present(frame);

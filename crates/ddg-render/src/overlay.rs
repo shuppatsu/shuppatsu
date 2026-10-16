@@ -1,5 +1,10 @@
 //! Draws the 640×480 sprite canvas ([`crate::sprites`]) over the 3D frame: one texture,
 //! nearest sampling (the original blits unscaled native pixels), index-0 pixels discarded.
+//!
+//! The canvas is always mapped to the window with one scale factor for x and y
+//! ([`canvas_rect_for`]), so art keeps square pixels. A wider window gets a wider canvas
+//! (`SpriteLayer::fit_window`, enhancement `wide_hud`), never a stretched one. The original's
+//! horizontal stretch of the 3D projection does not apply here.
 
 use crate::sprites::{CANVAS_H, CANVAS_W};
 
@@ -34,6 +39,8 @@ fn fs(in: Out) -> @location(0) vec4<f32> {
 
 pub struct Overlay {
     pipeline: wgpu::RenderPipeline,
+    layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
     size: (u32, u32),
@@ -79,42 +86,13 @@ impl Overlay {
                 },
             ],
         });
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("overlay canvas"),
-            size: wgpu::Extent3d {
-                width: size.0,
-                height: size.1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            // sRGB, so the palette colours reach the sRGB target unchanged.
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("overlay sampler"),
             mag_filter: wgpu::FilterMode::Nearest,
             min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("overlay"),
-            layout: &layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&sampler),
-                },
-            ],
-        });
+        let (texture, bind_group) = Self::canvas_texture(device, &layout, &sampler, size);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("overlay"),
             bind_group_layouts: &[Some(&layout)],
@@ -146,10 +124,69 @@ impl Overlay {
         });
         Self {
             pipeline,
+            layout,
+            sampler,
             texture,
             bind_group,
             size,
         }
+    }
+
+    fn canvas_texture(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        sampler: &wgpu::Sampler,
+        size: (u32, u32),
+    ) -> (wgpu::Texture, wgpu::BindGroup) {
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("overlay canvas"),
+            size: wgpu::Extent3d {
+                width: size.0,
+                height: size.1,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            // sRGB, so the palette colours reach the sRGB target unchanged.
+            format: wgpu::TextureFormat::Rgba8UnormSrgb,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("overlay"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        });
+        (texture, bind_group)
+    }
+
+    /// The canvas size in pixels.
+    pub fn size(&self) -> (u32, u32) {
+        self.size
+    }
+
+    /// Makes the canvas texture `width × height` (a wide canvas follows the window's shape).
+    /// Returns true when it changed (the new texture is empty: upload again).
+    pub fn resize(&mut self, device: &wgpu::Device, (width, height): (usize, usize)) -> bool {
+        let size = (width.max(1) as u32, height.max(1) as u32);
+        if size == self.size {
+            return false;
+        }
+        (self.texture, self.bind_group) =
+            Self::canvas_texture(device, &self.layout, &self.sampler, size);
+        self.size = size;
+        true
     }
 
     /// Uploads a composed canvas of this overlay's size (RGBA8).
@@ -215,8 +252,15 @@ impl Overlay {
 /// Where the 640×480 canvas goes in a `width × height` window: full height, centred, keeping
 /// the original 4:3 shape (x, y, w, h in pixels).
 pub fn canvas_rect(width: u32, height: u32) -> [f32; 4] {
+    canvas_rect_for(width, height, (CANVAS_W, CANVAS_H))
+}
+
+/// Where a canvas of `canvas` pixels goes in a `width × height` window: full height, centred,
+/// one scale factor for both axes (x, y, w, h in pixels). A canvas widened to the window's
+/// shape covers the whole window.
+pub fn canvas_rect_for(width: u32, height: u32, canvas: (usize, usize)) -> [f32; 4] {
     let h = height as f32;
-    let w = h * CANVAS_W as f32 / CANVAS_H as f32;
+    let w = h * canvas.0 as f32 / canvas.1.max(1) as f32;
     [(width as f32 - w) / 2.0, 0.0, w, h]
 }
 
@@ -229,5 +273,45 @@ mod tests {
         let r = canvas_rect(2560, 1600);
         assert!((r[0] - 213.333).abs() < 1e-3 && (r[2] - 2133.333).abs() < 1e-3);
         assert_eq!(canvas_rect(640, 480), [0.0, 0.0, 640.0, 480.0]);
+    }
+
+    /// Enhancement `wide_hud`: at 4:3, 16:10 and 21:9 the widened canvas covers the window
+    /// (within a pixel) and a 16×16 sprite's footprint in window pixels is square.
+    #[test]
+    fn wide_canvas_keeps_square_pixels() {
+        use crate::sprites::SpriteLayer;
+        for (win, scale) in [
+            ((1280, 960), 2),
+            ((1280, 800), 2),
+            ((2560, 1600), 2),
+            ((2560, 1080), 2),
+            ((3440, 1440), 3),
+            ((1920, 1080), 1),
+        ] {
+            let mut l = SpriteLayer {
+                scale,
+                ..SpriteLayer::default()
+            };
+            l.fit_window(win.0, win.1);
+            let (cw, ch) = l.canvas_size();
+            let r = canvas_rect_for(win.0, win.1, (cw, ch));
+            let (kx, ky) = (r[2] / cw as f32, r[3] / ch as f32);
+            assert!((kx - ky).abs() < 1e-6, "{win:?}: {kx} vs {ky}");
+            // A 16×16 tile of art is 16·scale canvas pixels square.
+            let side = (16 * scale) as f32;
+            assert!(((side * kx) - (side * ky)).abs() < 1e-3, "{win:?}");
+            assert!(
+                r[0].abs() <= kx,
+                "{win:?}: canvas does not cover the window: {r:?}"
+            );
+            assert!((r[2] - win.0 as f32).abs() <= 2.0 * kx, "{win:?}: {r:?}");
+        }
+        // 4:3 keeps the original canvas.
+        let mut l = SpriteLayer {
+            scale: 2,
+            ..SpriteLayer::default()
+        };
+        l.fit_window(1280, 960);
+        assert_eq!(l.canvas_size(), (1280, 960));
     }
 }

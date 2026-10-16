@@ -10,7 +10,7 @@ use ddg_formats::cab_hud::{CabTables, Place, VehicleRow};
 use ddg_formats::cg;
 use ddg_formats::exe::Exe;
 use ddg_formats::hud::{HudTables, digits_blank_leading};
-use ddg_render::sprites::{Slot, SpriteBank, SpriteLayer};
+use ddg_render::sprites::{Anchor, Slot, SpriteBank, SpriteLayer};
 use plates_en::EnglishPlates;
 use std::collections::HashMap;
 
@@ -38,6 +38,8 @@ const SLOT_LAMP: usize = 0x82;
 const SLOT_PLATE_FROM: usize = 0x83;
 const SLOT_PLATE_ARROW: usize = 0x84;
 const SLOT_PLATE_NEXT: usize = 0x85;
+const SLOT_GRADE_SIGN: usize = 0x5e;
+const SLOT_SIGNAL: usize = 0x60;
 /// Distance digits, most significant first (hud.md §3.4).
 const SLOTS_DIST_CM: [usize; 7] = [0x7c, 0x7d, 0x20, 0x21, 0x22, 0x23, 0x24];
 
@@ -180,8 +182,46 @@ pub struct Hud {
     /// after it (`0x829d14`).
     overlay_waiting: bool,
     lamp_ticks: i32,
-    /// Enhancement `en_station_plates` ([`plates_en`]); `None` draws the original plates.
+    /// Enhancement `wide_plates` ([`plates_en`]); `None` draws the original plates.
     english_plates: Option<EnglishPlates>,
+    /// The vehicle picture's place in the layout table (moved left for wider plates).
+    picture_pos: (i16, i16),
+}
+
+/// Enhancement `wide_hud` (docs/re/hud.md §6.4): the edge each driving-HUD slot keeps to on a
+/// wide canvas. Left: handles in one-handle mode, clocks, speedometer, cab-signal lamp, ATC
+/// panel and high-speed readout. Right: vehicle picture, station plates, brake in two-handle
+/// mode, signal, signs and the distance panel. Everything else (remaining time, vehicle name,
+/// captions, banners, messages, navigator, popups) stays centred. On a 4:3 canvas every
+/// anchor is the same, so this changes nothing there.
+pub fn anchor_slots(layer: &mut SpriteLayer) {
+    const LEFT: [std::ops::RangeInclusive<usize>; 3] = [
+        SLOT_CLOCK_LABEL..=SLOT_SCHED + 5,
+        SLOT_HIGH_SPEED..=SLOT_ATC_BAR,
+        SLOT_MASCON..=SLOT_LAMP,
+    ];
+    const RIGHT: [std::ops::RangeInclusive<usize>; 4] = [
+        SLOT_VEHICLE_PICTURE..=SLOT_VEHICLE_PICTURE,
+        SLOT_PLATE_FROM..=SLOT_PLATE_NEXT,
+        SLOT_DIST_HEADER..=SLOT_DIST_HEADER,
+        SLOT_GRADE_SIGN..=SLOT_SIGNAL,
+    ];
+    for (ranges, anchor) in [(&LEFT[..], Anchor::Left), (&RIGHT[..], Anchor::Right)] {
+        for r in ranges {
+            for i in r.clone() {
+                layer.anchors[i] = anchor;
+            }
+        }
+    }
+    for i in SLOTS_DIST_CM {
+        layer.anchors[i] = Anchor::Right;
+    }
+    // The brake gauge sits right in two-handle mode and left in one-handle mode.
+    layer.anchors[SLOT_BRAKE] = if layer.slots[SLOT_BRAKE].x < 320 {
+        Anchor::Left
+    } else {
+        Anchor::Right
+    };
 }
 
 impl Hud {
@@ -196,7 +236,14 @@ impl Hud {
     }
 
     fn with_tables(tables: HudTables, cab: &CabTables, remaining_label: i16) -> Self {
+        let picture_pos = tables
+            .layout
+            .iter()
+            .map(|r| r.at_640())
+            .find(|p| usize::try_from(p.slot) == Ok(SLOT_VEHICLE_PICTURE))
+            .map_or((411, 16), |p| (p.x, p.y));
         Self {
+            picture_pos,
             tables,
             vehicles: cab.vehicles.to_vec(),
             dial_pos: cab.dial_pos,
@@ -215,11 +262,11 @@ impl Hud {
         }
     }
 
-    /// Switches the station plates to the horizontal layout for a translation ([`plates_en`]),
-    /// with `romaji` names by plate tilemap id. Call before [`Hud::create`]. Returns false
-    /// (and keeps the original plates) when the art has no usable plates. Names whose kanji
-    /// will be clipped at `ui_scale` are listed on stderr.
-    pub fn use_english_plates(
+    /// Switches the station plates to the horizontal layout ([`plates_en`], `ui_scale` 2 and
+    /// up), with `romaji` names by plate tilemap id (empty: kanji only). Call before
+    /// [`Hud::create`]. Returns false (and keeps the original plates) when the art has no
+    /// usable plates. Names whose kanji will be clipped at `ui_scale` are listed on stderr.
+    pub fn use_horizontal_plates(
         &mut self,
         bank: &SpriteBank,
         romaji: &HashMap<u16, String>,
@@ -338,7 +385,8 @@ impl Hud {
             let shown = |slot: usize| Some(layer.slots[slot].tilemap).filter(|&t| t >= 0);
             let (from, next) = (shown(SLOT_PLATE_FROM), shown(SLOT_PLATE_NEXT));
             let l = layer.slots[SLOT_PLATE_ARROW].layer;
-            e.draw(layer, l, from, next);
+            let extra = plates_en::extra_width(layer);
+            layer.anchored(Anchor::Right, |layer| e.draw(layer, l, from, next, extra));
         }
     }
 
@@ -372,6 +420,12 @@ impl Hud {
         match s.vehicle {
             Some((name, picture)) => {
                 slots::image(layer, SLOT_VEHICLE_NAME, name);
+                if self.english_plates.is_some() {
+                    // Room for the wider plates on its right (the same group, hud.md §6.4).
+                    let (x, y) = self.picture_pos;
+                    let extra = plates_en::extra_width(layer) as i16;
+                    slots::move_to(layer, SLOT_VEHICLE_PICTURE, x - extra, y);
+                }
                 slots::image_palette(
                     layer,
                     SLOT_VEHICLE_PICTURE,
@@ -591,7 +645,8 @@ impl Hud {
             Speedometer::None => {}
             Speedometer::Analog => {
                 slots::set(layer, SLOT_SPEEDO, TBL_DIAL, self.dial_pos, PAL_4, 3);
-                layer.add_fan(&needle(f64::from(s.speed_kmh)), 0xff00_0000);
+                let points = needle(f64::from(s.speed_kmh));
+                layer.anchored(Anchor::Left, |l| l.add_fan(&points, 0xff00_0000));
             }
             Speedometer::Digital => {
                 self.segments(s.speed_kmh as i32, layer);
@@ -635,6 +690,48 @@ fn needle(kmh: f64) -> [[i32; 2]; 3] {
 mod tests {
     use super::*;
     use ddg_formats::cg::Palette;
+
+    #[test]
+    fn hud_groups_anchor_to_the_edges() {
+        let mut l = SpriteLayer::default();
+        l.slots[SLOT_BRAKE].x = BRAKE_POS.0;
+        anchor_slots(&mut l);
+        for s in [
+            SLOT_CLOCK,
+            SLOT_SCHED + 5,
+            SLOT_MASCON,
+            SLOT_SPEEDO,
+            SLOT_ATC_BAR,
+        ] {
+            assert_eq!(l.anchors[s], Anchor::Left, "{s:#x}");
+        }
+        for s in [
+            SLOT_PLATE_FROM,
+            SLOT_VEHICLE_PICTURE,
+            SLOT_SIGNAL,
+            0x7c,
+            0x24,
+            SLOT_BRAKE,
+        ] {
+            assert_eq!(l.anchors[s], Anchor::Right, "{s:#x}");
+        }
+        // Remaining time, vehicle name, captions, messages, navigator: centred.
+        for s in [
+            SLOT_REMAINING,
+            SLOT_VEHICLE_NAME,
+            0x28,
+            0x34,
+            0x36,
+            0x39,
+            0x61,
+        ] {
+            assert_eq!(l.anchors[s], Anchor::Centre, "{s:#x}");
+        }
+        // One-handle mode puts the brake gauge on the left.
+        l.slots[SLOT_BRAKE].x = 11;
+        anchor_slots(&mut l);
+        assert_eq!(l.anchors[SLOT_BRAKE], Anchor::Left);
+    }
 
     #[test]
     fn needle_sweeps_from_down_left_to_down_right() {

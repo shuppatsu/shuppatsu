@@ -766,6 +766,15 @@ impl App {
         matches!(self.screen, Screen::Quit)
     }
 
+    /// The front end's canvas: the centred 4:3 one at the UI scale (menus never widen).
+    fn canvas_size(&self) -> (usize, usize) {
+        let s = self.opts.locale.ui_scale.max(1);
+        (
+            ddg_render::sprites::CANVAS_W * s,
+            ddg_render::sprites::CANVAS_H * s,
+        )
+    }
+
     /// Headless: runs `ticks` app ticks and renders the frame.
     fn shot(mut self, ticks: u64, out: &std::path::Path) -> Result<()> {
         while self.ticks < ticks && !self.quitting() {
@@ -777,7 +786,11 @@ impl App {
         }
         match &self.screen {
             Screen::Play(p) => p.shot(out)?,
-            _ => crate::shot::render_to_ppm(None, self.opts.size, |_| {}, Some(&self.canvas), out)?,
+            _ => {
+                let size = self.canvas_size();
+                let hud = Some((self.canvas.as_slice(), size));
+                crate::shot::render_to_ppm(None, self.opts.size, |_| {}, hud, out)?
+            }
         }
         eprintln!("wrote {} at app tick {}", out.display(), self.ticks);
         Ok(())
@@ -799,7 +812,8 @@ impl App {
                 return Ok(());
             }
         }
-        let dirty = std::mem::take(&mut self.canvas_dirty);
+        let mut dirty = std::mem::take(&mut self.canvas_dirty);
+        let size = self.canvas_size();
         let Some(gpu) = self.res.as_mut().and_then(|r| r.gpu.as_mut()) else {
             return Ok(());
         };
@@ -811,6 +825,8 @@ impl App {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         crate::shot::clear_black(&gpu.device, &gpu.queue, &view);
+        // A run may have left the overlay at its wide size.
+        dirty |= gpu.overlay.resize(&gpu.device, size);
         if dirty {
             gpu.overlay.upload(&gpu.queue, &self.canvas);
         }
@@ -818,7 +834,7 @@ impl App {
             &gpu.device,
             &gpu.queue,
             &view,
-            ddg_render::overlay::canvas_rect(width, height),
+            ddg_render::overlay::canvas_rect_for(width, height, size),
         );
         gpu.window.pre_present_notify();
         gpu.queue.present(frame);

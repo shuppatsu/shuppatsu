@@ -3,7 +3,7 @@
 //! original blits them into its back buffer. The canvas is then drawn as one overlay texture.
 
 use crate::label::LabelFont;
-use crate::text::{SubRect, TextOverlay, draw_parts};
+use crate::text::{Align, SubRect, TextOverlay, draw_parts};
 use ddg_formats::cg::{CgFile, Palette, TILE_PIXELS, TILE_SIZE, Tilemap};
 
 /// The HUD design size: native pixels of resolution mode 1 (hud.md §1.1).
@@ -71,6 +71,20 @@ pub struct Fan {
     pub points: [[i32; 2]; 4],
     pub count: u8,
     pub argb: u32,
+    pub anchor: Anchor,
+}
+
+/// Which edge of a wide canvas an element keeps its distance to (enhancement `wide_hud`,
+/// docs/re/hud.md §6.4). The design is 640 original pixels wide; on a canvas
+/// [`SpriteLayer::wide`] canvas pixels wider, `Centre` elements are shifted by half the extra
+/// width (the 4:3 design stays centred), `Left` ones not at all and `Right` ones by all of it.
+/// Only positions change: sizes and pixel shapes never do.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Anchor {
+    #[default]
+    Centre,
+    Left,
+    Right,
 }
 
 /// A port-only 2D element (enhancements; the original has none). Widgets are rebuilt every
@@ -84,6 +98,7 @@ pub struct Widget {
     /// `[x, y, w, h]`; nothing is drawn outside it.
     pub rect: [f32; 4],
     pub kind: WidgetKind,
+    pub anchor: Anchor,
 }
 
 /// A colour: index `index` of palette slot `palette`.
@@ -108,14 +123,40 @@ pub enum WidgetKind {
         zoom: u8,
         palette: u8,
     },
-    /// Text in the rectangle at canvas resolution, uniformly scaled and centred, in the bank's
-    /// label font ([`SpriteBank::set_label_font`]): capitals `cap` original pixels high (made
-    /// smaller only when the text would not fit), or with `None` the largest size that fits.
-    Text {
-        text: String,
-        paint: Paint,
-        cap: Option<f32>,
-    },
+    /// Text in the rectangle at canvas resolution, uniformly scaled, in the bank's label font
+    /// ([`SpriteBank::set_label_font`]), styled by [`TextStyle`].
+    Text { text: String, style: TextStyle },
+}
+
+/// How a [`WidgetKind::Text`] is drawn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextStyle {
+    pub paint: Paint,
+    /// Capitals `cap` original pixels high (made smaller only when the text would not fit), or
+    /// with `None` the largest size that fits.
+    pub cap: Option<f32>,
+    /// A one-original-pixel outline under the text in this colour.
+    pub outline: Option<Paint>,
+    /// A box in this colour behind the text: the rectangle's full height, as wide as the
+    /// text plus [`BACKDROP_PAD`] on each side (for art drawn on a box, like the banners).
+    pub backdrop: Option<Paint>,
+    pub align: Align,
+}
+
+/// Horizontal padding of a [`TextStyle::backdrop`], original pixels.
+pub const BACKDROP_PAD: usize = 4;
+
+impl TextStyle {
+    /// Centred, no outline.
+    pub fn plain(paint: Paint, cap: Option<f32>) -> Self {
+        Self {
+            paint,
+            cap,
+            outline: None,
+            backdrop: None,
+            align: Align::Center,
+        }
+    }
 }
 
 /// Decoded tiles and tilemaps (`cg.rom`, `tbl.rom`).
@@ -217,6 +258,13 @@ pub struct SpriteLayer {
     /// Canvas pixels per original pixel. 1 is the original 640×480; 2 is the enhancement
     /// `ui_scale` (art doubled with nearest neighbour, translated text at full resolution).
     pub scale: usize,
+    /// Enhancement `wide_hud`: canvas pixels added to the width (0 = the original 4:3 canvas),
+    /// so the canvas has the window's shape ([`SpriteLayer::fit_window`]).
+    pub wide: usize,
+    /// Edge anchor of each slot on a wide canvas; all `Centre` keeps the 4:3 layout centred.
+    pub anchors: [Anchor; SLOT_COUNT],
+    /// Anchor given to widgets and fans as they are added ([`SpriteLayer::anchored`]).
+    pub pen: Anchor,
 }
 
 impl Default for SpriteLayer {
@@ -228,6 +276,9 @@ impl Default for SpriteLayer {
             widgets: Vec::new(),
             shake: (0, 0),
             scale: 1,
+            wide: 0,
+            anchors: [Anchor::Centre; SLOT_COUNT],
+            pen: Anchor::Centre,
         }
     }
 }
@@ -242,9 +293,53 @@ impl SpriteLayer {
         self.widgets.clear();
     }
 
-    /// Adds a [`Widget`].
+    /// Adds a [`Widget`], anchored as [`SpriteLayer::anchored`] says (else `Centre`).
     pub fn add_widget(&mut self, layer: u8, rect: [f32; 4], kind: WidgetKind) {
-        self.widgets.push(Widget { layer, rect, kind });
+        let anchor = self.pen;
+        self.widgets.push(Widget {
+            layer,
+            rect,
+            kind,
+            anchor,
+        });
+    }
+
+    /// Runs `f` with widgets and fans added by it anchored to `anchor`.
+    pub fn anchored(&mut self, anchor: Anchor, f: impl FnOnce(&mut Self)) {
+        let old = std::mem::replace(&mut self.pen, anchor);
+        f(self);
+        self.pen = old;
+    }
+
+    /// Every slot back to `Centre` (the 4:3 layout, centred on a wide canvas).
+    pub fn centre_all(&mut self) {
+        self.anchors = [Anchor::Centre; SLOT_COUNT];
+    }
+
+    /// Enhancement `wide_hud`: widens the canvas to a `width × height` window's shape (never
+    /// narrower than 4:3), keeping the height of 480 × [`SpriteLayer::scale`]. Returns whether
+    /// the canvas size changed.
+    pub fn fit_window(&mut self, width: u32, height: u32) -> bool {
+        let s = self.scale.max(1);
+        let ch = (CANVAS_H * s) as f64;
+        let cw = (ch * f64::from(width) / f64::from(height.max(1))).round() as usize;
+        let wide = cw.saturating_sub(CANVAS_W * s);
+        std::mem::replace(&mut self.wide, wide) != wide
+    }
+
+    /// The horizontal offset of an anchor, in canvas pixels.
+    pub fn anchor_shift(&self, anchor: Anchor) -> i32 {
+        match anchor {
+            Anchor::Left => 0,
+            Anchor::Centre => (self.wide / 2) as i32,
+            Anchor::Right => self.wide as i32,
+        }
+    }
+
+    /// The extra width of a wide canvas in original pixels, on each side of the centred 4:3
+    /// design: how far `Left` and `Right` elements move away from the centre.
+    pub fn side_room(&self) -> f32 {
+        (self.wide / 2) as f32 / self.scale.max(1) as f32
     }
 
     /// Adds `text` in `rect` (original pixels) in `paint`, capitals `cap` original pixels high
@@ -258,8 +353,13 @@ impl SpriteLayer {
         paint: Paint,
         cap: Option<f32>,
     ) {
+        self.add_styled_text(layer, rect, text, TextStyle::plain(paint, cap));
+    }
+
+    /// [`SpriteLayer::add_text`] with an outline or another alignment.
+    pub fn add_styled_text(&mut self, layer: u8, rect: [f32; 4], text: &str, style: TextStyle) {
         let text = text.to_owned();
-        self.add_widget(layer, rect, WidgetKind::Text { text, paint, cap });
+        self.add_widget(layer, rect, WidgetKind::Text { text, style });
     }
 
     /// Appends a fan; ignored once the list is full (16 fans).
@@ -274,6 +374,7 @@ impl SpriteLayer {
             points: p,
             count: n as u8,
             argb,
+            anchor: self.pen,
         });
     }
 
@@ -283,10 +384,11 @@ impl SpriteLayer {
         vec![0; w * h * 4]
     }
 
-    /// Canvas size in pixels for [`SpriteLayer::compose`]: 640×480 times [`SpriteLayer::scale`].
+    /// Canvas size in pixels for [`SpriteLayer::compose`]: 640×480 times
+    /// [`SpriteLayer::scale`], plus [`SpriteLayer::wide`] in width.
     pub fn canvas_size(&self) -> (usize, usize) {
         let s = self.scale.max(1);
-        (CANVAS_W * s, CANVAS_H * s)
+        (CANVAS_W * s + self.wide, CANVAS_H * s)
     }
 
     /// Draws the layer into `canvas` ([`SpriteLayer::canvas_size`] RGBA8, cleared to
@@ -302,19 +404,34 @@ impl SpriteLayer {
         };
         let (sx, sy) = (i32::from(self.shake.0), i32::from(self.shake.1));
         for layer in (0..LAYERS).rev() {
-            for slot in self.slots.iter().rev().filter(|s| s.layer == layer) {
-                self.blit(bank, slot, sx, sy, c, canvas);
+            for (i, slot) in self.slots.iter().enumerate().rev() {
+                if slot.layer == layer {
+                    let shift = self.anchor_shift(self.anchors[i]);
+                    self.blit(bank, slot, sx, sy, shift, c, canvas);
+                }
             }
             for w in self.widgets.iter().filter(|w| w.layer == layer) {
-                self.draw_widget(bank, w, sx, sy, c, canvas);
+                let shift = self.anchor_shift(w.anchor);
+                self.draw_widget(bank, w, sx, sy, shift, c, canvas);
             }
         }
         for fan in &self.fans {
-            fill_fan(fan, sx, sy, c, canvas);
+            fill_fan(fan, sx, sy, self.anchor_shift(fan.anchor), c, canvas);
         }
     }
 
-    fn blit(&self, bank: &SpriteBank, slot: &Slot, sx: i32, sy: i32, c: Canvas, canvas: &mut [u8]) {
+    /// Draws one slot; `shift` is its anchor's offset in canvas pixels.
+    #[allow(clippy::too_many_arguments)]
+    fn blit(
+        &self,
+        bank: &SpriteBank,
+        slot: &Slot,
+        sx: i32,
+        sy: i32,
+        shift: i32,
+        c: Canvas,
+        canvas: &mut [u8],
+    ) {
         let Ok(id) = usize::try_from(slot.tilemap) else {
             return;
         };
@@ -375,7 +492,7 @@ impl SpriteLayer {
                                 continue;
                             }
                             for dx in 0..s {
-                                let x = (ox + px) * s + dx;
+                                let x = (ox + px) * s + dx + shift;
                                 if !(0..c.w as i32).contains(&x) {
                                     continue;
                                 }
@@ -388,18 +505,20 @@ impl SpriteLayer {
             }
         }
         if let Some(parts) = text {
-            draw_parts(parts, palette, sx0 * s, sy0 * s, canvas, c.w, c.h);
+            draw_parts(parts, palette, sx0 * s + shift, sy0 * s, canvas, c.w, c.h);
         }
     }
 }
 
 impl SpriteLayer {
+    #[allow(clippy::too_many_arguments)]
     fn draw_widget(
         &self,
         bank: &SpriteBank,
         w: &Widget,
         sx: i32,
         sy: i32,
+        shift: i32,
         c: Canvas,
         canvas: &mut [u8],
     ) {
@@ -407,11 +526,13 @@ impl SpriteLayer {
         // The rectangle in canvas pixels, clipped to the canvas.
         let s = c.s as f32;
         let [x, y, rw, rh] = w.rect;
-        let to_px = |v: f32, shake: i32, max: usize| {
-            (((v + shake as f32) * s).round() as i64).clamp(0, max as i64) as usize
+        let to_px = |v: f32, shake: i32, offset: i32, max: usize| {
+            (((v + shake as f32) * s).round() as i64 + i64::from(offset)).clamp(0, max as i64)
+                as usize
         };
-        let (x0, x1) = (to_px(x, sx, c.w), to_px(x + rw, sx, c.w));
-        let (y0, y1) = (to_px(y, sy, c.h), to_px(y + rh, sy, c.h));
+        let (x0, x1) = (to_px(x, sx, shift, c.w), to_px(x + rw, sx, shift, c.w));
+        let (y0, y1) = (to_px(y, sy, 0, c.h), to_px(y + rh, sy, 0, c.h));
+        let shift = shift as f32;
         if x0 >= x1 || y0 >= y1 {
             return;
         }
@@ -436,7 +557,10 @@ impl SpriteLayer {
                     return;
                 };
                 let rgba = pal.rgba(p.index);
-                let (l, r) = ((x + sx as f32) * s, (x + rw + sx as f32) * s);
+                let (l, r) = (
+                    (x + sx as f32) * s + shift,
+                    (x + rw + sx as f32) * s + shift,
+                );
                 let (t, b) = ((y + sy as f32) * s, (y + rh + sy as f32) * s);
                 let tri = [[l, t], [r, t], [(l + r) / 2.0, b]];
                 fill_triangle(tri, rgba, c, canvas);
@@ -459,7 +583,8 @@ impl SpriteLayer {
                 let (sw, sh) = (sw.min(aw.saturating_sub(ax)), sh.min(ah.saturating_sub(ay)));
                 let z = usize::from((*zoom).max(1));
                 // Centred in the unclipped rectangle (in signed canvas pixels).
-                let cx = ((x + sx as f32 + rw / 2.0) * s).round() as i64 - (sw * z / 2) as i64;
+                let cx =
+                    ((x + sx as f32 + rw / 2.0) * s + shift).round() as i64 - (sw * z / 2) as i64;
                 let cy = ((y + sy as f32 + rh / 2.0) * s).round() as i64 - (sh * z / 2) as i64;
                 for py in y0..y1 {
                     let ly = py as i64 - cy;
@@ -479,12 +604,47 @@ impl SpriteLayer {
                     }
                 }
             }
-            WidgetKind::Text { text, paint, cap } => {
+            WidgetKind::Text { text, style } => {
+                let paint = style.paint;
                 let (Some(pal), Some(font)) = (palette(paint.palette), bank.labels.as_ref()) else {
                     return;
                 };
                 let (mw, mh) = (x1 - x0, y1 - y0);
-                let mask = font.mask(text, mw, mh, cap.map(|v| v * s));
+                let mask = font.mask(text, mw, mh, style.cap.map(|v| v * s), style.align);
+                let backdrop = style
+                    .backdrop
+                    .and_then(|b| Some(palette(b.palette)?.rgba(b.index)));
+                let inked = (0..mw).filter(|&px| (0..mh).any(|py| mask[py * mw + px] > 0));
+                if let (Some(b), Some(first), Some(last)) =
+                    (backdrop, inked.clone().min(), inked.max())
+                {
+                    let pad = BACKDROP_PAD * c.s;
+                    let (bx0, bx1) = (first.saturating_sub(pad), (last + 1 + pad).min(mw));
+                    for py in 0..mh {
+                        for px in bx0..bx1 {
+                            put(canvas, x0 + px, y0 + py, b);
+                        }
+                    }
+                }
+                let outline = style
+                    .outline
+                    .and_then(|o| Some(palette(o.palette)?.rgba(o.index)));
+                if let Some(o) = outline {
+                    // One original pixel around the solid part of the text, under it.
+                    let r = c.s as isize;
+                    let solid = |px: isize, py: isize| {
+                        (0..mw as isize).contains(&px)
+                            && (0..mh as isize).contains(&py)
+                            && mask[py as usize * mw + px as usize] >= 128
+                    };
+                    for py in 0..mh as isize {
+                        for px in 0..mw as isize {
+                            if (-r..=r).any(|dy| (-r..=r).any(|dx| solid(px + dx, py + dy))) {
+                                put(canvas, x0 + px as usize, y0 + py as usize, o);
+                            }
+                        }
+                    }
+                }
                 let fg = pal.rgba(paint.index);
                 for py in 0..mh {
                     for px in 0..mw {
@@ -519,12 +679,18 @@ impl SpriteLayer {
 
 /// Fills a convex fan, sampling pixel centres (D3D's top-left fill convention is approximated
 /// by the half-pixel centre test). Opaque; the original's alpha byte is not used (guess).
-fn fill_fan(fan: &Fan, sx: i32, sy: i32, c: Canvas, canvas: &mut [u8]) {
+fn fill_fan(fan: &Fan, sx: i32, sy: i32, shift: i32, c: Canvas, canvas: &mut [u8]) {
     let n = usize::from(fan.count);
     let s = c.s as f32;
+    // Uniform in x and y: the anchor only translates.
     let pts: Vec<[f32; 2]> = fan.points[..n]
         .iter()
-        .map(|p| [(p[0] + sx) as f32 * s, (p[1] + sy) as f32 * s])
+        .map(|p| {
+            [
+                (p[0] + sx) as f32 * s + shift as f32,
+                (p[1] + sy) as f32 * s,
+            ]
+        })
         .collect();
     let [_, r, g, b] = fan.argb.to_be_bytes();
     for i in 1..n - 1 {
@@ -796,6 +962,105 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn anchors_move_elements_to_the_edges_of_a_wide_canvas() {
+        let b = bank(1);
+        let mut l = SpriteLayer {
+            scale: 2,
+            ..SpriteLayer::default()
+        };
+        l.palettes[0] = Some(palette());
+        // 16:10 at 2×: 1536 × 960, 256 canvas pixels wider than 4:3.
+        assert!(l.fit_window(1280, 800));
+        assert!(!l.fit_window(2560, 1600));
+        assert_eq!((l.wide, l.canvas_size()), (256, (1536, 960)));
+        for (i, x) in [(0, 0), (1, 300), (2, 600)] {
+            l.slots[i] = Slot::new(0, x, 10, 0, 0, true);
+        }
+        l.anchors[0] = Anchor::Left;
+        l.anchors[2] = Anchor::Right;
+        l.anchored(Anchor::Right, |l| {
+            l.add_fan(
+                &[[620, 100], [630, 100], [630, 110], [620, 110]],
+                0xff_12_34_56,
+            )
+        });
+        l.add_fan(&[[0, 100], [10, 100], [10, 110], [0, 110]], 0xff_12_34_56);
+        let (w, h) = l.canvas_size();
+        let mut c = vec![0; w * h * 4];
+        l.compose(&b, &mut c);
+        let at = |c: &[u8], x: usize, y: usize| -> [u8; 4] {
+            c[(y * w + x) * 4..][..4].try_into().unwrap()
+        };
+        let px = |x: usize, y: usize| at(&c, x, y);
+        let green = [0, 255, 0, 255];
+        // Left: at the canvas edge; centre: +128; right: +256. Each tile stays 32 × 32.
+        assert_eq!(px(0, 20), green);
+        assert_eq!(px(31, 51), green);
+        assert_eq!(px(32, 20), [0; 4]);
+        assert_eq!(px(600 + 128, 20), green);
+        assert_eq!(px(600 + 127, 20), [0; 4]);
+        assert_eq!(px(1200 + 256, 20), green);
+        assert_eq!(px(1200 + 256 + 31, 51), green);
+        // Fans: the right one keeps its distance to the right edge; the other is centred.
+        assert_eq!(px(1240 + 256, 210), [0x12, 0x34, 0x56, 255]);
+        assert_eq!(px(128, 210), [0x12, 0x34, 0x56, 255]);
+        assert_eq!(px(0, 210), [0; 4]);
+        // Back to centred: the 4:3 layout in the middle.
+        l.centre_all();
+        let mut c2 = vec![0; w * h * 4];
+        l.compose(&b, &mut c2);
+        assert_eq!(at(&c2, 128, 20), green);
+        assert_eq!(at(&c2, 0, 20), [0; 4]);
+    }
+
+    #[test]
+    fn text_outline_and_backdrop() {
+        use crate::text::tests::BoxGlyphs;
+        let mut b = bank(1);
+        b.set_label_font(Some(LabelFont::new(Box::new(BoxGlyphs))));
+        let mut l = SpriteLayer::default();
+        l.palettes[0] = Some(palette());
+        let (green, red) = (
+            Paint {
+                palette: 0,
+                index: 1,
+            },
+            Paint {
+                palette: 0,
+                index: 2,
+            },
+        );
+        let style = TextStyle {
+            outline: Some(red),
+            align: Align::Left,
+            ..TextStyle::plain(green, Some(6.0))
+        };
+        l.add_styled_text(0, [100.0, 100.0, 200.0, 20.0], "Hi", style);
+        let boxed = TextStyle {
+            backdrop: Some(red),
+            ..TextStyle::plain(green, Some(6.0))
+        };
+        l.add_styled_text(0, [100.0, 200.0, 200.0, 20.0], "Hi", boxed);
+        let mut c = vec![0; CANVAS_W * CANVAS_H * 4];
+        l.compose(&b, &mut c);
+        let count = |y0: usize, rgba: [u8; 4]| {
+            (100..300)
+                .flat_map(|x| (y0..y0 + 20).map(move |y| (x, y)))
+                .filter(|&(x, y)| pixel(&c, x, y) == rgba)
+                .count()
+        };
+        let (g, r) = ([0, 255, 0, 255], [255, 0, 0, 255]);
+        assert!(count(100, g) > 0 && count(100, r) > 0);
+        // Left-aligned: nothing in the right half.
+        assert!((200..300).all(|x| (100..120).all(|y| pixel(&c, x, y)[3] == 0)));
+        // The box spans the full height around the centred text, not the whole rectangle.
+        assert_eq!(pixel(&c, 200, 200), r);
+        assert_eq!(pixel(&c, 200, 219), r);
+        assert_eq!(pixel(&c, 101, 210)[3], 0);
+        assert!(count(200, g) > 0);
     }
 
     #[test]

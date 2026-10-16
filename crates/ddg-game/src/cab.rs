@@ -418,6 +418,7 @@ impl CabHud {
                 self.time_up(s, layer);
             }
         }
+        crate::hud::anchor_slots(layer);
         self.prev = Some(s.clone());
     }
 

@@ -651,7 +651,8 @@ fn main() -> Result<()> {
                     r.band_top = HUD_BAND_TOP;
                 }
             },
-            hud.as_ref().map(|h| h.canvas.as_slice()),
+            hud.as_ref()
+                .map(|h| (h.canvas.as_slice(), h.layer.canvas_size())),
             &out,
         )?;
         eprintln!("wrote {}", out.display());

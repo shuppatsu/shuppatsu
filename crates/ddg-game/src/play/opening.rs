@@ -508,6 +508,7 @@ fn bar(x0: i32, y0: i32, x1: i32, y1: i32) -> Fan {
         points: [[x0, y0], [x1, y0], [x1, y1], [x0, y1]],
         count: 4,
         argb: 0xff00_0000,
+        anchor: Default::default(),
     }
 }
 
@@ -618,7 +619,7 @@ impl Play {
                 r.set_geometry(device, queue, &frame);
                 r.render(device, queue, view, (w, h), &camera);
             },
-            Some(&self.canvas),
+            Some((&self.canvas, self.layer.canvas_size())),
             out,
         )
     }

@@ -2,8 +2,10 @@
 
 use anyhow::{Context, Result};
 
-const CANVAS_PIXELS: usize = ddg_render::sprites::CANVAS_W * ddg_render::sprites::CANVAS_H;
 use ddg_render::Renderer;
+
+/// A composed sprite canvas (RGBA8) and its size in pixels.
+pub type Canvas<'a> = (&'a [u8], (usize, usize));
 
 /// Renders the scene at `pos` (`width`×`height`; black without a scene) with the canvas over
 /// it and writes a binary PPM (P6).
@@ -11,7 +13,7 @@ pub fn render_to_ppm(
     scene: Option<(&crate::scene::RouteScene, ddg_formats::scene::TrackPos)>,
     (width, height): (u32, u32),
     configure: impl FnOnce(&mut Renderer),
-    hud: Option<&[u8]>,
+    hud: Option<Canvas<'_>>,
     path: &std::path::Path,
 ) -> Result<()> {
     render_to_ppm_with(
@@ -45,7 +47,7 @@ pub fn render_to_ppm(
 pub fn render_to_ppm_with(
     (width, height): (u32, u32),
     draw: impl FnOnce(&wgpu::Device, &wgpu::Queue, &wgpu::TextureView, wgpu::TextureFormat),
-    hud: Option<&[u8]>,
+    hud: Option<Canvas<'_>>,
     path: &std::path::Path,
 ) -> Result<()> {
     let instance =
@@ -73,16 +75,15 @@ pub fn render_to_ppm_with(
     });
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
     draw(&device, &queue, &view, format);
-    if let Some(canvas) = hud {
-        // The canvas is 640×480 × the UI scale.
-        let scale = ((canvas.len() / (CANVAS_PIXELS * 4)) as f64).sqrt().round() as usize;
-        let overlay = ddg_render::overlay::Overlay::with_scale(&device, format, scale);
+    if let Some((canvas, size)) = hud {
+        let mut overlay = ddg_render::overlay::Overlay::new(&device, format);
+        overlay.resize(&device, size);
         overlay.upload(&queue, canvas);
         overlay.render(
             &device,
             &queue,
             &view,
-            ddg_render::overlay::canvas_rect(width, height),
+            ddg_render::overlay::canvas_rect_for(width, height, size),
         );
     }
 

@@ -81,7 +81,7 @@ impl SubRect {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub enum Align {
     Left,
     #[default]

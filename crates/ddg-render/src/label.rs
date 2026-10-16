@@ -10,8 +10,8 @@ use crate::text::{Align, GlyphSource, rasterise_sized};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// Cache key: text, mask size and cap height (bits of the f32) in canvas pixels.
-type Key = (String, usize, usize, Option<u32>);
+/// Cache key: text, mask size, cap height (bits of the f32) in canvas pixels and alignment.
+type Key = (String, usize, usize, Option<u32>, Align);
 
 /// A font for labels, with the coverage masks rendered so far (labels are redrawn every
 /// frame, so each distinct string and size is rasterised once).
@@ -30,15 +30,22 @@ impl LabelFont {
 
     /// `text` in a `w × h` coverage mask (row-major, 0..=255), uniformly scaled and centred:
     /// capitals `cap_px` high, or smaller if that does not fit; `None` = the largest size that
-    /// fits ([`rasterise_sized`]).
-    pub fn mask(&self, text: &str, w: usize, h: usize, cap_px: Option<f32>) -> Arc<[u8]> {
-        let key = (text.to_owned(), w, h, cap_px.map(f32::to_bits));
+    /// fits ([`rasterise_sized`]); `align` places it horizontally.
+    pub fn mask(
+        &self,
+        text: &str,
+        w: usize,
+        h: usize,
+        cap_px: Option<f32>,
+        align: Align,
+    ) -> Arc<[u8]> {
+        let key = (text.to_owned(), w, h, cap_px.map(f32::to_bits), align);
         let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
         cache
             .entry(key)
             .or_insert_with(|| {
                 let g = &*self.glyphs;
-                rasterise_sized(text, w, h, Align::Center, false, g, cap_px).into()
+                rasterise_sized(text, w, h, align, false, g, cap_px).into()
             })
             .clone()
     }
@@ -52,10 +59,16 @@ mod tests {
     #[test]
     fn masks_are_cached_per_size() {
         let f = LabelFont::new(Box::new(BoxGlyphs));
-        let a = f.mask("Tokyo", 60, 12, None);
+        let a = f.mask("Tokyo", 60, 12, None, Align::Center);
         assert_eq!(a.len(), 60 * 12);
         assert!(a.iter().any(|&c| c > 0));
-        assert!(Arc::ptr_eq(&a, &f.mask("Tokyo", 60, 12, None)));
-        assert!(!Arc::ptr_eq(&a, &f.mask("Tokyo", 120, 24, None)));
+        assert!(Arc::ptr_eq(
+            &a,
+            &f.mask("Tokyo", 60, 12, None, Align::Center)
+        ));
+        assert!(!Arc::ptr_eq(
+            &a,
+            &f.mask("Tokyo", 120, 24, None, Align::Center)
+        ));
     }
 }
