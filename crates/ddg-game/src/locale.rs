@@ -21,7 +21,9 @@ use anyhow::{Context, Result, bail, ensure};
 use ddg_formats::exe::Exe;
 use ddg_render::label::LabelFont;
 use ddg_render::sprites::SpriteBank;
-use ddg_render::text::{Align, FontGlyphs, Style, SubRect, TextOverlay, TextOverride, TextPart};
+use ddg_render::text::{
+    Align, Backdrop, FontGlyphs, Style, SubRect, TextOverlay, TextOverride, TextPart,
+};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -449,6 +451,21 @@ fn apply_option(p: &mut TextPart, k: &str, v: &toml::Value) -> Result<()> {
         }
         "vertical" => p.vertical = v.as_bool().context("vertical must be a boolean")?,
         "outline" => p.outline = v.as_bool().context("outline must be a boolean")?,
+        "line_height" => {
+            let em = v
+                .as_float()
+                .or_else(|| v.as_integer().map(|i| i as f64))
+                .context("line_height must be a number")?;
+            ensure!((0.5..=3.0).contains(&em), "line_height must be 0.5 to 3");
+            p.line_height = Some(em as f32);
+        }
+        "backdrop" => {
+            p.backdrop = match v.as_str() {
+                Some("art") => Backdrop::Art,
+                Some("solid") => Backdrop::Solid,
+                _ => bail!("backdrop must be art or solid"),
+            }
+        }
         _ => bail!("unknown field {k}"),
     }
     Ok(())

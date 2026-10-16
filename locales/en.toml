@@ -155,46 +155,46 @@ name = "English"
 # 出 = starting signal (the plate is behind the caption band, so the caption names it).
 
 # Emergency-stop signal 緊急停止 (NaviAnim(0)), five flash frames.
-0x44b = { region = [0, 102, 96, 34], text = "Emergency\nStop" }
-0x44c = { region = [0, 102, 96, 34], text = "Emergency\nStop" }
-0x44d = { region = [0, 102, 96, 34], text = "Emergency\nStop" }
-0x44e = { region = [0, 102, 96, 34], text = "Emergency\nStop" }
-0x44f = { region = [0, 102, 96, 34], text = "Emergency\nStop" }
+0x44b = { region = [0, 102, 96, 34], backdrop = "solid", line_height = 1.1, text = "Emergency\nStop" }
+0x44c = { region = [0, 102, 96, 34], backdrop = "solid", line_height = 1.1, text = "Emergency\nStop" }
+0x44d = { region = [0, 102, 96, 34], backdrop = "solid", line_height = 1.1, text = "Emergency\nStop" }
+0x44e = { region = [0, 102, 96, 34], backdrop = "solid", line_height = 1.1, text = "Emergency\nStop" }
+0x44f = { region = [0, 102, 96, 34], backdrop = "solid", line_height = 1.1, text = "Emergency\nStop" }
 # Three-lamp set (no stage uses it, hud.md §3.9).
-0x450 = { region = [0, 104, 96, 24], text = "Clear" }                     # 進行信号
-0x451 = { region = [0, 102, 96, 42], text = "Clear\nHome" }               # 進行信号 場
-0x452 = { region = [0, 102, 96, 42], text = "Clear\nStarting" }           # 進行信号 出
-0x453 = { region = [0, 97, 96, 47], text = "Caution\n45 km/h" }           # 注意信号 速度45
-0x454 = { region = [0, 97, 96, 47], text = "Caution 45\nHome" }
-0x455 = { region = [0, 97, 96, 47], text = "Caution 45\nStarting" }
-0x456 = { region = [0, 104, 96, 24], text = "Stop" }                      # 停止信号
-0x457 = { region = [0, 102, 96, 42], text = "Stop\nHome" }
-0x458 = { region = [0, 102, 96, 42], text = "Stop\nStarting" }
+0x450 = { region = [0, 104, 96, 40], backdrop = "solid", line_height = 1.1, text = "Clear" }                     # 進行信号
+0x451 = { region = [0, 104, 96, 40], backdrop = "solid", line_height = 1.1, text = "Clear\nHome" }               # 進行信号 場
+0x452 = { region = [0, 104, 96, 40], backdrop = "solid", line_height = 1.1, text = "Clear\nStarting" }           # 進行信号 出
+0x453 = { region = [0, 97, 96, 47], backdrop = "solid", line_height = 1.1, text = "Caution\n45 km/h" }           # 注意信号 速度45
+0x454 = { region = [0, 97, 96, 47], backdrop = "solid", line_height = 1.1, text = "Caution 45\nHome" }
+0x455 = { region = [0, 97, 96, 47], backdrop = "solid", line_height = 1.1, text = "Caution 45\nStarting" }
+0x456 = { region = [0, 104, 96, 40], backdrop = "solid", line_height = 1.1, text = "Stop" }                      # 停止信号
+0x457 = { region = [0, 104, 96, 40], backdrop = "solid", line_height = 1.1, text = "Stop\nHome" }
+0x458 = { region = [0, 104, 96, 40], backdrop = "solid", line_height = 1.1, text = "Stop\nStarting" }
 # Four-lamp set (all stages).
-0x470 = { region = [0, 112, 96, 24], text = "Stop" }                      # 停止信号
-0x471 = { region = [0, 104, 96, 40], text = "Stop\nHome" }
-0x472 = { region = [0, 104, 96, 40], text = "Stop\nStarting" }
-0x473 = { region = [0, 97, 96, 47], text = "Restricted\n25 km/h" }        # 警戒信号 速度25
-0x474 = { region = [0, 97, 96, 47], text = "Restricted 25\nHome" }
-0x475 = { region = [0, 97, 96, 47], text = "Restricted 25\nStarting" }
-0x476 = { region = [0, 97, 96, 47], text = "Caution\n45 km/h" }           # 注意信号 速度45
-0x477 = { region = [0, 97, 96, 47], text = "Caution 45\nHome" }
-0x478 = { region = [0, 97, 96, 47], text = "Caution 45\nStarting" }
-0x479 = { region = [0, 97, 96, 47], text = "Reduce\n70 km/h" }            # 減速信号 速度70
-0x47a = { region = [0, 97, 96, 47], text = "Reduce 70\nHome" }
-0x47b = { region = [0, 97, 96, 47], text = "Reduce 70\nStarting" }
-0x47c = { region = [0, 112, 96, 24], text = "Clear" }                     # 進行信号
-0x47d = { region = [0, 104, 96, 40], text = "Clear\nHome" }
-0x47e = { region = [0, 104, 96, 40], text = "Clear\nStarting" }
-0x47f = { region = [0, 118, 96, 26], text = "High-Speed" }                # 高速進行 (stages 7–9)
+0x470 = { region = [0, 104, 96, 40], backdrop = "solid", line_height = 1.1, text = "Stop" }                      # 停止信号
+0x471 = { region = [0, 104, 96, 40], backdrop = "solid", line_height = 1.1, text = "Stop\nHome" }
+0x472 = { region = [0, 104, 96, 40], backdrop = "solid", line_height = 1.1, text = "Stop\nStarting" }
+0x473 = { region = [0, 97, 96, 47], backdrop = "solid", line_height = 1.1, text = "Restricted\n25 km/h" }        # 警戒信号 速度25
+0x474 = { region = [0, 97, 96, 47], backdrop = "solid", line_height = 1.1, text = "Restricted 25\nHome" }
+0x475 = { region = [0, 97, 96, 47], backdrop = "solid", line_height = 1.1, text = "Restricted 25\nStarting" }
+0x476 = { region = [0, 97, 96, 47], backdrop = "solid", line_height = 1.1, text = "Caution\n45 km/h" }           # 注意信号 速度45
+0x477 = { region = [0, 97, 96, 47], backdrop = "solid", line_height = 1.1, text = "Caution 45\nHome" }
+0x478 = { region = [0, 97, 96, 47], backdrop = "solid", line_height = 1.1, text = "Caution 45\nStarting" }
+0x479 = { region = [0, 97, 96, 47], backdrop = "solid", line_height = 1.1, text = "Reduce\n70 km/h" }            # 減速信号 速度70
+0x47a = { region = [0, 97, 96, 47], backdrop = "solid", line_height = 1.1, text = "Reduce 70\nHome" }
+0x47b = { region = [0, 97, 96, 47], backdrop = "solid", line_height = 1.1, text = "Reduce 70\nStarting" }
+0x47c = { region = [0, 104, 96, 40], backdrop = "solid", line_height = 1.1, text = "Clear" }                     # 進行信号
+0x47d = { region = [0, 104, 96, 40], backdrop = "solid", line_height = 1.1, text = "Clear\nHome" }
+0x47e = { region = [0, 104, 96, 40], backdrop = "solid", line_height = 1.1, text = "Clear\nStarting" }
+0x47f = { region = [0, 120, 96, 24], backdrop = "solid", line_height = 1.1, text = "High-Speed" }                # 高速進行 (stages 7–9)
 # Repeater signals 中継信号.
-0x480 = { region = [0, 97, 96, 47], text = "Stop\nRepeater" }             # 停止
-0x481 = { region = [0, 97, 96, 47], text = "Limit\nRepeater" }            # 制限
-0x482 = { region = [0, 97, 96, 47], text = "Limit 25\nRepeater" }         # 制限25km/h
-0x483 = { region = [0, 97, 96, 47], text = "Limit 45\nRepeater" }         # 制限45km/h
-0x484 = { region = [0, 97, 96, 47], text = "Limit 70\nRepeater" }         # 制限70km/h
-0x485 = { region = [0, 97, 96, 47], text = "Clear\nRepeater" }            # 進行
-0x486 = { region = [0, 97, 96, 47], text = "High-Speed\nRepeater" }       # 高速進行
+0x480 = { backdrop = "solid", line_height = 1.1, parts = [{ region = [0, 97, 96, 23], text = "Stop" }, { region = [0, 120, 96, 24], text = "Repeater" }] }             # 停止
+0x481 = { backdrop = "solid", line_height = 1.1, parts = [{ region = [0, 97, 96, 23], text = "Limit" }, { region = [0, 120, 96, 24], text = "Repeater" }] }            # 制限
+0x482 = { backdrop = "solid", line_height = 1.1, parts = [{ region = [0, 97, 96, 23], text = "Limit 25" }, { region = [0, 120, 96, 24], text = "Repeater" }] }         # 制限25km/h
+0x483 = { backdrop = "solid", line_height = 1.1, parts = [{ region = [0, 97, 96, 23], text = "Limit 45" }, { region = [0, 120, 96, 24], text = "Repeater" }] }         # 制限45km/h
+0x484 = { backdrop = "solid", line_height = 1.1, parts = [{ region = [0, 97, 96, 23], text = "Limit 70" }, { region = [0, 120, 96, 24], text = "Repeater" }] }         # 制限70km/h
+0x485 = { backdrop = "solid", line_height = 1.1, parts = [{ region = [0, 97, 96, 23], text = "Clear" }, { region = [0, 120, 96, 24], text = "Repeater" }] }            # 進行
+0x486 = { backdrop = "solid", line_height = 1.1, parts = [{ region = [0, 96, 96, 24], text = "High-Speed" }, { region = [0, 120, 96, 24], text = "Repeater" }] }       # 高速進行
 
 # ---------------------------------------------------------------------------------------------
 # Signs (hud.md §3.10), 96×96: the caption under the sign (lettering on transparency).

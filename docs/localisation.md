@@ -44,6 +44,8 @@ Values are a string, or a table with `text` and options:
 | `style` | `auto` (default), `plain` (lettering on transparency: the old art is removed), `boxed` (a plate or box: the backdrop is kept, the old lettering painted over). `auto` picks `boxed` when more than 35 % of the region's edge is opaque. |
 | `vertical` | Rotate 90° clockwise (reads top to bottom). |
 | `outline` | Plain style: 1-px outline in the art's second colour (default on). |
+| `backdrop` | Boxed style: `art` (default, the backdrop as drawn) or `solid` (the backdrop's opaque colour fills the transparent half of a dither too, so the text never sits on the dither; the signal captions). |
+| `line_height` | Lines this many font sizes apart instead of the font's own line height (e.g. `1.1` for two lines in the signals' caption band). |
 
 `\n` breaks lines; the font size is fitted to the rectangle. Comments in `en.toml` give each
 sprite's role, a short Japanese label for identification and the pixel size.

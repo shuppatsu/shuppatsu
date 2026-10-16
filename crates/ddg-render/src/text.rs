@@ -103,6 +103,17 @@ pub enum Style {
     Boxed,
 }
 
+/// What a `Boxed` part leaves behind its text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Backdrop {
+    /// The backdrop as in the art (a plate's colour, a caption band's dither).
+    #[default]
+    Art,
+    /// Solid in the backdrop's opaque colour: a dither's transparent half is filled too (in
+    /// every 2×2 cell with an opaque pixel), so the text never sits on the dither.
+    Solid,
+}
+
 /// Opaque share of the region's edge above which `Style::Auto` picks `Boxed`.
 pub const BOXED_EDGE: f32 = 0.35;
 
@@ -119,6 +130,11 @@ pub struct TextPart {
     pub vertical: bool,
     /// Plain style only: draw a 1-px outline in the art's second colour.
     pub outline: bool,
+    /// Boxed style only: the backdrop behind the text.
+    pub backdrop: Backdrop,
+    /// Lines this many font sizes apart instead of the font's line height (two lines in a
+    /// tight caption band).
+    pub line_height: Option<f32>,
 }
 
 /// The replacement for one sprite.
@@ -305,9 +321,25 @@ pub fn rasterise_sized(
     glyphs: &dyn GlyphSource,
     cap_px: Option<f32>,
 ) -> Vec<u8> {
+    rasterise_spaced(text, w, h, align, vertical, glyphs, cap_px, None)
+}
+
+/// [`rasterise_sized`] with the lines `line_em` font sizes apart instead of the font's line
+/// height (`None`), for several lines in a tight box.
+#[allow(clippy::too_many_arguments)]
+pub fn rasterise_spaced(
+    text: &str,
+    w: usize,
+    h: usize,
+    align: Align,
+    vertical: bool,
+    glyphs: &dyn GlyphSource,
+    cap_px: Option<f32>,
+    line_em: Option<f32>,
+) -> Vec<u8> {
     if vertical {
         // Lay out in the rotated frame, then turn it clockwise.
-        let src = rasterise_sized(text, h, w, align, false, glyphs, cap_px);
+        let src = rasterise_spaced(text, h, w, align, false, glyphs, cap_px, line_em);
         let mut out = vec![0u8; w * h];
         for sy in 0..w {
             for sx in 0..h {
@@ -324,9 +356,12 @@ pub fn rasterise_sized(
     }
     let (aw, ah) = ((w - 2 * PAD) as f32, (h - 2 * PAD) as f32);
     let width_at = |line: &str, px: f32| line.chars().map(|c| glyphs.advance(c, px)).sum::<f32>();
-    let line_h = |px: f32| {
-        let (a, d) = glyphs.vertical_metrics(px);
-        a - d
+    let line_h = |px: f32| match line_em {
+        Some(em) => em * px,
+        None => {
+            let (a, d) = glyphs.vertical_metrics(px);
+            a - d
+        }
     };
     // Ink extent (top, bottom) relative to the first baseline, lines `line_h` apart.
     let ink = |px: f32| {
@@ -594,7 +629,7 @@ fn render_part(
         LATIN_CAP_OF_LETTERING
     };
     let cap_px = (lo <= hi).then(|| (hi - lo + 1) as f32 * share * s as f32);
-    let coverage = rasterise_sized(
+    let coverage = rasterise_spaced(
         &part.text,
         sw,
         sh,
@@ -602,15 +637,30 @@ fn render_part(
         part.vertical,
         glyphs,
         cap_px,
+        part.line_height,
     );
     let mut base = vec![0u8; sw * sh];
     let fg = if boxed {
+        // The backdrop's opaque colour: a plate's face, or the dark half of a dither.
+        let opaque = (0..4)
+            .map(|c| pattern[c])
+            .filter(|&v| v != 0)
+            .max_by_key(|&v| pattern.iter().filter(|&&p| p == v).count())
+            .unwrap_or(0);
+        let solid = part.backdrop == Backdrop::Solid && opaque != 0;
         // Every opaque pixel is repainted with the backdrop, which erases the old lettering and
-        // keeps the box shape (transparent corners stay transparent).
+        // keeps the box shape (transparent corners stay transparent). A solid backdrop also
+        // fills the transparent half of a dither (any opaque pixel in its 2×2 cell).
+        let cell_opaque = |ax: usize, ay: usize| {
+            let (cx, cy) = (ax & !1, ay & !1);
+            (cy..(cy + 2).min(h)).any(|y| (cx..(cx + 2).min(w)).any(|x| region_art(x, y) != 0))
+        };
         for py in 0..sh {
             for px in 0..sw {
                 let (ax, ay) = (px / s, py / s);
-                if region_art(ax, ay) != 0 {
+                if solid && cell_opaque(ax, ay) {
+                    base[py * sw + px] = opaque;
+                } else if region_art(ax, ay) != 0 {
                     base[py * sw + px] = pattern[parity(ax, ay)];
                 }
             }
@@ -623,21 +673,8 @@ fn render_part(
             .unwrap_or(second)
     } else {
         if part.outline && second != dominant {
-            let solid = |px: isize, py: isize| {
-                (0..sw as isize).contains(&px)
-                    && (0..sh as isize).contains(&py)
-                    && coverage[py as usize * sw + px as usize] >= 128
-            };
             // One original pixel thick at any scale.
-            let r = s as isize;
-            for py in 0..sh as isize {
-                for px in 0..sw as isize {
-                    let near = (-r..=r).any(|dy| (-r..=r).any(|dx| solid(px + dx, py + dy)));
-                    if near {
-                        base[py as usize * sw + px as usize] = second;
-                    }
-                }
-            }
+            dilate(&coverage, sw, sh, s, 128, |i| base[i] = second);
         }
         dominant
     };
@@ -647,6 +684,24 @@ fn render_part(
         coverage,
         fg,
     })
+}
+
+/// Calls `f` with the index of every pixel of a `w × h` mask within `r` pixels (a square) of a
+/// pixel whose coverage is at least `min`.
+fn dilate(coverage: &[u8], w: usize, h: usize, r: usize, min: u8, mut f: impl FnMut(usize)) {
+    let r = r as isize;
+    let inked = |px: isize, py: isize| {
+        (0..w as isize).contains(&px)
+            && (0..h as isize).contains(&py)
+            && coverage[py as usize * w + px as usize] >= min
+    };
+    for py in 0..h as isize {
+        for px in 0..w as isize {
+            if (-r..=r).any(|dy| (-r..=r).any(|dx| inked(px + dx, py + dy))) {
+                f(py as usize * w + px as usize);
+            }
+        }
+    }
 }
 
 /// Draws the parts of one slot whose source rectangle starts at canvas `(ox, oy)`.
@@ -754,6 +809,67 @@ pub(crate) mod tests {
         // A size too big for the box shrinks to fit; nothing is cut off.
         let big = rasterise_sized("Hi", w, 20, Align::Center, false, &BoxGlyphs, Some(40.0));
         assert!(big[..w].iter().all(|&c| c == 0) && big[19 * w..].iter().all(|&c| c == 0));
+    }
+
+    #[test]
+    fn line_spacing_packs_two_lines_tighter() {
+        let (w, h) = (200, 40);
+        let rows = |m: &[u8]| {
+            (0..h)
+                .filter(|y| m[y * w..][..w].iter().any(|&c| c > 0))
+                .count()
+        };
+        let loose = rasterise_sized("Ab\nCd", w, h, Align::Center, false, &BoxGlyphs, None);
+        let tight = rasterise_spaced(
+            "Ab\nCd",
+            w,
+            h,
+            Align::Center,
+            false,
+            &BoxGlyphs,
+            None,
+            Some(0.8),
+        );
+        // Each line's ink is 0.7 em: closer lines leave room for a bigger size.
+        assert!(
+            rows(&tight) > rows(&loose),
+            "{} vs {}",
+            rows(&tight),
+            rows(&loose)
+        );
+    }
+
+    #[test]
+    fn solid_backdrop_fills_the_dither() {
+        // A 16×8 band dithered 1 / transparent, with lettering 9 in the middle.
+        let (w, h) = (16, 8);
+        let art: Vec<u8> = (0..w * h)
+            .map(|i| {
+                let (x, y) = (i % w, i / w);
+                if (5..11).contains(&x) && (2..6).contains(&y) {
+                    9
+                } else if (x + y) % 2 == 0 {
+                    1
+                } else {
+                    0
+                }
+            })
+            .collect();
+        let part = |backdrop| TextPart {
+            text: "Go".into(),
+            style: Style::Boxed,
+            backdrop,
+            ..TextPart::default()
+        };
+        let solid = render_part(&part(Backdrop::Solid), &art, w, h, &BoxGlyphs, 2).unwrap();
+        assert_eq!(solid.fg, 9);
+        assert!(solid.base.iter().all(|&b| b == 1));
+        let dither = render_part(&part(Backdrop::Art), &art, w, h, &BoxGlyphs, 2).unwrap();
+        // The art backdrop keeps the dither, over the old lettering too.
+        assert_eq!(
+            dither.base.iter().filter(|&&b| b == 0).count(),
+            4 * w * h / 2
+        );
     }
 
     #[test]
