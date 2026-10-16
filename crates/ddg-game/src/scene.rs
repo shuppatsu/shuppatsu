@@ -44,6 +44,11 @@ impl GameData {
         Ok(std::fs::read(path)?)
     }
 
+    /// The installed `DATA` directory.
+    pub fn data_dir(&self) -> &std::path::Path {
+        &self.data
+    }
+
     pub fn exe(&self) -> Result<Vec<u8>> {
         Ok(std::fs::read(self.bin.join("dengo3k.exe"))?)
     }

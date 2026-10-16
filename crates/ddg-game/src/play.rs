@@ -46,6 +46,7 @@ pub struct PlayOptions {
     pub stable_track_variants: bool,
     pub texture_filtering: bool,
     pub fog: bool,
+    pub mute: bool,
     /// Scripted notches: `tick notch brake` lines, held from each tick on (the oracle's format).
     pub inputs: Option<std::path::PathBuf>,
     /// Headless: run this many ticks, render one frame with the HUD to a PPM and exit.
@@ -99,6 +100,11 @@ pub fn run(opts: PlayOptions) -> Result<()> {
     let popups = crate::popups::Popups::new(&exe, opts.stage)?;
     hud.create(&mut layer);
 
+    let sound = if opts.shot.is_some() || opts.mute {
+        None
+    } else {
+        crate::sound::Sound::open(data.data_dir(), &exe, &drive)?
+    };
     let visibility = visibility(&opts);
     let scene = load_scene(&data, drive.com_name(), visibility, &opts)?;
     let script = match &opts.inputs {
@@ -135,6 +141,7 @@ pub fn run(opts: PlayOptions) -> Result<()> {
         last_frame: now,
         title_at: now,
         error: None,
+        sound,
         script,
         opts,
     };
@@ -269,12 +276,22 @@ struct Play {
     last_frame: Instant,
     title_at: Instant,
     error: Option<anyhow::Error>,
+    sound: Option<crate::sound::Sound>,
     script: Option<Vec<(u64, u8, u8)>>,
 }
 
 impl Play {
     fn tick(&mut self) -> Result<()> {
+        let before = crate::sound::Before::of(&self.drive);
         let out = self.drive.tick(self.latched);
+        if let Some(s) = self.sound.as_mut() {
+            s.after_tick(
+                &self.drive,
+                before,
+                self.latched.horn_held,
+                out.segment_started,
+            );
+        }
         self.interpolate = !out.segment_started;
         if out.segment_started {
             self.popups.clear();
@@ -521,7 +538,12 @@ impl ApplicationHandler for Play {
                 if pressed && !repeat {
                     match code {
                         // Esc pauses (input.md §6.1); Q quits while paused.
-                        KeyCode::Escape => self.paused = !self.paused,
+                        KeyCode::Escape => {
+                            self.paused = !self.paused;
+                            if let Some(s) = self.sound.as_mut() {
+                                s.set_paused(self.paused);
+                            }
+                        }
                         KeyCode::KeyQ if self.paused => event_loop.exit(),
                         _ => {}
                     }

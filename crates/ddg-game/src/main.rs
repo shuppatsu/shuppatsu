@@ -9,6 +9,7 @@ mod play;
 mod popups;
 mod scene;
 mod shot;
+mod sound;
 mod window;
 
 use anyhow::{Context, Result, bail};
@@ -91,6 +92,7 @@ fn parse_play_args() -> Result<play::PlayOptions> {
         stable_track_variants: false,
         texture_filtering: false,
         fog: false,
+        mute: false,
         inputs: None,
         shot: None,
     };
@@ -105,6 +107,7 @@ fn parse_play_args() -> Result<play::PlayOptions> {
             "--difficulty" => opts.difficulty = value("a number")?.parse()?,
             "--station" => opts.station = value("a number")?.parse()?,
             "--keys" => opts.keyboard_mode = value("a mode")?.parse()?,
+            "--mute" => opts.mute = true,
             "--inputs" => opts.inputs = Some(value("a file")?.into()),
             "--shot" => {
                 let s = value("TICKS:FILE")?;

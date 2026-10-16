@@ -13,6 +13,7 @@ workspace = true
 ddg-formats.workspace = true
 ddg-render.workspace = true
 ddg-engine.workspace = true
+ddg-audio.workspace = true
 anyhow.workspace = true
 winit.workspace = true
 wgpu.workspace = true
