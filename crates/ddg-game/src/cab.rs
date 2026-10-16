@@ -174,6 +174,8 @@ pub struct CabHud {
     coupling: CouplingHud,
     vehicle_code: Option<u32>,
     stage_speed_mode: i32,
+    /// An attract demo drive: its task, not the stage loop, runs (no 0x40c4e0 HUD parts).
+    demo: bool,
 }
 
 impl CabHud {
@@ -212,6 +214,7 @@ impl CabHud {
             coupling,
             vehicle_code: None,
             stage_speed_mode: speed_mode,
+            demo: false,
         })
     }
 
@@ -312,7 +315,7 @@ impl CabHud {
         }
 
         // 0x40c4e0 (driving-loop body): panel toggle, approach captions, gradient signs.
-        if b.runs_loop_body() && !input.segment_started {
+        if b.runs_loop_body() && !input.segment_started && !self.demo {
             if input.confirm_pressed && b.ats < 1 && !ats_bell {
                 self.panel_on = !self.panel_on;
             }
@@ -408,6 +411,23 @@ impl CabHud {
             }
         }
         self.prev = Some(s.clone());
+    }
+
+    /// The HUD of an attract demo drive (0x40e4b0 / 0x40e6e0): plates of the first station and
+    /// of the first stop after it (0x40f780), clocks and the distance panel on (`0x856c80`,
+    /// `0x856d0c`), the departure lamp `0x829d16` lit by the route demo at once.
+    pub fn demo_setup(&mut self, s: &Snap, lamp: bool) {
+        self.demo = true;
+        self.clocks_visible = true;
+        self.panel_active = true;
+        self.lamp_lit = lamp;
+        let first_stop = (1..s.stops.len()).find(|&i| s.stops[i]).unwrap_or(1);
+        self.departure.plates = (self.name_id(0), self.name_id(first_stop));
+    }
+
+    /// `0x434fb0(1)`: the departure lamp `0x829d16` goes on.
+    pub fn light_lamp(&mut self) {
+        self.lamp_lit = true;
     }
 
     /// The segment start: 0x4080d0 sets the clocks and remaining time visible, 0x40cf40 resets

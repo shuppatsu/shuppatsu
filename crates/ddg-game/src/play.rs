@@ -35,6 +35,8 @@ use ddg_render::FrameGeometry;
 use ddg_render::camera::ORIGINAL_STRETCH;
 use ddg_render::sprites::{CANVAS_H, CANVAS_W, Slot, SpriteBank, SpriteLayer};
 use std::time::{Duration, Instant};
+
+mod demo;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -286,6 +288,7 @@ impl Play {
             last_events: Vec::new(),
             ticks: 0,
             leave: false,
+            quit: false,
             interpolate: false,
             frame: FrameGeometry::default(),
             gpu,
@@ -300,6 +303,7 @@ impl Play {
             weather: crate::weather::Weather::new(&exe, opts.stage)?,
             result_view: None,
             world: WorldView::Cab,
+            demo: None,
             opts,
         };
         play.configure_gpu();
@@ -330,6 +334,12 @@ impl Play {
     /// Quit or run over: the owner goes back to the title.
     pub fn left(&self) -> bool {
         self.leave
+    }
+
+    /// The run was left by quitting from the pause (`0x855ffc |= 0x10`: attract then skips its
+    /// opening); after a game over or a clear it starts from its first item.
+    pub fn quit(&self) -> bool {
+        self.quit
     }
 
     pub fn gpu(&self) -> Option<&Gpu> {
@@ -583,6 +593,8 @@ pub struct Play {
     ticks: u64,
     /// Quit or run over: leave play.
     leave: bool,
+    /// Left by quitting from the pause (not by the end of the run).
+    quit: bool,
     /// False right after a segment change: the position jumped, don't interpolate.
     interpolate: bool,
     frame: FrameGeometry,
@@ -601,11 +613,16 @@ pub struct Play {
     /// The station result's replay (scene.md §8) and what the 3D layer shows.
     result_view: Option<ResultView>,
     world: WorldView,
+    /// An attract demo drive (`play/demo.rs`).
+    demo: Option<demo::DemoView>,
 }
 
 impl Play {
     /// One 33 ms tick: a frozen pause tick, or a simulation tick with the stage flow.
     fn tick(&mut self) -> Result<()> {
+        if self.demo.is_some() {
+            return self.demo_tick();
+        }
         self.ticks += 1;
         let input = self.menu_input;
         let mut sfx = Vec::new();
@@ -880,6 +897,7 @@ impl Play {
                     s.stop_all();
                 }
                 eprintln!("{action:?}: leaving play");
+                self.quit = matches!(action, Action::Quit);
                 self.leave = true;
             }
         }

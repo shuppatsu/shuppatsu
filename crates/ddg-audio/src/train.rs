@@ -165,6 +165,8 @@ pub struct TrainSound {
     joint_state: i32,
     /// task+0x84: flange-squeal cooldown.
     squeal_ticks: i32,
+    /// `0x84c3dc`: rail-joint clicks so far (the attract demo's logo animation counts them).
+    pub clicks: u32,
 }
 
 impl TrainSound {
@@ -194,6 +196,7 @@ impl TrainSound {
             horn_ticks: 0,
             joint_state: 0,
             squeal_ticks: 0,
+            clicks: 0,
         };
         snd.set_pitch(stage.motor, stage.motor_base_pitch);
         ts
@@ -468,6 +471,7 @@ impl TrainSound {
             if phase >= at && self.joint_state == i as i32 {
                 snd.request(code);
                 self.joint_state += 1;
+                self.clicks = self.clicks.wrapping_add(1);
                 if fast && (i == 0 || i == 2) {
                     self.joint_state += 1;
                 }

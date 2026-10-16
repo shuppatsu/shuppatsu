@@ -228,6 +228,11 @@ impl Sound {
         self.flush();
     }
 
+    /// The rail-joint clicks of the stage's train so far (`0x84c3dc`).
+    pub fn joint_clicks(&self) -> Option<u32> {
+        self.stage.as_ref().map(|p| p.train.clicks)
+    }
+
     pub fn set_paused(&mut self, on: bool) {
         self.snd.set_paused(on);
         self.flush();

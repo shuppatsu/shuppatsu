@@ -10,7 +10,9 @@
 //! previous tick, and draw the 640×480 canvas centred over black (`0x855ffc & 0x1000`; the
 //! port always centres it).
 
-use crate::front::attract::{Attract, AttractCounters, AttractEnv, AttractStep, AttractTables};
+use crate::front::attract::{
+    Attract, AttractCounters, AttractEnv, AttractStep, AttractTables, DemoKind as AttractDemo,
+};
 use crate::front::calibrate::CalibrationScreen;
 use crate::front::dialog::ExitConfirm;
 use crate::front::options::{self, ControlPage, ListResult, OptionsList, SetEffect, ValuePage};
@@ -28,6 +30,7 @@ use crate::screens::tables::ScreenTables;
 use crate::screens::{MenuInput, Sfx};
 use crate::window::Gpu;
 use anyhow::{Context, Result};
+use ddg_engine::demo::DemoKind;
 use ddg_formats::exe::Exe;
 use ddg_render::sprites::{CANVAS_H, CANVAS_W, SpriteLayer};
 use std::path::PathBuf;
@@ -129,6 +132,8 @@ pub struct App {
     replay: bool,
     /// Attract's walk and photo counters (`0x8573c8`, `0x8573cc`), kept across walks.
     attract_counters: AttractCounters,
+    /// Attract waiting for its demo drive (the run in [`Screen::Play`]) to end.
+    demo_attract: Option<Attract>,
     down: [bool; 256],
     menu_input: MenuInput,
     script: play::Script,
@@ -220,6 +225,7 @@ impl App {
             joystick,
             replay: false,
             attract_counters: AttractCounters::default(),
+            demo_attract: None,
             down: [false; 256],
             menu_input: MenuInput::NONE,
             script,
@@ -327,6 +333,27 @@ impl App {
         Ok(())
     }
 
+    /// An attract demo drive: attract waits in [`App::demo_attract`] while the run plays.
+    fn start_demo(&mut self, kind: AttractDemo, stage: usize) -> Result<()> {
+        let Screen::Attract(a) = std::mem::replace(&mut self.screen, Screen::Quit) else {
+            return Ok(());
+        };
+        let chosen = Chosen {
+            group: 0,
+            stage,
+            route: stage,
+            variant: false,
+        };
+        let mut play = self.start_play(chosen)?;
+        play.start_demo(match kind {
+            AttractDemo::Route => DemoKind::Route,
+            AttractDemo::Lesson => DemoKind::Lesson,
+        })?;
+        self.demo_attract = Some(a);
+        self.screen = Screen::Play(Box::new(play));
+        Ok(())
+    }
+
     fn start_play(&mut self, chosen: Chosen) -> Result<Play> {
         let mut shared = self.res.take().expect("resources");
         let o = shared.save.eeprom.options();
@@ -372,6 +399,7 @@ impl App {
         let mut sfx = Vec::new();
         let env = self.env();
         let mut next: Option<Next> = None;
+        let mut demo: Option<(AttractDemo, usize)> = None;
         let mut set_option: Option<(usize, u8)> = None;
         let mut calibrated = None;
         let joy = if matches!(self.screen, Screen::Calibrate(_)) {
@@ -397,8 +425,7 @@ impl App {
                 match step {
                     AttractStep::Running => Screen::Attract(a),
                     AttractStep::Demo { kind, stage } => {
-                        eprintln!("attract: demo drive {kind:?} on stage {stage} (not built)");
-                        a.demo_done(false);
+                        demo = Some((kind, stage));
                         Screen::Attract(a)
                     }
                     AttractStep::KomachiMovie => {
@@ -596,6 +623,9 @@ impl App {
         if let Some(n) = next {
             self.start(n, &mut sfx)?;
         }
+        if let Some((kind, stage)) = demo {
+            self.start_demo(kind, stage)?;
+        }
         self.play_sfx(&sfx);
         if let Some(s) = self.res.as_mut().and_then(|r| r.sound.as_mut()) {
             s.menu_frame();
@@ -691,10 +721,20 @@ impl App {
         if !p.left() {
             return Ok(());
         }
-        let Screen::Play(p) = std::mem::replace(
-            &mut self.screen,
-            Screen::Wait(AFTER_RUN_TICKS, Next::Attract { skip_opening: true }),
-        ) else {
+        let next = match self.demo_attract.take() {
+            Some(mut a) => {
+                // The demo task's destroy (0x40e670), then attract's own `Task_Tick`.
+                a.demo_done(p.demo_ended_by_start());
+                Screen::Attract(a)
+            }
+            None => Screen::Wait(
+                AFTER_RUN_TICKS,
+                Next::Attract {
+                    skip_opening: p.quit(),
+                },
+            ),
+        };
+        let Screen::Play(p) = std::mem::replace(&mut self.screen, next) else {
             unreachable!()
         };
         let mut shared = p.into_shared();
