@@ -340,8 +340,9 @@ diffuse, `z = depth/32768` with 1/32768 at 0x47c968; screen = virtual × resolut
     level as the variant). **likely** that the 0x40d340 start becomes visible only there.
   - Data: `from_station` is 0 for stages 1–2, 7 for 6–9, 5 for 12/14/16, 99 (course event
     only) elsewhere. Sound 0x28 loops at volume `level/2` while it runs, and 0x84c2e0 is set
-    above level 199. 0x424740 starts a 3-callback overlay task. **guess**: rain (a
-    darkened sky, rain noise, windscreen effect).
+    above level 199. 0x424740 builds the weather overlay: a wiper plus raindrops (rain
+    stages) or scrolling snow with fog (Akita); 0x84c2e0 is the wiper flag (renderer.md §13).
+    **confirmed**
   - `GradientEventTables::read`, `GradientEvent { stage_start, try_start(trigger), end, tick,
     variant, sound_volume }` and `palette_fade` model this for the game layer.
 
@@ -462,9 +463,10 @@ width it returns exactly the 3 original tiles.
 - The f32 at +16 and the u16 at +2 of a track run are still unknown. Buckets are cut to the
   4:3 view either way.
 - Animated object triggers (global 0x85744c, the proximity threshold) and class-11/≥ 23 drawing.
-- What fires the camera jolts (0x409d0e, 0x409d74, 0x40a5ab).
+- Resolved (renderer.md §13.6): the jolts come from the coupling minigame (0x409d0e, 0x409d74)
+  and the buffer-stop crash (0x40a5ab).
 - The gradient event: what 0x856fb0 measures (remaining time is a guess), whether the 0x40d340
-  start changes the palette before the next drive restart, and what the overlay task 0x424740
-  draws (rain is a guess).
+  start changes the palette before the next drive restart. The overlay task 0x424740 is
+  resolved in renderer.md §13.
 - Panorama and ground: compare `sky_quads` / `ground_quad` with Wine screenshots (tile phase,
   vertical offset, corner/UV orientation against the bottom-up page rows).

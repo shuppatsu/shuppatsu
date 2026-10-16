@@ -333,6 +333,150 @@ Then `Frame_End`: full viewport, sprite layer, rect layer, `EndScene`, `Gfx_Pres
 Draw lists are the 9 task lists at `0x84c180..0x84c1ec`; each task's draw callback is at +0x10
 (`TaskList_Draw` 0x425ac0).
 
+## 13. Weather and cab effects in the driving view
+
+Source: disassembly of 0x424740–0x425232 (the Ghidra output loses the x87 operands of these
+functions), 0x40e370 / 0x40e3d0, and the callers named below. Port: `ddg-game/src/weather.rs`
+(state and quads), `ddg-render/src/effects.rs` + `Renderer::effects` (the pass).
+
+### 13.1 Who creates what — confirmed (code)
+
+`0x424740(type)` builds the weather overlay on task list 5 (0x84c1bc). `type` is `0x857210`, set
+per stage by 0x40d040: 5 for stages 0–2 and 17–19, 4 for 3–4, 2 for 7, 1 for 8–11, 0 otherwise.
+It sets `0x84c3a0 = type + 1` (the event's "active" word), clears the wiper flag `0x84c2e0`,
+caches the four drop textures (parts 0x299e–0x29a1 from 0x47c3a8 into 0x84c240) and four parts
+from 0x47c3b8 (0x2ae3–0x2ae0 into 0x84c300; **nothing reads that cache**, confirmed by scanning
+every absolute reference). Then:
+
+| type | wiper shape (draw fn) | swing table | extra |
+|---|---|---|---|
+| 0 | 0 (0x424950) | 0x47c340 / 0x47c344 / 0x47c350 | 10 drops |
+| 1 | 1 (0x424aa0) | 0x47c358 / 0x47c35c / 0x47c360 | 10 drops |
+| 2 | 2 (0x424cb0) | 0x47c380 / 0x47c384 / 0x47c388 | 10 drops |
+| 3 | 1 | as 1 | none (no stage uses it) |
+| 4 | 0 | as 0 | snow layers + fog (0x425070) |
+| 5 | 2 | as 2 | snow layers + fog |
+
+So rain (types 0–2, with the rain sound 0x28) is Hokuhoku, Keihin, Tōkaidō and Yamanote; snow
+(4–5, silent) is Akita. Callers of 0x424740: the drive (re)start 0x4080d0 when the level
+`0x857230 > 0` (it then sets `0x84c2e0 = 1` if the level is above 199), course event 0x15
+(0x40acd0), the station-reached start 0x40d620, and the obstacle-replay exit of 0x40a0a0 (level
+> 1). List 5 is cleared (0x425380) when the station result starts and when the driving loop is
+left (0x4080d0), so the overlay is gone during result screens and comes back at the next
+segment start while the level is above 0. Creating it at a segment start also sets 0x84c3a0
+again; if the event had already timed out, the next driving tick of 0x40c4e0 clears it again.
+
+### 13.2 Wiper task (update 0x4248d0, kill 0x424940, draw 0x424ee0) — confirmed
+
+State: counter +0x30, angle +0x3c (f32, starts at the swing minimum), step +0x40, direction
++0x44 (starts 0). Per tick: `angle += dir·step` (stored as f32); if `dir > 0` and
+`angle > max`: `dir = −dir`; else if `dir == 0` or `angle < min`: `dir = 0x84c2e0` (0 or 1).
+So the wiper only starts while `0x84c2e0` is set (level > 199, cleared in tunnels by 0x40c4e0)
+and parks just below the minimum when it is clear. The task ends when `0x84c3a0 == 0`; its kill
+callback clears `0x84c3a0` and `0x84c2e0` (**0x84c2e0 has no other reader**: it is the wiper
+flag, not a physics input). Swings (radians, from the table): shape 0 86°–112° by 1.5°/tick,
+shape 1 15°–90° by 5°, shape 2 40°–140° by 2°.
+
+Shapes, in 496×400 virtual units, every value truncated by `__ftol` and stored as a 16-bit word
+(`T()` below). Colours: 0x47c31c = four words 0x0039 ("blade"), 0x47c324 = four words 0x003c
+("arm"); depth word 0 (nearest).
+
+- **Shape 0** (0x424950): pivot P = (399, 1167) (0x47c33c), radius 952 (0x47c348). Tip
+  `x = T(952·cos a) + 399`, `y = 1167 − T(952·sin a)`. Blade: rectangle x ± 3 (0x47c34a), from
+  y − 112 to y + 80 (0x47c34c / 0x47c34e). Arm: from (x ± 3, y) to (X ± 3, 399) with
+  `X = T(399 − 767·tan(a − π/2))` (π/2 = f64 0x4697b0; 767 = 1167 − 0x190).
+- **Shape 1** (0x424aa0): pivot (100, 480) (0x47c354). Blade fan: root (r 128, 0x47c36e) at
+  `a + 32° + 1°`, tip (r 384, 0x47c36c) at `a + 0.3°`, tip at `a − 0.3°`, root at
+  `a − 1° + 32°` (32° f32 0x47c364, 1° f64 0x47c3d0, 0.3° f64 0x47c3d8); each point
+  `(T(r·cos) + 100, 480 − T(r·sin))`. Arm: from the point at r 200 (0x47c370), angle
+  `a + 12° + 1°` (12° f32 0x47c368), ± 3 in x, down to (X ± 3, 399) with
+  `X = T(48 + 81 / tan(a + 12°))` (48 = 0x47c372, 81 = dword 0x47c374 (480) − 399).
+- **Shape 2** (0x424cb0): nothing while `a < 1.6465` (0x47c39c, ≈ 94.3°). Centre (550, 800)
+  (f32 0x47c378 / 0x47c37c), radius 740 (0x47c394), half-angle 0.0027027 (0x47c38c). Points
+  `p0 = (T(740·cos(a+δ) + 550), T(800 − 740·sin(a+δ)))`, `p3` likewise at `a − δ`. The quad
+  `p0, p1, p2, p3` runs from the tip circle along the arm to the screen edge: `p1`/`p2` are the
+  crossings of the two edge lines with x = 496 (`y − (496 − x)·tan a`) while `a ≤ 1.699712`
+  (0x47c3a0); with p1 on y = 399 (`x − (399 − y)/tan a`) and p2 on x = 496 up to 1.709598
+  (0x47c3a4); both on y = 399 above. One quad, blade colour.
+
+**Colour — likely.** 0x432b50 reads palette entry `0x829d5c + 4·(hi·256 + lo)`; palette 0 is
+never written (no writer among the palette loaders 0x436720 / 0x436770 / 0x436bf0 / 0x436c20 and
+their callers, and no other absolute reference to the area), so both words are black and
+opaque.
+
+### 13.3 Drops (create 0x424f20, update 0x425000, draw 0x425040) — confirmed
+
+0x424740 creates 10 drops with counters `i & 7`; each update does `counter += 1` and at 8
+creates one successor (counter 0) if `0x84c3a0 ≠ 0`, then ends. The successor is appended to
+list 5 and is updated in the same pass (0x425320 re-reads the next pointer after a task ends),
+so it is drawn first with counter 1. A drop is a 63×63 textured quad at
+`x = rand·432 >> 15` (0..431), `y = (rand·284 >> 15) + 52`, corners TL, TR, BR, BL; frame
+`(counter >> 1) & 3` picks the cached texture of part 0x299e + frame; depth word 2. Visibility
++0x5c is fixed at creation: hidden when the camera point's track type `0x850114` (byte 10 & 0x1f
+of the camera's point, 0x41d160) is 0x1b–0x1e (tunnels), and also type 10 on stage 16
+(0x424720 / 0x424fd3). `rand` is the CRT LCG (0x437d10). **Its seed is not reproducible**: the
+only other user, the traffic spawner 0x404f10, reseeds it with `rand()·0x84c494`.
+
+### 13.4 Snow layers and fog (0x425070, update 0x425100, draw 0x425120, kill 0x425220) — confirmed
+
+0x425070 caches part 0x8de and overrides its corner UVs (page units ×256, `(u, v)`):
+corner 0 (0x7c0, 0), corner 1 (0x7c0, 0x570), corner 2 (part u, 0x570), corner 3 (part u, 0)
+— the texture repeats 7.75 × 5.4 times with v across the screen. It sets `0x8502ac = 0` and
+calls `Gfx_SetFog(1)` (fog on, if FOGENABLE; §7). Update: counter += 8 while `0x84c3a0 ≠ 0`,
+else the task ends and 0x425220 sets `0x8502ac = 1` and `Gfx_SetFog(0)`. Draw (skipped at tunnel
+points, 0x4246f0): three textured quads over the band rect 0x47c32c ((0,52)–(496,400)), each
+with every u and v shifted by an offset: `(−3n) & 0xff` at depth 0x10, `(n + 2) & 0xff` at
+0x100, `(n/2 + 4) & 0xff` at 0x200. With the Z test the nearest layer wins and colour-keyed
+texels write nothing, so the result is the three layers back to front.
+`0x8502ac == 0` makes 0x41dfc0 skip the panorama sprites in area 1 (Akita, COM ≠ 7/10), so the
+mountains vanish into the fog while it snows. **The fog therefore only exists during snow**: the
+only `Gfx_SetFog(1)` call is here.
+
+### 13.5 Sky gradient fades — confirmed (code), see scene.md §6.2
+
+Course event 0x15 and 0x40d620 fade palette 3 to the darker set over 150 ticks (0x40f320 →
+0x436a60 on list 7, which list clears do not touch); the drive restart rebuilds it without a
+fade for `level ≥ 1`; the level reaching 1 fades back.
+
+### 13.6 Camera jolt (0x40e370 / 0x40e3d0) — confirmed
+
+Created on list 2 with an amplitude `a`: −0.018 by 0x40a0a0 when the train stops with
+`0x8570b4 == 1` (ran past the forced-stop point / buffer stop), −0.004 and −0.0005 by the coupling
+minigame 0x4093c0. Each tick while `|a| ≥ 1e-4`: eye height `0x850140 = h − a`,
+`0x850294 = +0x34 + a` (scene.md §5 gives the net camera effect: eye lowered by `a`, target by
+`2a`), then `a ·= −0.8` on even `0x84c494`. The kill callback restores both. The buffer-stop
+jolt lasts ≈ 48 ticks.
+
+### 13.7 Other screen effects while driving — confirmed (search)
+
+There is no screen-fade task on the driving path. List 0 (0x84c180) holds sound tasks (0x420470
+timed sound, 0x4205c0 turnout clatter; audio-text.md), not fades as main-loop.md guessed. List 7
+holds only palette fades (0x4367c0 / 0x436920 for palettes 0x15–0x17 in the title/attract code,
+0x436a60 for palette 3 above). The callers of the 2D quad functions (0x432b50 / 0x432da0 /
+0x431ec0) are the background (0x401600, 0x41df00, 0x41dfc0; scene.md §6), this overlay, the
+render task's border quads (0x425680), the viewer camera preset (0x41c3c0) and the title picture
+(0x4037f0).
+
+### 13.8 Port notes
+
+- `Weather` mirrors the tasks from the rules' state each tick: created on the rules' weather-on
+  edge or at a segment start with level > 0; cleared at the station result; wiper flag =
+  `Rules::wet_rails` while the overlay lives. Drops and the wiper draw the latest tick's state
+  (no interpolation, like the original).
+- **Approximations.** The RNG starts at seed 1 (§13.3). The jolt's parity uses the drive tick
+  count, not 0x84c494. The jolt is applied to the window's camera but not to headless shots or
+  the 2D panorama placement. A fade already running when a segment restarts keeps running
+  (as in the original), but its frame count starts at 0 on the tick it is created (the exact
+  first frame of 0x436ad0 is not checked).
+- **4:3 placement (default, faithful).** Everything is in virtual x 0..496, the 4:3 area: at
+  16:10 the snow ends at the 4:3 edges and shape 2's arm stops at x = 496. Widening the snow
+  layers (and spawning drops) over the visible Hor+ range, and interpolating the wiper angle at
+  high refresh rates, would be enhancements (not implemented).
+- **Rules gap (not in this module).** The rules start the event only at the stage start and by
+  course event 0x15 (only stages 0 and 3 have one). The station-based starts (0x40d620 when the
+  global tick counter is divisible by 3, 0x40d340 by 4), which are how the rain stages
+  (from_station 5 or 7) get their weather, are not modelled, so rain never starts in the port yet.
+
 ## Implications for the port (Hor+)
 
 - Keep the vertical FOV from `0x84c150` and replace the aspect with the actual viewport aspect.

@@ -732,8 +732,8 @@ NULL, Z test and Z write off (render states 7 and 14 = 0), culling off (22 = 1).
 
 `Draw2D_FlatQuad` 0x432b50 / `Draw2D_TexQuad` 0x432da0 are drawn by task draw callbacks
 before `Frame_End`: sky and ground backgrounds, fades, and weather/cab effects during driving
-(rain streaks and wiper shapes 0x424950 / 0x424aa0 / 0x424cb0, drops 0x425040) (effect
-meanings: **likely**). None of the HUD elements in §3 use them.
+(wiper shapes 0x424950 / 0x424aa0 / 0x424cb0, drops 0x425040, snow layers 0x425120;
+renderer.md §13, confirmed). None of the HUD elements in §3 use them.
 
 ### 6.4 Implications for the port
 

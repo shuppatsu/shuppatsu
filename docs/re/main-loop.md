@@ -104,7 +104,7 @@ about 25 such functions exist in 0x402000–0x41e000.
 ### Task lists (head, tail, `int16 disabled`; 12 bytes each, `0x84c180..0x84c1ec`)
 | # | Addr | Typical creators | Role (guess unless noted) |
 |---|---|---|---|
-| 0 | 0x84c180 | 00420470, 004205c0 | screen fades/transitions |
+| 0 | 0x84c180 | 00420470, 004205c0 | sound tasks: timed sound, turnout clatter (confirmed, renderer.md §13.7) |
 | 1 | 0x84c18c | none | unused |
 | 2 | 0x84c198 | 004229c0 (route load), 0040e370, 004240d0 | 3D world/route |
 | 3 | 0x84c1a4 | ~30 creators: menus, HUD, results, title menu (0042b210) | UI/2D (likely) |
