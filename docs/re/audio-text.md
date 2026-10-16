@@ -46,6 +46,13 @@ regions that Ghidra did not turn into functions, and hexdumps of `DATA/bgm.rom`,
 | 0x420630 / 0x420650 / 0x420660 | release / release / stop-all wrappers | | confirmed |
 | 0x41ffe0 | `voice_call_pair(a, b)` | 2-phrase voice call built from the table at 0x46c368 | confirmed |
 | 0x420180 | `voice_call_prefix_speed(prefix, kmh)` | "prefix + speed" call (e.g. speed limit): kmh/5 picks code 0xae..0xcd (§5) | confirmed |
+| 0x420040 | `voice_call_station(mode, name)` | course event 2 announcement from the pair table's second block (§10.4) | confirmed |
+| 0x420320 | `voice_call_signal(prefix, kind, word)` | signal call-out, up to three phrases (§10.3) | confirmed |
+| 0x420470 / 0x420440 | `snd_play_timed(code, n)` + task | course event 13: play, release `n` updates later | confirmed |
+| 0x4205c0 / 0x4204d0 | `turnout_clatter_create(v)` + task | three wheel sets clicking over a turnout (§10.6) | confirmed |
+| 0x410cb0 / 0x411080 | `NaviAnim(n)` + task | navigator animation; requests its sound at a fixed frame (§10.7) | confirmed |
+| 0x4158b0 / 0x4159c0 | `TimeUp_Show` + task | time-up popup: buzzer 0x11 and the advice voice (§10.8) | confirmed |
+| 0x40ddb0 | `timeup_advice(&sprite, &voice)` | advice by the last statistic category `0x856d84` | confirmed |
 | 0x4229c0 | `train_task_create` | creates the player-train task; picks the running-noise mode by train type; posts the motor's base pitch | confirmed |
 | 0x422c20 | `train_task_update` (not a Ghidra function) | per-tick train update; horn, brake air, motor/running-noise pitch and volume, rail joints, squeal (0x4234eb–0x423eb0, §6) | confirmed (objdump) |
 | 0x424070 | `train_task_sound_reset` (label) | resets code 9 to vol 0x7f and the motor code to its base pitch | confirmed |
@@ -315,7 +322,8 @@ traction fade task+0x38, and `kmh` the f32 store `[esp+0x14] = v·3.6`. **confir
   the first and third clicks advance the state by 2, so only two clicks per period remain.
   Every click also bumps a counter 0x84c3dc and calls 0x433260 (force feedback, which has no
   effect; input.md). Rows on this disc: period 120/360/1200/1500, clicks e.g. 12/24/94/104.
-- Flange squeal (flag 0x84c400): if `0x84c408 ≥ 2.1` (0x472640) and the counter ≥ 0x50, play 0x19
+- Flange squeal (flag 0x84c400, latched at creation and then set / cleared by course events
+  18 / 19, 0x40acd0): if `0x84c408 ≥ 2.1` (0x472640) and the counter ≥ 0x50, play 0x19
   and reset. Otherwise count up to 0x51. **Departure**: with the same flag, `v₀ == 0` while moving
   plays 0x30, so it fires on the first moving tick.
 - Brake air (flag 0x84c430; any phase): brake-cylinder moving counter task+0x58 == 1 → play 0x14,
@@ -427,13 +435,226 @@ The allowed dependency list has no decoder, so ask before adding one.
     No code path in the game hits this.
 - `SoundSystem` (game thread) implements `snd_request`, the post functions with their pause and
   enable gating, the 4-slot sequencer (`frame()` once per 33 ms tick = two sequencer ticks),
-  `call_pair` and `call_prefix_speed`. It produces `Command`s.
-- `TrainSound::tick(&TrainTick)` implements §6.1–6.4 and `AmbientSound::tick` implements §6.6. Both
-  are deterministic and covered by unit tests built from the formulas above. Differential checks
-  against oracle logs of the 0x464–0x469 messages are still to do.
+  `call_pair`, `call_prefix_speed`, `call_signal` (0x420320) and `call_station` (0x420040). It
+  produces `Command`s.
+- `TrainSound::tick(&TrainTick)` implements §6.1–6.4, `AmbientSound::tick` §6.6 and
+  `TurnoutClatter` §10.6. All are deterministic and covered by unit tests built from the
+  formulas above. Differential checks against oracle logs of the 0x464–0x469 messages are still
+  to do.
+- The in-stage mapping of §10 lives in the game crate (`crates/ddg-game/src/sound.rs` and
+  `sound/stage.rs`), because it reads `ddg_engine` state; see §10.10.
 - `AudioOutput` (cpal, default device and format, any channel count) owns the stream. It receives
   `Command`s over a channel and applies them at the start of each device buffer.
 - `ddg-tools play-sound <code> [--wav out/…]` plays a code or sequence live, or renders it to a WAV.
+
+## 10. In-stage sound events
+
+Everything the stage loop requests besides the train task (§6). Sources: every caller of
+0x41fda0 / 0x42ff20 / 0x430100 / 0x420630 / 0x420650 / 0x420660 / 0x41ffe0 / 0x420040 /
+0x420180 / 0x420320 / 0x420470 in `re/decomp/dengo3k*/` (the stage-loop ones are listed below;
+menus and result screens are in menus.md). All rows are **confirmed** (read from code) unless
+marked; none has been checked against an oracle log of messages 0x464–0x469 yet. Meanings of
+voice codes are **guesses** from context.
+
+### 10.1 Order within a tick — confirmed
+
+Loop body of 0x4084f5: 0x407c10 (ambient, §6.6), 0x40dad0 (0x40d620 on a pass), 0x409fc0,
+0x40acd0 (course events), 0x40b4a0 (limit list), 0x40b780 (enforcement), 0x40c010 (signals),
+0x40c4e0 (approach, EB, ATS, rain), then 0x40a0a0 (stopped train) or the game over. Then
+`Task_Tick`: the train task 0x422c20, then the task lists (turnout clatter / timed release in
+0x84c180, HUD tasks in list 3: navigator, departure task, `Hud_Update`, time-up), then
+PumpMessages (sequencer, two steps). The reimplementation keeps this order:
+`StageSound::loop_part`, `TrainSound::tick`, `StageSound::task_part`, `SoundSystem::frame`.
+
+### 10.2 Rule events → sounds
+
+| Trigger (engine) | Call | Site | Conf. |
+|---|---|---|---|
+| Overspeed message (limit or signal) | request 0x11 (before the message) | 0x40b780 | confirmed |
+| False start (kind 9, pre-departure loop) | request 0x11 (after the message) | 0x4080d0 | confirmed |
+| On-time pass (kind 13) | request 0xbc | 0x40d620 | confirmed |
+| ATS state 1 (`AtsBell`) | request 0xb | 0x40c4e0 | confirmed |
+| ATS acknowledged | release 0xb; chime start = clock | 0x40c4e0 | confirmed |
+| Chime active | request 0xd when `(clock − start) % 32 == 0` (clock before this tick's ++) | 0x40c4e0 | confirmed |
+| Next sighting / repeater with the chime active | release 0xd | 0x40c010 | confirmed |
+| Course 8 obstacle (`ObstacleStop`) | request 0xb, `NaviAnim(0)` (no sound) | 0x40acd0, 0x40c4e0 | confirmed |
+| Red-signal / ATS recovery start (`SignalsReset`) | release 0xb | 0x40a0a0 | confirmed |
+| Recovery end (red / ATS and obstacle) | request 0x97 after the hold's last `Task_Tick` | 0x40a0a0 | confirmed |
+| Game over | stop all (0x420660), then 20 `Task_Tick`s | 0x40857b | confirmed |
+| Passing time 1–5 s away (next station passed) | request 0x15, twice per tick (Clock_Draw runs for both clocks and tests globals) | 0x417140 | confirmed |
+| Remaining-time transfer ±1 s | request 0x26 / 0x27 | 0x40ff20 | confirmed |
+| EB penalty, 40-tick branch | `NaviAnim(0x45addc[stage])` (the every-4th branch has none) | 0x40c4e0 | confirmed |
+| EB in the approach for 20 ticks, not penalised, ATS idle | same animation, re-requested every tick while the condition holds (blocked while one runs) | 0x40c4e0 | confirmed |
+| Approach state → 4 (overrun by 20 m) | `NaviAnim(0x45ade0[stage][clock & 1])` | 0x40c4e0 | confirmed |
+| Notch slam (stat 11 += 2) | `NaviAnim(0x45adde[stage])` unless 0x855ff8 & 0x410 | 0x422c20 | confirmed |
+
+The clock freeze 0x856c6c (90 ticks after a pass) also silences the countdown, since the test
+sits in the clock drawing that `Hud_Update` skips. **confirmed**
+
+### 10.3 Signal call-outs (0x40c010) — confirmed
+
+Only for a sighting whose `Signal_Show` created a task (return 1), and for every repeater
+(that path ignores the return value). Mode `m` of block `k` (after the decrement): stage 4:
+k ∈ {0, 6, 9} → 2, {2, 7, 10} → 1; other stages: 0 → 2, 2 → 1; else 0. "Passing route" =
+stages 0–2 and 17–19; `stops` = 0x856d74.
+
+* Aspect a ≠ 0: m = 0 → request `{0xa8, 0xa8, 0xa9, 0xaa, 0xd2}[a]`; passing route and the target
+  is passed → `0x420320(3, m, a)`; else `0x420320(0, m, a)`.
+* Green, k < 8: m = 0, or (passing route and stops), or (other routes and stage ≠ 4) → request
+  `T[k + 10·variant]` with T = `0x97 0x99 0x99 0x1005..0x100b` (variants 0, 2) and 0xbe ×10
+  (variant 1; `0x8570c2` ≥ 3 would read past the table); otherwise `0x420320(3 or 0, m, 0)`.
+  Sequences 5–0xb start with phrases 0x9b..: "第 n 閉塞 進行" (**likely**, from the phrase order
+  seen in a stage-0 run).
+* Green, k ≥ 8: m ≠ 0 → `0x420320(0, m, 0)`; else 0xbe (variant 1) or 0x98.
+* Repeater (0x856fb4 > 0, ATS ≤ 3): `0x420320(m', 0, w)` with m' the mode of the block before the
+  increment, w = 5 (variant 1, green; m' forced to 0), 6 (restrictive), 0 (green, other variants).
+
+`0x420320(p, kind, word)` builds up to three phrases (each skipped when out of range):
+p 1..3 → (0xc1, 30) / (0xc0, 36) / (0xd4, 30); kind 0..2 → (0xd1, 30) 閉塞 / (0xc1, 30) 場内 /
+(0xc0, 36) 出発; word 0..6 → 0xa7 0xa8 0xa9 0xaa 0xd2 0xbe 0xc2 with delay 0x1c.
+
+### 10.4 Limits, announcements, course events — confirmed
+
+* Limit kind 4 (none in force, 0x40acd0 and 0x40b4a0 alike): stages 0–2 request 0xc2 only,
+  others `0x420180(0, km/h)`. Kind 5 (one in force): `0x420180(0, km/h)` on stages ≥ 3, silent
+  on 0–2. Kind 6: `0x420180(0, 0)` ("limit lifted") when 0x856d24 = 1; 0x856d24 is set by every
+  `Sign_Show` that creates a sign (0x411a00), and kind 6 shows its own 制限解除 sign just
+  before, so it always plays.
+* Approach announcement: HUD state 0x856d68 goes 0 → 1 when the leg distance 0x84c40c reaches
+  50 m (f32 at 0x4594c8), 1 → 2 at rounded distance ≤ f5 + 150, where it calls
+  `0x41ffe0(stops ? 3 : 2, name)` = pair `name`, then pair 3 or 2. `name` = `0x856d58[station + 1]`,
+  0x856d58 being the stage's station-name id list 0x4860bc[stage] (the HUD plate ids). Reset by
+  0x40cf40 and 0x40d620.
+* 0x84c40c is the distance run since the segment start or the last passed station (train task:
+  += v/30; reset by 0x40cf40, 0x40d620 and the train-task reset); 0x40c4e0 adds 2.5 when its
+  truncation is 50 or 51, which makes the late/early hints fire once (hud.md open questions 2, 7).
+* Course events: 1 → request `a` (codes and sequences, e.g. the in-train announcements
+  0x1019–0x1023); 2 → `0x420040(a, 0x856d58[station + 1])`; 7 → request 0xe; 13 →
+  `0x420470(a, b)`: request `a`, a task releases it `b` updates later; 18 / 19 → 0x84c400 = 1 / 0
+  (flange squeal and departure sound, §6.4); 23 → E3 coupling animation, sequence 0x29 on its
+  65th update (6-update delay, frame counter 0x3c); 21 → rain (§10.8).
+* `0x420040(mode, name)`: pair `90 + name` (table 0x46c4d0), code c. Mode 1: [chime 0x1a4 (40) if
+  c < 0x112], name, name. Modes 0 / 2: [0x1a4 (70) if c < 0x112], "next" (0x111 if c < 0x12d,
+  0x147 if c < 0x147, else 0x168; delay 40), name, then name again (mode 0) or the suffix (0x112 /
+  0x148 / 0x169, mode 2). Other modes pass an uninitialised list (the port plays nothing).
+
+### 10.5 Departure (0x4124f0, task 0x413370) — confirmed
+
+Segment setup (0x4080d0): train sounds (§6.2), then 0x4124f0 requests **0x2d** (the departure
+bell), then rain if the level is > 0 (type < 3). Departure task, counter c, offset o (180 at
+station 0 of stages 0–2 / 17–19):
+
+| c | Call |
+|---|---|
+| 1 | request jingle `0x466be0[stage]` (0xc; 0x1a5 on stages 12–15; 0x1a8 at stage 10 station 7) |
+| 0x30 | request 0x1018 (station 0) / 0x16d (others) on stages 0–2, 17–19; 0xd5 elsewhere |
+| o + 0x5a, o + 0x82 | stages 13–15: request / release 0x1a6 |
+| o + 100 | release the jingle; request 0x23 (red starting signal) |
+| o + 200 | release 0xb if the ATS is set; release 0x2d (doors closed) |
+| ≥ o + 0xc9 | once moving at ≥ 0.04 m/s: request `{0x97, 0xce, 0xcf, 0xd0, 0xd2}[aspect]` and end |
+
+The task keeps running in the driving loop until the train moves, so the departure voice comes
+on the first moving tick, however late. The 0x400 flag (time-up) ends it.
+
+### 10.6 Turnout clatter (0x4205c0 → task 0x4204d0) — confirmed
+
+0x407c10 latches `0x857096` while the point 6 ahead has `flags & 0xe000` = 0x8000 / 0xa000 and
+sets 0x856d96 on the rising edge; the train task's moving branch then creates the task with
+step = v/30 (double 0x459550). Three wheel sets start at 0, −2.5, −14.5 m; whenever one is ≥ 0
+(and has clicked < 3 times) it requests the rail-joint code and moves back by 4, 3, 3 m per
+click; all advance by the step. The task ends when every set has clicked at least twice, and
+then requests 0x2f if 0x84c400 is set and v·3.6 < 40 (0x46c638 = 108, 0x4594b0 = 40).
+
+### 10.7 Navigator animations (`NaviAnim` 0x410cb0, task 0x411080) — confirmed
+
+Per animation n (0..19, stack immediates in 0x410cb0) a frame f and a code: 0 (−2, –),
+1 (20, 0x1025), 2 (20, 0xdc), 3 (20, 0xe2), 4 (20, 0x1012), 5 (20, 0xe5), 6 (20, 0x1011),
+7 (10, –), 8 (10, 0xd8), 9 (0, 0xd7), 10 (0, 0xd6), 11 (0, 0xd6), 12 (16, 0xda), 13 (4, 0xe0),
+14 (30, 0xdd), 15 (36, 0xdc), 16 (3, 0xe2), 17 (0, –), 18 (65, 0xd8), 19 (3, 0xd7). The task
+waits 5 updates, then counts frames; the code is requested when the counter equals f, i.e. on
+update 6 + f. Frame lists `{tbl, ticks}` end in `{−1, loops}` (20 pointers 0x465e04…0x466214).
+`NaviAnim(−1)` and replacement clear +0x3c, which ends the task at its next frame boundary.
+While an animation is current (0x856c68) only n = 0 replaces it (and not another 0). Callers in
+the stage: §10.2, obstacle `NaviAnim(0)`, cancels at the obstacle recovery, the end of the
+arrival branch and 0x4085e0. Per stage the numbers are i16 × 4 at 0x45addc + 8·stage: EB,
+notch slam, overrun ×2 (stage 0: 2, 1, 3, 3).
+
+### 10.8 Stops, recoveries, game over — confirmed unless noted
+
+* Arrival accepted (0x40a0a0): stop all; on a forced stop (buffer stop) request 0x1b and the
+  voices 0xdc / 0xd6 / 0xe2 / 0xe6 at loop ticks 0 / 15 / 40 / 50 of the 80-tick hold; after the
+  pending time drained (0x407ff0) stop all again; clean stop on time / clean stop: play BGM-slot
+  jingle 0x199 / 0x198 before the message, released after the 100-tick hold (0x420630); at the
+  final station 0x19b (with the 全区間走破 popup) after the 100 / 30-tick hold; then
+  `NaviAnim(−1)`.
+* Stage-loop exit (0x4085e0): release 0xb if the ATS is set, 0xd if the chime runs,
+  `NaviAnim(−1)`, sequencer off (0x84faf8 = 0, so running announcements stop), and, after an
+  arrival (stage still active), release 9. The sequencer stays off through the station result
+  until the next segment (0x4080d0 sets 0x84faf8 = 1 after 0x40d340).
+* Red-signal / ATS recovery: release 0xb at the start; request 0x97 after the last
+  `Task_Tick`. Scripted-signal recoveries with a passing train (0x404f10) also play 8
+  (tick 40, released at 100) or 1 + 4 (tick 45, 4 released at 100); the engine does not model
+  those animations.
+* Obstacle recovery: stop all, `NaviAnim(−1)`, two ticks, then 0x41a7b0 (request 0x2c at pitch
+  0x10, request 0x1a), rain if level > 1, running noise and motor restarted as at a segment
+  start, green signal, 30 ticks, request 0x97. Tick positions are **guesses** (the engine's
+  obstacle hold of 36 ticks is itself a guess).
+* Rain (0x28, weather type 0x857210 < 3, i.e. stages 5–16 by the switch in 0x40d040):
+  started by course event 21 (pitch 0), by 0x40d620 (not inside a tunnel) and at segment start /
+  obstacle recovery (pitch = level / 2). Each 0x40c4e0: while on, pitch = level / 2; entering a
+  class-3 track (probe +4) releases it, leaving requests it again; while decaying, released when
+  the level reaches 1.
+* Time-up (0x4158b0, after the 20 game-over ticks; task 0x4159c0, first update in the next
+  tick): request 0x11 on update 36, the advice voice on update 56. Voice by `0x856d84` (the
+  category of the last 0x40dd60 call, −1 after 0x40dd10), forced to 2 when stat 2 > 1: 0 → 0xef,
+  1 → 0xf6 (early accumulator < 1) / 0xf0, 2 → 0xf1, 3 → 0xfb (0x84c3e8 > 0.17) / 0xea, 4 → 0xfc,
+  5 → 0xf2, 6 → 0xeb (stat 0 < 1) / 0xf3, 7 → 0xec, 9 → 0xf5, 0xb → 0xfb, else 0xf6. The
+  matching sprites 0x3f2..0x3fe are hud.md §3.16.
+
+### 10.9 BGM: what plays when — confirmed
+
+There is **no music while driving**. BGM-slot codes (0x197–0x1a8) used around a stage:
+
+| Code | When | Site |
+|---|---|---|
+| 0x19e (loops) | title / menus / stage select; released when a stage starts (0x420630, then 0x420650 after the fade) | 0x42a1c0, 0x42a460, 0x435490, 0x4080d0 |
+| 0x197 | stage intro fly-by, released when skipped / done | 0x408f40, 0x4091a0 |
+| 0x1a5 / 0x1a8 / 0xc | departure jingle (0xc is an effect) | 0x413370 |
+| 0x1a6 | extra departure jingle, stages 13–15 | 0x413370 |
+| 0x1a3 | melody horn (stage 7) | 0x422c20 |
+| 0x1a4, 0x1a7 | chimes inside station calls and in-train announcements | 0x420040, sequences 0x19–0x23 |
+| 0x199 / 0x198 | clean stop on time / clean stop | 0x40a0a0 |
+| 0x19b | all-round clear at the final station | 0x40a0a0 |
+| 0x19a | coupling minigame, special endings | 0x4093c0, 0x41b810 |
+| 0x19d | ranking name entry | 0x41ebe0 (menus.md) |
+| 0x19f, 0x1a1, 0x1a2 | special-ending sequences (stage kind > 3) | 0x404920, 0x402e80, 0x404110 |
+
+Results (0x413d90 / 0x413f30: 0x195 or 0x2d, 0x18 tally loop, 0x16, 0x23, 0x192 / 0x193),
+continue and ranking sounds are in menus.md; they belong to the screens.
+
+### 10.10 Reimplementation and approximations
+
+`crates/ddg-game/src/sound/stage.rs` (`StageSound`) maps the engine's `RuleEvent`s and state
+changes (`Snap` before / after each tick) to the calls above; unit tests drive it with a
+recording `SoundSystem`, and a data test runs stage 0. Per-stage tables (station-name ids,
+departure jingle, navigator numbers and frame lists) are read from the exe; code immediates are
+constants with their addresses. Inferred rather than reported by the engine (rules.rs does not
+raise them):
+* sighting vs. other `Signal_Show` calls: a non-forced `SignalShown` in a driving-loop tick is a
+  0x40c010 sighting; a repeater is `0x856fb4` going from > 0 to 0 (missed if course event 14
+  arms it and a no-op repeater display consumes it in the same tick);
+* limit kind 4 vs 5 from `0x856fc4` before the tick (a second limit event in the same tick sees
+  0, as in the original);
+* the EB-penalty branch from `0x856d64` before the tick (40 = held branch);
+* `0x856d84` from the statistics that rose in a tick (several in one tick: the highest
+  category);
+* the departure task after the rules stop running it (the voice once moving);
+* the approach HUD state, the clock freeze and the navigator tasks are re-modelled here;
+* a probe 16 points before the route start reads class 0 (the original reads whatever precedes
+  the point array); a turnout edge consumed only when moving is approximated by "moving now".
+
+Every enhancement stays off: the mapping is the original's, including the doubled countdown
+request.
 
 ## Open questions
 
@@ -446,16 +667,33 @@ The allowed dependency list has no decoder, so ask before adding one.
 4. Whether `nosound` (bit 9 of 0x816840) is read anywhere outside the decompiled functions.
 5. The high byte of the 0x486b4e per-code records (unreferenced, maybe priority or a leftover).
 6. Who starts code 0x1c? It is only ever released (train task, stopped or not driving). Search
-   for a computed `snd_request` argument, or log 0x464 messages in the oracle.
+   for a computed `snd_request` argument, or log 0x464 messages in the oracle. No course event
+   requests it (kind 1 codes checked on every stage).
 7. Whether the offset-0 notification fires at Play (§2) under Wine and real DirectSound. If not,
    the original would play one half of stale data on every start.
 8. Win9x DirectSound resampling quality (nearest, linear or better) for the default
    `Interpolation`, and whether its software mixer clipped or wrapped when voices summed past
    full scale. We clamp.
 9. Does any route's odometer pass 32767 m, where the class-1 ambient anchor (i16) wraps (§6.6)?
-10. The meaning of the pair-table blocks at 0–4 / 90–94 and of the second station-name block, and
-    the per-station index source (0x856d58).
-11. The meaning of sequences 0x00–0x18 and 0x24–0x2e (which events request them). Needed for
-    subtitles keyed by sequence ID.
-12. The code 0x28 condition (0x857230 > 0 and 0x857210 < 3 at segment start; 0x40c4e0/0x40acd0
-    also play it). It belongs to the rules port, not the train task.
+10. ~~The per-station index source (0x856d58)~~: the stage's station-name id list 0x4860bc
+    (§10.4); pairs `id` (approach call) and `90 + id` (course event 2) are the two name blocks.
+    Still open: the phrases of entries 0–4 / 90–94 (suffixes; 2 and 3 are the pass / stop
+    suffixes of the approach call).
+11. The meaning of the 47 sequences. Known requesters: 0x05–0x0b green calls by block
+    (0x40c010), 0x11 / 0x12 / 0x25 navigator voices (0x410cb0), 0x18 first-station departure
+    call (0x413370), 0x29 E3 coupling (0x411300). Course events of kind 1 in the shipped data
+    request sequences 0x13, 0x16, 0x19, 0x1c–0x1f, 0x21–0x23, 0x2a, 0x2b, 0x2d, 0x2e and code 0x11;
+    kind 13 plays code 0xf for 30 ticks; kind 2 uses modes 0, 1 and 2. 0x00–0x04 are menu
+    jingles (menus.md). Not requested in a stage: 0x0c–0x10, 0x14, 0x15, 0x17, 0x1a, 0x1b, 0x20,
+    0x24, 0x26–0x28, 0x2c (unused, or callers outside the stage loop). Needed for subtitles keyed
+    by sequence ID.
+12. ~~The code 0x28 condition~~: rain, answered in §10.8.
+13. The navigator animation table entry for the sound-bearing frame of each animation is fixed
+    by code; whether every animation is still alive at its frame (so the sound plays) depends on
+    the frame lists, which the port reads but has not cross-checked against a trace.
+14. Hold lengths around the obstacle recovery (0x41a7b0 waits on 0x100) and therefore the tick of
+    its 0x2c / 0x1a sounds and of the restarted train sounds.
+15. Whether a task created during the loop body gets its first update in the same `Task_Tick`
+    (assumed for 0x420470, 0x411240 and `NaviAnim`; it shifts their sounds by one tick).
+16. Scripted-signal recoveries with a passing train (0x404f10 animation; sounds 8, 1, 4) and the
+    AI-train sounds of 0x40b710 / 0x406420 are not modelled (no traffic in the engine).
