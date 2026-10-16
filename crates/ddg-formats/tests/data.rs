@@ -195,12 +195,16 @@ fn stage_tables_read_and_agree_with_routes() {
         }
         for ev in &stage.traffic_events {
             let (seg, _) = stage.segment_for_station(ev.station as u32).unwrap();
-            let spawns = routes[&seg.com].traffic.len();
-            assert!(
-                (ev.spawn as usize) < spawns,
-                "stage {s}: spawn {}",
-                ev.spawn
-            );
+            let spawn = routes[&seg.com].traffic.get(ev.spawn as usize);
+            assert!(spawn.is_some(), "stage {s}: spawn {}", ev.spawn);
+            // The model row: the override, or the spawn's own type − 1 (0x404f10).
+            let row = if ev.args[3] == -1 {
+                i32::from(spawn.unwrap().train_type) - 1
+            } else {
+                i32::from(ev.args[3])
+            };
+            let model = tables.train_models.row(row as usize);
+            assert!(model.is_some(), "stage {s}: model row {row}");
         }
         assert!(stage.course_events.iter().all(|e| e.station >= 0));
         assert!(stage.limit_events.iter().all(|e| (4..=6).contains(&e.kind)));
@@ -208,6 +212,37 @@ fn stage_tables_read_and_agree_with_routes() {
     eprintln!("timetable vs .COM stop spacing: {checked} pairs, worst error {worst} m");
     assert!(checked > 100);
     assert!(worst <= 5.0, "worst {worst} m");
+}
+
+#[test]
+fn traffic_model_table() {
+    use ddg_formats::{exe::Exe, traffic::TrainModels};
+    let dir = require_data!();
+    let exe_data = exe_bytes(&dir);
+    let models = TrainModels::read(&Exe::parse(&exe_data).unwrap()).unwrap();
+    assert_eq!(models.rows.len(), 79);
+    let mut lists = 0;
+    for (row, m) in models.rows.iter().enumerate() {
+        assert!((0..=8).contains(&m.kind), "row {row}: kind {}", m.kind);
+        // Road vehicles (kind 0) are rows 68..=78 and use area parts; trains use TR parts.
+        assert_eq!(m.kind == 0, row >= 68, "row {row}");
+        for cars in &m.cars {
+            if cars.is_empty() {
+                continue;
+            }
+            lists += 1;
+            // The head is at offset 0 and each offset is the previous one plus the spacing.
+            assert_eq!((cars[0].offset, cars[0].spacing), (0.0, 0.0), "row {row}");
+            for w in cars.windows(2) {
+                assert!((w[0].offset + w[1].spacing - w[1].offset).abs() < 1e-3);
+            }
+            for c in cars {
+                let tr = (11762..=13086).contains(&c.lods[0]);
+                assert_eq!(tr, m.kind != 0, "row {row}: part {:#x}", c.lods[0]);
+            }
+        }
+    }
+    assert!(lists > 140, "{lists} car lists");
 }
 
 // ---- Driving-HUD tables (docs/re/hud.md) ----

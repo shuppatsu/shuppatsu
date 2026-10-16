@@ -141,6 +141,8 @@ pub struct StageTables {
     /// Lower-case `.COM` file names by COM index; index 0 is `None`. Match case-insensitively
     /// (the disc has upper-case names).
     pub com_files: Vec<Option<String>>,
+    /// The AI-train model table (0x457358), shared by all stages.
+    pub train_models: crate::traffic::TrainModels,
 }
 
 impl StageTables {
@@ -158,7 +160,11 @@ impl StageTables {
         let stages = (0..STAGE_COUNT)
             .map(|s| read_stage(exe, s as u32, com_files.len()))
             .collect::<Result<Vec<_>>>()?;
-        Ok(Self { stages, com_files })
+        Ok(Self {
+            stages,
+            com_files,
+            train_models: crate::traffic::TrainModels::read(exe)?,
+        })
     }
 
     /// The filename for a COM index, if any.
@@ -350,15 +356,15 @@ fn c_string(exe: &Exe<'_>, va: u32) -> Result<String> {
 mod tests {
     use super::*;
 
-    /// A minimal PE32 whose single section covers 0x463000..0x486000, so the real table
+    /// A minimal PE32 whose single section covers 0x457000..0x486000, so the real table
     /// addresses can be used.
     struct Image {
         file: Vec<u8>,
     }
 
-    const SECTION_VA: u32 = 0x463000;
+    const SECTION_VA: u32 = 0x457000;
     const SECTION_RAW: usize = 0x400;
-    const SECTION_LEN: usize = 0x23000;
+    const SECTION_LEN: usize = 0x2f000;
 
     impl Image {
         fn new() -> Self {

@@ -18,5 +18,6 @@ pub mod sha256;
 pub mod stages;
 pub mod strings;
 pub mod tex;
+pub mod traffic;
 
 pub use error::{FormatError, Result};
