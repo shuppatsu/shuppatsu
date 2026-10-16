@@ -571,9 +571,8 @@ impl Weather {
                 self.jolt = None;
             } else {
                 self.jolt_now = a;
-                // Parity of the global tick counter 0x84c494 (its phase is not known; the
-                // drive's tick count stands in for it).
-                if drive.tick_count().is_multiple_of(2) {
+                // Parity of the global tick counter 0x84c494 (modelled by `Drive::global_tick`).
+                if drive.global_tick().is_multiple_of(2) {
                     self.jolt = Some((f64::from(a) * JOLT_DAMP) as f32);
                 }
             }
