@@ -9,6 +9,7 @@ mod input;
 mod play;
 mod popups;
 mod scene;
+mod screens;
 mod shot;
 mod sound;
 mod window;
@@ -47,7 +48,7 @@ options:
   --size <WxH>             window/frame size (default 1280x800, 16:10)
 
 play keys (mode 0): Down/Up power +/-, Right/Left brake +/- (one more press past B8 = EB),
-  Space horn, Enter ATS confirm / panel / continue, Esc pause, Q quit while paused
+  Space horn, Enter ATS confirm / panel / menu confirm, Esc pause / cancel, Up/Down menu cursor
 view keys: Space pause, Up/Down speed, Left/Right jump 100 m, L track lines, F fog, Esc quit";
 
 /// The original's fixed tick (timeSetEvent(33, …) at 0x436f30).

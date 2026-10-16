@@ -1,11 +1,17 @@
 //! `ddg-game play`: drive a stage. The simulation is `ddg_engine::drive` at the original's
 //! fixed 33 ms tick; rendering interpolates the camera along the track between the last two
-//! ticks. Menus and result screens are not built yet: arrivals advance after a short hold, and
-//! Enter continues after a game over.
+//! ticks. The stage flow (pause dialogs, station result, continue, report card, run-end banner)
+//! is [`crate::screens::flow::StageFlow`]; there is no title screen yet, so quitting or ending
+//! the run leaves play.
 
 use crate::hud::{Hud, HudState};
 use crate::input::{Bindings, ButtonState, Keyboard};
 use crate::scene::{GameData, RouteScene, Visibility};
+use crate::screens::flow::{Action, FlowDefs, Observation, StageFlow};
+use crate::screens::pause::PauseResult;
+use crate::screens::result::ResultInput;
+use crate::screens::tables::ScreenTables;
+use crate::screens::{MenuInput, Sfx};
 use crate::window::Gpu;
 use anyhow::{Context, Result};
 use ddg_engine::drive::{Drive, DrivePhase, DriverInput, LoadError};
@@ -17,22 +23,22 @@ use ddg_formats::scene::{DRIVING_FOV_Y_DEG, TrackPos};
 use ddg_formats::stages::StageTables;
 use ddg_render::FrameGeometry;
 use ddg_render::camera::ORIGINAL_STRETCH;
-use ddg_render::sprites::{CANVAS_H, CANVAS_W, SpriteBank, SpriteLayer};
+use ddg_render::sprites::{CANVAS_H, CANVAS_W, Slot, SpriteBank, SpriteLayer};
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use winit::keyboard::PhysicalKey;
 use winit::window::WindowId;
 
 /// The original's fixed tick (timeSetEvent(33, …) at 0x436f30).
 const TICK: Duration = Duration::from_millis(33);
 /// The original's 3D viewport starts at virtual y 52 of 400 (renderer.md §5).
 pub const HUD_BAND_TOP: f32 = 52.0 / 400.0;
-/// Stand-in for the station result screen until it exists: ticks before `finish_station`.
-const RESULT_HOLD_TICKS: u32 = 150;
 /// Visibility is widened for at least this aspect, so resizing up to 21:9 needs no rebuild.
 const MIN_WIDE_ASPECT: f32 = 21.0 / 9.0;
+/// Pixels per `tbl.rom` tile.
+const TILE_PX: i16 = 16;
 
 pub struct PlayOptions {
     pub stage: usize,
@@ -47,22 +53,22 @@ pub struct PlayOptions {
     pub texture_filtering: bool,
     pub fog: bool,
     pub mute: bool,
-    /// Scripted notches: `tick notch brake` lines, held from each tick on (the oracle's format).
+    /// Scripted inputs: `tick notch brake` lines (the oracle's format, drive ticks), held from
+    /// each tick on, and `key <tick> <enter|esc|space|up|down>` lines: the key is down for the
+    /// poll at the end of play tick `tick` (play ticks also count paused ticks).
     pub inputs: Option<std::path::PathBuf>,
-    /// Headless: run this many ticks, render one frame with the HUD to a PPM and exit.
+    /// Headless: run this many play ticks, render one frame with the HUD to a PPM and exit.
     pub shot: Option<(u64, std::path::PathBuf)>,
 }
 
-pub fn run(opts: PlayOptions) -> Result<()> {
-    let data = GameData::from_env()?;
-    let exe_bytes = data.exe()?;
-    let exe = Exe::parse(&exe_bytes)?;
-    let stages = StageTables::read(&exe)?;
-    let train_tables = TrainTables::read(&exe)?;
-    let rule_tables = RuleTables::read(&exe)?;
-    let tolerance_m = rule_tables
-        .stop_tolerance_m
-        .get(opts.stage, opts.difficulty);
+/// The exe tables a (re)start needs.
+struct Tables {
+    train: TrainTables,
+    rules: RuleTables,
+    stages: StageTables,
+}
+
+fn start_drive(tables: &Tables, opts: &PlayOptions, station: usize) -> Result<Drive> {
     let loader_data = GameData::from_env()?;
     let loader = move |name: &str| -> Result<Vec<u8>, LoadError> {
         loader_data
@@ -70,22 +76,38 @@ pub fn run(opts: PlayOptions) -> Result<()> {
             .map_err(|e| LoadError::from(format!("{e:#}")))
     };
     let drive = Drive::new(
-        &train_tables,
-        &rule_tables,
-        &stages,
+        &tables.train,
+        &tables.rules,
+        &tables.stages,
         opts.stage,
         opts.difficulty,
-        opts.station,
+        station,
         loader,
     )
     .context("starting the stage")?;
     eprintln!(
-        "stage {} difficulty {} from station {} ({})",
+        "stage {} difficulty {} from station {station} ({})",
         opts.stage,
         opts.difficulty,
-        opts.station,
-        drive.station_name(opts.station).unwrap_or("?")
+        drive.station_name(station).unwrap_or("?")
     );
+    Ok(drive)
+}
+
+pub fn run(opts: PlayOptions) -> Result<()> {
+    let data = GameData::from_env()?;
+    let exe_bytes = data.exe()?;
+    let exe = Exe::parse(&exe_bytes)?;
+    let tables = Tables {
+        train: TrainTables::read(&exe)?,
+        rules: RuleTables::read(&exe)?,
+        stages: StageTables::read(&exe)?,
+    };
+    let tolerance_m = tables
+        .rules
+        .stop_tolerance_m
+        .get(opts.stage, opts.difficulty);
+    let drive = start_drive(&tables, &opts, opts.station)?;
 
     let keyboard = Keyboard::new(&Bindings::read(&exe)?, opts.keyboard_mode)
         .context("keyboard modes are 0..=3")?;
@@ -99,6 +121,15 @@ pub fn run(opts: PlayOptions) -> Result<()> {
     let hud = Hud::new(&exe, opts.stage)?;
     let popups = crate::popups::Popups::new(&exe, opts.stage)?;
     hud.create(&mut layer);
+    let screen_tables = ScreenTables::read(&exe)?;
+    let flow = StageFlow::new(FlowDefs::new(&screen_tables, |tbl| {
+        usize::try_from(tbl)
+            .ok()
+            .and_then(|i| bank.tilemaps.get(i))
+            .map_or((0, 0), |m| {
+                (i16::from(m.width) * TILE_PX, i16::from(m.height) * TILE_PX)
+            })
+    }));
 
     let sound = if opts.shot.is_some() || opts.mute {
         None
@@ -108,32 +139,36 @@ pub fn run(opts: PlayOptions) -> Result<()> {
     let visibility = visibility(&opts);
     let scene = load_scene(&data, drive.com_name(), visibility, &opts)?;
     let script = match &opts.inputs {
-        Some(p) => Some(parse_script(
-            &std::fs::read_to_string(p).with_context(|| p.display().to_string())?,
-        )?),
-        None => None,
+        Some(p) => {
+            parse_script(&std::fs::read_to_string(p).with_context(|| p.display().to_string())?)?
+        }
+        None => Script::default(),
     };
     let now = Instant::now();
     let mut app = Play {
         scene_com: drive.com(),
         drive,
+        tables,
         data,
         visibility,
         scene,
         keyboard,
         latched: DriverInput::default(),
+        menu_input: MenuInput::NONE,
+        saved_levers: (0, 0),
         down: [false; 256],
         hud,
         popups,
+        flow,
         layer,
         bank,
         canvas: vec![0; CANVAS_W * CANVAS_H * 4],
         canvas_dirty: true,
         panel_on: true,
         tolerance_m,
-        hold: 0,
         last_events: Vec::new(),
-        paused: false,
+        ticks: 0,
+        leave: false,
         interpolate: false,
         frame: FrameGeometry::default(),
         gpu: None,
@@ -146,7 +181,7 @@ pub fn run(opts: PlayOptions) -> Result<()> {
         opts,
     };
     if let Some((ticks, out)) = app.opts.shot.clone() {
-        while app.drive.tick_count() < ticks {
+        while app.ticks < ticks && !app.leave {
             app.tick()?;
         }
         let band_top = HUD_BAND_TOP;
@@ -169,7 +204,7 @@ pub fn run(opts: PlayOptions) -> Result<()> {
             Some(&app.canvas),
             &out,
         )?;
-        eprintln!("wrote {} at tick {ticks}", out.display());
+        eprintln!("wrote {} at play tick {}", out.display(), app.ticks);
         return Ok(());
     }
     let event_loop = EventLoop::new()?;
@@ -211,22 +246,51 @@ fn load_scene(
     Ok(scene)
 }
 
-/// Parses `tick notch brake` lines (`#` comments), ticks counted from the start of the run.
-fn parse_script(text: &str) -> Result<Vec<(u64, u8, u8)>> {
-    let mut steps = Vec::new();
+/// Scripted inputs (see [`PlayOptions::inputs`]).
+#[derive(Debug, Default)]
+struct Script {
+    /// `(drive tick, notch, brake)`, sorted.
+    notches: Vec<(u64, u8, u8)>,
+    /// `(play tick, DIK code)`.
+    keys: Vec<(u64, u8)>,
+}
+
+/// DirectInput codes of the script's key names.
+fn script_key(name: &str) -> Option<u8> {
+    Some(match name {
+        "enter" => 0x1c,
+        "esc" => 0x01,
+        "space" => 0x39,
+        "up" => 0xc8,
+        "down" => 0xd0,
+        _ => return None,
+    })
+}
+
+/// Parses the input script (`#` comments).
+fn parse_script(text: &str) -> Result<Script> {
+    let mut s = Script::default();
     for (n, line) in text.lines().enumerate() {
         let line = line.split('#').next().unwrap_or("").trim();
         if line.is_empty() {
             continue;
         }
         let v: Vec<&str> = line.split_whitespace().collect();
-        let [t, p, b] = v[..] else {
-            anyhow::bail!("line {}: expected `tick notch brake`", n + 1);
-        };
-        steps.push((t.parse()?, p.parse()?, b.parse()?));
+        match v[..] {
+            ["key", t, k] => {
+                let code =
+                    script_key(k).with_context(|| format!("line {}: unknown key {k}", n + 1))?;
+                s.keys.push((t.parse()?, code));
+            }
+            [t, p, b] => s.notches.push((t.parse()?, p.parse()?, b.parse()?)),
+            _ => anyhow::bail!(
+                "line {}: expected `tick notch brake` or `key tick name`",
+                n + 1
+            ),
+        }
     }
-    steps.sort_by_key(|s| s.0);
-    Ok(steps)
+    s.notches.sort_by_key(|s| s.0);
+    Ok(s)
 }
 
 /// Track units from the main-line origin.
@@ -244,6 +308,7 @@ fn track_pos(units: f32) -> TrackPos {
 
 struct Play {
     opts: PlayOptions,
+    tables: Tables,
     data: GameData,
     drive: Drive,
     visibility: Visibility,
@@ -252,10 +317,15 @@ struct Play {
     keyboard: Keyboard,
     /// Controls polled at the end of the last tick (the physics reads them this tick).
     latched: DriverInput,
+    /// Button edges of that poll, as the screens' tasks see them this tick.
+    menu_input: MenuInput,
+    /// Notches saved when the pause opened (0x42b7f0 saves 0x829d00 / 0x829d04).
+    saved_levers: (u8, u8),
     /// Keys down now, by DirectInput scan code.
     down: [bool; 256],
     hud: Hud,
     popups: crate::popups::Popups,
+    flow: StageFlow,
     layer: SpriteLayer,
     bank: SpriteBank,
     canvas: Vec<u8>,
@@ -265,9 +335,10 @@ struct Play {
     tolerance_m: i32,
     /// Rule events of the previous tick, to keep repeats out of the log.
     last_events: Vec<ddg_engine::rules::RuleEvent>,
-    /// Ticks spent in the current arrival hold.
-    hold: u32,
-    paused: bool,
+    /// Play ticks (simulation and paused).
+    ticks: u64,
+    /// Quit or run over: leave play.
+    leave: bool,
     /// False right after a segment change: the position jumped, don't interpolate.
     interpolate: bool,
     frame: FrameGeometry,
@@ -277,11 +348,36 @@ struct Play {
     title_at: Instant,
     error: Option<anyhow::Error>,
     sound: Option<crate::sound::Sound>,
-    script: Option<Vec<(u64, u8, u8)>>,
+    script: Script,
 }
 
 impl Play {
+    /// One 33 ms tick: a frozen pause tick, or a simulation tick with the stage flow.
     fn tick(&mut self) -> Result<()> {
+        self.ticks += 1;
+        let input = self.menu_input;
+        let mut sfx = Vec::new();
+        if self.flow.paused() {
+            let result = self.flow.frozen_tick(&input, &mut sfx);
+            self.poll();
+            if let Some(r) = result {
+                self.end_pause(r)?;
+            }
+            self.play(&sfx);
+            self.draw_frozen();
+            return Ok(());
+        }
+        if self.flow.try_pause(&input, self.drive.phase(), &mut sfx) {
+            self.saved_levers = (self.keyboard.power, self.keyboard.brake);
+            if let Some(s) = self.sound.as_mut() {
+                s.set_paused(true);
+            }
+            self.poll();
+            self.play(&sfx);
+            self.draw_frozen();
+            return Ok(());
+        }
+
         let before = crate::sound::Before::of(&self.drive);
         let out = self.drive.tick(self.latched);
         if let Some(s) = self.sound.as_mut() {
@@ -311,8 +407,29 @@ impl Play {
         self.last_events = out.events;
 
         // The input poll at the end of `Task_Tick`: next tick's controls.
+        let buttons = self.poll();
+        let obs = self.observation();
+        if let Some(action) = self.flow.after_tick(&obs, &input, &mut sfx) {
+            self.act(action)?;
+        }
+        self.play(&sfx);
+
+        if self.drive.com() != self.scene_com {
+            self.reload_scene()?;
+        }
+        self.update_hud(buttons);
+        Ok(())
+    }
+
+    /// Polls the controls and latches the next tick's driver input and menu edges.
+    fn poll(&mut self) -> ButtonState {
         let down = self.down;
-        let buttons = self.keyboard.poll(|c| down[usize::from(c)]);
+        let tick = self.ticks;
+        let keys = &self.script.keys;
+        let buttons = self
+            .keyboard
+            .poll(|c| down[usize::from(c)] || keys.iter().any(|&(t, k)| t == tick && k == c));
+        self.menu_input = MenuInput::from_pressed(buttons.word.pressed, None);
         self.latched = DriverInput {
             power: self.keyboard.power,
             brake: self.keyboard.brake,
@@ -320,54 +437,148 @@ impl Play {
             horn_pressed: buttons.horn_pressed,
             confirm_pressed: buttons.confirm_pressed,
         };
-        if let Some(script) = &self.script {
-            let next = self.drive.tick_count();
-            if let Some(&(_, p, b)) = script.iter().rev().find(|s| s.0 <= next) {
-                self.latched.power = p;
-                self.latched.brake = b;
-            }
+        let next = self.drive.tick_count();
+        if let Some(&(_, p, b)) = self.script.notches.iter().rev().find(|s| s.0 <= next) {
+            self.latched.power = p;
+            self.latched.brake = b;
         }
-        self.flow(buttons)?;
+        buttons
+    }
 
-        if self.drive.com() != self.scene_com {
-            self.scene = load_scene(
-                &self.data,
-                self.drive.com_name(),
-                self.visibility,
-                &self.opts,
-            )?;
-            self.scene_com = self.drive.com();
-            self.interpolate = false;
+    /// The end of 0x42b7f0: sound resumes, the notches come back; then quit or restart.
+    fn end_pause(&mut self, r: PauseResult) -> Result<()> {
+        if let Some(s) = self.sound.as_mut() {
+            s.set_paused(false);
         }
-        self.update_hud(buttons);
+        (self.keyboard.power, self.keyboard.brake) = self.saved_levers;
+        if self.script.notches.is_empty() {
+            (self.latched.power, self.latched.brake) = self.saved_levers;
+        }
+        eprintln!("pause: {r:?}");
+        match r {
+            PauseResult::Resume => {}
+            PauseResult::Quit => self.act(Action::Quit)?,
+            PauseResult::Retry => self.act(Action::Restart)?,
+        }
         Ok(())
     }
 
-    /// Stand-ins for the result and continue screens.
-    fn flow(&mut self, buttons: ButtonState) -> Result<()> {
-        match self.drive.phase() {
-            DrivePhase::Arrived => {
-                self.hold += 1;
-                if self.hold >= RESULT_HOLD_TICKS {
-                    self.hold = 0;
-                    let r = self.drive.finish_station()?;
-                    eprintln!("station result: {r:?}");
+    fn observation(&self) -> Observation {
+        let r = self.drive.rules();
+        let (stage, difficulty) = r.stage();
+        let t = &self.tables.rules;
+        Observation {
+            phase: self.drive.phase(),
+            can_continue: self.drive.can_continue(),
+            remaining_s: r.remaining_s,
+            result: ResultInput {
+                stage,
+                dist_round_m: r.dist_round_m,
+                tolerance_m: t.stop_tolerance_m.get(stage, difficulty),
+                dist_m: r.dist_m,
+                repowered: r.repowered > 0,
+                repower_s: t.repower_s.get(stage, difficulty),
+                emergency_brake: r.eb_approach_ticks > 0,
+                lesson: r.stage_rank() == 1,
+                clean_mark: r.marks.get(r.station).is_some_and(|&m| m > 0),
+                overrun_factor: t.overrun_factor.get(stage, difficulty),
+                exact_bonus_s: t.exact_stop_bonus_s.get(stage, difficulty),
+            },
+            grades: r.grades().parts,
+            continues: r.continues,
+            stage,
+            stage_kind: r.stage_rank(),
+        }
+    }
+
+    fn act(&mut self, action: Action) -> Result<()> {
+        match action {
+            Action::FinishStation => {
+                let r = self.drive.finish_station()?;
+                eprintln!("station result: {r:?}");
+                let can_continue = self.drive.can_continue();
+                self.flow.station_finished(r.outcome, can_continue);
+            }
+            Action::ContinueRun => {
+                eprintln!("continue");
+                self.drive.continue_run()?;
+            }
+            Action::Restart => {
+                // 始発駅に戻る: the route again from station 0, no departure board.
+                self.drive = start_drive(&self.tables, &self.opts, 0)?;
+                self.popups.clear();
+                self.keyboard.reset_levers();
+                self.panel_on = true;
+                self.interpolate = false;
+                self.flow.reset();
+                self.layer.slots.fill(Slot::CLEAR);
+                self.hud.create(&mut self.layer);
+                if self.drive.com() != self.scene_com {
+                    self.reload_scene()?;
                 }
             }
-            DrivePhase::GameOver if buttons.confirm_pressed => {
-                if self.drive.can_continue() {
-                    eprintln!("continue");
-                    self.drive.continue_run()?;
-                } else {
-                    eprintln!("game over, no continue");
-                }
+            Action::Ranking { cleared } => {
+                // Ranking insert and name entry (menus.md §11.2) are not built yet.
+                eprintln!(
+                    "ranking value {} (not entered)",
+                    self.drive.rules().ranking_score(cleared)
+                );
             }
-            _ => {}
+            Action::Quit | Action::RunOver => {
+                eprintln!("{action:?}: leaving play (no title screen yet)");
+                self.leave = true;
+            }
         }
         Ok(())
+    }
+
+    fn reload_scene(&mut self) -> Result<()> {
+        self.scene = load_scene(
+            &self.data,
+            self.drive.com_name(),
+            self.visibility,
+            &self.opts,
+        )?;
+        self.scene_com = self.drive.com();
+        self.interpolate = false;
+        if let Some(g) = self.gpu.as_mut() {
+            g.renderer
+                .upload_pages(&g.device, &g.queue, &self.scene.library.pages);
+        }
+        Ok(())
+    }
+
+    fn play(&mut self, sfx: &[Sfx]) {
+        let Some(s) = self.sound.as_mut() else {
+            return;
+        };
+        for &c in sfx {
+            match c {
+                Sfx::Play(code) => s.request(code),
+                Sfx::Stop(code) => s.release(code),
+            }
+        }
+    }
+
+    /// A paused tick: only the render list runs (`0x855ffc & 4`); the dialog changes.
+    fn draw_frozen(&mut self) {
+        self.flow.clear_drawn(&mut self.layer);
+        self.flow.draw(&mut self.layer);
+        self.layer.compose(&self.bank, &mut self.canvas);
+        self.canvas_dirty = true;
     }
 
     fn update_hud(&mut self, buttons: ButtonState) {
+        self.layer.reset_transient();
+        self.flow.clear_drawn(&mut self.layer);
+        if !self.flow.hud_visible() {
+            // The HUD task is killed before the report card and its slots cleared.
+            self.layer.slots.fill(Slot::CLEAR);
+            self.flow.draw(&mut self.layer);
+            self.layer.compose(&self.bank, &mut self.canvas);
+            self.canvas_dirty = true;
+            return;
+        }
         let rules = self.drive.rules();
         let phase = self.drive.phase();
         let driving = phase == DrivePhase::Driving;
@@ -378,7 +589,7 @@ impl Play {
         let state = HudState {
             power: u8::try_from(train.prev_power).unwrap_or(0),
             brake: u8::try_from(train.prev_brake).unwrap_or(0),
-            remaining_s: rules.remaining_s,
+            remaining_s: self.flow.remaining_override().unwrap_or(rules.remaining_s),
             pending_s: rules.pending_s,
             hud_counter: rules.hud_counter,
             clock: rules.clock,
@@ -393,7 +604,6 @@ impl Play {
             tolerance_m: self.tolerance_m,
             speed_kmh: self.drive.speed_kmh(),
         };
-        self.layer.reset_transient();
         self.hud.update(&state, &mut self.layer);
         self.popups.update(
             &mut self.layer,
@@ -401,6 +611,7 @@ impl Play {
             rules.clock,
             buttons.horn_held,
         );
+        self.flow.draw(&mut self.layer);
         self.layer.compose(&self.bank, &mut self.canvas);
         self.canvas_dirty = true;
     }
@@ -409,18 +620,17 @@ impl Play {
         let now = Instant::now();
         let dt = now - self.last_frame;
         self.last_frame = now;
-        if !self.paused {
-            self.accumulator += dt.min(Duration::from_millis(250));
-            while self.accumulator >= TICK {
-                self.accumulator -= TICK;
-                self.tick()?;
-            }
+        self.accumulator += dt.min(Duration::from_millis(250));
+        while self.accumulator >= TICK && !self.leave {
+            self.accumulator -= TICK;
+            self.tick()?;
         }
         // Interpolate the track distance between the last two ticks (along the track, so the
-        // camera follows curves), then evaluate the original's cab camera there.
+        // camera follows curves), then evaluate the original's cab camera there. Frozen while
+        // paused.
         let (prev, cur) = (units(self.drive.prev_pos()), units(self.drive.pos()));
         let alpha = self.accumulator.as_secs_f32() / TICK.as_secs_f32();
-        let pos = if self.interpolate {
+        let pos = if self.interpolate && !self.flow.paused() {
             track_pos(prev + (cur - prev) * alpha)
         } else {
             self.drive.pos()
@@ -461,7 +671,7 @@ impl Play {
             gpu.window.set_title(&format!(
                 "ddg-game play | {:?}{} | {:.1} km/h | next {} | {} m",
                 self.drive.phase(),
-                if self.paused { " (paused)" } else { "" },
+                if self.flow.paused() { " (paused)" } else { "" },
                 self.drive.speed_kmh(),
                 self.drive.station_name(station).unwrap_or("?"),
                 self.drive.rules().dist_round_m,
@@ -529,34 +739,22 @@ impl ApplicationHandler for Play {
                     KeyEvent {
                         physical_key: PhysicalKey::Code(code),
                         state,
-                        repeat,
                         ..
                     },
                 ..
             } => {
-                let pressed = state == ElementState::Pressed;
-                if pressed && !repeat {
-                    match code {
-                        // Esc pauses (input.md §6.1); Q quits while paused.
-                        KeyCode::Escape => {
-                            self.paused = !self.paused;
-                            if let Some(s) = self.sound.as_mut() {
-                                s.set_paused(self.paused);
-                            }
-                        }
-                        KeyCode::KeyQ if self.paused => event_loop.exit(),
-                        _ => {}
-                    }
-                }
-                if code != KeyCode::Escape
-                    && let Some(d) = crate::input::dik(code)
-                {
-                    self.down[usize::from(d)] = pressed;
+                // Esc is pause and cancel in the button word (input.md §6.1).
+                if let Some(d) = crate::input::dik(code) {
+                    self.down[usize::from(d)] = state == ElementState::Pressed;
                 }
             }
             WindowEvent::RedrawRequested => {
                 if let Err(e) = self.redraw() {
                     self.fail(event_loop, e);
+                    return;
+                }
+                if self.leave {
+                    event_loop.exit();
                     return;
                 }
                 if let Some(g) = &self.gpu {

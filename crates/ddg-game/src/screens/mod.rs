@@ -1,0 +1,213 @@
+//! Stage-flow screens (docs/re/menus.md §8–§11): pause dialogs, the station result, the continue
+//! countdown, the report card and the run-end banner, plus [`flow::StageFlow`], which sequences
+//! them around a [`ddg_engine::drive::Drive`] run with the original's tick gaps.
+//!
+//! Every screen is a pure state machine: one `tick` per 33 ms `Task_Tick` with the button edges
+//! the original's task would see (polled at the end of the previous tick), sound requests pushed
+//! to a list, and a `draw` that writes its sprite slots into the [`SpriteLayer`].
+
+pub mod continue_screen;
+pub mod flow;
+pub mod pause;
+pub mod report;
+pub mod result;
+pub mod run_end;
+pub mod tables;
+
+use ddg_render::sprites::{Slot, SpriteLayer};
+use std::collections::BTreeMap;
+use tables::{Placement, TextDesc};
+
+/// Button edges of one tick (the pressed word `0x48c42c`, input.md §6).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct MenuInput {
+    /// 0x1000: Enter / pad A.
+    pub confirm: bool,
+    /// 0x2000: Esc / pad B.
+    pub cancel: bool,
+    /// 0x800000: Esc / pad button 2.
+    pub pause: bool,
+    /// 0x10 / 0x20: cursor up / down (press, then repeat pulses).
+    pub up: bool,
+    pub down: bool,
+    /// 0x100: horn (Space).
+    pub horn: bool,
+    /// Analog-lever modes: the power notch, which the dialog cursor follows (menus.md §1.4).
+    pub notch: Option<u8>,
+}
+
+impl MenuInput {
+    /// The edges of a pressed word (`ButtonWord::pressed`, set bit = pressed).
+    pub fn from_pressed(pressed: u32, notch: Option<u8>) -> Self {
+        use crate::input::bits;
+        let on = |b: u32| pressed & b != 0;
+        Self {
+            confirm: on(bits::MENU_CONFIRM),
+            cancel: on(bits::CANCEL),
+            pause: on(bits::PAUSE),
+            up: on(bits::UP_PULSE),
+            down: on(bits::DOWN_PULSE),
+            horn: on(bits::HORN),
+            notch,
+        }
+    }
+
+    pub const NONE: Self = Self {
+        confirm: false,
+        cancel: false,
+        pause: false,
+        up: false,
+        down: false,
+        horn: false,
+        notch: None,
+    };
+}
+
+/// A sound command from a screen: `Sfx_Play` 0x41fda0 / `Snd_Play` 0x430100 (codes with 0x1000
+/// set are jingle sequences, 0x41fdd0) or `Snd_Stop` 0x420650.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sfx {
+    Play(u16),
+    Stop(u16),
+}
+
+/// The sprite slots one screen owns, set through the original's slot calls; drawn every tick.
+#[derive(Debug, Clone, Default)]
+pub struct SlotSet {
+    slots: BTreeMap<usize, Slot>,
+    /// Slots owned by the HUD that the screen only re-images (0x4318c0 / 0x431920 on the
+    /// remaining-time digits): tilemap and, if given, palette.
+    patches: BTreeMap<usize, (i16, Option<u8>)>,
+}
+
+impl SlotSet {
+    fn slot(&mut self, slot: usize) -> &mut Slot {
+        self.slots.entry(slot).or_insert(Slot::CLEAR)
+    }
+
+    /// `Sprite_Place` 0x431850: position, layer and palette; the image is kept.
+    pub fn place(&mut self, p: &Placement) {
+        let Ok(slot) = usize::try_from(p.slot) else {
+            return;
+        };
+        self.place_at(slot, p.x, p.y, p.layer as u8, p.palette as u8);
+    }
+
+    pub fn place_at(&mut self, slot: usize, x: i16, y: i16, layer: u8, palette: u8) {
+        let s = self.slot(slot);
+        s.x = x;
+        s.y = y;
+        s.layer = layer;
+        s.palette = palette;
+    }
+
+    /// 0x4318c0: the whole of tilemap `tbl` (−1 hides).
+    pub fn image(&mut self, slot: usize, tbl: i16) {
+        let s = self.slot(slot);
+        s.tilemap = tbl;
+        (s.col, s.row, s.w, s.h) = (0, 0, 0, 0);
+    }
+
+    /// 0x431920: image and palette.
+    pub fn image_pal(&mut self, slot: usize, tbl: i16, palette: u8) {
+        self.image(slot, tbl);
+        self.slot(slot).palette = palette;
+    }
+
+    /// 0x4316e0: everything at once.
+    pub fn full(&mut self, slot: usize, tbl: i16, x: i16, y: i16, palette: u8, layer: u8) {
+        *self.slot(slot) = Slot::new(tbl, x, y, palette, layer, false);
+    }
+
+    /// 0x431730: a label cut out of a string sheet.
+    pub fn text(&mut self, slot: usize, d: TextDesc, x: i16, y: i16, palette: u8, layer: u8) {
+        *self.slot(slot) = Slot {
+            col: d.col,
+            row: d.row,
+            w: d.w,
+            h: d.h,
+            ..Slot::new(d.tbl, x, y, palette, layer, false)
+        };
+    }
+
+    /// Re-images a HUD slot without moving it.
+    pub fn patch(&mut self, slot: usize, tbl: i16, palette: Option<u8>) {
+        self.patches.insert(slot, (tbl, palette));
+    }
+
+    pub fn clear(&mut self) {
+        self.slots.clear();
+        self.patches.clear();
+    }
+
+    /// The slots this set owns (not the HUD patches).
+    pub fn indices(&self) -> impl Iterator<Item = usize> + '_ {
+        self.slots.keys().copied()
+    }
+
+    pub fn get(&self, slot: usize) -> Option<&Slot> {
+        self.slots.get(&slot)
+    }
+
+    #[cfg(test)]
+    pub fn patched(&self, slot: usize) -> Option<(i16, Option<u8>)> {
+        self.patches.get(&slot).copied()
+    }
+
+    /// Writes the slots into the layer (after the HUD, so they win).
+    pub fn draw(&self, layer: &mut SpriteLayer) {
+        for (&i, s) in &self.slots {
+            if let Some(dst) = layer.slots.get_mut(i) {
+                *dst = *s;
+            }
+        }
+        for (&i, &(tbl, pal)) in &self.patches {
+            if let Some(dst) = layer.slots.get_mut(i) {
+                dst.tilemap = tbl;
+                (dst.col, dst.row, dst.w, dst.h) = (0, 0, 0, 0);
+                if let Some(p) = pal {
+                    dst.palette = p;
+                }
+            }
+        }
+    }
+}
+
+/// Decimal digits of `v` (0..=999), most significant first.
+pub fn digits3(v: i32) -> [usize; 3] {
+    let v = v.clamp(0, 999) as usize;
+    [v / 100, v / 10 % 10, v % 10]
+}
+
+/// HUD remaining-time digit slots 0x18–0x1a (hud.md §2), reused by the result and continue
+/// screens.
+pub const SLOT_REMAINING: usize = 0x18;
+/// The HUD's remaining-time masks (flicker frames), hud.md §3.2.
+pub const TBL_MASKS: [i16; 2] = [0x40b, 0x40c];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slot_calls_compose() {
+        let mut s = SlotSet::default();
+        s.place_at(5, 10, 20, 3, 4);
+        s.image(5, 0x100);
+        assert_eq!(
+            s.get(5).map(|s| (s.x, s.y, s.tilemap)),
+            Some((10, 20, 0x100))
+        );
+        s.patch(0x18, 0x40b, Some(5));
+        let mut layer = SpriteLayer::default();
+        layer.slots[0x18] = Slot::new(1, 241, 56, 4, 2, true);
+        s.draw(&mut layer);
+        let d = layer.slots[0x18];
+        assert_eq!(
+            (d.x, d.y, d.tilemap, d.palette, d.keep),
+            (241, 56, 0x40b, 5, true)
+        );
+        assert_eq!(digits3(507), [5, 0, 7]);
+        assert_eq!(digits3(1500), [9, 9, 9]);
+    }
+}
