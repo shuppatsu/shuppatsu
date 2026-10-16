@@ -86,7 +86,10 @@
         LOCALE_ARCHIVE_2_27 = "${pkgs.glibcLocales}/lib/locale/locale-archive";
 
         shellHook = ''
-          export DDG_DATA_DIR="''${DDG_DATA_DIR:-$PWD/data/extracted}"
+          # Default only when the extracted data exists, so data tests skip cleanly elsewhere.
+          if [ -z "''${DDG_DATA_DIR:-}" ] && [ -d "$PWD/data/extracted" ]; then
+            export DDG_DATA_DIR="$PWD/data/extracted"
+          fi
           export WINEPREFIX="''${WINEPREFIX:-$PWD/wine/prefix}"
         '';
       };
