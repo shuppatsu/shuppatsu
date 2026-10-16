@@ -90,18 +90,19 @@ pub enum Align {
 /// How a part is coloured.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Style {
-    /// `Boxed` when more than [`BOXED_COVERAGE`] of the part's art is opaque, else `Plain`.
+    /// `Boxed` when more than [`BOXED_EDGE`] of the region's edge is opaque (the art fills
+    /// the region: a plate, a box, a caption band), else `Plain` (lettering on transparency).
     #[default]
     Auto,
-    /// Text in the art's dominant colour, outlined in its second colour.
+    /// The old art is removed; text in the art's dominant colour, outlined in its second.
     Plain,
-    /// The art's opaque pixels are flattened to its dominant colour (keeping the box shape) and
-    /// the text is drawn in its second colour.
+    /// The backdrop (the colours along the region's edge) is kept and the old lettering is
+    /// painted over with it; the text takes the lettering's colour.
     Boxed,
 }
 
-/// Opaque share of a part above which `Style::Auto` treats the art as a box or plate.
-pub const BOXED_COVERAGE: f32 = 0.55;
+/// Opaque share of the region's edge above which `Style::Auto` picks `Boxed`.
+pub const BOXED_EDGE: f32 = 0.35;
 
 /// One piece of replacement text.
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -376,13 +377,23 @@ fn render_part(
         return None;
     }
     let region_art = |px: usize, py: usize| art[(y + py) * art_w + x + px];
+    let parity = |px: usize, py: usize| (px & 1) | (py & 1) << 1;
     let mut counts = [0u32; 256];
+    // Edge values per 2×2 parity class (x & 1, y & 1), for the backdrop pattern.
+    let mut class = [[0u32; 256]; 4];
+    let mut edge_n = 0u32;
+    let mut edge_opaque = 0u32;
     for py in 0..h {
         for px in 0..w {
-            counts[usize::from(region_art(px, py))] += 1;
+            let v = region_art(px, py);
+            counts[usize::from(v)] += 1;
+            if py == 0 || px == 0 || py == h - 1 || px == w - 1 {
+                class[parity(px, py)][usize::from(v)] += 1;
+                edge_n += 1;
+                edge_opaque += u32::from(v != 0);
+            }
         }
     }
-    let opaque: u32 = counts[1..].iter().sum();
     let mut ranked: Vec<u8> = (1..=255u8)
         .filter(|&i| counts[usize::from(i)] > 0)
         .collect();
@@ -392,19 +403,33 @@ fn render_part(
     let boxed = match part.style {
         Style::Boxed => true,
         Style::Plain => false,
-        Style::Auto => opaque as f32 > BOXED_COVERAGE * (w * h) as f32,
+        Style::Auto => edge_opaque as f32 > BOXED_EDGE * edge_n as f32,
     };
     let coverage = rasterise(&part.text, w, h, part.align, part.vertical, glyphs);
     let mut base = vec![0u8; w * h];
     let fg = if boxed {
+        // The backdrop is the commonest value along the region's edge per 2×2 parity class
+        // (a plate's face is one colour; a caption band's dither alternates colours or
+        // transparency). Every opaque pixel is repainted with it, which erases the old
+        // lettering and keeps the box shape (transparent corners stay transparent).
+        let pattern: [u8; 4] = std::array::from_fn(|c| {
+            (0..=255u8)
+                .max_by_key(|&i| class[c][usize::from(i)])
+                .unwrap_or(0)
+        });
         for py in 0..h {
             for px in 0..w {
                 if region_art(px, py) != 0 {
-                    base[py * w + px] = dominant;
+                    base[py * w + px] = pattern[parity(px, py)];
                 }
             }
         }
-        second
+        // The text takes the original lettering's colour: the commonest non-backdrop one.
+        ranked
+            .iter()
+            .copied()
+            .find(|i| !pattern.contains(i))
+            .unwrap_or(second)
     } else {
         if part.outline && second != dominant {
             let solid = |px: isize, py: isize| {
