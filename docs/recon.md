@@ -102,6 +102,21 @@ No `QueryPerformanceCounter` import (confirmed). No D3D DLL import, which fits D
 Resources in `dengo3k.exe`: two icons, an icon group, and one MFC string-table block. No dialogs,
 menus or bitmaps (confirmed). All UI art is in the data files.
 
+Icon (confirmed, decoded by `ddg_formats::icon`, data test `icon::tests::real_exe_icon`): group
+`RT_GROUP_ICON` #101 (lang 0x411, 34 bytes) lists two classic DIB entries, no PNG entries:
+
+| `RT_ICON` | size | depth | bytes | layout |
+|---|---|---|---|---|
+| #1 | 32×32 | 4 bpp, 16-colour palette | 744 | 40 header + 64 palette + 512 XOR + 128 AND |
+| #2 | 16×16 | 4 bpp, 16-colour palette | 296 | 40 header + 64 palette + 128 XOR + 64 AND |
+
+The art is a train front over the text "DENGO!3K", transparent via the AND mask. `ddg-game` uses
+the 32×32 image as its window icon (X11 and Windows; Wayland ignores window icons) and sets the
+app id / `WM_CLASS` `ddg-game`. The opt-in `ddg-game install-desktop` writes it to
+`$XDG_DATA_HOME/icons/hicolor/<n>x<n>/apps/ddg-game.png` for n = 16, 32, 128, 256 (the larger two
+nearest-upscaled from 32×32) with a matching `applications/ddg-game.desktop`; the icon is read
+from the user's exe at install time and never shipped.
+
 ## 4. Notable strings (`dengo3k.exe`, Shift-JIS decoded)
 
 | offset | string | interpretation |
