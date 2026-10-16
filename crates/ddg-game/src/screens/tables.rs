@@ -210,7 +210,7 @@ pub(crate) fn placement_list(exe: &Exe<'_>, va: u32, max: usize) -> Result<Vec<P
     anyhow::bail!("placement list at {va:#x} has no terminator")
 }
 
-fn dialog(exe: &Exe<'_>, va: u32) -> Result<Dialog> {
+pub(crate) fn dialog(exe: &Exe<'_>, va: u32) -> Result<Dialog> {
     let r = exe.reader_at(va, 12, WHAT)?;
     let count = r.i8(7)?;
     ensure!((1..=8).contains(&count), "dialog at {va:#x}: {count} items");

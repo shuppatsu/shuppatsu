@@ -33,6 +33,8 @@ pub struct MenuInput {
     pub down: bool,
     /// 0x100: horn (Space).
     pub horn: bool,
+    /// 0x4000: the R key (route select: replay playback toggle).
+    pub key_r: bool,
     /// 0x100000: the driving A button (Enter in keyboard modes); ends the ranking page.
     pub a: bool,
     /// Held bits 4 / 8 (`0x48c428`): left / right, for the name-entry wheel.
@@ -58,6 +60,7 @@ impl MenuInput {
             down: on(bits::DOWN_PULSE),
             horn: on(bits::HORN),
             a: on(bits::A),
+            key_r: on(bits::KEY_R),
             left_held: word.held & bits::LEFT != 0,
             right_held: word.held & bits::RIGHT != 0,
             notch: levers.map(|l| l.0),
@@ -73,6 +76,7 @@ impl MenuInput {
         down: false,
         horn: false,
         a: false,
+        key_r: false,
         left_held: false,
         right_held: false,
         notch: None,

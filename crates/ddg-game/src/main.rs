@@ -3,9 +3,11 @@
 //! Phase 3: `ddg-game view <route.com>` flies through a route; `ddg-game shot` renders one frame
 //! headless for checks.
 
+mod app;
 mod cab;
 mod captions;
 mod departure_hud;
+mod front;
 mod gamepad;
 mod hints;
 mod hud;
@@ -36,7 +38,9 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 use winit::window::WindowId;
 
 const USAGE: &str = "\
-usage: ddg-game play <stage 0..19> [--difficulty <0..>] [--station <n>] [--keys <0..6>] [options]
+usage: ddg-game [options] [--joystick-dat <file>] [--combo <file>] [--mute]
+                [--inputs <script>] [--shot <ticks>:<file.ppm>]
+       ddg-game play <stage 0..19> [--difficulty <0..>] [--station <n>] [--keys <0..6>] [options]
                      [--joystick-dat <file>] [--combo <file>]
                      [--inputs <script>] [--shot <ticks>:<file.ppm>] [--speedometer <0|1|2>]
        ddg-game view <route.com> [options]
@@ -87,6 +91,7 @@ struct Options {
 
 fn parse_play_args() -> Result<play::PlayOptions> {
     let args: Vec<String> = std::env::args().skip(2).collect();
+    let locale = locale::LocaleConfig::from_env();
     let mut opts = play::PlayOptions {
         stage: args
             .first()
@@ -108,6 +113,8 @@ fn parse_play_args() -> Result<play::PlayOptions> {
         inputs: None,
         shot: None,
         speedometer: None,
+        variant: false,
+        locale,
     };
     let mut rest = args[1..].iter();
     while let Some(a) = rest.next() {
@@ -124,6 +131,58 @@ fn parse_play_args() -> Result<play::PlayOptions> {
             "--combo" => opts.pad.combo_table = Some(value("a file")?.into()),
             "--mute" => opts.mute = true,
             "--speedometer" => opts.speedometer = Some(value("0, 1 or 2")?.parse()?),
+            "--inputs" => opts.inputs = Some(value("a file")?.into()),
+            "--shot" => {
+                let s = value("TICKS:FILE")?;
+                let (t, f) = s.split_once(':').context("--shot needs TICKS:FILE")?;
+                opts.shot = Some((t.parse()?, f.into()));
+            }
+            "--size" => {
+                let s = value("WxH")?;
+                let (w, h) = s.split_once('x').context("--size needs WxH")?;
+                opts.size = (w.parse()?, h.parse()?);
+            }
+            "--uncapped" => opts.uncapped = true,
+            "--square-pixels" => opts.square_pixels = true,
+            "--original-visibility" => opts.original_visibility = true,
+            "--stable-track-variants" => opts.stable_track_variants = true,
+            "--texture-filtering" => opts.texture_filtering = true,
+            "--fog" => opts.fog = true,
+            other => bail!("unknown option {other}\n\n{USAGE}"),
+        }
+    }
+    Ok(opts)
+}
+
+/// `ddg-game [options]`: the whole game ([`app`]).
+fn parse_app_args() -> Result<app::AppOptions> {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    let locale = locale::LocaleConfig::from_env();
+    let mut opts = app::AppOptions {
+        size: (1280, 800),
+        uncapped: false,
+        square_pixels: false,
+        original_visibility: false,
+        stable_track_variants: false,
+        texture_filtering: false,
+        fog: false,
+        mute: false,
+        pad: gamepad::PadOptions::default(),
+        inputs: None,
+        shot: None,
+        locale,
+    };
+    let mut rest = args.iter();
+    while let Some(a) = rest.next() {
+        let mut value = |what: &str| {
+            rest.next()
+                .with_context(|| format!("{a} needs {what}"))
+                .cloned()
+        };
+        match a.as_str() {
+            "--joystick-dat" => opts.pad.joystick_dat = Some(value("a file")?.into()),
+            "--combo" => opts.pad.combo_table = Some(value("a file")?.into()),
+            "--mute" => opts.mute = true,
             "--inputs" => opts.inputs = Some(value("a file")?.into()),
             "--shot" => {
                 let s = value("TICKS:FILE")?;
@@ -495,6 +554,10 @@ impl ApplicationHandler for App {
 }
 
 fn main() -> Result<()> {
+    let first = std::env::args().nth(1);
+    if first.as_deref().is_none_or(|a| a.starts_with("--")) {
+        return app::run(parse_app_args()?);
+    }
     if std::env::args().nth(1).as_deref() == Some("play") {
         return play::run(parse_play_args()?);
     }
@@ -559,8 +622,7 @@ fn main() -> Result<()> {
             h.tick(opts.speed_kmh, false);
         }
         shot::render_to_ppm(
-            &scene,
-            track_pos(units),
+            Some((&scene, track_pos(units))),
             opts.size,
             |r| {
                 configure_renderer(r, &opts);

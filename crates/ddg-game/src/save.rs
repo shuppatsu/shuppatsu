@@ -32,6 +32,8 @@ pub const BLANK: u8 = 0xb;
 
 /// File offsets (menus.md §13.1).
 const MAGIC_LEN: usize = 2;
+/// The settings word holding the difficulty in bits 14–15 (`0x856026`).
+const DIFFICULTY: usize = 6;
 const SETTINGS_SUM: usize = 0x20;
 const NAMES: usize = 0x22;
 const SCORES: usize = 0x22a;
@@ -137,6 +139,12 @@ impl Eeprom {
         }
     }
 
+    /// An image from raw bytes (tests).
+    #[cfg(test)]
+    pub fn from_bytes(bytes: [u8; EEPROM_LEN]) -> Self {
+        Self { bytes }
+    }
+
     pub fn bytes(&self) -> &[u8; EEPROM_LEN] {
         &self.bytes
     }
@@ -180,8 +188,33 @@ impl Eeprom {
         }
     }
 
-    /// Clear mark of a route: 0 none, 1..=3 (menus.md §6.3).
-    #[cfg(test)]
+    /// Option byte `item` 0..=5 of the options menu, minus the difficulty (menus.md §4):
+    /// control mode, vibration, speed meter, distance meter, sound (item 3 lives at +0x336).
+    pub fn set_option(&mut self, item: usize, value: u8) {
+        let off = match item {
+            0 => OPTIONS,
+            2 => OPTIONS + 1,
+            3 => OPTIONS + 4,
+            4 => OPTIONS + 2,
+            5 => OPTIONS + 3,
+            _ => return,
+        };
+        self.bytes[off] = value;
+    }
+
+    /// The difficulty 0..=3 (Easy, Normal, Hard, Very hard): bits 14–15 of the u16 at +6,
+    /// mirrored to `0x829d10` (0x434ed0, `Options_Set` case 1).
+    pub fn difficulty(&self) -> u8 {
+        (u16::from_le_bytes([self.bytes[DIFFICULTY], self.bytes[DIFFICULTY + 1]]) >> 14) as u8
+    }
+
+    pub fn set_difficulty(&mut self, value: u8) {
+        let old = u16::from_le_bytes([self.bytes[DIFFICULTY], self.bytes[DIFFICULTY + 1]]);
+        let v = (u16::from(value & 3) << 14) | (old & 0x3fff);
+        self.bytes[DIFFICULTY..DIFFICULTY + 2].copy_from_slice(&v.to_le_bytes());
+    }
+
+    /// Clear mark of a route: 0 none, 1..=3 (menus.md §6.3); index 20 is select stage 20.
     pub fn clear_mark(&self, route: usize) -> u8 {
         if route < CLEAR_MARK_COUNT {
             self.bytes[CLEAR_MARKS + route]

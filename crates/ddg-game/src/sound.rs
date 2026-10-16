@@ -28,6 +28,14 @@ pub type Before = Snap;
 pub struct Sound {
     out: AudioOutput,
     snd: SoundSystem,
+    tables: Arc<SoundTables>,
+    /// The sound option (`0x856356`): off makes the sound thread ignore play messages.
+    enabled: bool,
+    stage: Option<StageParts>,
+}
+
+/// The per-stage half: train sounds and the stage's sound mapping.
+struct StageParts {
     train: TrainSound,
     stage: StageSound,
     horn_was_held: bool,
@@ -36,11 +44,10 @@ pub struct Sound {
 }
 
 impl Sound {
-    /// Opens the default device; `Ok(None)` when there is none (the game runs silently).
-    pub fn open(data_dir: &Path, exe: &Exe<'_>, drive: &Drive) -> Result<Option<Self>> {
+    /// Opens the default device with no stage (menus); `Ok(None)` when there is none.
+    pub fn open_device(data_dir: &Path, exe: &Exe<'_>) -> Result<Option<Self>> {
         let bank = Arc::new(SoundBank::load(data_dir)?);
         let tables = Arc::new(SoundTables::from_exe(exe)?);
-        let stage_tables = StageTables::read(exe, drive.rules().stage().0)?;
         let out = match AudioOutput::open(bank, tables.code_volume.clone(), MixerConfig::default())
         {
             Ok(o) => o,
@@ -49,27 +56,64 @@ impl Sound {
                 return Ok(None);
             }
         };
-        let mut snd = SoundSystem::new(tables.clone());
-        let train = TrainSound::new(
-            &tables,
-            drive.rules().stage().0,
-            drive.train().train_type,
-            &mut snd,
-        );
         Ok(Some(Self {
             out,
-            snd,
+            snd: SoundSystem::new(tables.clone()),
+            tables,
+            enabled: true,
+            stage: None,
+        }))
+    }
+
+    /// Sets up the train and stage sounds for `drive`'s stage, on a fresh sound system (the
+    /// previous stage's voices are stopped).
+    pub fn begin_stage(&mut self, exe: &Exe<'_>, drive: &Drive) -> Result<()> {
+        let stage_tables = StageTables::read(exe, drive.rules().stage().0)?;
+        self.snd.stop_all();
+        self.flush();
+        self.snd = SoundSystem::new(self.tables.clone());
+        self.snd.set_enabled(self.enabled);
+        let train = TrainSound::new(
+            &self.tables,
+            drive.rules().stage().0,
+            drive.train().train_type,
+            &mut self.snd,
+        );
+        self.stage = Some(StageParts {
             train,
             stage: StageSound::new(stage_tables),
             horn_was_held: false,
             events: Vec::new(),
-        }))
+        });
+        Ok(())
+    }
+
+    /// Back to the menus: every voice stopped, the stage half dropped.
+    pub fn end_stage(&mut self) {
+        self.stage = None;
+        self.snd.set_paused(false);
+        self.snd.stop_all();
+        self.flush();
+    }
+
+    /// The sound option (`0x856356`): when off, the sound thread ignores play messages.
+    pub fn set_enabled(&mut self, on: bool) {
+        self.enabled = on;
+        self.snd.set_enabled(on);
+    }
+
+    /// A menu tick: the sequencer runs (jingles), then flush.
+    pub fn menu_frame(&mut self) {
+        self.snd.frame();
+        self.flush();
     }
 
     /// The rule events of this tick ([`ddg_engine::drive::DriveTick::events`]). Call before
     /// [`Sound::after_tick`] of the same tick; events given later are heard one tick late.
     pub fn events(&mut self, events: &[RuleEvent]) {
-        self.events.extend_from_slice(events);
+        if let Some(p) = self.stage.as_mut() {
+            p.events.extend_from_slice(events);
+        }
     }
 
     /// After one simulation tick: loop-body sounds, train sounds, task sounds, sequencer, then
@@ -81,7 +125,11 @@ impl Sound {
         horn_held: bool,
         segment_started: bool,
     ) {
-        let events = std::mem::take(&mut self.events);
+        let Some(p) = self.stage.as_mut() else {
+            self.menu_frame();
+            return;
+        };
+        let events = std::mem::take(&mut p.events);
         let info = TickInfo {
             before,
             after: Snap::of(drive),
@@ -90,17 +138,17 @@ impl Sound {
             track_classes: drive.track_classes(),
             turnout_entered: drive.turnout_entered(),
         };
-        self.stage.loop_part(&mut self.snd, &mut self.train, &info);
+        p.stage.loop_part(&mut self.snd, &mut p.train, &info);
 
         let t = drive.train();
         let rules = drive.rules();
-        let horn = match (self.horn_was_held, horn_held) {
+        let horn = match (p.horn_was_held, horn_held) {
             (false, true) => HornEdge::Pressed,
             (true, false) => HornEdge::Released,
             _ => HornEdge::None,
         };
-        self.horn_was_held = horn_held;
-        self.train.tick(
+        p.horn_was_held = horn_held;
+        p.train.tick(
             &TrainTick {
                 driving: drive.train_driving(),
                 horn_enabled: true,
@@ -122,7 +170,7 @@ impl Sound {
             &mut self.snd,
         );
 
-        self.stage.task_part(&mut self.snd, &self.train, &info);
+        p.stage.task_part(&mut self.snd, &p.train, &info);
         self.snd.frame();
         self.flush();
     }

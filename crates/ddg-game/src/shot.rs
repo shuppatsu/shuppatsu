@@ -3,10 +3,10 @@
 use anyhow::{Context, Result};
 use ddg_render::Renderer;
 
-/// Renders the scene at `pos` (`width`×`height`) and writes a binary PPM (P6).
+/// Renders the scene at `pos` (`width`×`height`; black without a scene) with the canvas over
+/// it and writes a binary PPM (P6).
 pub fn render_to_ppm(
-    scene: &crate::scene::RouteScene,
-    pos: ddg_formats::scene::TrackPos,
+    scene: Option<(&crate::scene::RouteScene, ddg_formats::scene::TrackPos)>,
     (width, height): (u32, u32),
     configure: impl FnOnce(&mut Renderer),
     hud: Option<&[u8]>,
@@ -35,27 +35,31 @@ pub fn render_to_ppm(
         usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
         view_formats: &[],
     });
-    let mut renderer = Renderer::new(&device, format);
-    configure(&mut renderer);
-    renderer.upload_pages(&device, &queue, &scene.library.pages);
-    let mut frame = ddg_render::FrameGeometry::default();
-    let band = (height as f32 * (1.0 - renderer.band_top)).max(1.0);
-    scene.compose(&mut frame, pos, false, width as f32 / band);
-    eprintln!(
-        "frame at engine index {}: {} triangles, {} missing parts",
-        pos.engine_index,
-        frame.triangle_count(),
-        frame.missing_parts
-    );
-    renderer.set_geometry(&device, &queue, &frame);
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
-    renderer.render(
-        &device,
-        &queue,
-        &view,
-        (width, height),
-        &scene.cab_camera(pos),
-    );
+    if let Some((scene, pos)) = scene {
+        let mut renderer = Renderer::new(&device, format);
+        configure(&mut renderer);
+        renderer.upload_pages(&device, &queue, &scene.library.pages);
+        let mut frame = ddg_render::FrameGeometry::default();
+        let band = (height as f32 * (1.0 - renderer.band_top)).max(1.0);
+        scene.compose(&mut frame, pos, false, width as f32 / band);
+        eprintln!(
+            "frame at engine index {}: {} triangles, {} missing parts",
+            pos.engine_index,
+            frame.triangle_count(),
+            frame.missing_parts
+        );
+        renderer.set_geometry(&device, &queue, &frame);
+        renderer.render(
+            &device,
+            &queue,
+            &view,
+            (width, height),
+            &scene.cab_camera(pos),
+        );
+    } else {
+        clear_black(&device, &queue, &view);
+    }
     if let Some(canvas) = hud {
         let overlay = ddg_render::overlay::Overlay::new(&device, format);
         overlay.upload(&queue, canvas);
@@ -109,4 +113,29 @@ pub fn render_to_ppm(
         }
     }
     std::fs::write(path, ppm).with_context(|| format!("writing {}", path.display()))
+}
+
+/// Clears `view` to black (the front-end screens have no 3D layer; the 640×480 canvas is drawn
+/// over it with black bars either side).
+pub fn clear_black(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView) {
+    let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        label: Some("clear"),
+    });
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("clear"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                store: wgpu::StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    queue.submit([encoder.finish()]);
 }

@@ -1,9 +1,11 @@
 //! `ddg-game play`: drive a stage. The simulation is `ddg_engine::drive` at the original's
 //! fixed 33 ms tick; rendering interpolates the camera along the track between the last two
 //! ticks. The stage flow (pause dialogs, station result, continue, report card, ranking and
-//! name entry, run-end banner) is [`crate::screens::flow::StageFlow`]; there is no title screen
-//! yet, so quitting or ending the run leaves play. The save (`eeprom.dat`, rankings and clear
-//! marks) is loaded at start and written when play exits, like the original at shutdown.
+//! name entry, run-end banner) is [`crate::screens::flow::StageFlow`]; quitting or ending the run
+//! leaves play. Standalone (`ddg-game play <stage>`) that closes the window; under the front end
+//! ([`crate::app`]) the run is a sub-state built from [`Shared`] resources and the title comes
+//! back. The save (`eeprom.dat`, rankings and clear marks) is written when the program exits,
+//! like the original at shutdown.
 
 use crate::cab::{CabHud, Snap, TickInput};
 use crate::gamepad::{Controls, PadOptions};
@@ -74,6 +76,10 @@ pub struct PlayOptions {
     pub shot: Option<(u64, std::path::PathBuf)>,
     /// Overrides the save's speedometer option (0 none, 1 analog, 2 digital).
     pub speedometer: Option<u8>,
+    /// Select stage 20: route 10 with `0x48ddf0 = 1`, whose clear mark is the 21st byte.
+    pub variant: bool,
+    /// Language and font of the text sprites (docs/localisation.md).
+    pub locale: crate::locale::LocaleConfig,
 }
 
 /// The exe tables a (re)start needs.
@@ -109,15 +115,40 @@ fn start_drive(tables: &Tables, opts: &PlayOptions, station: usize) -> Result<Dr
     Ok(drive)
 }
 
+/// What a run borrows from its owner: moved into [`Play::new`] and handed back by
+/// [`Play::into_shared`] (the front end keeps one window, sprite bank, save, input and sound
+/// device for the whole session).
+pub struct Shared {
+    pub data: GameData,
+    pub bank: SpriteBank,
+    pub layer: SpriteLayer,
+    pub save: Save,
+    pub controls: Controls,
+    /// The sound device, without a stage (`Sound::open_device`).
+    pub sound: Option<crate::sound::Sound>,
+    pub gpu: Option<Gpu>,
+}
+
+/// Loads the sprite bank (`cg.rom` + `tbl.rom`) with the locale's text overrides.
+pub fn load_bank(
+    data: &GameData,
+    exe: &Exe<'_>,
+    locale: &crate::locale::LocaleConfig,
+) -> Result<SpriteBank> {
+    let cg_bytes = data.read("cg.rom")?;
+    let mut bank = SpriteBank::new(
+        &ddg_formats::cg::CgFile::parse(&cg_bytes)?,
+        ddg_formats::cg::parse_tbl(&data.read("tbl.rom")?)?,
+    );
+    crate::locale::install(locale, exe, &mut bank)?;
+    Ok(bank)
+}
+
+/// `ddg-game play <stage>`: one run in its own window (or headless with `--shot`).
 pub fn run(opts: PlayOptions) -> Result<()> {
     let data = GameData::from_env()?;
     let exe_bytes = data.exe()?;
     let exe = Exe::parse(&exe_bytes)?;
-    let tables = Tables {
-        train: TrainTables::read(&exe)?,
-        rules: RuleTables::read(&exe)?,
-        stages: StageTables::read(&exe)?,
-    };
     // Headless shots use the exe's default save and never write one.
     let save_path = if opts.shot.is_some() {
         None
@@ -128,117 +159,28 @@ pub fn run(opts: PlayOptions) -> Result<()> {
     if let Some(p) = save.path() {
         eprintln!("save: {}", p.display());
     }
-    let tolerance_m = tables
-        .rules
-        .stop_tolerance_m
-        .get(opts.stage, opts.difficulty);
-    let drive = start_drive(&tables, &opts, opts.station)?;
-
     let controls = Controls::new(&exe, opts.control_mode, &opts.pad)?;
-    let cg_bytes = data.read("cg.rom")?;
-    let bank = SpriteBank::new(
-        &ddg_formats::cg::CgFile::parse(&cg_bytes)?,
-        ddg_formats::cg::parse_tbl(&data.read("tbl.rom")?)?,
-    );
-    let mut layer = SpriteLayer::default();
-    Hud::install_palettes(&exe, &mut layer)?;
-    // The horn hint names the B button with a joystick in modes 5–6 (`FUN_00433270`).
-    let mut cab = CabHud::new(&exe, opts.stage, matches!(opts.control_mode, 5 | 6))?;
-    let o = save.eeprom.options();
-    cab.hud.speedometer = match opts.speedometer.unwrap_or(o.speed_meter) {
-        0 => Speedometer::None,
-        2 => Speedometer::Digital,
-        _ => Speedometer::Analog,
-    };
-    cab.hud.distance = match o.distance_meter {
-        0 => DistanceReadout::Off,
-        1 => DistanceReadout::Centimetres,
-        _ => DistanceReadout::Metres,
-    };
-    cab.create(&mut layer);
-    let screen_tables = ScreenTables::read(&exe)?;
-    let flow = StageFlow::new(FlowDefs::new(&screen_tables, |tbl| {
-        usize::try_from(tbl)
-            .ok()
-            .and_then(|i| bank.tilemaps.get(i))
-            .map_or((0, 0), |m| {
-                (i16::from(m.width) * TILE_PX, i16::from(m.height) * TILE_PX)
-            })
-    }));
-
+    let bank = load_bank(&data, &exe, &opts.locale)?;
     let sound = if opts.shot.is_some() || opts.mute {
         None
     } else {
-        crate::sound::Sound::open(data.data_dir(), &exe, &drive)?
+        crate::sound::Sound::open_device(data.data_dir(), &exe)?
     };
-    let visibility = visibility(&opts);
-    let scene = load_scene(&data, drive.com_name(), visibility, &opts)?;
-    let script = match &opts.inputs {
-        Some(p) => {
-            parse_script(&std::fs::read_to_string(p).with_context(|| p.display().to_string())?)?
-        }
-        None => Script::default(),
-    };
-    let now = Instant::now();
-    let mut app = Play {
-        scene_com: drive.com(),
-        drive,
-        tables,
+    let shared = Shared {
         data,
-        visibility,
-        scene,
-        controls,
-        latched: DriverInput::default(),
-        menu_input: MenuInput::NONE,
-        saved_levers: (0, 0),
-        down: [false; 256],
-        cab,
-        flow,
-        layer,
         bank,
-        canvas: vec![0; CANVAS_W * CANVAS_H * 4],
-        canvas_dirty: true,
-        tolerance_m,
-        last_events: Vec::new(),
-        ticks: 0,
-        leave: false,
-        interpolate: false,
-        frame: FrameGeometry::default(),
-        gpu: None,
-        accumulator: Duration::ZERO,
-        last_frame: now,
-        title_at: now,
-        error: None,
-        sound,
-        script,
+        layer: SpriteLayer::default(),
         save,
-        meter_m: 0.0,
-        opts,
+        controls,
+        sound,
+        gpu: None,
     };
+    let mut app = Play::new(shared, opts)?;
     if let Some((ticks, out)) = app.opts.shot.clone() {
         while app.ticks < ticks && !app.leave {
             app.tick()?;
         }
-        let band_top = HUD_BAND_TOP;
-        let (texture_filtering, fog, square) = (
-            app.opts.texture_filtering,
-            app.opts.fog,
-            app.opts.square_pixels,
-        );
-        crate::shot::render_to_ppm(
-            &app.scene,
-            app.drive.pos(),
-            app.opts.size,
-            |r| {
-                r.texture_filtering = texture_filtering;
-                r.fog.enabled = fog;
-                r.projection.fov_tenths = (DRIVING_FOV_Y_DEG * 10.0) as u16;
-                r.projection.stretch = if square { 1.0 } else { ORIGINAL_STRETCH };
-                r.band_top = band_top;
-            },
-            Some(&app.canvas),
-            &out,
-        )?;
+        app.shot(&out)?;
         eprintln!("wrote {} at play tick {}", out.display(), app.ticks);
         return Ok(());
     }
@@ -249,6 +191,208 @@ pub fn run(opts: PlayOptions) -> Result<()> {
     match app.error {
         Some(e) => Err(e),
         None => saved,
+    }
+}
+
+impl Play {
+    /// Starts a run (`Stage_Run` after the pre-run screens) on the owner's resources. With a
+    /// window, the renderer is set up for the cab view here.
+    pub fn new(shared: Shared, opts: PlayOptions) -> Result<Self> {
+        let Shared {
+            data,
+            bank,
+            mut layer,
+            save,
+            controls,
+            mut sound,
+            gpu,
+        } = shared;
+        let exe_bytes = data.exe()?;
+        let exe = Exe::parse(&exe_bytes)?;
+        let tables = Tables {
+            train: TrainTables::read(&exe)?,
+            rules: RuleTables::read(&exe)?,
+            stages: StageTables::read(&exe)?,
+        };
+        let tolerance_m = tables
+            .rules
+            .stop_tolerance_m
+            .get(opts.stage, opts.difficulty);
+        let drive = start_drive(&tables, &opts, opts.station)?;
+
+        layer.slots.fill(Slot::CLEAR);
+        layer.fans.clear();
+        Hud::install_palettes(&exe, &mut layer)?;
+        // The horn hint names the B button with a joystick in modes 5–6 (`FUN_00433270`).
+        let mut cab = CabHud::new(&exe, opts.stage, matches!(opts.control_mode, 5 | 6))?;
+        let o = save.eeprom.options();
+        cab.hud.speedometer = match opts.speedometer.unwrap_or(o.speed_meter) {
+            0 => Speedometer::None,
+            2 => Speedometer::Digital,
+            _ => Speedometer::Analog,
+        };
+        cab.hud.distance = match o.distance_meter {
+            0 => DistanceReadout::Off,
+            1 => DistanceReadout::Centimetres,
+            _ => DistanceReadout::Metres,
+        };
+        cab.create(&mut layer);
+        let screen_tables = ScreenTables::read(&exe)?;
+        let flow = StageFlow::new(FlowDefs::new(&screen_tables, |tbl| {
+            usize::try_from(tbl)
+                .ok()
+                .and_then(|i| bank.tilemaps.get(i))
+                .map_or((0, 0), |m| {
+                    (i16::from(m.width) * TILE_PX, i16::from(m.height) * TILE_PX)
+                })
+        }));
+
+        if let Some(s) = sound.as_mut() {
+            s.begin_stage(&exe, &drive)?;
+        }
+        let visibility = visibility(&opts);
+        let scene = load_scene(&data, drive.com_name(), visibility, &opts)?;
+        let script = match &opts.inputs {
+            Some(p) => {
+                parse_script(&std::fs::read_to_string(p).with_context(|| p.display().to_string())?)?
+            }
+            None => Script::default(),
+        };
+        let now = Instant::now();
+        let mut play = Play {
+            scene_com: drive.com(),
+            drive,
+            tables,
+            data,
+            visibility,
+            scene,
+            controls,
+            latched: DriverInput::default(),
+            menu_input: MenuInput::NONE,
+            saved_levers: (0, 0),
+            down: [false; 256],
+            cab,
+            flow,
+            layer,
+            bank,
+            canvas: vec![0; CANVAS_W * CANVAS_H * 4],
+            canvas_dirty: true,
+            tolerance_m,
+            last_events: Vec::new(),
+            ticks: 0,
+            leave: false,
+            interpolate: false,
+            frame: FrameGeometry::default(),
+            gpu,
+            accumulator: Duration::ZERO,
+            last_frame: now,
+            title_at: now,
+            error: None,
+            sound,
+            script,
+            save,
+            meter_m: 0.0,
+            opts,
+        };
+        play.configure_gpu();
+        Ok(play)
+    }
+
+    /// Ends the run and hands the shared resources back (sound back to the menus, the HUD's
+    /// sprites cleared).
+    pub fn into_shared(self) -> Shared {
+        let mut sound = self.sound;
+        if let Some(s) = sound.as_mut() {
+            s.end_stage();
+        }
+        let mut layer = self.layer;
+        layer.slots.fill(Slot::CLEAR);
+        layer.fans.clear();
+        Shared {
+            data: self.data,
+            bank: self.bank,
+            layer,
+            save: self.save,
+            controls: self.controls,
+            sound,
+            gpu: self.gpu,
+        }
+    }
+
+    /// Quit or run over: the owner goes back to the title.
+    pub fn left(&self) -> bool {
+        self.leave
+    }
+
+    pub fn gpu(&self) -> Option<&Gpu> {
+        self.gpu.as_ref()
+    }
+
+    pub fn save(&self) -> &Save {
+        &self.save
+    }
+
+    pub fn take_error(&mut self) -> Option<anyhow::Error> {
+        self.error.take()
+    }
+
+    /// Keys down for the next poll, by DirectInput code (the front end's headless script).
+    pub fn set_down(&mut self, down: [bool; 256]) {
+        self.down = down;
+    }
+
+    /// One tick, for headless drivers.
+    pub fn step(&mut self) -> Result<()> {
+        self.tick()
+    }
+
+    /// Renders the current frame (cab view and HUD) to a PPM, headless.
+    pub fn shot(&self, out: &std::path::Path) -> Result<()> {
+        let (texture_filtering, fog, square) = (
+            self.opts.texture_filtering,
+            self.opts.fog,
+            self.opts.square_pixels,
+        );
+        crate::shot::render_to_ppm(
+            Some((&self.scene, self.drive.pos())),
+            self.opts.size,
+            |r| {
+                r.texture_filtering = texture_filtering;
+                r.fog.enabled = fog;
+                r.projection.fov_tenths = (DRIVING_FOV_Y_DEG * 10.0) as u16;
+                r.projection.stretch = if square { 1.0 } else { ORIGINAL_STRETCH };
+                r.band_top = HUD_BAND_TOP;
+            },
+            Some(&self.canvas),
+            out,
+        )
+    }
+
+    /// Window events other than redraws: keys, focus, resize.
+    pub fn window_input(&mut self, event: &WindowEvent) {
+        match event {
+            WindowEvent::Resized(size) => {
+                if let Some(g) = self.gpu.as_mut() {
+                    g.resize(size.width, size.height);
+                }
+            }
+            WindowEvent::Focused(false) => self.down = [false; 256],
+            WindowEvent::KeyboardInput {
+                event:
+                    KeyEvent {
+                        physical_key: PhysicalKey::Code(code),
+                        state,
+                        ..
+                    },
+                ..
+            } => {
+                // Esc is pause and cancel in the button word (input.md §6.1).
+                if let Some(d) = crate::input::dik(*code) {
+                    self.down[usize::from(d)] = *state == ElementState::Pressed;
+                }
+            }
+            _ => {}
+        }
     }
 }
 
@@ -284,11 +428,11 @@ fn load_scene(
 
 /// Scripted inputs (see [`PlayOptions::inputs`]).
 #[derive(Debug, Default)]
-struct Script {
+pub struct Script {
     /// `(drive tick, notch, brake)`, sorted.
-    notches: Vec<(u64, u8, u8)>,
+    pub notches: Vec<(u64, u8, u8)>,
     /// `(play tick, DIK code)`.
-    keys: Vec<(u64, u8)>,
+    pub keys: Vec<(u64, u8)>,
 }
 
 /// DirectInput codes of the script's key names.
@@ -301,12 +445,13 @@ fn script_key(name: &str) -> Option<u8> {
         "down" => 0xd0,
         "left" => 0xcb,
         "right" => 0xcd,
+        "r" => 0x13,
         _ => return None,
     })
 }
 
 /// Parses the input script (`#` comments).
-fn parse_script(text: &str) -> Result<Script> {
+pub fn parse_script(text: &str) -> Result<Script> {
     let mut s = Script::default();
     for (n, line) in text.lines().enumerate() {
         let line = line.split('#').next().unwrap_or("").trim();
@@ -348,7 +493,7 @@ fn track_pos(units: f32) -> TrackPos {
     }
 }
 
-struct Play {
+pub struct Play {
     opts: PlayOptions,
     tables: Tables,
     data: GameData,
@@ -486,7 +631,9 @@ impl Play {
         let r = self.drive.rules();
         let (stage, _) = r.stage();
         if cleared {
-            self.save.eeprom.raise_clear_mark(stage, r.continues);
+            // Select stage 20 keeps its own mark (`Stage_Run` sets `0x8570a4 = 0x14` around it).
+            let mark = if self.opts.variant { 20 } else { stage };
+            self.save.eeprom.raise_clear_mark(mark, r.continues);
         }
         let score = r.ranking_score(cleared);
         let pro = self.meter_m <= PRO_LIMIT_M;
@@ -629,7 +776,7 @@ impl Play {
                 if let Some(s) = self.sound.as_mut() {
                     s.stop_all();
                 }
-                eprintln!("{action:?}: leaving play (no title screen yet)");
+                eprintln!("{action:?}: leaving play");
                 self.leave = true;
             }
         }
@@ -698,7 +845,7 @@ impl Play {
         self.canvas_dirty = true;
     }
 
-    fn redraw(&mut self) -> Result<()> {
+    pub fn redraw(&mut self) -> Result<()> {
         let now = Instant::now();
         let dt = now - self.last_frame;
         self.last_frame = now;
@@ -763,12 +910,23 @@ impl Play {
     }
 
     fn init_gpu(&mut self, event_loop: &ActiveEventLoop) -> Result<()> {
-        let mut gpu = Gpu::create(
+        self.gpu = Some(Gpu::create(
             event_loop,
             "ddg-game play",
             self.opts.size,
             self.opts.uncapped,
-        )?;
+        )?);
+        self.configure_gpu();
+        Ok(())
+    }
+
+    /// The cab view's renderer settings and the route's textures.
+    fn configure_gpu(&mut self) {
+        let Some(gpu) = self.gpu.as_mut() else {
+            return;
+        };
+        self.last_frame = Instant::now();
+        self.accumulator = Duration::ZERO;
         let r = &mut gpu.renderer;
         r.texture_filtering = self.opts.texture_filtering;
         r.fog.enabled = self.opts.fog;
@@ -781,8 +939,6 @@ impl Play {
         r.band_top = HUD_BAND_TOP;
         gpu.renderer
             .upload_pages(&gpu.device, &gpu.queue, &self.scene.library.pages);
-        self.gpu = Some(gpu);
-        Ok(())
     }
 
     fn fail(&mut self, event_loop: &ActiveEventLoop, e: anyhow::Error) {
@@ -810,26 +966,6 @@ impl ApplicationHandler for Play {
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(size) => {
-                if let Some(g) = self.gpu.as_mut() {
-                    g.resize(size.width, size.height);
-                }
-            }
-            WindowEvent::Focused(false) => self.down = [false; 256],
-            WindowEvent::KeyboardInput {
-                event:
-                    KeyEvent {
-                        physical_key: PhysicalKey::Code(code),
-                        state,
-                        ..
-                    },
-                ..
-            } => {
-                // Esc is pause and cancel in the button word (input.md §6.1).
-                if let Some(d) = crate::input::dik(code) {
-                    self.down[usize::from(d)] = state == ElementState::Pressed;
-                }
-            }
             WindowEvent::RedrawRequested => {
                 if let Err(e) = self.redraw() {
                     self.fail(event_loop, e);
@@ -843,7 +979,7 @@ impl ApplicationHandler for Play {
                     g.window.request_redraw();
                 }
             }
-            _ => {}
+            other => self.window_input(&other),
         }
     }
 }
