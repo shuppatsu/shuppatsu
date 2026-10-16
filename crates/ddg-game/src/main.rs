@@ -58,6 +58,9 @@ options:
   --fog                    linear fog as DengoSetting's FOGENABLE (off on a fresh install)
   --hud                    the driving HUD over the view (test values)
   --size <WxH>             window/frame size (default 1280x800, 16:10)
+  --lang <code>            text-sprite language (default ja = the original art; env DDG_LANG)
+  --font <file>            TTF/OTF font for translated text sprites (env DDG_FONT)
+  --locale-dir <dir>       extra catalogue directory, <dir>/<lang>.toml (env DDG_LOCALE_DIR)
 
 play keys (mode 0): Down/Up power +/-, Right/Left brake +/- (one more press past B8 = EB),
   Space horn, Enter ATS confirm / panel / menu confirm, Esc pause / cancel, Up/Down menu cursor
@@ -87,11 +90,13 @@ struct Options {
     hud: bool,
     gradient_variant: usize,
     size: (u32, u32),
+    locale: locale::LocaleConfig,
 }
 
 fn parse_play_args() -> Result<play::PlayOptions> {
-    let args: Vec<String> = std::env::args().skip(2).collect();
-    let locale = locale::LocaleConfig::from_env();
+    let mut args: Vec<String> = std::env::args().skip(2).collect();
+    let mut locale = locale::LocaleConfig::from_env();
+    locale.take_args(&mut args)?;
     let mut opts = play::PlayOptions {
         stage: args
             .first()
@@ -156,8 +161,9 @@ fn parse_play_args() -> Result<play::PlayOptions> {
 
 /// `ddg-game [options]`: the whole game ([`app`]).
 fn parse_app_args() -> Result<app::AppOptions> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let locale = locale::LocaleConfig::from_env();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let mut locale = locale::LocaleConfig::from_env();
+    locale.take_args(&mut args)?;
     let mut opts = app::AppOptions {
         size: (1280, 800),
         uncapped: false,
@@ -207,7 +213,9 @@ fn parse_app_args() -> Result<app::AppOptions> {
 }
 
 fn parse_args() -> Result<Options> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let mut locale = locale::LocaleConfig::from_env();
+    locale.take_args(&mut args)?;
     let shot = match args.first().map(String::as_str) {
         Some("view") => false,
         Some("shot") => true,
@@ -228,6 +236,7 @@ fn parse_args() -> Result<Options> {
         hud: false,
         gradient_variant: 0,
         size: (1280, 800),
+        locale,
     };
     let mut rest = args[2..].iter();
     while let Some(a) = rest.next() {
@@ -316,16 +325,17 @@ struct HudView {
 }
 
 impl HudView {
-    fn load(data: &scene::GameData) -> Result<Self> {
+    fn load(data: &scene::GameData, locale: &locale::LocaleConfig) -> Result<Self> {
         use ddg_formats::cg;
         use ddg_render::sprites::{CANVAS_H, CANVAS_W, SpriteBank, SpriteLayer};
         let exe_bytes = data.exe()?;
         let exe = ddg_formats::exe::Exe::parse(&exe_bytes)?;
         let cg_bytes = data.read("cg.rom")?;
-        let bank = SpriteBank::new(
+        let mut bank = SpriteBank::new(
             &cg::CgFile::parse(&cg_bytes)?,
             cg::parse_tbl(&data.read("tbl.rom")?)?,
         );
+        locale::install(locale, &exe, &mut bank)?;
         let mut layer = SpriteLayer::default();
         hud::Hud::install_palettes(&exe, &mut layer)?;
         let hud = hud::Hud::new(&exe, 0)?;
@@ -614,7 +624,7 @@ fn main() -> Result<()> {
         let out = opts.out.clone().context("shot needs --out <file.ppm>")?;
         let units = (start + opts.at_m / METRES_PER_UNIT).clamp(limits.0, limits.1);
         let mut hud = if opts.hud {
-            Some(HudView::load(&data)?)
+            Some(HudView::load(&data, &opts.locale)?)
         } else {
             None
         };
@@ -638,7 +648,7 @@ fn main() -> Result<()> {
     }
 
     let hud = if opts.hud {
-        Some(HudView::load(&data)?)
+        Some(HudView::load(&data, &opts.locale)?)
     } else {
         None
     };
