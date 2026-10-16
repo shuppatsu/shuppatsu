@@ -30,6 +30,9 @@ Keyed by the sprite's identity in the original:
 * `[station_plate]`: the English name of each vertical station plate, keyed by the plate's
   tilemap id (`0x4e1 = "Yokohama"`). These are not sprite overrides: they feed the horizontal
   plate layout below.
+* `[landmark]`: the English name of each landmark caption, keyed by the landmark sprite's
+  tilemap id (`0x235 = "Yodo River"`). Not sprite overrides either: the kanji stay and the
+  name goes on a line under them ("Landmark captions" below).
 
 Values are a string, or a table with `text` and options:
 
@@ -180,8 +183,36 @@ captions.rs` (`OneLine`):
   in its second (dark). The banners' art is on a box (most of its edge is opaque): the line is
   the commonest colour that is not the box's (yellow) on a box of the box colour (navy), the
   sprite's full height and as wide as the text plus 4 px each side.
-* The landmark captions (one sprite each) and the time messages (word + digits) are not
-  changed.
+* The landmark captions have their own enhancement (below); the time messages (word +
+  digits) are not changed.
+
+## Landmark captions (enhancement `landmark_names`)
+
+The landmark captions (course event 17, `Landmark_Show` 0x410a70 → task 0x410bd0, slot 0x3c,
+hud.md §3.13) are 30 white plates naming bridges, rivers, roads and signal stations, one
+sprite each (tbl 0x222–0x23f, widths in the exe table 0x466a20).
+
+Decided by the user (enhancement, translations only; Japanese is unchanged): **Japanese on
+top, English below.** With a translation and a font, the original kanji plate is drawn
+exactly as in the original, and the `[landmark]` name is drawn on a small line directly under
+it (`crates/ddg-game/src/captions.rs`, `LandmarkLines`):
+
+* **Look.** The plate's colours are read from the art at load (`Look`: most of the sprite's
+  edge is opaque, so its commonest edge colour is the plate, white; the commonest other
+  colour is the lettering, black), from palette 4 at draw time. The plate is extended
+  downwards by the line: a fill of the plate's own columns (its opaque columns in the art),
+  starting at its bottom row, and the text on a box of the plate colour (text width + 4 px
+  each side), so a name longer than the plate widens the extension around its centre.
+* **Size.** Capitals 6.5 original pixels high (13 canvas pixels at `ui_scale` 2), but at
+  least 8 canvas pixels (8 original pixels at `ui_scale` 1); the line is the capital height
+  + 4.5 px. Drawn at the `ui_scale` resolution with the sprite layer's text widget
+  (`SpriteLayer::add_styled_text`), centred under the plate, at most 300 px wide.
+* **Timing.** The line belongs to the landmark task: it waits the same 6 updates, is drawn
+  every update the sprite is, hides with it under a time message and ends with it (distance
+  run out, cancel, arrival or time-up).
+* **Anchor.** Drawn with slot 0x3c's anchor (centred; `hud::anchor_slots` leaves the
+  captions in the middle on a wide canvas).
+* A landmark without a `[landmark]` name, or Japanese, shows the sprite alone.
 
 ## Integration
 
@@ -218,15 +249,16 @@ module-level `#![allow(dead_code)]` until these calls exist; remove it then.
 
 ## Coverage of `en.toml`
 
-622 sprite entries (506 tilemaps and 116 string-sheet labels) and 65 station-plate names.
+592 sprite entries (476 tilemaps and 116 string-sheet labels), 65 station-plate names and 30
+landmark names.
 
 * HUD: time labels, remaining time, line/vehicle plates (15), distance-panel headers (m and
   cm), handle labels, ATS lamp, cab-signal lamp, all 15 time messages with their sign and unit
   words, all 34 navigator hints plus the two horn variants, every signal caption (3-lamp,
   4-lamp, repeater, emergency: 37), every sign caption (27), station captions/banners and
-  departure words, 85 station names (plain and highlighted), 31
-  landmarks, the progress strips, all-clear, emergency-brake, time-up and its 9 advice
-  balloons, the coupling bonus game.
+  departure words, 85 station names (plain and highlighted), the 30 landmarks (`[landmark]`,
+  under the kanji) and 通過, the progress strips, all-clear, emergency-brake, time-up and its
+  9 advice balloons, the coupling bonus game.
 * Screens: station result rows, continue, run end (both grades), report card, lever check,
   departure board (header and all 37 flaps), route select (groups, difficulty, rank badges,
   Shizukuishi tags), records (header, 7 line and 13 series plates, legends), press START.

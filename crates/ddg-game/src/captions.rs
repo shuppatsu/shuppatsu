@@ -19,7 +19,7 @@
 use crate::slots;
 use ddg_formats::cab_hud::{CabTables, LANDMARK_COUNT, WideSprite};
 use ddg_formats::hud::{HudTables, StationNameSprite};
-use ddg_render::sprites::{Paint, SpriteBank, SpriteLayer, TextStyle};
+use ddg_render::sprites::{Anchor, Paint, SpriteBank, SpriteLayer, TextStyle, WidgetKind};
 use ddg_render::text::Align;
 use std::collections::HashMap;
 
@@ -198,6 +198,114 @@ impl OneLine {
                 backdrop: look.backdrop.map(paint),
                 align,
             },
+            fill: None,
+        })
+    }
+}
+
+/// Enhancement `landmark_names`: a landmark caption keeps its original kanji plate, and the
+/// translated name is drawn on a small line directly under it, in the plate's own colours read
+/// from the art (white plate, dark lettering): the plate is extended downwards by the line,
+/// and widened when the name is longer than the plate. Same task, so same timing and hiding.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LandmarkLines {
+    /// By landmark sprite tilemap.
+    lines: HashMap<u16, LandmarkLine>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct LandmarkLine {
+    text: String,
+    /// The plate's opaque columns `[x, w]` and the row under it, art pixels.
+    plate: [u16; 2],
+    bottom: u16,
+    look: Look,
+}
+
+/// The name line under a landmark plate: capital height in original pixels, but at least
+/// [`LANDMARK_LINE_MIN_CANVAS_CAP`] canvas pixels (so 8 at `ui_scale` 1); the line is
+/// [`LANDMARK_LINE_PAD`] taller. The text is centred under the plate and at most
+/// [`LANDMARK_LINE_MAX_W`] wide.
+const LANDMARK_LINE_CAP: f32 = 6.5;
+const LANDMARK_LINE_MIN_CANVAS_CAP: f32 = 8.0;
+const LANDMARK_LINE_PAD: f32 = 4.5;
+const LANDMARK_LINE_MAX_W: f32 = 300.0;
+
+impl LandmarkLines {
+    /// `names`: translated names by landmark sprite tilemap (`[landmark]`). Landmarks without
+    /// a name or without art are left as they are.
+    pub fn new(bank: &SpriteBank, defs: &CaptionDefs, names: &HashMap<u16, String>) -> Self {
+        let mut lines = HashMap::new();
+        for l in &defs.landmarks {
+            let Ok(tbl) = u16::try_from(l.sprite) else {
+                continue;
+            };
+            let (Some(text), Some((w, h, px)), Some(look)) =
+                (names.get(&tbl), bank.art(tbl), Look::of(bank, l.sprite))
+            else {
+                continue;
+            };
+            let (mut x0, mut x1, mut y1) = (w, 0, 0);
+            for y in 0..h {
+                for x in 0..w {
+                    if px[y * w + x] != 0 {
+                        x0 = x0.min(x);
+                        x1 = x1.max(x + 1);
+                        y1 = y1.max(y + 1);
+                    }
+                }
+            }
+            if x0 >= x1 {
+                continue;
+            }
+            lines.insert(
+                tbl,
+                LandmarkLine {
+                    text: text.clone(),
+                    plate: [x0 as u16, (x1 - x0) as u16],
+                    bottom: y1 as u16,
+                    look,
+                },
+            );
+        }
+        Self { lines }
+    }
+
+    /// The line under landmark sprite `tbl` drawn at `(x, y)`, on a canvas of `ui_scale` `s`.
+    fn line(&self, tbl: i16, x: i16, y: i16, s: usize) -> Option<Line> {
+        let cap = LANDMARK_LINE_CAP.max(LANDMARK_LINE_MIN_CANVAS_CAP / s.max(1) as f32);
+        let h = cap + LANDMARK_LINE_PAD;
+        let l = self.lines.get(&u16::try_from(tbl).ok()?)?;
+        let paint = |index| Paint {
+            palette: PALETTE,
+            index,
+        };
+        let px = f32::from(x) + f32::from(l.plate[0]);
+        let pw = f32::from(l.plate[1]);
+        let top = f32::from(y) + f32::from(l.bottom);
+        let centre = px + pw / 2.0;
+        // No box in the art: the lettering colour with its outline instead.
+        let outline = if l.look.backdrop.is_some() {
+            None
+        } else {
+            l.look.outline
+        };
+        Some(Line {
+            text: l.text.clone(),
+            rect: [
+                centre - LANDMARK_LINE_MAX_W / 2.0,
+                top,
+                LANDMARK_LINE_MAX_W,
+                h,
+            ],
+            style: TextStyle {
+                paint: paint(l.look.letter),
+                cap: Some(cap),
+                outline: outline.map(paint),
+                backdrop: l.look.backdrop.map(paint),
+                align: Align::Center,
+            },
+            fill: l.look.backdrop.map(|b| ([px, top, pw, h], paint(b))),
         })
     }
 }
@@ -208,6 +316,8 @@ struct Line {
     text: String,
     rect: [f32; 4],
     style: TextStyle,
+    /// A rectangle filled before the text (the landmark plate's extension).
+    fill: Option<([f32; 4], Paint)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -275,7 +385,14 @@ impl Task {
             slots::image(layer, slot, if hidden { -1 } else { self.images[i] });
         }
         if let Some(l) = self.line.as_ref().filter(|_| !hidden) {
-            layer.add_styled_text(LAYER, l.rect, &l.text, l.style);
+            // Anchored with the task's slots (enhancement `wide_hud`).
+            let anchor = slots.first().map_or(Anchor::Centre, |&s| layer.anchors[s]);
+            layer.anchored(anchor, |layer| {
+                if let Some((rect, paint)) = l.fill {
+                    layer.add_widget(LAYER, rect, WidgetKind::Fill(paint));
+                }
+                layer.add_styled_text(LAYER, l.rect, &l.text, l.style);
+            });
         }
         let alive = match &mut self.until {
             Until::Ticks(t) => {
@@ -331,6 +448,8 @@ pub struct Captions {
     approach: u8,
     /// Enhancement `one_line_captions`; `None` draws the original sprites.
     one_line: Option<OneLine>,
+    /// Enhancement `landmark_names`; `None` draws the landmark sprites alone.
+    landmark_lines: Option<LandmarkLines>,
 }
 
 /// What the approach state machine reads (0x40c4e0, after 0x40dad0 of the same tick).
@@ -359,6 +478,7 @@ impl Captions {
             allowed: false,
             approach: 0,
             one_line: None,
+            landmark_lines: None,
         }
     }
 
@@ -369,6 +489,11 @@ impl Captions {
     /// Draws captions and banners as one translated line from now on ([`OneLine`]).
     pub fn use_one_line(&mut self, one_line: OneLine) {
         self.one_line = Some(one_line);
+    }
+
+    /// Draws the translated landmark names under the landmark captions ([`LandmarkLines`]).
+    pub fn use_landmark_lines(&mut self, lines: LandmarkLines) {
+        self.landmark_lines = Some(lines);
     }
 
     /// 0x40cf40 (segment reset) and 0x40d620 (station passed): the approach starts over.
@@ -529,7 +654,13 @@ impl Captions {
         let x = origin.0 + CENTRE_X + CENTRE_HALF - l.width / 2;
         let y = origin.1 + TOP_Y + LANDMARK_Y;
         slots::place(layer, SLOT_LANDMARK, x, y, 3, 4);
-        self.landmark = Some(Task::new([l.sprite, -1, -1], DISTANCE, metres, odometer));
+        let mut task = Task::new([l.sprite, -1, -1], DISTANCE, metres, odometer);
+        // The kanji sprite stays; the name line is drawn with it.
+        task.line = self
+            .landmark_lines
+            .as_ref()
+            .and_then(|n| n.line(l.sprite, x, y, layer.scale));
+        self.landmark = Some(task);
         self.allowed = true;
     }
 
@@ -696,6 +827,110 @@ mod tests {
         c.update(&mut layer, false, 0.0);
         assert!(!c.any());
         assert_eq!(layer.slots[SLOT_LANDMARK].tilemap, -1);
+    }
+
+    #[test]
+    fn landmark_name_goes_under_the_kanji_plate() {
+        use ddg_render::sprites::WidgetKind;
+        let look = Look {
+            letter: 0x02,
+            outline: None,
+            backdrop: Some(0x0f),
+            cap: 18.0,
+            height: 32.0,
+        };
+        let mut c = Captions::new(defs());
+        c.use_landmark_lines(LandmarkLines {
+            lines: [(
+                0x222,
+                LandmarkLine {
+                    text: "Akita Depot".into(),
+                    plate: [8, 160],
+                    bottom: 30,
+                    look,
+                },
+            )]
+            .into_iter()
+            .collect(),
+        });
+        let mut layer = SpriteLayer {
+            scale: 2,
+            ..SpriteLayer::default()
+        };
+        c.landmark(&mut layer, 0, 500, 0.0);
+        for _ in 0..6 {
+            layer.reset_transient();
+            c.update(&mut layer, false, 0.0);
+            assert!(layer.widgets.is_empty());
+        }
+        layer.reset_transient();
+        c.update(&mut layer, false, 0.0);
+        // The kanji sprite is drawn as in the original.
+        assert_eq!(layer.slots[SLOT_LANDMARK].tilemap, 0x222);
+        let x = f32::from(64 + 256 - 0x58_i16) + 8.0;
+        let y = f32::from(TOP_Y + LANDMARK_Y) + 30.0;
+        let h = LANDMARK_LINE_CAP + LANDMARK_LINE_PAD;
+        match &layer.widgets[..] {
+            [fill, text] => {
+                assert_eq!(fill.rect, [x, y, 160.0, h]);
+                assert_eq!(
+                    fill.kind,
+                    WidgetKind::Fill(Paint {
+                        palette: PALETTE,
+                        index: 0x0f
+                    })
+                );
+                let WidgetKind::Text { text: t, style } = &text.kind else {
+                    panic!("{:?}", text.kind);
+                };
+                assert_eq!(t, "Akita Depot");
+                assert_eq!(text.rect[0] + text.rect[2] / 2.0, x + 80.0);
+                assert_eq!(style.cap, Some(LANDMARK_LINE_CAP));
+                assert_eq!(style.paint.index, 0x02);
+                assert_eq!(style.backdrop.map(|p| p.index), Some(0x0f));
+            }
+            w => panic!("{w:?}"),
+        }
+        // Hidden with the sprite under a time message.
+        layer.reset_transient();
+        c.update(&mut layer, true, 0.0);
+        assert!(layer.widgets.is_empty());
+        assert_eq!(layer.slots[SLOT_LANDMARK].tilemap, -1);
+        // At `ui_scale` 1 the capitals stay 8 canvas pixels high.
+        let lines = c.landmark_lines.as_ref().unwrap();
+        let l = lines.line(0x222, 0, 0, 1).unwrap();
+        assert_eq!(l.style.cap, Some(LANDMARK_LINE_MIN_CANVAS_CAP));
+        assert!(lines.line(0x223, 0, 0, 2).is_none());
+    }
+
+    /// Against the user's data: every landmark has an English name and a white plate with dark
+    /// lettering that the line extends.
+    #[test]
+    fn landmark_lines_from_the_data() {
+        if std::env::var_os("DDG_DATA_DIR").is_none() {
+            eprintln!("skipped: DDG_DATA_DIR not set");
+            return;
+        }
+        let data = crate::scene::GameData::from_env().unwrap();
+        let exe_bytes = data.exe().unwrap();
+        let exe = ddg_formats::exe::Exe::parse(&exe_bytes).unwrap();
+        let bank = SpriteBank::new(
+            &ddg_formats::cg::CgFile::parse(&data.read("cg.rom").unwrap()).unwrap(),
+            ddg_formats::cg::parse_tbl(&data.read("tbl.rom").unwrap()).unwrap(),
+        );
+        let defs = CaptionDefs::new(
+            &HudTables::read(&exe).unwrap(),
+            &CabTables::read(&exe).unwrap(),
+        );
+        let en = crate::locale::Catalogue::parse(include_str!("../../../locales/en.toml")).unwrap();
+        let names: HashMap<u16, String> = en.landmarks.into_iter().collect();
+        let lines = LandmarkLines::new(&bank, &defs, &names);
+        assert_eq!(lines.lines.len(), LANDMARK_COUNT);
+        for l in lines.lines.values() {
+            let b = l.look.backdrop.expect("landmark art on a plate");
+            assert_ne!(b, l.look.letter);
+            assert!(l.plate[1] > 0 && l.bottom > 0);
+        }
     }
 
     #[test]

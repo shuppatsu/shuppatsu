@@ -267,6 +267,13 @@ impl Play {
             cab.hud
                 .use_horizontal_plates(&bank, &names, opts.locale.ui_scale);
         }
+        // Enhancement `landmark_names`: with a translation drawn, the name under the kanji.
+        if bank.has_label_font() {
+            let names = crate::locale::landmark_names(&opts.locale)?;
+            if !names.is_empty() {
+                cab.use_landmark_names(&bank, &names);
+            }
+        }
         // Enhancement `one_line_captions` (docs/localisation.md): with a translation drawn.
         if bank.has_label_font()
             && let Some(p) = crate::locale::caption_phrases(&opts.locale)?

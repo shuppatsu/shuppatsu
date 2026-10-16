@@ -126,6 +126,10 @@ pub struct Catalogue {
     /// `[station_plate]`: translated station names by vertical plate tilemap (hud.md §3.7),
     /// shown by the horizontal plate layout (`hud::plates_en`), not as sprite overrides.
     pub station_plates: Vec<(u16, String)>,
+    /// `[landmark]`: translated landmark names by landmark sprite tilemap (0x466a20, hud.md
+    /// §3.13), shown on a line under the original caption (`captions::LandmarkLines`), not as
+    /// sprite overrides.
+    pub landmarks: Vec<(u16, String)>,
     /// `[caption]`: one-line phrases of the station captions and banners by kind
     /// ([`CAPTION_KINDS`]), with `{name}` for the station name (docs/localisation.md,
     /// "Captions and banners").
@@ -176,6 +180,7 @@ impl Catalogue {
         let mut name = None;
         let mut entries = Vec::new();
         let mut station_plates = Vec::new();
+        let mut landmarks = Vec::new();
         let mut captions = Vec::new();
         for (section, value) in &root {
             match section.as_str() {
@@ -245,6 +250,15 @@ impl Catalogue {
                         station_plates.push((tbl, s.to_owned()));
                     }
                 }
+                "landmark" => {
+                    let t = value.as_table().context("[landmark] must be a table")?;
+                    for (k, v) in t {
+                        let tbl = parse_id(k).with_context(|| format!("landmark key {k:?}"))?;
+                        let s = v.as_str().with_context(|| format!("landmark.{k}"))?;
+                        ensure!(!s.trim().is_empty(), "landmark.{k}: empty text");
+                        landmarks.push((tbl, s.to_owned()));
+                    }
+                }
                 "caption" => {
                     let t = value.as_table().context("[caption] must be a table")?;
                     for (k, v) in t {
@@ -265,6 +279,7 @@ impl Catalogue {
             name: name.context("meta.name missing")?,
             entries,
             station_plates,
+            landmarks,
             captions,
         })
     }
@@ -625,6 +640,16 @@ pub fn station_plate_names(cfg: &LocaleConfig) -> Result<HashMap<u16, String>> {
     Ok(cat.station_plates.into_iter().collect())
 }
 
+/// The translated landmark names (`[landmark]`), by landmark sprite tilemap id; empty unless
+/// text overrides are drawn ([`LocaleConfig::active`]).
+pub fn landmark_names(cfg: &LocaleConfig) -> Result<HashMap<u16, String>> {
+    if !cfg.active() {
+        return Ok(HashMap::new());
+    }
+    let cat = Catalogue::load(&cfg.lang, cfg.dir.as_deref())?;
+    Ok(cat.landmarks.into_iter().collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -666,6 +691,12 @@ mod tests {
         // The vertical plates are named for the horizontal layout, not overridden as art.
         assert!(cat.station_plates.len() >= 60);
         for (tbl, _) in &cat.station_plates {
+            assert!(l.lookup(*tbl as i16, SubRect::WHOLE).is_none(), "{tbl:#x}");
+        }
+        // The landmark captions keep their kanji; their names go on a line underneath.
+        assert_eq!(cat.landmarks.len(), ddg_formats::cab_hud::LANDMARK_COUNT);
+        for (tbl, _) in &cat.landmarks {
+            assert!((0x222..=0x23f).contains(tbl), "{tbl:#x}");
             assert!(l.lookup(*tbl as i16, SubRect::WHOLE).is_none(), "{tbl:#x}");
         }
         assert!(

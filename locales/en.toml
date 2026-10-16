@@ -247,37 +247,7 @@ name = "English"
 0x120 = "Depart: Restrict"           # 出発警戒 plain
 0x121 = "Depart: Restrict"           # 出発警戒 banner
 
-# Landmark captions (hud.md §3.13, 0x466a20), white plates, 2 tiles high.
-0x222 = "Akita Depot"                # 秋田車両基地
-0x223 = "Akita North Bypass"         # 秋田北バイパス
-0x224 = "Akita Expressway"           # 秋田自動車道
-0x225 = "Iwami River"                # 岩見川
-0x226 = "No. 1 Tamagawa Bridge"      # 第一玉川橋梁
-0x227 = "Sainai River"               # 斉内川
-0x228 = "Iwase Bridge"               # 岩瀬橋
-0x229 = "Shidōchi Signal Stn"        # 志度内信号場
-0x22a = "Ōjizawa Signal Stn"         # 大地沢信号場
-0x22b = "Akita Kaidō"                # 秋田街道
-0x22c = "Tōhoku Expressway"          # 東北自動車道
-0x22d = "Seki River"                 # 関川
-0x22e = "Hokuriku Expressway"        # 北陸自動車道
-0x22f = "Kata River"                 # 潟川
-0x230 = "Shinano River"              # 信濃川
-0x231 = "Kan-Etsu Expressway"        # 関越自動車道
-0x232 = "Gimyō Signal Stn"           # 儀明信号場
-0x233 = "Yakushitōge Signal Stn"     # 薬師峠信号場
-0x234 = "Akakura Signal Stn"         # 赤倉信号場
-0x235 = "Yodo River"                 # 淀川
-0x236 = "Kanzaki River"              # 神崎川
-0x237 = "Shōge River"                # 庄下川
-0x238 = "Muko River"                 # 武庫川
-0x239 = "Hankyū Imazu Line"          # 阪急今津線
-0x23a = "Shuku River"                # 夙川
-0x23b = "Yokohama Line"              # 横浜線
-0x23c = "Tsurumi Line"               # 鶴見線
-0x23d = "Tsurumi River"              # 鶴見川
-0x23e = "Nambu Line"                 # 南武線
-0x23f = "Tama River"                 # 多摩川
+# 通過 (pass) sprite, 0x240 (next to the landmarks in tbl.rom).
 0x240 = "Passing"                    # 通過
 
 # Pre-departure progress strips (hud.md §3.7), 352×48: 発 / 着 at the ends.
@@ -865,6 +835,40 @@ mode = { rect = [0, 8, 6, 2], text = "Mode" }         # モード切替
 # banners"). The original builds them from three sprites, [name][駅][word]; a translation draws
 # one line instead, at one size, with {name} = the name sprite's text above. By kind: the four
 # departure aspects, 通過, 停車, and the bare name. 駅 ("Stn") is dropped.
+[landmark]
+# Landmark captions (hud.md §3.13, 0x466a20): the original kanji plate is kept and this
+# name is drawn on a line under it (docs/localisation.md, "Landmark captions").
+0x222 = "Akita Depot"                # 秋田車両基地
+0x223 = "Akita North Bypass"         # 秋田北バイパス
+0x224 = "Akita Expressway"           # 秋田自動車道
+0x225 = "Iwami River"                # 岩見川
+0x226 = "No. 1 Tamagawa Bridge"      # 第一玉川橋梁
+0x227 = "Sainai River"               # 斉内川
+0x228 = "Iwase Bridge"               # 岩瀬橋
+0x229 = "Shidōchi Signal Stn"        # 志度内信号場
+0x22a = "Ōjizawa Signal Stn"         # 大地沢信号場
+0x22b = "Akita Kaidō"                # 秋田街道
+0x22c = "Tōhoku Expressway"          # 東北自動車道
+0x22d = "Seki River"                 # 関川
+0x22e = "Hokuriku Expressway"        # 北陸自動車道
+0x22f = "Kata River"                 # 潟川
+0x230 = "Shinano River"              # 信濃川
+0x231 = "Kan-Etsu Expressway"        # 関越自動車道
+0x232 = "Gimyō Signal Stn"           # 儀明信号場
+0x233 = "Yakushitōge Signal Stn"     # 薬師峠信号場
+0x234 = "Akakura Signal Stn"         # 赤倉信号場
+0x235 = "Yodo River"                 # 淀川
+0x236 = "Kanzaki River"              # 神崎川
+0x237 = "Shōge River"                # 庄下川
+0x238 = "Muko River"                 # 武庫川
+0x239 = "Hankyū Imazu Line"          # 阪急今津線
+0x23a = "Shuku River"                # 夙川
+0x23b = "Yokohama Line"              # 横浜線
+0x23c = "Tsurumi Line"               # 鶴見線
+0x23d = "Tsurumi River"              # 鶴見川
+0x23e = "Nambu Line"                 # 南武線
+0x23f = "Tama River"                 # 多摩川
+
 [caption]
 depart_clear = "{name} · Depart: Clear!"
 depart_reduce = "{name} · Depart: Reduce"

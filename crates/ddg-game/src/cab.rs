@@ -241,6 +241,17 @@ impl CabHud {
         }
     }
 
+    /// Enhancement `landmark_names`: translated names under the landmark captions, by
+    /// landmark sprite tilemap.
+    pub fn use_landmark_names(
+        &mut self,
+        bank: &ddg_render::sprites::SpriteBank,
+        names: &std::collections::HashMap<u16, String>,
+    ) {
+        let lines = crate::captions::LandmarkLines::new(bank, self.captions.defs(), names);
+        self.captions.use_landmark_lines(lines);
+    }
+
     /// `Hud_Create` 0x40f7e0 (stage start and restart): static slots, strip palette.
     pub fn create(&mut self, layer: &mut SpriteLayer) {
         self.hud.create(layer);
