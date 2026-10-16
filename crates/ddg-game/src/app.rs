@@ -375,6 +375,7 @@ impl App {
             shot: None,
             speedometer: None,
             variant: chosen.variant,
+            ending: None,
             locale: self.opts.locale.clone(),
         };
         eprintln!(

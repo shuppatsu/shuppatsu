@@ -35,7 +35,7 @@ use crate::rules::{
     Buttons, Phase, RuleEvent, RuleTables, Rules, RulesError, StationOutcome, StationResult,
     TickInput, TickOutput, TrainReadout,
 };
-use crate::traffic::{CarPose, Traffic, TrafficEnv, TrafficSound};
+use crate::traffic::{CarPose, SpawnRequest, Traffic, TrafficEnv, TrafficSound};
 use ddg_formats::FormatError;
 use ddg_formats::route::{Route, UNITS_PER_POINT};
 use ddg_formats::scene::{CabWalker, TrackPos, cab_camera};
@@ -541,6 +541,60 @@ impl Drive {
         self.demo
             .as_ref()
             .is_some_and(|d| d.counter >= d.kind.ticks())
+    }
+
+    /// The ending's camera placement (0x408080 → 0x41cb00): the camera task of the segment
+    /// holding `station`, at that station's stop, with the route loaded and the AI trains gone
+    /// (a new list 5).
+    pub fn ending_place(&mut self, station: usize) -> Result<(), DriveError> {
+        let stage = self.rules.stage().0;
+        let (seg, stop) = segment_for(&self.stage_data, stage, station)?;
+        if seg != self.com {
+            self.route = load_route(&mut *self.loader, &self.com_files, seg)?;
+            self.com = seg;
+        }
+        let stop = stop as usize;
+        check_stop(&self.route, &self.com_files, seg, stop)?;
+        self.walker = CabWalker::at_segment_start(&self.route, stop);
+        self.prev_pos = self.walker.pos();
+        self.traffic.clear();
+        Ok(())
+    }
+
+    /// One tick of the ending's list 5: the camera task advances by `units` (`0x850208`, track
+    /// units; negative goes back) and the AI-train tasks run. The player train is gone.
+    pub fn ending_tick(&mut self, units: f32) {
+        self.tick_count += 1;
+        self.traffic.begin_tick();
+        self.prev_pos = self.walker.pos();
+        self.walker.advance(&self.route, units);
+        self.heading = crate::physics::heading_at(&self.route, self.walker.pos());
+        self.traffic_task();
+        self.global_tick = self.global_tick.wrapping_add(1);
+    }
+
+    /// A tick without list 5 (the ending killed it): only the global counter runs.
+    pub fn idle_global_tick(&mut self) {
+        self.tick_count += 1;
+        self.traffic.begin_tick();
+        self.global_tick = self.global_tick.wrapping_add(1);
+    }
+
+    /// The spawner 0x404f10 on the current route (the ending's final shot).
+    pub fn ending_spawn(&mut self, req: &SpawnRequest) {
+        let env = TrafficEnv {
+            route: &self.route,
+            models: &self.train_models,
+            obstacle_armed: false,
+            dist_round_m: self.rules.dist_round_m,
+            tick: u64::from(self.global_tick),
+        };
+        self.traffic.spawn(req, &env);
+    }
+
+    /// Kills list 5: the camera task and the AI trains.
+    pub fn ending_kill(&mut self) {
+        self.traffic.clear();
     }
 
     /// The demo's notches and horn of the last tick (for the cab and the sounds).

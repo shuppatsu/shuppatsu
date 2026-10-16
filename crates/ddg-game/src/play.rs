@@ -37,6 +37,7 @@ use ddg_render::sprites::{CANVAS_H, CANVAS_W, Slot, SpriteBank, SpriteLayer};
 use std::time::{Duration, Instant};
 
 mod demo;
+mod ending;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -83,6 +84,8 @@ pub struct PlayOptions {
     pub speedometer: Option<u8>,
     /// Select stage 20: route 10 with `0x48ddf0 = 1`, whose clear mark is the 21st byte.
     pub variant: bool,
+    /// Check aid: start with the ending (`full` or `plain`) instead of driving.
+    pub ending: Option<bool>,
     /// Language and font of the text sprites (docs/localisation.md).
     pub locale: crate::locale::LocaleConfig,
 }
@@ -182,6 +185,9 @@ pub fn run(opts: PlayOptions) -> Result<()> {
         gpu: None,
     };
     let mut app = Play::new(shared, opts)?;
+    if let Some(full) = app.opts.ending {
+        app.start_ending(Some(full))?;
+    }
     if let Some((ticks, out)) = app.opts.shot.clone() {
         while app.ticks < ticks && !app.leave {
             app.tick()?;
@@ -304,6 +310,8 @@ impl Play {
             result_view: None,
             world: WorldView::Cab,
             demo: None,
+            ending: None,
+            ending_tables: None,
             opts,
         };
         play.configure_gpu();
@@ -420,6 +428,7 @@ impl Play {
         let band_aspect = w as f32 / (h as f32 * (1.0 - HUD_BAND_TOP)).max(1.0);
         self.weather
             .compose(&self.scene, &self.drive, band_aspect, &mut effects);
+        Self::ending_masks(self.ending.as_ref(), &mut effects);
         let fog = fog && self.weather.fog();
         crate::shot::render_to_ppm(
             Some((&self.scene, self.drive.pos())),
@@ -615,6 +624,9 @@ pub struct Play {
     world: WorldView,
     /// An attract demo drive (`play/demo.rs`).
     demo: Option<demo::DemoView>,
+    /// The ending (`play/ending.rs`) and its tables.
+    ending: Option<ending::Ending>,
+    ending_tables: Option<ending::EndingTables>,
 }
 
 impl Play {
@@ -622,6 +634,9 @@ impl Play {
     fn tick(&mut self) -> Result<()> {
         if self.demo.is_some() {
             return self.demo_tick();
+        }
+        if self.ending.is_some() {
+            return self.ending_tick();
         }
         self.ticks += 1;
         let input = self.menu_input;
@@ -753,6 +768,20 @@ impl Play {
             let mark = if self.opts.variant { 20 } else { stage };
             self.save.eeprom.raise_clear_mark(mark, r.continues);
         }
+        if cleared && self.has_ending() {
+            // Stage_Run: the ending (0x4040a0) between the clear mark and the ranking.
+            match self.start_ending(None) {
+                Ok(()) => return,
+                Err(e) => eprintln!("ending: {e:#}"),
+            }
+        }
+        self.start_ranking_now(cleared, sfx);
+    }
+
+    /// The ranking insert with the run's value and PRO flag (0x41e8d0).
+    fn start_ranking_now(&mut self, cleared: bool, sfx: &mut Vec<Sfx>) {
+        let r = self.drive.rules();
+        let (stage, _) = r.stage();
         let score = r.ranking_score(cleared);
         let pro = self.meter_m <= PRO_LIMIT_M;
         eprintln!(
@@ -1001,6 +1030,8 @@ impl Play {
             let fx = &mut gpu.renderer.effects;
             self.weather
                 .compose(&self.scene, &self.drive, band_aspect, fx);
+            Self::ending_masks(self.ending.as_ref(), fx);
+            Self::ending_camera(self.ending.as_ref(), &mut camera);
             gpu.renderer.fog.enabled = self.opts.fog && self.weather.fog();
         } else {
             // The drive's task list (scenery, traffic, weather, fog) is gone at a station result.
