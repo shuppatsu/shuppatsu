@@ -424,9 +424,32 @@ width it returns exactly the 3 original tiles.
   returns `(a.x·b.y − a.y·b.x + (b.y − a.y)·x)/(a.x − b.x)`, which is the edge's y at **−x**
   (sign slip). `extra_quad` keeps it. Flat colours 0x469c80 (ground top), depth 0x7ffd
   (quad 1) / 0x7fe0 (quad 2). Likely water or a field surface.
+- **What area 3's textured ground is — confirmed (data + experiment).** Part 0x2dd2's first
+  group maps rect 2633 (texR4 page 19, u 0..127, v 0..63): a blue water texture with pale
+  cloud reflections. Stretched over (0,251)–(496,415) with u running down the screen and v
+  across it, one texel is ≈ 7.9 virtual units wide. Rivers and ponds are **holes in the
+  terrain meshes**, not water polygons: with the layer switched off the river shows the black
+  clear colour, and with the colour key turned into magenta (renderer.md §9) no keyed texel
+  appears there. So the water is this static screen-space picture seen through the holes; it
+  does not move with the camera, which makes the "reflections" look like something under the
+  water. No z-fight is possible (depth 0x7ffe, behind every 3D polygon). The original does the
+  same: 0x41dfc0 case 3 draws 0x469ca0 with the part's UVs (0x432da0), whatever is in front.
+- **Gap at the horizon — likely (code + data; not yet compared with Wine).** The sky gradient
+  ends at y 235 (0x469c68) and the area-3 textured ground starts at y 251 (0x469ca0), so the
+  band 235..251 is covered only by the panorama, the 3D terrain and extra quad 1 (which the
+  per-point table turns on together with ground 2, e.g. hokuho2a.com from engine index 3325,
+  bits 0x251). Where none of them reaches, the black clear colour (0x4286b0) shows: a black
+  strip under the hills, at 4:3 too (Hokuhoku 485 after Naoetsu, engine index ≈ 3350: x
+  0..≈ 25 % of the view; ≈ 3460: the full width, the extra quad
+  not being drawn there). The port keeps it; widescreen only extends it to the new edges.
 - Widescreen: the flat and textured quads span x 0..496. `Quad2d::widened` and `ground_quad`
   move the left/right corners to the viewport edges and extrapolate the UVs linearly along each
-  horizontal edge (v = x/16 for the tiled ground).
+  horizontal edge (v = x/16 for the tiled ground, whose page repeats anyway). The area-3 water
+  (the part's own UVs) cannot be extrapolated: past 0 and 496 its UVs would leave rect 2633
+  and show the neighbouring atlas textures as grey blocks (the bug seen at 16:10 and wider).
+  `ground_quad` covers the extra width with horizontally mirrored copies of the quad instead,
+  seamless at 0 and 496 and inside the rect. At the original width it is the single original
+  quad.
 
 `scene::background()` returns the per-frame plan. `BackgroundTables` holds the tables;
 `sky_quads`, `ground_quad`, `extra_quad` turn them into `TexQuad2d` / `FlatQuad2d`.
