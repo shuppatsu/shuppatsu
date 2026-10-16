@@ -153,6 +153,31 @@ impl Autopilot {
         }
     }
 
+    /// The coupling minigame: horn first, then creep the last 40 m and touch at about 1.5 km/h.
+    fn couple(&mut self, d: &Drive, mps: f32) -> DriverInput {
+        let Some(c) = d.rules().coupling.as_ref().filter(|c| c.driving()) else {
+            return self.set(0, 8);
+        };
+        let left = c.dist_m;
+        let target_kmh = if left > 10.0 {
+            5.0
+        } else if left > 4.0 {
+            2.5
+        } else {
+            1.2
+        };
+        let kmh = mps * 3.6;
+        let mut i = if kmh < target_kmh - 0.6 {
+            self.set(1, 0)
+        } else if kmh > target_kmh + 0.2 {
+            self.set(0, if kmh > target_kmh + 1.0 { 4 } else { 2 })
+        } else {
+            self.set(0, 0)
+        };
+        i.horn_pressed = c.horn == 0 && mps <= 0.0;
+        i
+    }
+
     /// The controls for the next tick: notches, plus the horn at whistle signs (held while one
     /// is required, pressed in a horn bonus zone) and the ATS acknowledgement.
     pub fn control(&mut self, d: &Drive) -> DriverInput {
@@ -181,6 +206,7 @@ impl Autopilot {
                 return self.set(0, 9);
             }
             DrivePhase::Holding | DrivePhase::GameOver => return self.set(0, 8),
+            DrivePhase::Coupling => return self.couple(d, mps),
             DrivePhase::PreDeparture | DrivePhase::Driving => {}
         }
 
@@ -206,7 +232,8 @@ impl Autopilot {
             }
         }
         // Keep to the timetable: running early paints restrictive signals (rules.md §4.3).
-        if let Some(kmh) = schedule_kmh(v.dist_m, v.time_left_s, v.stops) {
+        let atc_section = d.rules().derail_kmh < 999.0;
+        if let Some(kmh) = schedule_kmh(v.dist_m, v.time_left_s, v.stops).filter(|_| !atc_section) {
             cruise = cruise.min(kmh.max(SCHEDULE_MIN_KMH));
         }
         // ATC section: the cab shows the coming ATC speed before it is enforced; above the
@@ -299,6 +326,10 @@ pub struct RunReport {
     /// `.COM` indices of the stage's segments that hold a leg (one starting at the last station
     /// only serves a start there).
     pub stage_segments: Vec<u32>,
+    /// Stage-specific events: the bonus section, coupling results.
+    pub notes: Vec<String>,
+    /// Stage 1 jumped from station 8 to the bonus section at 24 (rows 9–23 not driven).
+    pub bonus_jump: bool,
     /// Sanity violations (first few).
     pub violations: Vec<String>,
 }

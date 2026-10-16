@@ -11,6 +11,7 @@
 
 mod support;
 
+use ddg_engine::coupling::CouplingEvent;
 use ddg_engine::drive::{Drive, DrivePhase};
 use ddg_engine::physics::TrainTables;
 use ddg_engine::rules::{RuleEvent, RuleTables, StationOutcome, TimeReason};
@@ -60,7 +61,6 @@ fn run_stage(data: &Data, stage: usize, difficulty: usize) -> RunReport {
     )
     .unwrap_or_else(|e| panic!("stage {stage} d{difficulty}: {e}"));
     let margin = data.rules.limit_margin_kmh.get(stage, difficulty) as f32;
-    let top = d.train_spec().max_speed_kmh();
     let mut ap = Autopilot::new(margin);
     let mut rep = RunReport {
         stage,
@@ -75,6 +75,8 @@ fn run_stage(data: &Data, stage: usize, difficulty: usize) -> RunReport {
         overspeed: 0,
         remaining_s: 0,
         violations: Vec::new(),
+        notes: Vec::new(),
+        bonus_jump: false,
         segments: Vec::new(),
         stage_segments: (d.stage_data().segments.iter())
             .filter(|s| (s.first_station as usize) + 1 < d.rules().timetable().len())
@@ -156,6 +158,9 @@ fn run_stage(data: &Data, stage: usize, difficulty: usize) -> RunReport {
                         d.speed_kmh()
                     );
                 }
+                RuleEvent::Coupling(CouplingEvent::Result(r)) => {
+                    rep.notes.push(format!("coupling {r:?}"));
+                }
                 RuleEvent::AtsBell => rep.ats_trips += 1,
                 RuleEvent::Time {
                     reason: TimeReason::Overspeed,
@@ -169,6 +174,8 @@ fn run_stage(data: &Data, stage: usize, difficulty: usize) -> RunReport {
         let tr = d.train();
         let r = d.rules();
         let speed = d.speed_kmh();
+        // The bonus sections switch to a faster train type (`Vehicle_Set`).
+        let top = d.train_spec().max_speed_kmh();
         if !speed.is_finite() || speed < 0.0 || speed > top * 1.02 + 0.5 {
             violate(&mut rep, format!("speed {speed} km/h (top {top})"));
         }
@@ -202,6 +209,10 @@ fn run_stage(data: &Data, stage: usize, difficulty: usize) -> RunReport {
                     let res = d
                         .finish_station()
                         .unwrap_or_else(|e| panic!("stage {stage} d{difficulty}: {e}"));
+                    if d.rules().bonus_jump {
+                        rep.bonus_jump = true;
+                        rep.notes.push("bonus section".into());
+                    }
                     if res.outcome == StationOutcome::Cleared {
                         rep.outcome = Outcome::Cleared;
                         break;
@@ -275,6 +286,9 @@ fn print_table(reports: &[RunReport]) {
         for v in &r.violations {
             println!("      ! {v}");
         }
+        if !r.notes.is_empty() {
+            println!("      {}", r.notes.join(", "));
+        }
     }
 }
 
@@ -341,8 +355,18 @@ fn check(reports: &[RunReport]) {
         }
         match r.outcome {
             Outcome::Cleared => {
-                if r.reached + 1 != r.stations {
+                // Stages 1, 2 and 10 end early unless their bonus opens (rules.md §13).
+                let last = r.stations - 1;
+                let early = match r.stage {
+                    1 | 10 => Some(8),
+                    2 => Some(24),
+                    _ => None,
+                };
+                if r.reached != last && Some(r.reached) != early {
                     bad.push(format!("{tag}: cleared at station {}", r.reached));
+                }
+                if r.reached != last || r.bonus_jump {
+                    continue;
                 }
                 let missed: Vec<_> = (r.stage_segments.iter())
                     .filter(|c| !r.segments.contains(c))

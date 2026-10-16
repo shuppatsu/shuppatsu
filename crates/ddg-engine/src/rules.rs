@@ -18,6 +18,7 @@ use ddg_formats::FormatError;
 use ddg_formats::exe::Exe;
 use ddg_formats::stages::{CourseEvent, DIFFICULTY_COUNT, STAGE_COUNT, Stage, TimetableRow};
 
+use crate::coupling::{Coupling, CouplingEvent, CouplingInput, CouplingResult};
 use crate::stop_replay::{RecordInput, StopRecord};
 use crate::traffic::{PassingSound, PassingTrain, SpawnRequest};
 
@@ -114,6 +115,10 @@ const PASSING_STANDSTILL_TICKS: u32 = 30;
 const OBSTACLE_SIGNAL_AT: u32 = 31;
 /// Extra standstill after stopping at the final station (0x40aaa5: 0x78 `Task_Tick`s).
 const FINAL_STATION_HOLD: u32 = 0x78;
+/// Standstill after a successful coupling on stage 2 (0x40a0a0: 0x1e `Task_Tick`s).
+const COUPLED_HOLD: u32 = 0x1e;
+/// The stage-1 bonus section starts at this timetable row (0x40d340: `0x856d78 = 0x18`).
+const BONUS_SECTION_STATION: usize = 0x18;
 /// Sentinel signal position for "no signal" (0xfffffc19 = −999, 0x40b970).
 const NO_SIGNAL: i32 = -999;
 
@@ -721,6 +726,10 @@ pub enum RuleEvent {
     ObstacleStop,
     /// Course events the rules don't act on (sounds, announcements, HUD, scenery), passed through.
     Script { kind: i16, args: [i16; 3] },
+    /// The coupling minigame (0x4093c0) started: captions 0x2d8 / 0x2d9, BGM 0x19a.
+    CouplingStarted,
+    /// Something of the coupling minigame for the presentation (sounds, result, jolts).
+    Coupling(CouplingEvent),
 }
 
 /// Result of a station stop, computed in the stop handler 0x40a0a0.
@@ -811,6 +820,9 @@ pub enum Phase {
     /// Stop evaluation of 0x40a0a0 after the drain: part 1 (stop error, count) and part 2
     /// (lateness, bonus), one `Task_Tick` apart.
     Evaluating(u8),
+    /// The coupling minigame of 0x4093c0 (stage 2 station 24, stages 17–19 station 16); the
+    /// state is [`Rules::coupling`].
+    Coupling,
     /// Stopped at the station; call [`Rules::finish_station`].
     Arrived,
     GameOver,
@@ -826,6 +838,8 @@ pub enum AfterHold {
     ObstacleCleared,
     Drain,
     Arrived,
+    /// The perfect stop at a coupling station: the minigame follows.
+    Coupling,
 }
 
 /// One signal block (12-byte record at 0x856dc0 + 12·i).
@@ -1034,6 +1048,26 @@ pub struct Rules {
     pub arrivals: Vec<(i32, i32)>,
     /// Odometer at the final stop, for the ranking score (`0x8570c8`).
     pub final_odometer: f32,
+
+    /// Stage 1: the perfect stop at station 8 opened the bonus section (`0x855ff8 & 0x20000000`).
+    pub bonus_section: bool,
+    /// `0x855ff8 & 0x40000000`: the clear takes the plain ending (0x404920) rather than the
+    /// full one (0x404110), see [`Rules::full_ending`].
+    pub plain_ending: bool,
+    /// The coupling partner chosen by course event 12 (`0x855ff8` bits 0x10000000 = 1, few
+    /// marks; 0x8000000 = 2, 13 or more marks); 0 none.
+    pub coupling_partner: u8,
+    /// The coupling minigame while [`Phase::Coupling`] (and its result afterwards).
+    pub coupling: Option<Coupling>,
+    /// The last `Vehicle_Set` code (0x410320), `None` = the stage's own vehicle.
+    pub vehicle_code: Option<u32>,
+    /// The train type `0x84c3fc` after a `Vehicle_Set` of the bonus section.
+    pub train_type: Option<usize>,
+    /// Select stage 20 (`0x48ddf0`): stage 10 runs on past station 8.
+    pub select_variant: bool,
+    /// The last [`Rules::finish_station`] jumped to the bonus section (stage 1, station 24):
+    /// the odometer and the event cursors moved.
+    pub bonus_jump: bool,
 }
 
 fn round_half_away(v: f32) -> i32 {
@@ -1166,6 +1200,14 @@ impl Rules {
             marks: vec![0; stations],
             arrivals: vec![(0, 999_999); stations],
             final_odometer: 0.0,
+            bonus_section: false,
+            plain_ending: false,
+            coupling_partner: 0,
+            coupling: None,
+            vehicle_code: None,
+            train_type: None,
+            select_variant: false,
+            bonus_jump: false,
         };
         r.start_run();
         Ok(r)
@@ -1193,6 +1235,31 @@ impl Rules {
     fn is_final_next(&self) -> bool {
         // `row[d78+2].time == −1` (0x40d340 / 0x40d620).
         self.row(self.station + 2).is_none()
+    }
+
+    /// The tails of 0x40d340 (`at_stop`) and 0x40d620: legs that end a stage before its last
+    /// timetable row. Stage 1 ends at station 8 (unless the bonus section opens), stage 2 at
+    /// 24 (unless the coupling succeeds), stages 17–19 at 16; stage 10 at 8 only after a stop
+    /// (0x40d620 has no stage-10 case).
+    fn final_override(&self, at_stop: bool) -> bool {
+        match (self.stage, self.station) {
+            (1, 7) | (2, 0x17) | (0x11..=0x13, 0xf) => true,
+            (10, 7) => at_stop,
+            _ => false,
+        }
+    }
+
+    /// [`Rules::is_final_next`] with the stage-specific legs of [`Rules::final_override`].
+    fn final_leg(&self, at_stop: bool) -> bool {
+        self.is_final_next() || self.final_override(at_stop)
+    }
+
+    /// Whether a clear plays the full ending (0x4040a0 → 0x404110) rather than the plain one
+    /// (0x404920): `0x855ff8 & 0x40000000` clear. The ending only runs on stages whose
+    /// difficulty (`0x4656c4`) is above 3; the registry option bits 0x08 / 0x10 can force
+    /// either (Stage_Run 0x4080d0, not modelled here).
+    pub fn full_ending(&self) -> bool {
+        !self.plain_ending
     }
 
     /// 0x40d040 (stage start) without the presentation parts.
@@ -1230,6 +1297,19 @@ impl Rules {
     }
 
     fn seek_cursors(&mut self) {
+        self.seek_course_cursor();
+        let st = self.station as i16;
+        while self
+            .limits
+            .get(self.limit_cursor)
+            .is_some_and(|e| e.station < st)
+        {
+            self.limit_cursor += 1;
+        }
+    }
+
+    /// Moves the course-event cursor (`0x857088`) past the events of earlier stations.
+    fn seek_course_cursor(&mut self) {
         let st = self.station as i16;
         while self
             .course
@@ -1237,13 +1317,6 @@ impl Rules {
             .is_some_and(|e| e.station < st)
         {
             self.course_cursor += 1;
-        }
-        while self
-            .limits
-            .get(self.limit_cursor)
-            .is_some_and(|e| e.station < st)
-        {
-            self.limit_cursor += 1;
         }
     }
 
@@ -1571,6 +1644,7 @@ impl Rules {
                 | Phase::Holding { .. }
                 | Phase::Draining
                 | Phase::Evaluating(_)
+                | Phase::Coupling
         )
     }
 
@@ -2052,7 +2126,7 @@ impl Rules {
         self.platform_red = false;
         self.station += 1;
         self.scheduled = self.target_row().time_ticks;
-        self.final_station = self.is_final_next();
+        self.final_station = self.final_leg(false);
         // 0x40d620 tail: weather may start on every third global tick; in a tunnel the rails
         // stay dry for now (0x84c2e0 = 0).
         if self.station_weather(3) && in_tunnel {
@@ -2186,6 +2260,19 @@ impl Rules {
                 }
                 22 => self.weather_on = false,
                 20 => self.green_hint = a,
+                12 => {
+                    // 0x40acd0: the waiting set for the coupling game; 13 or more marks so far
+                    // (0x40e350(0, d78)) pick the 0x8000000 one, else 0x10000000. The set's
+                    // placement (0x406c50) is left to the presentation.
+                    let sum: i32 = (self.marks.iter().take(self.station))
+                        .map(|&m| i32::from(m))
+                        .sum();
+                    self.coupling_partner = if sum < 13 { 1 } else { 2 };
+                    out.events.push(RuleEvent::Script {
+                        kind: e.kind,
+                        args: e.args,
+                    });
+                }
                 9 => self.hint(out, a, i32::from(b), i32::from(c)),
                 _ => out.events.push(RuleEvent::Script {
                     kind: e.kind,
@@ -2693,19 +2780,19 @@ impl Rules {
             self.stop_streak = 0;
             30
         };
-        // 0x40aaa5: 120 more ticks at the final station (stage-specific endings of stages 1, 2,
-        // 10 and 17–19 are not modelled).
-        let hold = if self.final_station {
-            hold + FINAL_STATION_HOLD
-        } else {
-            hold
-        };
         if let Some(m) = self.marks.get_mut(self.station) {
             *m = mark;
         }
         if self.tables.stage_kind[self.stage] == 1 {
             self.eb_approach_ticks = 0;
         }
+        let then = self.stage_ending_at_stop();
+        // 0x40aaa5: 120 more ticks (and the 運転終了 caption 0x20f) at the final station.
+        let hold = if self.final_station && then == AfterHold::Arrived {
+            hold + FINAL_STATION_HOLD
+        } else {
+            hold
+        };
         if let Some(a) = self.arrivals.get_mut(self.station) {
             *a = (self.clock, trunc(f64::from(self.dist_m)));
         }
@@ -2716,10 +2803,127 @@ impl Rules {
             mark,
             forced: self.forced_stop,
         }));
+        self.phase = Phase::Holding { ticks: hold, then };
+    }
+
+    /// The stage-specific part of 0x40a0a0 after the marks: the stage-1 bonus section, the
+    /// coupling stations and stage 10's early end. Decides [`Rules::final_station`] and
+    /// whether the coupling minigame follows the stop.
+    fn stage_ending_at_stop(&mut self) -> AfterHold {
+        // `0x85722c == 0`, no EB in the approach or held, re-power excused, no continue.
+        let perfect = self.dist_round_m == 0
+            && self.eb_approach_ticks == 0
+            && self.eb_ticks == 0
+            && self.repowered == self.repower_excused
+            && self.continues == 0;
+        match (self.stage, self.station) {
+            (1, 7) if perfect => {
+                self.final_station = false;
+                self.bonus_section = true;
+            }
+            (2, 0x17) | (0x11..=0x13, 0xf) => {
+                if perfect {
+                    return AfterHold::Coupling;
+                }
+                self.final_station = true;
+                self.coupling_partner = 0;
+            }
+            // 0x40aa26: marks of stations 1–8 (0x40e350(1, 8)) at least 15, or select stage 20.
+            (10, 7)
+                if self
+                    .marks
+                    .iter()
+                    .take(8)
+                    .map(|&m| i32::from(m))
+                    .sum::<i32>()
+                    >= 15
+                    || self.select_variant =>
+            {
+                self.final_station = false;
+            }
+            _ => {}
+        }
+        AfterHold::Arrived
+    }
+
+    /// The end of the coupling minigame (0x40a0a0 after 0x4093c0 returned).
+    fn coupling_done(&mut self, result: CouplingResult) {
+        let hold = if result == CouplingResult::Coupled && self.stage == 2 {
+            // 0x410320(0x1000) with type 0xe when course event 12 chose the 0x8000000 partner,
+            // else 0x410320(0x1001) with type 0xc; then a 30-tick wait.
+            let (code, train_type) = if self.coupling_partner == 2 {
+                (0x1000, 0xe)
+            } else {
+                (0x1001, 0xc)
+            };
+            self.set_vehicle(code, train_type);
+            self.final_station = false;
+            COUPLED_HOLD
+        } else {
+            self.plain_ending = true;
+            self.final_station = true;
+            FINAL_STATION_HOLD
+        };
         self.phase = Phase::Holding {
             ticks: hold,
             then: AfterHold::Arrived,
         };
+    }
+
+    /// One tick of the coupling minigame (0x4093c0). While the train may move, 0x409fc0 runs
+    /// first: the forced-stop test on the previous iteration's `0x85722c` and the stop record,
+    /// both on the distance before the 40 m offset.
+    fn coupling_step(&mut self, out: &mut TickOutput, input: &TickInput) {
+        let Some(mut c) = self.coupling.take() else {
+            self.phase = Phase::Arrived;
+            return;
+        };
+        let mut speed = input.speed_mps;
+        self.speed_mps = speed;
+        if c.driving() {
+            if c.dist_trunc <= self.target_row().params[4] {
+                speed = 0.0;
+                self.speed_mps = 0.0;
+                out.force_stop = true;
+                self.forced_stop = true;
+            }
+            self.stop_record.record(RecordInput {
+                dist_m: input.dist_to_stop_m,
+                target_stops: self.target_stops,
+                obstacle: self.obstacle,
+                obstacle_odo: self.obstacle_odo,
+                odometer_m: input.odometer_m,
+            });
+        }
+        let t = c.step(&CouplingInput {
+            speed_mps: speed,
+            dist_to_stop_m: input.dist_to_stop_m,
+            horn_pressed: input.buttons.horn_pressed,
+        });
+        out.events
+            .extend(t.events.iter().map(|&e| RuleEvent::Coupling(e)));
+        if let Some((id, ticks)) = t.hint {
+            self.hint(out, id, ticks, 0);
+        }
+        if let Some(s) = t.bonus_s {
+            // TimeMsg_Show(0x103, points, 0x3c): ボーナス.
+            self.time(out, TimeReason::Horn, s);
+        }
+        if t.stop_train {
+            self.speed_mps = 0.0;
+            out.force_stop = true;
+        }
+        let done = c.result();
+        self.coupling = Some(c);
+        if let Some(r) = done {
+            self.coupling_done(r);
+        }
+    }
+
+    /// `Vehicle_Set(code)` 0x410320 together with the train type `0x84c3fc`.
+    fn set_vehicle(&mut self, code: u32, train_type: usize) {
+        self.vehicle_code = Some(code);
+        self.train_type = Some(train_type);
     }
 
     // ----------------------------------------------------------------------------------------
@@ -2828,7 +3032,8 @@ impl Rules {
                     then: AfterHold::Resume,
                     ..
                 }
-        )
+        ) || (self.phase == Phase::Coupling
+            && self.coupling.as_ref().is_some_and(Coupling::driving))
     }
 
     /// 0x4085e0, when the stage loop is left after an arrival or a game over: the ATS and its
@@ -2905,6 +3110,11 @@ impl Rules {
                         AfterHold::Resume | AfterHold::ObstacleCleared => Phase::Driving,
                         AfterHold::Drain => Phase::Draining,
                         AfterHold::Arrived => Phase::Arrived,
+                        AfterHold::Coupling => {
+                            self.coupling = Some(Coupling::new());
+                            out.events.push(RuleEvent::CouplingStarted);
+                            Phase::Coupling
+                        }
                     };
                 } else {
                     self.phase = Phase::Holding {
@@ -2927,6 +3137,7 @@ impl Rules {
                     self.evaluate_stop(&mut out);
                 }
             }
+            Phase::Coupling => self.coupling_step(&mut out, input),
             Phase::PreDeparture => self.pre_departure_step(&mut out),
             Phase::Arrived | Phase::GameOver | Phase::Cleared => {}
         }
@@ -3042,9 +3253,26 @@ impl Rules {
 
     /// 0x40d340 + segment setup.
     fn next_segment(&mut self) -> StationOutcome {
-        let was_final = self.final_station;
-        self.station += 1;
-        if was_final {
+        self.bonus_jump = false;
+        if self.stage == 1 && self.station == 7 {
+            // Stage 1 at station 8 (d78 stays 7 when the stage ends here).
+            if self.bonus_section {
+                self.enter_bonus_section();
+            } else {
+                self.plain_ending = true;
+                self.final_station = true;
+            }
+        } else {
+            self.station += 1;
+        }
+        self.bonus_section = false;
+        if self.final_station {
+            if self.forced_stop || self.remaining_s < 1 || self.continues > 0 {
+                self.plain_ending = true;
+            }
+            if self.stage == 2 && self.station < 0x19 {
+                self.plain_ending = true;
+            }
             self.phase = Phase::Cleared;
             return StationOutcome::Cleared;
         }
@@ -3052,7 +3280,7 @@ impl Rules {
         // the dwell (oracle: stops-drive.csv row 4381, clock +690 with the game over).
         let game_over = self.remaining_s < 1;
         self.scheduled = self.target_row().time_ticks;
-        self.final_station = self.is_final_next();
+        self.final_station = self.final_leg(true);
         self.reset_segment_state();
         self.clock += DWELL_TICKS;
         // 0x40d340: weather may start when the global tick counter is a multiple of 4.
@@ -3064,6 +3292,28 @@ impl Rules {
         }
         self.phase = Phase::PreDeparture;
         StationOutcome::Continue
+    }
+
+    /// 0x40d340 after the perfect stop at stage 1 station 8: on to station 24, the bonus
+    /// section (odometer and clock of row 24, course events before it skipped, the limit list
+    /// left as it is), with the E3 cab (`Vehicle_Set(0x1001)`, train type 0xc) and the weather
+    /// switched off (`0x857230 = −1`, `0x84c3a0 = 0`).
+    fn enter_bonus_section(&mut self) {
+        let st = BONUS_SECTION_STATION;
+        let (Some(row), Some(first)) = (self.row(st).copied(), self.row(0).copied()) else {
+            self.final_station = true;
+            return;
+        };
+        self.station = st;
+        self.odometer_m = (row.position_m - first.position_m) as f32;
+        self.clock = row.time_ticks;
+        self.seek_course_cursor();
+        self.vehicle_code = Some(0x1001);
+        self.train_type = Some(0xc);
+        self.final_station = false;
+        self.weather_level = -1;
+        self.weather_on = false;
+        self.bonus_jump = true;
     }
 
     /// Continue after a game over (0x40d930): back to the last stopping station with a fresh
@@ -3094,7 +3344,7 @@ impl Rules {
         self.seek_cursors();
         self.continues += 1;
         self.clock_skew = 0;
-        self.final_station = self.is_final_next();
+        self.final_station = self.final_leg(true);
         self.signal_hud.clear();
         self.signal_hud_pending = false;
         self.signal_hide_pending = false;
@@ -3118,7 +3368,8 @@ impl Rules {
 
     /// The station [`Rules::continue_run`] would restart from (to load its route in advance).
     pub fn continue_station(&self) -> usize {
-        let from = if self.approach > 0 {
+        // 0x40d340 leaves stage 1 at station 7 (the stage ends there without the bonus).
+        let from = if self.approach > 0 && !(self.stage == 1 && self.station == 7) {
             self.station + 1
         } else {
             self.station

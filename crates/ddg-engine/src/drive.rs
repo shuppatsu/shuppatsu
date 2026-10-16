@@ -94,6 +94,9 @@ pub enum DrivePhase {
     Driving,
     /// A blocking sequence: stop evaluation, red-signal / ATS recovery, obstacle.
     Holding,
+    /// The coupling minigame after a perfect stop at a coupling station; see
+    /// [`Rules::coupling`](crate::rules::Rules::coupling).
+    Coupling,
     /// Stopped at a station and evaluated: show the result, then call [`Drive::finish_station`].
     Arrived,
     /// Out of time. The train coasts to a stop if it was moving; offer
@@ -176,6 +179,8 @@ pub struct Drive {
     rules: Rules,
     train: TrainState,
     spec: TrainSpec,
+    /// Every train type (`Vehicle_Set` in the bonus sections switches types mid-run).
+    specs: Vec<TrainSpec>,
     stage_data: Stage,
     com_files: Vec<Option<String>>,
     loader: Box<dyn RouteLoader + Send>,
@@ -275,6 +280,7 @@ impl Drive {
             rules,
             train,
             spec,
+            specs: train_tables.specs.clone(),
             stage_data,
             com_files: stages.com_files.clone(),
             loader,
@@ -318,6 +324,7 @@ impl Drive {
                 Phase::Holding { .. } | Phase::Draining | Phase::Evaluating(_) => {
                     DrivePhase::Holding
                 }
+                Phase::Coupling => DrivePhase::Coupling,
                 Phase::Arrived => DrivePhase::Arrived,
                 Phase::GameOver => DrivePhase::GameOver,
                 Phase::Cleared => DrivePhase::Cleared,
@@ -556,6 +563,14 @@ impl Drive {
         self.settle_odometer();
         self.rules.global_tick = Some(self.global_tick);
         let result = self.rules.finish_station();
+        if self.rules.bonus_jump {
+            // 0x40d340 moved to the bonus section: the odometer and the AI-train cursor follow
+            // (`0x856d90` skipped to station 24 like the course events).
+            self.train.odometer = self.rules.odometer_m;
+            self.traffic
+                .skip_to(&self.stage_data.traffic_events, self.rules.station);
+        }
+        self.sync_train_type();
         // 0x4080d0 after the station result: `0x857216 = (0x8570b8 < 1)`.
         self.traffic.after_arrival(self.rules.continues);
         if result.outcome == StationOutcome::Continue {
@@ -613,6 +628,17 @@ impl Drive {
         check_stop(route, &self.com_files, seg, stop as usize)?;
         self.step = Step::Load(load_ticks);
         Ok(())
+    }
+
+    /// Applies a `Vehicle_Set` train type (`0x84c3fc`, read by the train task every tick).
+    fn sync_train_type(&mut self) {
+        if let Some(t) = self.rules.train_type
+            && t != self.train.train_type
+            && let Some(&spec) = self.specs.get(t)
+        {
+            self.train.train_type = t;
+            self.spec = spec;
+        }
     }
 
     /// The rules' view of this tick's inputs (0x40dad0 reads `0x8500c8` of the last tick).
@@ -870,6 +896,7 @@ impl Drive {
         }
         let rin = self.rule_input(&input);
         let mut out: TickOutput = self.rules.step(&rin);
+        self.sync_train_type();
         if out
             .events
             .iter()

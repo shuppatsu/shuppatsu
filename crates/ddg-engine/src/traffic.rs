@@ -417,6 +417,12 @@ impl Traffic {
         self.state = 0;
     }
 
+    /// 0x40d340's jump to the stage-1 bonus section: the cursor moves past the records of
+    /// earlier stations, from where it is.
+    pub fn skip_to(&mut self, events: &[TrafficEvent], station: usize) {
+        self.seek(events, station);
+    }
+
     /// The station result path of 0x4080d0: `0x857216 = (continues < 1)`.
     pub fn after_arrival(&mut self, continues: i32) {
         self.state = u8::from(continues < 1);

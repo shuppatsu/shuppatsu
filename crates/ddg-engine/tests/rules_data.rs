@@ -172,9 +172,19 @@ fn scripted_driver_completes_every_stage() {
             assert_eq!(outcome, StationOutcome::Cleared, "stage {s}/{d}");
             assert!(arrivals > 0);
             let (course, limits) = r.event_cursors();
-            let last = (tt.len() - 1) as i16;
+            // Stages 1, 2 and 10 can end early (stage 1 stays at 7 when it ends at 8), and
+            // stage 1's jump to the bonus section leaves the limit list where it was.
+            let last = if s == 1 && r.station == 7 {
+                8
+            } else {
+                r.station as i16
+            };
             let c_end = reachable_end(&stage.course_events, last);
-            let l_end = reachable_end(&stage.limit_events, last);
+            let l_end = if r.vehicle_code.is_some() && s == 1 {
+                reachable_end(&stage.limit_events, 9)
+            } else {
+                reachable_end(&stage.limit_events, last)
+            };
             assert!(
                 course >= c_end,
                 "stage {s}/{d}: course event {course} not consumed: {:?}",
