@@ -260,14 +260,10 @@ impl Play {
             1 => DistanceReadout::Centimetres,
             _ => DistanceReadout::Metres,
         };
-        // Enhancement `wide_plates`: horizontal plates from `ui_scale` 2, with romaji when a
-        // translation is drawn; `ui_scale` 1 keeps the original vertical plates.
-        if opts.locale.ui_scale >= 2 {
-            let names = if bank.has_label_font() {
-                crate::locale::station_plate_names(&opts.locale)?
-            } else {
-                Default::default()
-            };
+        // Enhancement `wide_plates`: horizontal plates (kanji + romaji) with a translation drawn
+        // and `ui_scale` 2 and up; Japanese and `ui_scale` 1 keep the original vertical plates.
+        if opts.locale.ui_scale >= 2 && opts.locale.active() && bank.has_label_font() {
+            let names = crate::locale::station_plate_names(&opts.locale)?;
             cab.hud
                 .use_horizontal_plates(&bank, &names, opts.locale.ui_scale);
         }

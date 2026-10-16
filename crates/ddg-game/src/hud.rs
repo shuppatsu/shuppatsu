@@ -262,9 +262,9 @@ impl Hud {
         }
     }
 
-    /// Switches the station plates to the horizontal layout ([`plates_en`], `ui_scale` 2 and
-    /// up), with `romaji` names by plate tilemap id (empty: kanji only). Call before
-    /// [`Hud::create`]. Returns false (and keeps the original plates) when the art has no
+    /// Switches the station plates to the horizontal layout ([`plates_en`]; a translation at
+    /// `ui_scale` 2 and up), with `romaji` names by plate tilemap id (empty: kanji only). Call
+    /// before [`Hud::create`]. Returns false (and keeps the original plates) when the art has no
     /// usable plates. Names whose kanji will be clipped at `ui_scale` are listed on stderr.
     pub fn use_horizontal_plates(
         &mut self,

@@ -107,10 +107,14 @@ Decided by the user (enhancement):
 * **`ui_scale` 1 is "original mode"**: the original vertical plates with the Japanese art
   only, in every language. No horizontal plates, no romaji; the whole 1× HUD is the original
   4:3 layout, centred. (Japanese at 1× is pixel-identical to the arcade default.)
-* **`ui_scale` 2 and up**: the plates are laid out horizontally
-  (`crates/ddg-game/src/hud/plates_en.rs`), in every language. The romaji line is drawn when
-  a translation with a font is active (`LocaleConfig::active`); otherwise the boxes show the
-  kanji only. The boxes grow on a wide canvas (enhancement `wide_hud`, hud.md §6.4).
+* **Japanese keeps the original vertical plates at every `ui_scale`** (they are its own
+  script; only the HUD canvas is larger and, with `wide_hud`, the groups keep to the edges).
+* **A translation at `ui_scale` 2 and up** (`LocaleConfig::active`: a language other than
+  `ja` with a font): the plates are laid out horizontally
+  (`crates/ddg-game/src/hud/plates_en.rs`), kanji with the translated name under them. The
+  boxes grow on a wide canvas (enhancement `wide_hud`, hud.md §6.4). The vehicle picture's
+  shift (below) belongs to this layout: with the vertical plates it stays where the layout
+  table puts it.
 
 640×480 coordinates, with `extra` = the widening (below):
 

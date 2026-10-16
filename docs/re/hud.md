@@ -764,8 +764,9 @@ renderer.md §13, confirmed). None of the HUD elements in §3 use them.
     station result, continue) are put back to `Centre`. With the HUD hidden (report card,
     ranking, run end), in the ending, opening, bonus game and the front end everything is
     centred.
-  * The wider station plates of `wide_plates` (docs/localisation.md) take part of the right
-    group's extra room; the vehicle picture moves left with them.
+  * The wider station plates of `wide_plates` (docs/localisation.md; a translation at
+    `ui_scale` 2 and up) take part of the right group's extra room; the vehicle picture moves
+    left with them, and only then.
 * Palette animation (speedometer digits, route strip) means palettes are per-frame state, not
   constant textures.
 * Sprite ids are per slot, and the slot table can be mirrored directly as engine state; the
