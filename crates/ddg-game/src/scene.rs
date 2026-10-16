@@ -221,9 +221,11 @@ impl RouteScene {
             let m = Mat4::from_cols_array(&s.transform.to_cols_array());
             // Animated signal parts (classes 0–5) show frame `0x85744c` (0x401140).
             let part = match self.tables.animated(s.part_id) {
-                Some(a) if s.animated && a.class < 6 => {
-                    a.frames.get(self.signal_model).copied().unwrap_or(s.part_id)
-                }
+                Some(a) if s.animated && a.class < 6 => a
+                    .frames
+                    .get(self.signal_model)
+                    .copied()
+                    .unwrap_or(s.part_id),
                 _ => s.part_id,
             };
             frame.add_instance(&self.library, part, &m);
