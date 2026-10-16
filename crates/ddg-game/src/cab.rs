@@ -215,6 +215,11 @@ impl CabHud {
 
     /// The distance panel is active and shows the distance, not the "Professional" plate
     /// (`0x856d0c == 1` and `0x856c70 == 1`).
+    /// The time-up popup is still on screen (phase flag 0x400 in the original).
+    pub fn time_up_running(&self) -> bool {
+        self.popups.time_up_running()
+    }
+
     pub fn panel_shown(&self) -> bool {
         self.panel_active && self.panel_on
     }

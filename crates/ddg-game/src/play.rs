@@ -581,6 +581,7 @@ impl Play {
             continues: r.continues,
             stage,
             stage_kind: r.stage_rank(),
+            time_up_running: self.cab.time_up_running(),
         }
     }
 

@@ -56,6 +56,9 @@ pub struct Observation {
     pub continues: i32,
     pub stage: usize,
     pub stage_kind: i32,
+    /// The time-up popup (0x4158b0) is still running: `Stage_Run` waits on its phase flag 0x400
+    /// before opening the continue screen (0x4080d0, the loop before 0x415ab0).
+    pub time_up_running: bool,
 }
 
 /// What the game must do on the `Drive` (or the app) after a flow call.
@@ -241,7 +244,7 @@ impl StageFlow {
                 if *arrived == RESULT_AFTER_ARRIVED_TICKS {
                     let s = StationResultScreen::new(self.defs.result.clone(), obs.result, sfx);
                     self.state = State::Result(Box::new(s));
-                } else if *game_over == CONTINUE_AFTER_GAME_OVER_TICKS {
+                } else if *game_over >= CONTINUE_AFTER_GAME_OVER_TICKS && !obs.time_up_running {
                     self.state = if obs.can_continue {
                         State::Continue(Box::new(ContinueScreen::new(self.defs.continue_)))
                     } else {
@@ -492,6 +495,7 @@ mod tests {
             continues: 0,
             stage: 1,
             stage_kind: 1,
+            time_up_running: false,
         }
     }
 
