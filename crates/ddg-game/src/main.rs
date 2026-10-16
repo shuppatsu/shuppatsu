@@ -3,7 +3,11 @@
 //! Phase 3: `ddg-game view <route.com>` flies through a route; `ddg-game shot` renders one frame
 //! headless for checks.
 
+mod cab;
+mod captions;
+mod departure_hud;
 mod gamepad;
+mod hints;
 mod hud;
 mod input;
 mod play;
@@ -12,6 +16,7 @@ mod save;
 mod scene;
 mod screens;
 mod shot;
+mod slots;
 mod sound;
 mod window;
 
@@ -32,7 +37,7 @@ use winit::window::WindowId;
 const USAGE: &str = "\
 usage: ddg-game play <stage 0..19> [--difficulty <0..>] [--station <n>] [--keys <0..6>] [options]
                      [--joystick-dat <file>] [--combo <file>]
-                     [--inputs <script>] [--shot <ticks>:<file.ppm>]
+                     [--inputs <script>] [--shot <ticks>:<file.ppm>] [--speedometer <0|1|2>]
        ddg-game view <route.com> [options]
        ddg-game shot <route.com> --at <metres> --out <file.ppm> [options]
        ddg-game pad <monitor|calibrate|learn> [--mode <4..6>] [--joystick-dat <file>] [--combo <file>]
@@ -101,6 +106,7 @@ fn parse_play_args() -> Result<play::PlayOptions> {
         mute: false,
         inputs: None,
         shot: None,
+        speedometer: None,
     };
     let mut rest = args[1..].iter();
     while let Some(a) = rest.next() {
@@ -116,6 +122,7 @@ fn parse_play_args() -> Result<play::PlayOptions> {
             "--joystick-dat" => opts.pad.joystick_dat = Some(value("a file")?.into()),
             "--combo" => opts.pad.combo_table = Some(value("a file")?.into()),
             "--mute" => opts.mute = true,
+            "--speedometer" => opts.speedometer = Some(value("0, 1 or 2")?.parse()?),
             "--inputs" => opts.inputs = Some(value("a file")?.into()),
             "--shot" => {
                 let s = value("TICKS:FILE")?;
@@ -275,6 +282,8 @@ impl HudView {
             dist_m: 1234.5,
             dist_round_m: 1235,
             tolerance_m: 5,
+            train_driving: true,
+            speed_mode: 1,
             ..Default::default()
         };
         Ok(Self {

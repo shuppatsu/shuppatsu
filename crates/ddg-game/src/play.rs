@@ -5,8 +5,9 @@
 //! yet, so quitting or ending the run leaves play. The save (`eeprom.dat`, rankings and clear
 //! marks) is loaded at start and written when play exits, like the original at shutdown.
 
+use crate::cab::{CabHud, Snap, TickInput};
 use crate::gamepad::{Controls, PadOptions};
-use crate::hud::{Hud, HudState};
+use crate::hud::{DistanceReadout, Hud, Speedometer};
 use crate::input::ButtonState;
 use crate::save::Save;
 use crate::scene::{GameData, RouteScene, Visibility};
@@ -71,6 +72,8 @@ pub struct PlayOptions {
     pub inputs: Option<std::path::PathBuf>,
     /// Headless: run this many play ticks, render one frame with the HUD to a PPM and exit.
     pub shot: Option<(u64, std::path::PathBuf)>,
+    /// Overrides the save's speedometer option (0 none, 1 analog, 2 digital).
+    pub speedometer: Option<u8>,
 }
 
 /// The exe tables a (re)start needs.
@@ -139,9 +142,20 @@ pub fn run(opts: PlayOptions) -> Result<()> {
     );
     let mut layer = SpriteLayer::default();
     Hud::install_palettes(&exe, &mut layer)?;
-    let hud = Hud::new(&exe, opts.stage)?;
-    let popups = crate::popups::Popups::new(&exe, opts.stage)?;
-    hud.create(&mut layer);
+    // The horn hint names the B button with a joystick in modes 5–6 (`FUN_00433270`).
+    let mut cab = CabHud::new(&exe, opts.stage, matches!(opts.control_mode, 5 | 6))?;
+    let o = save.eeprom.options();
+    cab.hud.speedometer = match opts.speedometer.unwrap_or(o.speed_meter) {
+        0 => Speedometer::None,
+        2 => Speedometer::Digital,
+        _ => Speedometer::Analog,
+    };
+    cab.hud.distance = match o.distance_meter {
+        0 => DistanceReadout::Off,
+        1 => DistanceReadout::Centimetres,
+        _ => DistanceReadout::Metres,
+    };
+    cab.create(&mut layer);
     let screen_tables = ScreenTables::read(&exe)?;
     let flow = StageFlow::new(FlowDefs::new(&screen_tables, |tbl| {
         usize::try_from(tbl)
@@ -178,14 +192,12 @@ pub fn run(opts: PlayOptions) -> Result<()> {
         menu_input: MenuInput::NONE,
         saved_levers: (0, 0),
         down: [false; 256],
-        hud,
-        popups,
+        cab,
         flow,
         layer,
         bank,
         canvas: vec![0; CANVAS_W * CANVAS_H * 4],
         canvas_dirty: true,
-        panel_on: true,
         tolerance_m,
         last_events: Vec::new(),
         ticks: 0,
@@ -353,15 +365,12 @@ struct Play {
     saved_levers: (u8, u8),
     /// Keys down now, by DirectInput scan code.
     down: [bool; 256],
-    hud: Hud,
-    popups: crate::popups::Popups,
+    cab: CabHud,
     flow: StageFlow,
     layer: SpriteLayer,
     bank: SpriteBank,
     canvas: Vec<u8>,
     canvas_dirty: bool,
-    /// Distance panel shown (1) or "Professional" plate (0), toggled by Enter (`0x856c70`).
-    panel_on: bool,
     tolerance_m: i32,
     /// Rule events of the previous tick, to keep repeats out of the log.
     last_events: Vec<ddg_engine::rules::RuleEvent>,
@@ -425,7 +434,6 @@ impl Play {
         }
         self.interpolate = !out.segment_started;
         if out.segment_started {
-            self.popups.clear();
             // Digital modes force P0 / EB at each station start (0x4332c0, input.md §4.1).
             self.controls.reset_levers();
         }
@@ -434,15 +442,17 @@ impl Play {
         for e in out.events.iter().filter(|e| !self.last_events.contains(e)) {
             eprintln!("[{}] {e:?}", self.drive.tick_count());
         }
-        let odometer = self.drive.train().odometer;
-        let variant = self.drive.rules().signal_variant;
-        for e in &out.events {
-            self.popups.event(e, odometer, variant);
-        }
+        let hud_input = TickInput {
+            segment_started: out.segment_started,
+            horn_held: self.latched.horn_held,
+            confirm_pressed: self.latched.confirm_pressed,
+            remaining_override: None,
+            tolerance_m: self.tolerance_m,
+        };
         self.last_events = out.events;
 
         // The input poll at the end of `Task_Tick`: next tick's controls.
-        let buttons = self.poll();
+        self.poll();
         let obs = self.observation();
         match self.flow.after_tick(&obs, &input, &mut sfx) {
             Some(Action::Ranking { cleared }) => self.start_ranking(cleared, &mut sfx),
@@ -454,7 +464,7 @@ impl Play {
         if self.drive.com() != self.scene_com {
             self.reload_scene()?;
         }
-        self.update_hud(buttons);
+        self.update_hud(hud_input);
         self.track_meter();
         Ok(())
     }
@@ -463,8 +473,7 @@ impl Play {
     /// panel is active and shown (not the "Professional" plate) and the distance option is on.
     fn track_meter(&mut self) {
         let shown = self.flow.hud_visible()
-            && self.drive.phase() == DrivePhase::Driving
-            && self.panel_on
+            && self.cab.panel_shown()
             && self.save.eeprom.options().distance_meter != 0;
         if shown {
             self.meter_m += self.drive.train().speed * METER_SCALE as f32;
@@ -590,14 +599,12 @@ impl Play {
             Action::Restart => {
                 // 始発駅に戻る: the route again from station 0, no departure board.
                 self.drive = start_drive(&self.tables, &self.opts, 0)?;
-                self.popups.clear();
                 self.controls.reset_levers();
-                self.panel_on = true;
                 self.meter_m = 0.0;
                 self.interpolate = false;
                 self.flow.reset();
                 self.layer.slots.fill(Slot::CLEAR);
-                self.hud.create(&mut self.layer);
+                self.cab.create(&mut self.layer);
                 if self.drive.com() != self.scene_com {
                     self.reload_scene()?;
                 }
@@ -667,7 +674,7 @@ impl Play {
         self.canvas_dirty = true;
     }
 
-    fn update_hud(&mut self, buttons: ButtonState) {
+    fn update_hud(&mut self, input: TickInput) {
         self.layer.reset_transient();
         self.flow.clear_drawn(&mut self.layer);
         if !self.flow.hud_visible() {
@@ -678,38 +685,13 @@ impl Play {
             self.canvas_dirty = true;
             return;
         }
-        let rules = self.drive.rules();
-        let phase = self.drive.phase();
-        let driving = phase == DrivePhase::Driving;
-        if driving && buttons.confirm_pressed && rules.ats == 0 {
-            self.panel_on = !self.panel_on;
-        }
-        let train = self.drive.train();
-        let state = HudState {
-            power: u8::try_from(train.prev_power).unwrap_or(0),
-            brake: u8::try_from(train.prev_brake).unwrap_or(0),
-            remaining_s: self.flow.remaining_override().unwrap_or(rules.remaining_s),
-            pending_s: rules.pending_s,
-            hud_counter: rules.hud_counter,
-            clock: rules.clock,
-            scheduled: rules.scheduled,
-            clocks_visible: !matches!(phase, DrivePhase::Loading | DrivePhase::Cleared),
-            remaining_visible: phase != DrivePhase::Cleared,
-            panel_active: driving,
-            panel_on: self.panel_on,
-            next_is_stop: rules.target_stops,
-            dist_m: self.drive.dist_to_stop_m(),
-            dist_round_m: rules.dist_round_m,
-            tolerance_m: self.tolerance_m,
-            speed_kmh: self.drive.speed_kmh(),
+        let input = TickInput {
+            remaining_override: self.flow.remaining_override(),
+            ..input
         };
-        self.hud.update(&state, &mut self.layer);
-        self.popups.update(
-            &mut self.layer,
-            train.odometer,
-            rules.clock,
-            buttons.horn_held,
-        );
+        let snap = Snap::of(&self.drive);
+        self.cab
+            .tick(&snap, &input, &self.last_events, &mut self.layer);
         self.flow.draw(&mut self.layer);
         self.layer.compose(&self.bank, &mut self.canvas);
         self.canvas_dirty = true;

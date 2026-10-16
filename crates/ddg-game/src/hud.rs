@@ -1,8 +1,12 @@
 //! The driving HUD as sprite slots (docs/re/hud.md). Each tick the game fills a [`HudState`]
 //! from the simulation and [`Hud::update`] sets the slots the way `Hud_Update` (0x40ff20),
-//! `Clock_Draw` (0x417140), `Hud_Distance` (0x4162c0) and `Cab_Overlay` (0x434fd0) do.
+//! `Clock_Draw` (0x417140), `Hud_Distance` (0x4162c0), `Hud_HighSpeed` (0x416d10) and
+//! `Cab_Overlay` (0x434fd0) do. The timed elements (signals, signs, hints, captions, the
+//! departure strip, popups) are in [`crate::cab`] and the modules it drives.
 
+use crate::slots;
 use anyhow::Result;
+use ddg_formats::cab_hud::{CabTables, Place, VehicleRow};
 use ddg_formats::cg;
 use ddg_formats::exe::Exe;
 use ddg_formats::hud::{HudTables, digits_blank_leading};
@@ -16,10 +20,20 @@ const SLOT_SCHED: usize = 0x12;
 const SLOT_REMAINING: usize = 0x18;
 const SLOT_SECONDS: usize = 0x1b;
 const SLOT_REMAINING_LABEL: usize = 0x1c;
+const SLOT_VEHICLE_NAME: usize = 0x1d;
+const SLOT_VEHICLE_PICTURE: usize = 0x1e;
 const SLOT_BRAKE: usize = 0x1f;
 const SLOT_DIST_HEADER: usize = 0x5a;
+const SLOT_HIGH_SPEED: usize = 0x75;
+const SLOT_ATC_SPEED: usize = 0x76;
+const SLOT_ATC_LABEL: usize = 0x77;
+const SLOT_ATC_BAR: usize = 0x78;
 const SLOT_MASCON: usize = 0x7e;
 const SLOT_SPEEDO: usize = 0x81;
+const SLOT_LAMP: usize = 0x82;
+const SLOT_PLATE_FROM: usize = 0x83;
+const SLOT_PLATE_ARROW: usize = 0x84;
+const SLOT_PLATE_NEXT: usize = 0x85;
 /// Distance digits, most significant first (hud.md §3.4).
 const SLOTS_DIST_CM: [usize; 7] = [0x7c, 0x7d, 0x20, 0x21, 0x22, 0x23, 0x24];
 
@@ -31,6 +45,14 @@ const TBL_SECONDS: i16 = 0x40e;
 const TBL_TRANSFER_MASKS: [i16; 2] = [0x40b, 0x40c];
 const TBL_PROFESSIONAL: i16 = 0x2c7;
 const TBL_DIAL: i16 = 0x54a;
+/// The "888 km/h" seven-segment panel (digital speedometer, high-speed readout).
+const TBL_SEVEN_SEGMENT: i16 = 0x53;
+const TBL_ATC_LABEL: i16 = 0x3f;
+/// ATC speed readouts `0x4b + index` (0x416d10).
+const TBL_ATC_SPEED0: i16 = 0x4b;
+const TBL_PLATE_ARROW: i16 = 0x4b8;
+/// Cab-signal lamp dark / lit (0x434fd0).
+const TBL_LAMP: [i16; 2] = [0x54e, 0x54f];
 /// Distance headers, metres / centimetres: passing, before, within (short), within (over),
 /// overrun (hud.md §3.4).
 const TBL_DIST_HEADERS: [[i16; 2]; 5] = [
@@ -54,10 +76,26 @@ const BRAKE_POS: (i16, i16) = (590, 16);
 const MASCON_POS: (i16, i16) = (11, 16);
 
 // Analog speedometer (hud.md §3.5).
-const DIAL_POS: (i16, i16) = (16, 345);
 const NEEDLE_PIVOT: (f64, f64) = (80.0, 409.0);
 const NEEDLE_MODEL: [(f64, f64); 3] = [(4.0, -20.0), (0.0, -58.0), (-4.0, -20.0)];
 const DIAL_MAX_KMH: f64 = 120.0;
+
+/// Seven-segment digits: palette 4 entries 0xdb.. (3 digits × 7 segments), lit 0xff0000
+/// (`0x555555 + 0xa9aaab`, green in the B, R, G byte order) or unlit 0x555555 (0x416d10,
+/// 0x4350b0).
+const SEGMENT_ENTRY: usize = 0xdb;
+const SEGMENT_LIT: u32 = 0x00ff_0000;
+const SEGMENT_UNLIT: u32 = 0x0055_5555;
+/// High-speed readout hysteresis `0x856c84`: on at 120 km/h, off below 100 (0x416d10).
+const HIGH_SPEED_ON_KMH: i32 = 0x78;
+const HIGH_SPEED_OFF_KMH: i32 = 100;
+/// ATC speeds by index `0x856cf4` (stack table in 0x416d10), km/h.
+const ATC_SPEEDS: [i32; 8] = [0, 0x1e, 0x46, 0x6e, 0xa0, 0xd2, 0xf5, 0x113];
+const ATC_BAR_MAX: i32 = 10;
+/// Speedometer mode `0x856d34`: 2 = ATC section.
+const SPEED_MODE_ATC: i32 = 2;
+/// The cab-signal lamp stays 30 more frames after the wait (`0x829d14 = 0x1e`, 0x434fd0).
+const LAMP_AFTER_TICKS: i32 = 0x1e;
 
 /// Ticks per second of the stage clock.
 const TICKS: i32 = 30;
@@ -70,11 +108,12 @@ pub enum DistanceReadout {
     Metres,
 }
 
+/// The speedometer option `0x856354` (eeprom +0x334, settings item 4).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[allow(dead_code)] // set from the options screen later
 pub enum Speedometer {
     None,
     Analog,
+    Digital,
 }
 
 /// What the HUD shows this tick, filled from the simulation.
@@ -89,6 +128,8 @@ pub struct HudState {
     pub clock: i32,
     pub scheduled: i32,
     pub clocks_visible: bool,
+    /// The clocks are not redrawn this tick (`0x856c6c > 0` after a station is passed).
+    pub clocks_frozen: bool,
     pub remaining_visible: bool,
     /// The driving panel (distance readout) is active (`0x856d0c`).
     pub panel_active: bool,
@@ -100,24 +141,75 @@ pub struct HudState {
     pub dist_round_m: i32,
     pub tolerance_m: i32,
     pub speed_kmh: f32,
+    /// Station plates "from" and "next stop" (`0x856d4c`, `0x856c74`), tbl ids.
+    pub plates: [Option<i16>; 2],
+    /// Vehicle name and picture (`0x856cfe`, `0x856cfc`), shown while `0x856d5c == 1`.
+    pub vehicle: Option<(i16, i16)>,
+    /// Speedometer mode `0x856d34`: 0 none, 1 high-speed readout, 2 ATC; ATC speed index
+    /// `0x856cf4`.
+    pub speed_mode: i32,
+    pub atc_index: i32,
+    /// A navigator hint is up (`0x856d44 ≠ 0`).
+    pub hint_up: bool,
+    /// The departure wait (`0x855ff8 & 0x800`) and the driving flag (`& 0x200`).
+    pub waiting: bool,
+    pub train_driving: bool,
+    /// The cab-signal lamp is lit (`0x829d16`).
+    pub lamp_lit: bool,
 }
 
 pub struct Hud {
     tables: HudTables,
+    vehicles: Vec<VehicleRow>,
+    dial_pos: (i16, i16),
+    digital_pos: (i16, i16),
+    lamp_pos: (i16, i16),
+    atc_bar: [i16; 11],
+    plate_places: [Place; 3],
+    station_plates: Vec<i16>,
     remaining_label: i16,
     pub distance: DistanceReadout,
     pub speedometer: Speedometer,
+    /// High-speed readout latch `0x856c84`.
+    high_speed: bool,
+    /// Cab_Overlay: the last draw was during the wait (`0x829d18`), and the lamp's frames left
+    /// after it (`0x829d14`).
+    overlay_waiting: bool,
+    lamp_ticks: i32,
 }
 
 impl Hud {
     pub fn new(exe: &Exe<'_>, stage: usize) -> Result<Self> {
         let label = exe.reader_at(STAGE_LABELS_VA + 16 * stage as u32, 2, "HUD labels")?;
-        Ok(Self {
-            tables: HudTables::read(exe)?,
-            remaining_label: label.u16(0)? as i16,
+        let cab = CabTables::read(exe)?;
+        Ok(Self::with_tables(
+            HudTables::read(exe)?,
+            &cab,
+            label.u16(0)? as i16,
+        ))
+    }
+
+    fn with_tables(tables: HudTables, cab: &CabTables, remaining_label: i16) -> Self {
+        Self {
+            tables,
+            vehicles: cab.vehicles.to_vec(),
+            dial_pos: cab.dial_pos,
+            digital_pos: cab.digital_pos,
+            lamp_pos: cab.lamp_pos,
+            atc_bar: cab.atc_bar,
+            station_plates: cab.station_plates.to_vec(),
+            plate_places: cab.plates,
+            remaining_label,
             distance: DistanceReadout::Metres,
             speedometer: Speedometer::Analog,
-        })
+            high_speed: false,
+            overlay_waiting: false,
+            lamp_ticks: 0,
+        }
+    }
+
+    pub fn tables(&self) -> &HudTables {
+        &self.tables
     }
 
     /// Palettes set at init (GAME_INIT 0x40e910).
@@ -140,15 +232,47 @@ impl Hud {
             };
             *slot = Slot::new(-1, p.x, p.y, p.palette as u8, p.layer as u8, true);
         }
+        slots::image(layer, SLOT_REMAINING_LABEL, self.remaining_label);
+        // Station plates from the 0x464c18 / 0x464c40 / 0x464c68 rows.
+        for p in self.plate_places {
+            if let Ok(slot) = usize::try_from(p.slot) {
+                slots::clear(layer, slot);
+                slots::place(layer, slot, p.x, p.y, p.layer as u8, p.palette as u8);
+            }
+        }
     }
 
-    /// One HUD tick.
-    pub fn update(&self, s: &HudState, layer: &mut SpriteLayer) {
+    /// The vehicle row for a stage, or for `Vehicle_Set(0x1000 | n)` (row 20 + n, ATC mode)
+    /// (0x410320): `(name, picture)`.
+    pub fn vehicle(&self, code: u32) -> Option<(i16, i16)> {
+        let row = if code & 0x1000 != 0 {
+            20 + (code & 0xfff) as usize
+        } else {
+            code as usize
+        };
+        self.vehicles.get(row).map(|v| (v.name, v.picture))
+    }
+
+    /// The plate tilemap of a station-name id (`0x46645c[id]`, −1 = none).
+    pub fn plate(&self, name_id: usize) -> Option<i16> {
+        self.station_plates
+            .get(name_id)
+            .copied()
+            .filter(|&t| t >= 0)
+    }
+
+    /// One HUD tick: `Hud_Update` then `Cab_Overlay`.
+    pub fn update(&mut self, s: &HudState, layer: &mut SpriteLayer) {
         self.handles(s, layer);
+        if !s.clocks_frozen {
+            self.clocks(s, layer);
+        }
+        self.plates(s, layer);
         self.remaining(s, layer);
-        self.clocks(s, layer);
+        self.vehicle_plate(s, layer);
         self.distance(s, layer);
-        self.speedometer(s, layer);
+        self.high_speed(s, layer);
+        self.cab_overlay(s, layer);
     }
 
     fn set(layer: &mut SpriteLayer, slot: usize, tbl: i16, palette: u8) {
@@ -163,6 +287,17 @@ impl Hud {
         let mascon = self.tables.mascon_sprites[usize::from(s.power.min(5))];
         layer.slots[SLOT_BRAKE] = Slot::new(brake as i16, BRAKE_POS.0, BRAKE_POS.1, 4, 2, true);
         layer.slots[SLOT_MASCON] = Slot::new(mascon as i16, MASCON_POS.0, MASCON_POS.1, 4, 2, true);
+    }
+
+    /// 0x40f780: the plates drawn every tick (a plate id of −1 leaves the slot as it is).
+    fn plates(&self, s: &HudState, layer: &mut SpriteLayer) {
+        if let Some(t) = s.plates[0] {
+            slots::image(layer, SLOT_PLATE_FROM, t);
+        }
+        slots::image(layer, SLOT_PLATE_ARROW, TBL_PLATE_ARROW);
+        if let Some(t) = s.plates[1] {
+            slots::image(layer, SLOT_PLATE_NEXT, t);
+        }
     }
 
     fn remaining(&self, s: &HudState, layer: &mut SpriteLayer) {
@@ -187,6 +322,26 @@ impl Hud {
         }
         Self::set(layer, SLOT_SECONDS, TBL_SECONDS, palette);
         Self::set(layer, SLOT_REMAINING_LABEL, self.remaining_label, PAL_4);
+    }
+
+    /// 0x40ff20: name and picture while `0x856d5c == 1`; the picture's palette from
+    /// `0x431dc0`.
+    fn vehicle_plate(&self, s: &HudState, layer: &mut SpriteLayer) {
+        match s.vehicle {
+            Some((name, picture)) => {
+                slots::image(layer, SLOT_VEHICLE_NAME, name);
+                slots::image_palette(
+                    layer,
+                    SLOT_VEHICLE_PICTURE,
+                    picture,
+                    picture_palette(picture),
+                );
+            }
+            None => {
+                slots::image(layer, SLOT_VEHICLE_NAME, -1);
+                slots::image(layer, SLOT_VEHICLE_PICTURE, -1);
+            }
+        }
     }
 
     fn clock_digits(&self, ticks: i32) -> [i16; 6] {
@@ -297,13 +452,127 @@ impl Hud {
         }
     }
 
-    fn speedometer(&self, s: &HudState, layer: &mut SpriteLayer) {
-        if self.speedometer != Speedometer::Analog {
-            layer.slots[SLOT_SPEEDO].tilemap = -1;
+    /// Palette 4 entries 0xdb..0xef from the three digits of `kmh` (0x416d10 / 0x4350b0).
+    fn segments(&self, kmh: i32, layer: &mut SpriteLayer) {
+        let v = kmh.clamp(0, 999);
+        let digits = [v / 100, v / 10 % 10, v % 10];
+        let mut colours = [0u32; 21];
+        for (d, digit) in digits.iter().enumerate() {
+            let mask = self.tables.segment_masks[*digit as usize];
+            for k in 0..7 {
+                colours[d * 7 + k] = if mask & (1 << k) != 0 {
+                    SEGMENT_LIT
+                } else {
+                    SEGMENT_UNLIT
+                };
+            }
+        }
+        slots::palette4(layer, SEGMENT_ENTRY, &colours);
+    }
+
+    /// `Hud_HighSpeed` 0x416d10: the digital readout beside the dial above 120 km/h on fast
+    /// stages, and the ATC panel in an ATC section.
+    fn high_speed(&mut self, s: &HudState, layer: &mut SpriteLayer) {
+        let v = s.speed_kmh as i32;
+        if self.speedometer == Speedometer::None || s.speed_mode == 0 {
             return;
         }
-        layer.slots[SLOT_SPEEDO] = Slot::new(TBL_DIAL, DIAL_POS.0, DIAL_POS.1, 4, 3, true);
-        layer.add_fan(&needle(f64::from(s.speed_kmh)), 0xff00_0000);
+        if !self.high_speed {
+            if v >= HIGH_SPEED_ON_KMH {
+                self.high_speed = true;
+            }
+        } else if v < HIGH_SPEED_OFF_KMH {
+            self.high_speed = false;
+        }
+        if self.speedometer == Speedometer::Digital {
+            self.high_speed = false;
+        }
+        if s.speed_mode == SPEED_MODE_ATC {
+            self.high_speed = true;
+        }
+        let shown = s.panel_active && !s.hint_up;
+        self.segments(v, layer);
+        let tbl = if shown && self.high_speed {
+            TBL_SEVEN_SEGMENT
+        } else {
+            -1
+        };
+        slots::image(layer, SLOT_HIGH_SPEED, tbl);
+        if shown && s.speed_mode == SPEED_MODE_ATC {
+            let index = s.atc_index.clamp(0, ATC_SPEEDS.len() as i32 - 1);
+            slots::image(layer, SLOT_ATC_SPEED, TBL_ATC_SPEED0 + index as i16);
+            slots::image(layer, SLOT_ATC_LABEL, TBL_ATC_LABEL);
+            let margin = (ATC_SPEEDS[index as usize] - v).clamp(0, ATC_BAR_MAX);
+            slots::image(layer, SLOT_ATC_BAR, self.atc_bar[margin as usize]);
+        } else {
+            for slot in [SLOT_ATC_SPEED, SLOT_ATC_LABEL, SLOT_ATC_BAR] {
+                slots::image(layer, slot, -1);
+            }
+        }
+    }
+
+    /// `Cab_Overlay` 0x434fd0 (once per drawn frame in the original, once per tick here): the
+    /// speedometer while waiting or driving outside ATC sections, and the cab-signal lamp
+    /// while waiting and 30 frames after.
+    fn cab_overlay(&mut self, s: &HudState, layer: &mut SpriteLayer) {
+        let active = s.waiting || s.train_driving;
+        if !active {
+            if self.overlay_waiting {
+                self.speedometer_draw(s, layer);
+                self.overlay_waiting = false;
+            } else {
+                slots::clear(layer, SLOT_SPEEDO);
+            }
+        } else if s.speed_mode != SPEED_MODE_ATC {
+            self.speedometer_draw(s, layer);
+            self.overlay_waiting = s.waiting;
+        } else {
+            // ATC sections draw the digital readout instead; the dial is not drawn.
+            slots::clear(layer, SLOT_SPEEDO);
+        }
+        if s.waiting {
+            self.lamp_ticks = LAMP_AFTER_TICKS;
+        } else if self.lamp_ticks > 0 {
+            self.lamp_ticks -= 1;
+        }
+        if s.waiting || self.lamp_ticks > 0 {
+            let tbl = TBL_LAMP[usize::from(s.lamp_lit)];
+            slots::set(layer, SLOT_LAMP, tbl, self.lamp_pos, PAL_4, 3);
+        } else {
+            slots::clear(layer, SLOT_LAMP);
+        }
+    }
+
+    /// 0x4350b0.
+    fn speedometer_draw(&self, s: &HudState, layer: &mut SpriteLayer) {
+        match self.speedometer {
+            Speedometer::None => {}
+            Speedometer::Analog => {
+                slots::set(layer, SLOT_SPEEDO, TBL_DIAL, self.dial_pos, PAL_4, 3);
+                layer.add_fan(&needle(f64::from(s.speed_kmh)), 0xff00_0000);
+            }
+            Speedometer::Digital => {
+                self.segments(s.speed_kmh as i32, layer);
+                slots::set(
+                    layer,
+                    SLOT_SPEEDO,
+                    TBL_SEVEN_SEGMENT,
+                    self.digital_pos,
+                    PAL_4,
+                    3,
+                );
+            }
+        }
+    }
+}
+
+/// `0x431dc0`: palette of a vehicle picture: 4 for 0x69, 10 for pictures 0–8, 0x67, 0x68 and
+/// 0x184, else 9.
+fn picture_palette(picture: i16) -> u8 {
+    match picture {
+        0x69 => 4,
+        0..=8 | 0x67 | 0x68 | 0x184 => 10,
+        _ => 9,
     }
 }
 
@@ -323,6 +592,7 @@ fn needle(kmh: f64) -> [[i32; 2]; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ddg_formats::cg::Palette;
 
     #[test]
     fn needle_sweeps_from_down_left_to_down_right() {
@@ -334,5 +604,170 @@ mod tests {
         assert_eq!(tip60, [80, 351]);
         let [_, tip120, _] = needle(200.0);
         assert!(tip120[0] > 80 && tip120[1] > 409);
+    }
+
+    fn hud() -> Hud {
+        let tables = HudTables {
+            mode_sizes: [(640, 480); 4],
+            layout: Vec::new(),
+            time_digits: [0; 10],
+            clock_digits: [0; 10],
+            clock_colon_digits: [0; 10],
+            distance_digits: [0; 10],
+            brake_sprites: [0; 11],
+            mascon_sprites: [0; 6],
+            station_names: Vec::new(),
+            stage_station_ids: Vec::new(),
+            segment_masks: [0x77, 0x24, 0x5d, 0x6d, 0x2e, 0x6b, 0x7b, 0x25, 0x7f, 0x6f],
+        };
+        Hud::with_tables(tables, &crate::departure_hud::tests::cab(), 0x261)
+    }
+
+    fn layer() -> SpriteLayer {
+        let mut l = SpriteLayer::default();
+        l.palettes[4] = Some(Palette([0; 256]));
+        l
+    }
+
+    fn state(kmh: f32) -> HudState {
+        HudState {
+            speed_kmh: kmh,
+            speed_mode: 1,
+            panel_active: true,
+            train_driving: true,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn high_speed_readout_has_hysteresis() {
+        let mut h = hud();
+        let mut l = layer();
+        let mut shown = |h: &mut Hud, kmh: f32| {
+            h.update(&state(kmh), &mut l);
+            l.slots[SLOT_HIGH_SPEED].tilemap == TBL_SEVEN_SEGMENT
+        };
+        assert!(!shown(&mut h, 119.9));
+        assert!(shown(&mut h, 120.0));
+        assert!(shown(&mut h, 100.0));
+        assert!(!shown(&mut h, 99.9));
+        assert!(!shown(&mut h, 110.0));
+    }
+
+    #[test]
+    fn segments_light_from_the_masks() {
+        let h = hud();
+        let mut l = layer();
+        h.segments(128, &mut l);
+        let p = l.palettes[4].as_ref().unwrap();
+        // Digit 1 (mask 0x24): segments 2 and 5 lit.
+        let first: Vec<bool> = (0..7)
+            .map(|k| p.0[SEGMENT_ENTRY + k] == SEGMENT_LIT)
+            .collect();
+        assert_eq!(first, [false, false, true, false, false, true, false]);
+        // Digit 8: all seven lit.
+        assert!((0..7).all(|k| p.0[SEGMENT_ENTRY + 14 + k] == SEGMENT_LIT));
+        assert_eq!(p.0[SEGMENT_ENTRY], SEGMENT_UNLIT);
+    }
+
+    #[test]
+    fn digital_speedometer_and_hint_hides_high_speed() {
+        let mut h = hud();
+        h.speedometer = Speedometer::Digital;
+        let mut l = layer();
+        let s = HudState {
+            hint_up: true,
+            ..state(130.0)
+        };
+        h.update(&s, &mut l);
+        assert_eq!(l.slots[SLOT_SPEEDO].tilemap, TBL_SEVEN_SEGMENT);
+        assert_eq!((l.slots[SLOT_SPEEDO].x, l.slots[SLOT_SPEEDO].y), (17, 432));
+        assert_eq!(l.slots[SLOT_HIGH_SPEED].tilemap, -1);
+    }
+
+    #[test]
+    fn atc_panel_shows_speed_and_margin_bar() {
+        let mut h = hud();
+        let mut l = layer();
+        let s = HudState {
+            speed_mode: SPEED_MODE_ATC,
+            atc_index: 4,
+            ..state(155.0)
+        };
+        h.update(&s, &mut l);
+        assert_eq!(l.slots[SLOT_HIGH_SPEED].tilemap, TBL_SEVEN_SEGMENT);
+        assert_eq!(l.slots[SLOT_ATC_SPEED].tilemap, 0x4b + 4);
+        assert_eq!(l.slots[SLOT_ATC_LABEL].tilemap, TBL_ATC_LABEL);
+        // 160 − 155 = 5 km/h margin.
+        assert_eq!(l.slots[SLOT_ATC_BAR].tilemap, 0x4a - 5);
+        // No dial in an ATC section.
+        assert_eq!(l.slots[SLOT_SPEEDO].tilemap, -1);
+    }
+
+    #[test]
+    fn lamp_shows_while_waiting_and_thirty_ticks_after() {
+        let mut h = hud();
+        let mut l = layer();
+        let waiting = HudState {
+            waiting: true,
+            train_driving: false,
+            ..state(0.0)
+        };
+        h.update(&waiting, &mut l);
+        assert_eq!(l.slots[SLOT_LAMP].tilemap, TBL_LAMP[0]);
+        h.update(
+            &HudState {
+                lamp_lit: true,
+                ..waiting
+            },
+            &mut l,
+        );
+        assert_eq!(l.slots[SLOT_LAMP].tilemap, TBL_LAMP[1]);
+        let after = HudState {
+            lamp_lit: true,
+            ..state(0.0)
+        };
+        let shown = (0..40)
+            .filter(|_| {
+                h.update(&after, &mut l);
+                l.slots[SLOT_LAMP].tilemap != -1
+            })
+            .count();
+        assert_eq!(shown, 29);
+    }
+
+    #[test]
+    fn frozen_clocks_keep_their_digits() {
+        let mut h = hud();
+        let mut l = layer();
+        h.tables.clock_digits = [
+            0x1f2, 0x1f4, 0x1f6, 0x1f8, 0x1fa, 0x1fc, 0x1fe, 0x200, 0x202, 0x204,
+        ];
+        let s = HudState {
+            clocks_visible: true,
+            clock: 5 * TICKS,
+            ..state(0.0)
+        };
+        h.update(&s, &mut l);
+        assert_eq!(l.slots[SLOT_CLOCK + 5].tilemap, 0x1fc);
+        h.update(
+            &HudState {
+                clock: 6 * TICKS,
+                clocks_frozen: true,
+                ..s
+            },
+            &mut l,
+        );
+        assert_eq!(l.slots[SLOT_CLOCK + 5].tilemap, 0x1fc);
+    }
+
+    #[test]
+    fn vehicle_rows_and_picture_palettes() {
+        let h = hud();
+        assert_eq!(h.vehicle(0), Some((0x268, 0x68)));
+        assert_eq!(h.vehicle(0x1001), Some((0x268, 0x68)));
+        assert_eq!(picture_palette(0x69), 4);
+        assert_eq!(picture_palette(0x68), 10);
+        assert_eq!(picture_palette(0x129), 9);
     }
 }
