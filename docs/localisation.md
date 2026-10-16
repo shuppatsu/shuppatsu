@@ -27,6 +27,9 @@ Keyed by the sprite's identity in the original:
   (`crates/ddg-game/src/locale.rs`) and read from the user's exe at runtime. Named keys with an
   explicit `rect` cover sheets whose descriptors were not found (the screen headers, the
   legend word sheet).
+* `[station_plate]`: the English name of each vertical station plate, keyed by the plate's
+  tilemap id (`0x4e1 = "Yokohama"`). These are not sprite overrides: they feed the horizontal
+  plate layout below.
 
 Values are a string, or a table with `text` and options:
 
@@ -36,7 +39,7 @@ Values are a string, or a table with `text` and options:
 | `parts = [{ region, text }, ...]` | Several regions in one sprite (e.g. a label and a unit). |
 | `align` | `center` (default), `left`, `right`. |
 | `style` | `auto` (default), `plain` (lettering on transparency: the old art is removed), `boxed` (a plate or box: the backdrop is kept, the old lettering painted over). `auto` picks `boxed` when more than 35 % of the region's edge is opaque. |
-| `vertical` | Rotate 90° clockwise (the vertical station plates). |
+| `vertical` | Rotate 90° clockwise (reads top to bottom). |
 | `outline` | Plain style: 1-px outline in the art's second colour (default on). |
 
 `\n` breaks lines; the font size is fitted to the rectangle. Comments in `en.toml` give each
@@ -79,6 +82,53 @@ rebuild.
   the replaced regions and draws the text instead. With no overlay, composing is unchanged.
 * `crates/ddg-game/src/locale.rs`: catalogue parsing, sheet descriptors from the exe,
   `Locale::lookup(tbl, sub_rect)`, `LocaleConfig` (env and arguments) and `install`.
+* Free text and widgets: `SpriteLayer::widgets` (`crates/ddg-render/src/sprites.rs`) hold
+  port-only elements of enhancements: a fill, a down arrow, a tilemap clipped to a rectangle
+  at a whole number of canvas pixels per art pixel, and text. `SpriteLayer::add_text(layer,
+  rect, text, Paint { palette, index }, cap)` draws a string into a rectangle (original
+  pixels; drawn at the canvas resolution of `ui_scale`) in a palette colour, with capitals
+  `cap` pixels high or as large as fits, uniformly scaled. Widgets are drawn after the slots of
+  their layer, are cleared with the rect layer every tick, and are empty in the arcade default.
+  The text uses `crates/ddg-render/src/label.rs` (`LabelFont`: the language's font, installed
+  by `install` with `SpriteBank::set_label_font`, masks cached per string and size).
+
+## Station plates (enhancement `en_station_plates`)
+
+The original's station plates (hud.md §3.7) are two 32×96 plates with vertical kanji in the
+top right, "from" (slot 0x83 at (493, 8)) and "next stop" (slot 0x85 at (552, 8)), with the
+arrow 0x4b8 (slot 0x84 at (530, 48)) between them. Vertical romaji is hard to read, so with a
+translation active (`LocaleConfig::active`: a language other than `ja` and a font) the plates
+are laid out horizontally in the same footprint (`crates/ddg-game/src/hud/plates_en.rs`).
+640×480 coordinates:
+
+| Element | Rectangle | Content |
+|---|---|---|
+| Backdrop | (490, 7) 98×100 | the plates' black |
+| "From" box | (492, 10) 94×42 | #303030, the kanji name and the English name under it |
+| Arrow | (533.5, 53) 11×9 | ▼ in the plates' yellow |
+| "Next stop" box | (492, 62) 94×42 | as "from" |
+
+* The kanji are the original horizontal station-name sprites (`HudTables::station_names`,
+  `plain`, the captions' art), not a font. Their lettering index (0x1c, green in palette 4) is
+  recoloured to the plates' yellow (palette 4 index 0xa) in a port-only palette, slot 0x7f,
+  rebuilt every tick from palette 4; the box grey goes into an index the name sprites do not
+  use. All indices are found in the art at load (the plates' commonest index is the backdrop,
+  the second their lettering; the name sprites' commonest other than the backdrop is theirs).
+* The sprite is drawn at a whole number of canvas pixels per art pixel, never resampled:
+  1 at `ui_scale` 1 and 2 (at 2× it is half the original height, 14 px of 640×480, like the
+  other HUD lettering), 2 at 3 and 4. A name wider than the box is centred and clipped at both
+  ends. At `ui_scale` 2 every name fits (the widest, Hokuhoku-Ōshima, is 164 of 188 px). At
+  `ui_scale` 1 eight are clipped: Yotsugoya 0x4ba (109 px), Uragawara 0x4ce (138),
+  Hokuhoku-Ōshima 0x4cf (164), Matsudai 0x4d0 (107), Higashi-Kanagawa 0x4e2 (116),
+  Kōshienguchi 0x4ef (105), Kōnan-Yamate 0x4f2 (110), Settsu-Motoyama 0x4f3 (117); the box
+  is 94 px wide. At `ui_scale` 3 (2 canvas pixels per art pixel in a 282-pixel box) only
+  Hokuhoku-Ōshima is clipped; at 4 none.
+* The English name is `[station_plate]` text under the kanji, capitals 5 px high (smaller if
+  a long name needs it), centred, in the plates' yellow.
+* State: the plate slots are set and cleared exactly as in arcade mode but parked off screen;
+  each tick the HUD draws the boxes from the slots' current images, so they appear and
+  disappear with the original plates. With neither plate shown nothing is drawn.
+* Japanese (and any run without a font) draws the original plates unchanged.
 
 ## Integration
 
@@ -115,13 +165,13 @@ module-level `#![allow(dead_code)]` until these calls exist; remove it then.
 
 ## Coverage of `en.toml`
 
-687 entries: 571 tilemaps and 116 string-sheet labels.
+622 sprite entries (506 tilemaps and 116 string-sheet labels) and 65 station-plate names.
 
 * HUD: time labels, remaining time, line/vehicle plates (15), distance-panel headers (m and
   cm), handle labels, ATS lamp, cab-signal lamp, all 15 time messages with their sign and unit
   words, all 34 navigator hints plus the two horn variants, every signal caption (3-lamp,
   4-lamp, repeater, emergency: 37), every sign caption (27), station captions/banners and
-  departure words, 85 station names (plain and highlighted) and 65 vertical plates, 31
+  departure words, 85 station names (plain and highlighted), 31
   landmarks, the progress strips, all-clear, emergency-brake, time-up and its 9 advice
   balloons, the coupling bonus game.
 * Screens: station result rows, continue, run end (both grades), report card, lever check,
