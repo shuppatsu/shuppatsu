@@ -7,10 +7,12 @@ use ddg_formats::exe::Exe;
 use winit::keyboard::KeyCode;
 
 /// Binding table: 7 modes × 14 bytes (input.md §4, 0x47c980).
-const BINDINGS_VA: u32 = 0x47c980;
-const BINDING_STRIDE: usize = 14;
+pub(crate) const BINDINGS_VA: u32 = 0x47c980;
+pub(crate) const BINDING_STRIDE: usize = 14;
 pub const MODE_COUNT: usize = 7;
-const UNBOUND: u8 = 0xff;
+pub(crate) const UNBOUND: u8 = 0xff;
+/// Bytes [4..14] of a binding-table row: menu up/down/left/right, then the button sources.
+pub(crate) const BUTTON_SLOTS: usize = 10;
 
 pub const MAX_POWER: u8 = 5;
 /// Emergency brake: the highest notch the two-handle keyboard modes reach (input.md §4.1).
@@ -20,10 +22,7 @@ const BRAKE_CODE_10: u8 = 10;
 /// Repeat stops one short of EB, so holding the brake key never slides into it.
 const REPEAT_BRAKE_MAX: u8 = 8;
 
-// DirectInput scan codes used outside the binding table (input.md §6.1).
-const DIK_SPACE: u8 = 0x39;
-const DIK_RETURN: u8 = 0x1c;
-const DIK_ESCAPE: u8 = 0x01;
+// Scan codes of mode 2, outside the binding table (input.md §6.1).
 /// Mode 2: digits 1..5 (0x02..=0x06) hold P1..P5.
 const DIK_DIGITS: [u8; 5] = [0x02, 0x03, 0x04, 0x05, 0x06];
 /// Mode 2: numpad 0..9.
@@ -42,7 +41,9 @@ pub fn dik(code: KeyCode) -> Option<u8> {
         KeyR => 0x13,
         Enter => 0x1c,
         KeyA => 0x1e,
+        ShiftLeft => 0x2a,
         KeyZ => 0x2c,
+        ShiftRight => 0x36,
         Space => 0x39,
         Numpad7 => 0x47,
         Numpad8 => 0x48,
@@ -76,6 +77,9 @@ pub struct LeverKeys {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Bindings {
     pub modes: [LeverKeys; MODE_COUNT],
+    /// Button slots [4..14] the keyboard uses in every mode: the keyboard routine reads them at
+    /// absolute addresses, so always from the mode-0 row (input.md §4, 0x433b25/0x433bf4).
+    pub keyboard_buttons: [u8; BUTTON_SLOTS],
 }
 
 impl Bindings {
@@ -91,8 +95,97 @@ impl Bindings {
                     brake_down: b[3],
                 }
             }),
+            keyboard_buttons: std::array::from_fn(|i| bytes[4 + i]),
         })
     }
+}
+
+/// Bits of the button word (input.md §6). The original stores them active-low; here a set bit
+/// means true.
+pub mod bits {
+    pub const UP: u32 = 0x01;
+    pub const DOWN: u32 = 0x02;
+    pub const LEFT: u32 = 0x04;
+    pub const RIGHT: u32 = 0x08;
+    /// Menu cursor pulses: on the press, then on the repeat frames (§4.2).
+    pub const UP_PULSE: u32 = 0x10;
+    pub const DOWN_PULSE: u32 = 0x20;
+    pub const RIGHT_PULSE: u32 = 0x40;
+    pub const LEFT_PULSE: u32 = 0x80;
+    pub const HORN: u32 = 0x100;
+    pub const MENU_CONFIRM: u32 = 0x1000;
+    pub const CANCEL: u32 = 0x2000;
+    /// Keyboard R, press frame only; nothing reads it.
+    pub const KEY_R: u32 = 0x4000;
+    /// The driving "A" button: HUD panel toggle and stop/door prompts.
+    pub const A: u32 = 0x100000;
+    pub const PAUSE: u32 = 0x800000;
+}
+
+/// One device's button word for a tick: held now, and the edges against the previous tick.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ButtonWord {
+    pub held: u32,
+    pub pressed: u32,
+    pub released: u32,
+}
+
+impl ButtonWord {
+    pub fn new(prev_held: u32, held: u32) -> Self {
+        Self {
+            held,
+            pressed: held & !prev_held,
+            released: prev_held & !held,
+        }
+    }
+}
+
+/// True on the press frame and then on frames 9, 12, 15, … of a hold (input.md §4.2).
+pub(crate) fn repeat_pulse(count: u16) -> bool {
+    count == 1 || (count > 8 && count.is_multiple_of(3))
+}
+
+/// The held word from binding-table slots [4..14] and a per-code hold counter (0x4335d0 and
+/// 0x4341c0 tails). `count` must return 0 for unbound codes. Slot 9 (R, press only) only
+/// exists on the keyboard.
+pub(crate) fn held_word(
+    slots: &[u8; BUTTON_SLOTS],
+    count: impl Fn(u8) -> u16,
+    keyboard: bool,
+) -> u32 {
+    let n = |slot: usize| {
+        let code = slots[slot];
+        if code == UNBOUND { 0 } else { count(code) }
+    };
+    let mut w = 0;
+    for (slot, held, pulse) in [
+        (0, bits::UP, bits::UP_PULSE),
+        (1, bits::DOWN, bits::DOWN_PULSE),
+        (2, bits::LEFT, bits::LEFT_PULSE),
+        (3, bits::RIGHT, bits::RIGHT_PULSE),
+    ] {
+        if n(slot) > 0 {
+            w |= held;
+        }
+        if repeat_pulse(n(slot)) {
+            w |= pulse;
+        }
+    }
+    for (slot, bit) in [
+        (4, bits::A),
+        (5, bits::HORN),
+        (6, bits::MENU_CONFIRM),
+        (7, bits::CANCEL),
+        (8, bits::PAUSE),
+    ] {
+        if n(slot) > 0 {
+            w |= bit;
+        }
+    }
+    if keyboard && n(9) == 1 {
+        w |= bits::KEY_R;
+    }
+    w
 }
 
 /// How the keyboard drives the levers (input.md §4 modes 0–3).
@@ -124,6 +217,9 @@ pub struct Keyboard {
     keys: LeverKeys,
     /// Frames each key has been held (0x829b00), saturating.
     held: [u16; 256],
+    buttons: [u8; BUTTON_SLOTS],
+    /// Held word of the previous poll, for the edges.
+    prev_word: u32,
     pub power: u8,
     pub brake: u8,
 }
@@ -133,8 +229,29 @@ pub struct Keyboard {
 pub struct ButtonState {
     pub horn_held: bool,
     pub horn_pressed: bool,
+    /// The driving A button (bit 0x100000): HUD panel, ATS confirm, continue.
     pub confirm_pressed: bool,
     pub cancel_pressed: bool,
+    /// Menu confirm (bit 0x1000). Same key or button as `confirm_pressed` in every mode, except
+    /// that keyboard Enter only raises this one while a joystick mode is active.
+    pub menu_confirm_pressed: bool,
+    pub pause_pressed: bool,
+    /// The whole word, for menus (cursor pulses) and replays.
+    pub word: ButtonWord,
+}
+
+impl ButtonState {
+    pub fn from_word(word: ButtonWord) -> Self {
+        Self {
+            horn_held: word.held & bits::HORN != 0,
+            horn_pressed: word.pressed & bits::HORN != 0,
+            confirm_pressed: word.pressed & bits::A != 0,
+            cancel_pressed: word.pressed & bits::CANCEL != 0,
+            menu_confirm_pressed: word.pressed & bits::MENU_CONFIRM != 0,
+            pause_pressed: word.pressed & bits::PAUSE != 0,
+            word,
+        }
+    }
 }
 
 impl Keyboard {
@@ -143,9 +260,16 @@ impl Keyboard {
             mode: KeyboardMode::from_index(mode)?,
             keys: bindings.modes[mode],
             held: [0; 256],
+            buttons: bindings.keyboard_buttons,
+            prev_word: 0,
             power: 0,
             brake: EB,
         })
+    }
+
+    /// Whether either Shift key is held (LShift 0x2a, RShift 0x36; 0x4335d0 → 0x829d08).
+    pub fn shift_held(&self) -> bool {
+        self.held[0x2a] > 0 || self.held[0x36] > 0
     }
 
     /// Run or station start in a digital mode (0x4332c0): P0, EB.
@@ -169,12 +293,10 @@ impl Keyboard {
             KeyboardMode::Direct => self.direct(),
             KeyboardMode::OneHandle => self.one_handle(),
         }
-        ButtonState {
-            horn_held: self.count(DIK_SPACE) > 0,
-            horn_pressed: self.count(DIK_SPACE) == 1,
-            confirm_pressed: self.count(DIK_RETURN) == 1,
-            cancel_pressed: self.count(DIK_ESCAPE) == 1,
-        }
+        let held = held_word(&self.buttons, |c| self.count(c), true);
+        let word = ButtonWord::new(self.prev_word, held);
+        self.prev_word = held;
+        ButtonState::from_word(word)
     }
 
     fn count(&self, code: u8) -> u16 {
@@ -270,6 +392,13 @@ enum Step {
 mod tests {
     use super::*;
 
+    const DIK_SPACE: u8 = 0x39;
+    const DIK_RETURN: u8 = 0x1c;
+    const DIK_ESCAPE: u8 = 0x01;
+    /// Mode-0 row bytes [4..14]: arrows, Enter, Space, Enter, Esc, Esc, R.
+    pub(crate) const ROW0_BUTTONS: [u8; BUTTON_SLOTS] =
+        [0xc8, 0xd0, 0xcb, 0xcd, 0x1c, 0x39, 0x1c, 0x01, 0x01, 0x13];
+
     fn bindings() -> Bindings {
         // Modes 0 and 3 rows of the exe table (input.md §4).
         let m0 = LeverKeys {
@@ -285,6 +414,7 @@ mod tests {
         };
         Bindings {
             modes: [m0, m0, m0, m3, m0, m0, m0],
+            keyboard_buttons: ROW0_BUTTONS,
         }
     }
 
@@ -344,6 +474,28 @@ mod tests {
     }
 
     #[test]
+    fn keyboard_word() {
+        let mut kb = Keyboard::new(&bindings(), 0).unwrap();
+        // Esc is both cancel and pause; Enter is both A and menu confirm.
+        let b = kb.poll(|c| c == DIK_ESCAPE || c == DIK_RETURN);
+        assert!(b.pause_pressed && b.cancel_pressed);
+        assert!(b.confirm_pressed && b.menu_confirm_pressed);
+        let b = kb.poll(|_| false);
+        assert_eq!(
+            b.word.released,
+            bits::PAUSE | bits::CANCEL | bits::A | bits::MENU_CONFIRM
+        );
+        // R is a press-only bit.
+        assert_eq!(kb.poll(|c| c == 0x13).word.held, bits::KEY_R);
+        assert_eq!(kb.poll(|c| c == 0x13).word.held, 0);
+        // Held ↑ pulses the menu cursor on ticks 1, 9, 12.
+        let pulses: Vec<usize> = (1..=12)
+            .filter(|_| kb.poll(|c| c == 0xc8).word.pressed & bits::UP_PULSE != 0)
+            .collect();
+        assert_eq!(pulses, [1, 9, 12]);
+    }
+
+    #[test]
     fn direct_mode() {
         let mut kb = Keyboard::new(&bindings(), 2).unwrap();
         kb.poll(|c| c == 0x04 || c == 0x06);
@@ -364,5 +516,6 @@ mod tests {
         assert_eq!(b.modes[0], bindings().modes[0]);
         assert_eq!(b.modes[1].power_up, 0x2c);
         assert_eq!(b.modes[3], bindings().modes[3]);
+        assert_eq!(b.keyboard_buttons, ROW0_BUTTONS);
     }
 }
