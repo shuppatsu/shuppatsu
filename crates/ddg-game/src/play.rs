@@ -342,6 +342,12 @@ impl Play {
         self.down = down;
     }
 
+    /// The global tick counter `0x84c494` at the stage start (the ticks the game ran before,
+    /// menus included); the drive advances it from there.
+    pub fn set_global_tick(&mut self, tick: u32) {
+        self.drive.set_global_tick(tick);
+    }
+
     /// One tick, for headless drivers.
     pub fn step(&mut self) -> Result<()> {
         self.tick()
@@ -759,7 +765,9 @@ impl Play {
             }
             Action::Restart => {
                 // 始発駅に戻る: the route again from station 0, no departure board.
+                let global_tick = self.drive.global_tick();
                 self.drive = start_drive(&self.tables, &self.opts, 0)?;
+                self.drive.set_global_tick(global_tick);
                 self.controls.reset_levers();
                 self.meter_m = 0.0;
                 self.interpolate = false;

@@ -300,6 +300,7 @@ fn engine_values(d: &Drive, bases: (u32, u32)) -> Vec<(&'static str, Out)> {
     let tr = d.train();
     let (stage, difficulty) = r.stage();
     v.extend([
+        ("global_tick", I(d.global_tick().into())),
         ("gradient", F(d.gradient())),
         ("heading", F(d.heading())),
         ("units_to_stop", F(d.units_to_stop())),
@@ -462,6 +463,10 @@ fn replay_once(
         data_loader(data_dir.to_owned()),
     )?;
     drive.set_hud_counter(hud_counter(t, start));
+    // 0x84c494 after the tick of row `start` is that row's value.
+    if let Some(g) = t.get(start, "global_tick").int() {
+        drive.set_global_tick((g as u32).wrapping_sub(1));
+    }
     let bases = tables.bases.get(stage).copied().unwrap_or((0, 0));
 
     let mut finish_at: Option<usize> = None;

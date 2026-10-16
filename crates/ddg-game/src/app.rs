@@ -355,6 +355,8 @@ impl App {
         crate::front::clear_all(&mut shared.layer);
         let mut play = Play::new(shared, opts)?;
         play.set_down(self.down);
+        // 0x84c494 counts every tick since boot, menus included.
+        play.set_global_tick(self.ticks as u32);
         Ok(play)
     }
 

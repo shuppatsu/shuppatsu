@@ -989,6 +989,10 @@ pub struct Rules {
     pub weather_level: i32,
     pub weather_ticks: i32,
     pub wet_rails: bool,
+    /// The global tick counter `0x84c494` as the loop body sees it (before this tick's
+    /// `Task_Tick` increments it); set by [`crate::drive::Drive`]. `None` = unknown: the
+    /// station-based weather starts of 0x40d340 / 0x40d620, which test it, are skipped.
+    pub global_tick: Option<u32>,
     /// Notch-slam cooldown (`0x8571f8`).
     pub jolt_cooldown: i32,
     /// Departure task (0x413370): counter (task+0x34), offset (+0x38), false-start freeze
@@ -1135,6 +1139,7 @@ impl Rules {
             departure_released: 0,
             departure_done: false,
             weather_on: false,
+            global_tick: None,
             weather_level: 0,
             weather_ticks: 0,
             wet_rails: false,
@@ -1961,7 +1966,7 @@ impl Rules {
         self.dist_m = input.dist_to_stop_m;
         if self.dist_m < 0.0 {
             if self.target_row().stops == 0 {
-                self.pass_station(out);
+                self.pass_station(out, input.in_tunnel);
                 self.dist_m = input.dist_to_following_stop_m;
                 self.build_blocks();
             } else if self.dist_m < ATS_OVERRUN_M {
@@ -1979,8 +1984,31 @@ impl Rules {
         self.dist_round_m = round_half_away(self.dist_m);
     }
 
+    /// The station-based weather start of 0x40d340 (`modulus` 4) and 0x40d620 (3): no weather
+    /// yet (`0x857230 == 0`, `0x84c3a0 == 0`), at or past the stage's first weather station
+    /// (`0x459cf8`), enough remaining time (`0x459d20`) and `0x84c494 % modulus == 0`.
+    fn station_weather(&mut self, modulus: u32) -> bool {
+        let Some(tick) = self.global_tick else {
+            return false;
+        };
+        let first = i32::from(self.tables.weather_station[self.stage]);
+        let min = self.table(&self.tables.weather_min_time_s);
+        if self.weather_level == 0
+            && first <= self.station as i32
+            && tick.is_multiple_of(modulus)
+            && min <= self.remaining_s
+            && !self.weather_on
+        {
+            self.weather_on = true;
+            self.weather_level = 1;
+            self.weather_ticks = 0;
+            return true;
+        }
+        false
+    }
+
     /// 0x40d620: passing a non-stop station.
-    fn pass_station(&mut self, out: &mut TickOutput) {
+    fn pass_station(&mut self, out: &mut TickOutput, in_tunnel: bool) {
         self.late_s = self.clock / TICKS_PER_SECOND - self.scheduled / TICKS_PER_SECOND;
         self.stat(1, self.late_s.abs());
         if let Some(a) = self.arrivals.get_mut(self.station) {
@@ -2005,6 +2033,11 @@ impl Rules {
         self.station += 1;
         self.scheduled = self.target_row().time_ticks;
         self.final_station = self.is_final_next();
+        // 0x40d620 tail: weather may start on every third global tick; in a tunnel the rails
+        // stay dry for now (0x84c2e0 = 0).
+        if self.station_weather(3) && in_tunnel {
+            self.wet_rails = false;
+        }
         out.events.push(RuleEvent::StationPassed {
             station: self.station,
         });
@@ -2986,8 +3019,8 @@ impl Rules {
         self.final_station = self.is_final_next();
         self.reset_segment_state();
         self.clock += DWELL_TICKS;
-        // 0x40d340 may also start scripted weather here when the global frame counter is a
-        // multiple of 4; that depends on non-rule state and is left to the caller.
+        // 0x40d340: weather may start when the global tick counter is a multiple of 4.
+        self.station_weather(4);
         self.signals_pending = true;
         if game_over {
             self.phase = Phase::GameOver;
@@ -3707,5 +3740,23 @@ mod tests {
         r.signal_stop_recovery(&mut out);
         assert!(matches!(r.phase, Phase::Holding { ticks: 70, .. }));
         assert_eq!((r.passing_train, r.passing_spawn), (None, None));
+    }
+
+    #[test]
+    fn station_weather_needs_the_global_tick() {
+        let mut r = rules(Vec::new(), Vec::new());
+        r.tables.weather_station[3] = 0;
+        r.remaining_s = 999;
+        r.global_tick = None;
+        assert!(!r.station_weather(4));
+        r.global_tick = Some(4001);
+        assert!(!r.station_weather(4));
+        assert!(!r.weather_on);
+        r.global_tick = Some(4000);
+        assert!(r.station_weather(4));
+        assert!(r.weather_on && r.weather_level == 1 && r.weather_ticks == 0);
+        // Only once: the started flag stays set.
+        r.weather_level = 0;
+        assert!(!r.station_weather(4));
     }
 }

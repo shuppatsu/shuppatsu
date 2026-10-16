@@ -213,6 +213,8 @@ pub struct Drive {
     tick_count: u64,
     /// Idle ticks until the deferred continue rewind (0x40d930).
     pending_continue: Option<u32>,
+    /// The global tick counter `0x84c494` after the last tick (see [`Drive::set_global_tick`]).
+    global_tick: u32,
     /// AI trains (task list 5) and their model table.
     traffic: Traffic,
     train_models: TrainModels,
@@ -297,6 +299,7 @@ impl Drive {
             odometer_settled: false,
             tick_count: 0,
             pending_continue: None,
+            global_tick: 0,
             traffic,
             train_models: stages.train_models.clone(),
         })
@@ -499,8 +502,9 @@ impl Drive {
     pub fn tick(&mut self, input: DriverInput) -> DriveTick {
         self.tick_count += 1;
         self.traffic.begin_tick();
+        self.rules.global_tick = Some(self.global_tick);
         self.prev_pos = self.walker.pos();
-        match self.step {
+        let out = match self.step {
             Step::Load(0) => self.setup_tick(input),
             Step::Load(n) => {
                 self.step = Step::Load(n - 1);
@@ -518,7 +522,24 @@ impl Drive {
                 self.idle_tick(input)
             }
             Step::Run => self.run_tick(input),
-        }
+        };
+        // `Task_Tick` counts the tick after the task lists ran (main-loop.md §2).
+        self.global_tick = self.global_tick.wrapping_add(1);
+        out
+    }
+
+    /// The global tick counter `0x84c494` after the last tick: every unpaused `Task_Tick`
+    /// since boot, menus included. It decides the station-based weather starts and reseeds the
+    /// AI-train spawner's random speeds.
+    pub fn global_tick(&self) -> u32 {
+        self.global_tick
+    }
+
+    /// Sets the counter (at the stage start: the ticks the game has run so far). Each
+    /// [`Drive::tick`] then adds one; paused ticks, which do not call it, don't count.
+    pub fn set_global_tick(&mut self, tick: u32) {
+        self.global_tick = tick;
+        self.rules.global_tick = Some(tick);
     }
 
     /// The station result (0x413d90's deductions) and the move on (0x40d340). Call once in
@@ -533,6 +554,7 @@ impl Drive {
             });
         }
         self.settle_odometer();
+        self.rules.global_tick = Some(self.global_tick);
         let result = self.rules.finish_station();
         // 0x4080d0 after the station result: `0x857216 = (0x8570b8 < 1)`.
         self.traffic.after_arrival(self.rules.continues);
@@ -732,7 +754,7 @@ impl Drive {
             models: &self.train_models,
             obstacle_armed: self.rules.obstacle_armed,
             dist_round_m: self.rules.dist_round_m,
-            tick: self.tick_count,
+            tick: u64::from(self.global_tick),
         };
         if loop_body {
             self.traffic
@@ -751,7 +773,7 @@ impl Drive {
             models: &self.train_models,
             obstacle_armed: self.rules.obstacle_armed,
             dist_round_m: self.rules.dist_round_m,
-            tick: self.tick_count,
+            tick: u64::from(self.global_tick),
         };
         self.traffic.task_step(&env);
         let camera = cab_camera(&self.route, self.walker.pos(), 0.0, 0.0);
