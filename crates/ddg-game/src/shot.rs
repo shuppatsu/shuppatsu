@@ -3,9 +3,23 @@
 use anyhow::{Context, Result};
 
 use ddg_render::Renderer;
+use ddg_render::overlay::UiScaling;
 
 /// A composed sprite canvas (RGBA8) and its size in pixels.
 pub type Canvas<'a> = (&'a [u8], (usize, usize));
+
+/// How shots present the canvas (`--ui-scaling`, set once at startup by the subcommand, so
+/// every shot path honours it without threading it through each caller).
+static UI_SCALING: std::sync::Mutex<UiScaling> = std::sync::Mutex::new(UiScaling::Smooth);
+
+/// Sets the presentation of the canvas in later shots.
+pub fn set_ui_scaling(scaling: UiScaling) {
+    *UI_SCALING.lock().unwrap_or_else(|e| e.into_inner()) = scaling;
+}
+
+fn ui_scaling() -> UiScaling {
+    *UI_SCALING.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Renders the scene at `pos` (`width`×`height`; black without a scene) with the canvas over
 /// it and writes a binary PPM (P6).
@@ -79,12 +93,8 @@ pub fn render_to_ppm_with(
         let mut overlay = ddg_render::overlay::Overlay::new(&device, format);
         overlay.resize(&device, size);
         overlay.upload(&queue, canvas);
-        overlay.render(
-            &device,
-            &queue,
-            &view,
-            ddg_render::overlay::canvas_rect_for(width, height, size),
-        );
+        overlay.scaling = ui_scaling();
+        overlay.render(&device, &queue, &view, overlay.rect(width, height));
     }
 
     // Rows must be 256-byte aligned for the copy.
