@@ -102,7 +102,10 @@ index, then value indices, −1 terminated). A translation layer can key on (she
 Positions are native pixels of the 640×480 sprite space. Screens that are laid out for 640×480 add
 a per-resolution offset `x0 = 0x463d78[res]`, `y0 = 0x463d88[res]` = (0,0), (0,0), (88,60),
 (200,144) for res modes 0–3 (512×384, 640×480, 800×600, 1024×768). Some screens add
-`(640 − *0x855ae8)/2` as well (guess: 0 in every shipped mode). All coordinates below are for res
+`(640 − *0x855ae8)/2` as well: `0x855ae8` is the pixel width of tbl 0x504 (the cursor frame) in
+the tilemap-size cache at 0x850aa8 (16 bytes per tilemap, filled by 0x430ec0), so the term
+centres the cursor frame. **confirmed** (nothing writes 0x855ae8 directly; 0x850aa8 + 16 · 0x504
+= 0x855ae8) All coordinates below are for res
 mode 1 with those offsets at 0. Several layouts are `{x, y, layer, pal, slot}` × 4 res modes per
 row, −1 terminated (the HUD tables use the same shape).
 
@@ -126,11 +129,31 @@ Input words are active-low (input.md §6); "pressed" = the edge word `0x48c42c`.
 ## 2. Boot, attract, press START
 
 * Attract: `Attract_Run` 0x402700 walks the table at 0x484e30 (main-loop.md §5): 0x402e60,
-  0x402880 (title logo), 0x402e80, 0x404e10 (ranking; may chain to the Komachi movie), 0x40e450
-  (demo route), 0x40e4b0 (demo drive), 0x40e6c0, 0x403f40 ×4, 0x403da0, 0x40e6e0. START (0x1000)
-  ends it. **likely** (individual items not traced in this pass).
+  0x402880 (a logo that picks its sprites from the difficulty bits of 0x829d10), 0x402e80
+  (title), 0x404e10 (Komachi check, below), 0x40e450 (demo route), 0x40e4b0 (demo drive),
+  0x40e6c0, 0x403f40 ×4, 0x403da0, 0x40e6e0. An item runs while it keeps `0x855ff8 & 4` set; one
+  `Task_Tick` follows each item; the end of the table clears the sprites and runs 3 ticks.
+  **confirmed** (0x402700; most items not traced)
+* START is the menu-confirm edge 0x1000 (free play). Pressed while the title picture shows
+  (`0x855ffc & 0x20`, set by 0x4037f0): sound 0x1e and `Attract_Run` returns, so the title menu
+  comes next. Pressed during any other item: `0x855ffc |= 0x10` and the walk restarts at item 2
+  (the title). **confirmed** (0x402700)
+* Item 2, 0x402e80: with `0x855ffc & 0x10` (back from a menu cancel, a quit, a declined exit) it
+  goes straight to 0x4037f0: tbl 0x410 (0x411 in res mode 2) full screen at (x0, y0), palette
+  0x17; palettes 0x17 / 0x16 / 0x15 fade in from black over 0x40 / 0x50 / 0x50 ticks towards the
+  palette data at 0x48b290 / 0x488e90 / 0x488290 (task 0x4367c0 → 0x436820: each channel ×
+  `(n − remaining) / n`, truncated, the last tick an exact copy); the title call 0x1024 at tick
+  100; the item ends after 300 ticks. Without 0x10 (cold start, after a run that was not quit)
+  it first plays a 3D opening fly-by (0x402fb0 → 0x403080 → 0x4031d0 with logo tbl 0x198, PRESS
+  START tbl 0x123, BGM 0x1a1, route-1 scenery). **confirmed** (the fly-by itself not traced)
+* Item 3, 0x404e10, is **not** the ranking: it calls 0x404cf0, which returns 1 when every
+  select stage of the five route-select groups has a clear mark on its route
+  (`0x85635a[stage +0x1c]`), and then plays the Komachi movie `FUN_00429110`. That is the only
+  reachable caller of the movie (§3). **confirmed** Where attract shows the records viewer
+  (`0x855ffc & 8` clear, §5) is not traced.
 * Demo route (0x40e450): collects the routes 0–12 whose bit is set in `0x8500b0` (→ 1, 3, 4, 6, 7,
-  8, 9, 10, 12) and takes entry `attract_counter (0x8573c8) mod 9`. **confirmed** (objdump).
+  8, 11, 12) and takes entry `attract_counter (0x8573c8) mod 8` (the count of collected routes).
+  **confirmed** (objdump; corrected from 9 entries).
 * The arcade "insert coin / press START" machinery is disabled on PC: `Credits_Init` 0x401910 (called
   unconditionally from `Game_Init`) sets `0x8573e0 = 1`, and every credit routine (0x401dc0,
   0x401e40, 0x401ef0, 0x401f40) returns at once when it is set. **confirmed**
@@ -154,12 +177,21 @@ Input words are active-low (input.md §6); "pressed" = the edge word `0x48c42c`.
 | 2 | 3 ランキングを見る / Ranking | records viewer (§5) |
 | 3 | 4 ゲーム終了 / Game Exit | `ExitConfirm_Run`, Yes → `DestroyWindow` |
 | 4 | 5 専用コントローラー設定 / Controller Adjust (mode 6 only) | `ControllerAdjust_Run` 0x434a00 |
-| (5) | 6 LOVE特急こまち | movie `FUN_00429110`; **not reachable**: the cursor max is 3 or 4 |
+| (5) | 6 LOVE特急こまち | movie `FUN_00429110`; **not reachable from the menu**: the cursor max is 3 or 4 and 0x47c778 holds only five descriptors. Attract plays it once every select stage is cleared (§2) |
 
 * Confirm: sound 0xd, 30-tick blink, stop 0xd, `0x816834 = index`. Cancel: sound 0x13,
   `0x816834 = −2` → `TitleMenu_Run` returns −2, `Game_MainFlow` sets `0x855ffc |= 0x10` and shows
   the title again without attract. **confirmed**
 * Start (0): BGM 0x19e stops, all non-persistent sprites cleared, 3 ticks, return 0.
+* After options (1), records (2) and calibration (4) the menu is re-created with the cursor on
+  that item (0x42a1c0 passes its last result back to 0x42b210). Records: BGM stopped, sprites
+  cleared, 10 ticks, then the viewer; the BGM restarts afterwards. **confirmed**
+* Every menu task's destroy (0x42a710) clears slots 0x90..0xb6; the header slots 0x87..0x8f and
+  the background 0xb7 stay until the next screen redraws them. The header 0x42a820 draws the
+  full-screen background tbl 0x501 (res mode 1) in slot 0xb7. **confirmed**
+* Exit declined (いいえ, cancel or the pause key) does **not** return to the menu: 0x42a1c0 falls
+  into case 0 with result −1 (BGM stop, clear, 3 ticks), `Game_MainFlow` sets `0x855ffc |= 0x10`
+  and attract restarts at the title picture, the same as a title cancel. **confirmed**
 * Exit confirm 0x42bb90: `Dialog_Run(0x47c848, cursor 1)`: frame tbl 0x542, title "終了しますか?"
   (0x544 idx 0x0a), はい/いいえ (idx 0x0c/0x0e), cursor starts on いいえ. Yes destroys the window
   (→ `WM_QUIT` → shutdown, eeprom/replay saved). **likely** (Ghidra garbled the return value; the
@@ -186,7 +218,15 @@ List of six items, label at (x0+96, y0+160+48·i) slot 0x90+i and current value 
   discards. The control-mode page allows 0–3 without a joystick and 0–6 with one; with an analog
   lever, pushing the lever to P3 steps the mode cyclically (mod 7). It also shows the controller
   legend page 0x42a820 (pad picture tbl 0x50c etc.). **confirmed**
-* Sound off → stop all (0x430160); sound on → restart the title BGM 0x19e. **confirmed**
+* Sound off → stop all (0x430160); sound on → restart the title BGM 0x19e. While the byte is
+  non-zero the sound thread drops the play/stop/pitch messages (`cmp 0x856356` at 0x4305bd).
+  **confirmed**
+* List-page skips (0x42a560): with no FF device the cursor jumps over item 2, with no sound
+  device over item 3, in both directions; the analog branch maps notch 3 → 2 → 1 the same way.
+  The control page (0x42ad10) always draws all seven labels at (x0+0x20, y0+0x88+48 i); its
+  pictures: slot 0x9a = `0x487684[mode]` at (x0+0x118, y0+0x90) and slot 0x9b = 0x494, 0x495,
+  0x496, 0x497, 0x498, 0x493 for modes 0–5 at per-mode offsets; mode 6 shows 0x49d and 0x4a1.
+  **confirmed**
 * Labels 20/21 ロードする/セーブする exist in the sheet but are not in any item list (leftover).
   **confirmed** (lists at 0x47c744–0x47c76c)
 
@@ -197,8 +237,9 @@ List of six items, label at (x0+96, y0+160+48·i) slot 0x90+i and current value 
   (0x428990(0x70, 0x7070)). **confirmed**
 * Pages: the route index `r` steps through 0, 1, 2, … and shows a page when bit `r` of `0x8500b0`
   is set and the ranking-table index `0x46bbe8[r] ≠ −1`; it ends after the first `r > 12` that fails.
-  With `0x8500b0 = 0x3f9da` this gives **routes 1, 3, 4, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17**
-  (routes 8 and 9 both show ranking table 5). **confirmed** (0x41f910)
+  With `0x8500b0 = 0x3f9da` (bits 1, 3, 4, 6, 7, 8, 11–17) this gives **routes 1, 3, 4, 6, 7, 8,
+  11, 12, 13, 14, 15, 16, 17**: thirteen pages, one per ranking table. **confirmed** (0x41f910,
+  immediate at 0x41e52c; an earlier version of this note listed 9 and 10 instead of 11)
 * Layout: header maps `0x46bc10[r]` (slot 0x67) and `0x46bc64[r]` (slot 0x68) slide in at y = 40
   (x from −176 and 576, 8 px per tick, 33 ticks); column titles tbl 0x413–0x418 (slots 0x6c–0x71);
   10 rows at y = 92 + 32·rank, 8 cells per row (4 name characters, 4 score digits) at
@@ -206,9 +247,12 @@ List of six items, label at (x0+96, y0+160+48·i) slot 0x90+i and current value 
   tbl 0x2c8 ("PRO") at slot 0x5d+rank, x = 272, when the row's flag is 1. Cells reveal one per 2
   ticks, flickering between tbl 0x274/0x275 for 16 ticks. Legend tbl 0x545 (keyboard) or 0x546
   (pad) at (128, 432). Black side bars from the rect layer (0x41fc60). **confirmed**
-* Timing: a page lasts 200 ticks. Confirm (0x17): jump to tick 175 (reveal all) or, if already
-  there, to the next page. Cancel (0x13): leave. In attract the viewer ends when `0x855ff8 & 4`
-  clears. **confirmed**
+* Timing: in attract a page lasts 200 ticks. From the title (interactive) the counter only runs
+  up to 175 (all cells shown, header in place) and **holds** there: confirm (0x17) jumps to 175
+  (and the header slide to its last step) or, if already there, to 200 = the next page; the
+  viewer ends after the last page. Cancel (0x13) undims and ends the task on the next tick. In
+  attract the viewer ends when `0x855ff8 & 4` clears. Cells: cell u appears at counter 2u.
+  **confirmed**
 
 ## 6. Route / stage select (0x435490)
 
@@ -247,8 +291,9 @@ Two levels in one task (`+0x30` level, `+0x38` cursor, `+0x34` item count, `+0x4
   shows a different train type). Row layout relative to the row top (+0x86 + 106·i): thumbnail
   (48,16), caption (128,24), tbl 0x30c (128,40), from board (136,56), tbl 0x30d "〜" (264,64),
   to board (300,56), type board (300,16), tbl 0x30f 難易度 (424,80), stars tbl 0x30e × difficulty
-  from (424+16k, 64), rank badge (428,20) = 0x314 初級 (1–2 stars), 0x315 中級 (3),
-  0x316 上級 (4), 0x317 特級 (5), clear star (36,12), replay mark (40,40). Stages 0x11/0x12 add a
+  from (424+16k, 64), rank badge (428,20) = 0x314 初級 (1 star), 0x315 中級 (2–3; the
+  stack table is 0x314, 0x314, 0x315, 0x315, 0x316, 0x317 indexed by difficulty), 0x316 上級 (4),
+  0x317 特級 (5), clear star (36,12), replay mark (40,40). Stages 0x11/0x12 add a
   雫石停車/通過 tag (tbl 0x549/0x548). Header bar tbl 0x515 at (x0, 0); legends slots 0x87–0x8e,
   0x9c, 0x9d (descriptors 0x47cab0–0x47cb08, keyboard vs pad variant by input mode).
 
@@ -260,7 +305,8 @@ Two levels in one task (`+0x30` level, `+0x38` cursor, `+0x34` item count, `+0x4
   previous group; at line level it ends with `+0x44 = +0x48 = −1`.
 * **R key (bit 0x4000)** toggles `0x816974` ("自動運転", replay playback) while in the train list. When
   on, each row whose stage has a stored replay (`0x42e450(stage) ≥ 0`) shows tbl 0x50b (row 6) at
-  (40,40). This is the only reader of bit 0x4000 found (input.md lists none).
+  (40,40). This is the only reader of bit 0x4000 found (input.md lists none). It plays no sound
+  and is ignored at the line level.
 * Destroy 0x436640: if both indices are valid, `0x8570a4 = stage[+0x1c]` (stage 20 → 10,
   `0x48ddf0 = 1`); with replay mode on, `0x42e490(&0x829d10, rank)` loads the replay's difficulty or
   replay mode is switched off when none exists. Clears `0x855ff8 & 0x100000` and `0x855ffc & 0x1000`.
@@ -274,8 +320,8 @@ Two levels in one task (`+0x30` level, `+0x38` cursor, `+0x34` item count, `+0x4
 * Every group and stage is always selectable; the code has no lock test.
 * `0x8500b0` is **not** an unlock mask. It is a constant written once, `0x3f9da`, by
   `Ranking_FromEeprom` 0x41e520 (at eeprom load), and read only by the records viewer (§5) and the
-  attract demo-route picker (§2). Bits set: 1, 3, 4, 6–10, 12–17 = routes that own a ranking table
-  (`0x46bbe8[r] ≠ −1`) minus 11, 18, 19 (which share a table with 10 and 17).
+  attract demo-route picker (§2). Bits set: 1, 3, 4, 6, 7, 8, 11–17: one route per ranking table
+  (`0x46bbe8[r] ≠ −1` minus 9, 10, 18, 19, which share tables 5, 7 and 6 with 8, 11 and 17).
 * What *is* stored per route is the **clear mark** `0x85635a[route]` (eeprom +0x33a, 20 bytes),
   written by `Stage_Run` after a clear: 3 = cleared without a continue, 2 = 1–3 continues,
   1 = 4 or more continues; only ever raised. It is written right after the report card of a
@@ -293,15 +339,19 @@ Order in `Stage_Run` 0x4080d0 after the route select (main-loop.md §5):
 1. **Lever check** 0x4137e0 (**analog-lever modes only**; digital modes just force P0/EB). Shows
    "仕業検査" (tbl 0x249, slot 10 at (224,108)), "各レバーをスタート位置に合わせて下さい" (tbl 0x248,
    slot 11 at (160,364)), controller picture tbl 0x50a (slot 0x11 at (156,160), palette 0x18) and
-   arrows tbl 0x3b/0x3c. Ends when the brake has been ≥ 9 with power 0 on **50 ticks** (not
+   arrows tbl 0x3b/0x3c (only preloaded by 0x4317e0(0x465abc); 0x4137e0 images slots 10, 11 and
+   0x11 only and merely places 13, 14, 18, 19, so who draws the arrows is open). Ends when the brake has been ≥ 9 with power 0 on **50 ticks** (not
    necessarily consecutive) or after **400 ticks**. **confirmed**
 2. BGM 0x19e stopped, route data load `0x40ed90`, 15 ticks, setup calls (main-loop.md §5).
 3. **Departure board** 0x4139c0 (skipped on retry): board tbl 0x3d8 "発車案内" (slot 58 at
    (112,206)) with four flaps: slot 54 series (128,256), 55 train type (376,256), 56 from (136,320),
    57 to (328,320). From tick 10 (sound 0x18) flap k starts at tick 10+8k, spins 32 ticks
-   (alternating tbl 0x3d6/0x3d7 with random entries from its list), then lands on the route's entry
+   (tick s of the spin: s % 3 = 0 → tbl 0x3d6, 1 → 0x3d7, 2 → entry `(s / 3) % len` of its list;
+   deterministic, not random), then lands on the route's entry
    from `0x467040[route·20 + k]` (lists 0x466fa0 series, 0x466fd8 type, 0x466ff8 stations; with
-   `0x48ddf0` the type is forced to entry 2). When all four have landed sound 0x18 stops; the
+   `0x48ddf0` the **destination** flap (k = 3, slot 57) is forced to station entry 2; an earlier
+   version said the train type). Every tick after the fourth landing stops 0x18 again; the screen
+   lasts 136 ticks in all. When all four have landed sound 0x18 stops; the
    screen ends after **70 more ticks**. **confirmed**
 4. Route load, then the per-station loop. At the first segment the HUD and the departure task
    take over (hud.md, rules.md §8).
@@ -583,12 +633,50 @@ are unpacked to `0x84fca0 + 0x50·table + 8·row` (4 name bytes + 4 decimal digi
   and the pause-dialog text "運転を記録しますか?" belong to it.
 * `joystick.dat`: calibration (input.md §5).
 
+## 14. The port's front end
+
+`ddg-game` with no subcommand (`crates/ddg-game/src/app.rs`) sequences `Game_MainFlow`: attract →
+title menu → route select → lever check (modes 5/6) → departure board → the run
+(`crates/ddg-game/src/play.rs`, built from the app's shared window, sprite bank, layer, save,
+input and sound device) → attract again. The screens are `crates/ddg-game/src/front/`, one state
+machine per task, with the exe tables read at runtime (`front/tables.rs`). Headless checks:
+`ddg-game --inputs <script> --shot <ticks>:<file.ppm>` (script keys as for `play`, plus `r`).
+
+Faithful (code reading, unit-tested, art lined up in headless shots; not compared with the
+running original): the title menu (list scroll, clamps, 30-tick blink, sounds, five items with
+mode 6 only), the options list and both value pages with `Options_Get` / `Options_Set` on
+`eeprom.dat`, the records viewer, the exit dialog, the route select (both levels, settle-on-back,
+clear stars, rank badges, the 雫石 tags, R toggle), the lever check, the departure board, the
+calibration screen (writes `joystick.dat` next to `eeprom.dat`), the tick gaps between screens
+listed above, BGM 0x19e on the title / options / route select, and the attract title picture.
+
+Approximated or left out:
+
+* Attract: only the title picture (item 2's 0x4037f0 branch) and item 3's Komachi check run; the
+  other items, including the cold-start 3D fly-by, take no time, so attract shows the title
+  picture in a loop. The Komachi movie is postponed (decision D2): its trigger is logged. After
+  every run attract restarts at item 2 (the original does that only after a quit; after a game
+  over or a clear it starts at item 0, which is not built anyway).
+* Replays (`REPLAY.DAT`) are not implemented: R toggles the flag, no row ever shows the 自動運転
+  mark, and leaving the select switches the flag off (what 0x436640 does without a replay).
+* Select stage 20 runs route 10 with its own clear mark (+0x34e) and the departure-board
+  destination; the other effects of `0x48ddf0` (replay slot 0x14 in 0x407900, the rules branch at
+  0x40aa42, which also reads the clear mark of the route) are not modelled.
+* No force feedback: the vibration item is skipped as on a PC without an FF device. The Shift
+  override's keyboard legends (0x829d08) are not drawn. The difficulty value page writes the
+  eeprom; a run reads it at its start.
+* The sprite canvas is always centred with black bars (the port has no non-centred mode), so the
+  `0x855ffc & 0x1000` toggling has no visible effect.
+
 ## Open questions
 
 1. Group 4 of the line select (header 東北路線 again, stage list `2, 2, 2, 2`, thumbnails 104, 103,
-   0): is it really reachable as a fifth group, and why stage 2 four times? Stage 19 (route 19) is
-   in no group. Needs a run of the original.
-2. `0x855ae8` (subtracted from 640 in route-select and title x positions): its value per mode.
+   0): the code makes it reachable (the line level is created with 5 items, 0x435490, and the
+   cursor clamps at 4), so the port shows and selects it; why stage 2 four times is open. Stage 19
+   (route 19) is in no group. Needs a run of the original.
+11. Who draws the lever-check arrows tbl 0x3b / 0x3c (§7), and what 0x40aa42 does with a clear
+    mark of 3 at station 7 of the route-10 variant.
+2. ~~`0x855ae8`~~: resolved, the cached pixel width of tbl 0x504 (§1.3).
 3. ~~Default ranking contents on first boot~~: resolved, the image at 0x467768/0x467790/0x467aa0
    copied by 0x418ef0 when the magic differs (§13.1).
 4. The PRO flag (`0x8571f0 ≤ 30.0`, metres driven with the distance meter drawn, §11.2): the
