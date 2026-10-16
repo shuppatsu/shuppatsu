@@ -23,6 +23,8 @@ pub struct Exe<'a> {
     data: &'a [u8],
     image_base: u32,
     sections: Vec<Section>,
+    /// RVA and size of the resource directory (data directory 2), if present.
+    resource_dir: Option<(u32, u32)>,
 }
 
 impl<'a> Exe<'a> {
@@ -48,6 +50,15 @@ impl<'a> Exe<'a> {
             return Err(FormatError::invalid("PE", "not a PE32 optional header"));
         }
         let image_base = b.u32(optional + 28)?;
+        // Data directories follow NumberOfRvaAndSizes (optional + 92); entry 2 is resources.
+        let dir_count = b.u32(optional + 92)?;
+        let resource_dir = if dir_count > 2 && optional_size >= 96 + 3 * 8 {
+            let rva = b.u32(optional + 96 + 2 * 8)?;
+            let size = b.u32(optional + 96 + 2 * 8 + 4)?;
+            (rva != 0 && size != 0).then_some((rva, size))
+        } else {
+            None
+        };
         let table = optional + optional_size;
         let mut sections = Vec::with_capacity(section_count);
         for i in 0..section_count {
@@ -68,6 +79,7 @@ impl<'a> Exe<'a> {
             data,
             image_base,
             sections,
+            resource_dir,
         })
     }
 
@@ -109,6 +121,131 @@ impl<'a> Exe<'a> {
     pub fn u32_at(&self, va: u32) -> Result<u32> {
         self.reader_at(va, 4, "PE")?.u32(0)
     }
+
+    /// Every leaf of the resource tree (type / name / language), in directory order. Empty when
+    /// the image has no resource directory.
+    pub fn resources(&self) -> Result<Vec<Resource<'a>>> {
+        let Some((rva, size)) = self.resource_dir else {
+            return Ok(Vec::new());
+        };
+        let tree = self.reader_at(self.image_base.wrapping_add(rva), size as usize, "PE rsrc")?;
+        let mut out = Vec::new();
+        for (kind, types) in res_entries(&tree, 0)? {
+            let ResEntry::Dir(names) = types else {
+                continue;
+            };
+            for (name, langs) in res_entries(&tree, names)? {
+                let ResEntry::Dir(langs) = langs else {
+                    continue;
+                };
+                for (lang, leaf) in res_entries(&tree, langs)? {
+                    let ResEntry::Data(entry) = leaf else {
+                        continue;
+                    };
+                    let data_rva = tree.u32(entry)?;
+                    let data_size = tree.usize32(entry + 4)?;
+                    let data = self.bytes_at(self.image_base.wrapping_add(data_rva), data_size)?;
+                    let lang = match lang {
+                        ResId::Id(id) => id,
+                        ResId::Name(_) => 0,
+                    };
+                    out.push(Resource {
+                        kind: kind.clone(),
+                        name: name.clone(),
+                        lang,
+                        data,
+                    });
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    /// The resource of type `kind` with numeric `id` (first language).
+    pub fn resource(&self, kind: u16, id: u16) -> Result<Option<&'a [u8]>> {
+        Ok(self
+            .resources()?
+            .into_iter()
+            .find(|r| r.kind == ResId::Id(kind) && r.name == ResId::Id(id))
+            .map(|r| r.data))
+    }
+}
+
+/// `RT_ICON`: one icon image (a DIB or a PNG).
+pub const RT_ICON: u16 = 3;
+/// `RT_GROUP_ICON`: a directory of `RT_ICON` images.
+pub const RT_GROUP_ICON: u16 = 14;
+
+/// A resource type, name or language: numeric or a UTF-16 string.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResId {
+    Id(u16),
+    Name(String),
+}
+
+/// One resource leaf.
+#[derive(Debug, Clone)]
+pub struct Resource<'a> {
+    pub kind: ResId,
+    pub name: ResId,
+    pub lang: u16,
+    pub data: &'a [u8],
+}
+
+enum ResEntry {
+    /// Offset of a subdirectory within the resource section.
+    Dir(usize),
+    /// Offset of an `IMAGE_RESOURCE_DATA_ENTRY`.
+    Data(usize),
+}
+
+/// Depth guard: a resource tree has exactly three levels, so offsets must not loop.
+const MAX_RES_ENTRIES: usize = 4096;
+
+/// The entries of the `IMAGE_RESOURCE_DIRECTORY` at `dir` (16-byte header, then named and
+/// numbered 8-byte entries).
+fn res_entries(tree: &Bytes<'_>, dir: usize) -> Result<Vec<(ResId, ResEntry)>> {
+    let count = tree.u16(dir + 12)? as usize + tree.u16(dir + 14)? as usize;
+    if count > MAX_RES_ENTRIES {
+        return Err(FormatError::invalid(
+            "PE rsrc",
+            "too many directory entries",
+        ));
+    }
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count {
+        let e = dir + 16 + i * 8;
+        let name = tree.u32(e)?;
+        let target = tree.u32(e + 4)?;
+        let id = if name & 0x8000_0000 != 0 {
+            let at = (name & 0x7fff_ffff) as usize;
+            let len = tree.u16(at)? as usize;
+            let units: Vec<u16> = tree
+                .slice(at + 2, len * 2)?
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                .collect();
+            ResId::Name(String::from_utf16_lossy(&units))
+        } else {
+            ResId::Id(name as u16)
+        };
+        let off = (target & 0x7fff_ffff) as usize;
+        let entry = if target & 0x8000_0000 != 0 {
+            if off <= dir {
+                return Err(FormatError::invalid(
+                    "PE rsrc",
+                    "directory points backwards",
+                ));
+            }
+            ResEntry::Dir(off)
+        } else {
+            ResEntry::Data(off)
+        };
+        out.push((id, entry));
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

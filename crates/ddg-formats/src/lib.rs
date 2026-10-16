@@ -8,6 +8,7 @@ pub mod cg;
 pub mod error;
 pub mod exe;
 pub mod hud;
+pub mod icon;
 pub mod lz;
 pub mod part;
 pub mod reader;
