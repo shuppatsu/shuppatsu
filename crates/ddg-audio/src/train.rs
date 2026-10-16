@@ -212,6 +212,16 @@ impl TrainSound {
         self.stage
     }
 
+    /// 0x84c400, the flange-squeal / departure-sound flag. Latched from the train type at
+    /// creation; course events 18 / 19 set and clear it (0x40acd0).
+    pub fn flange(&self) -> bool {
+        self.flange
+    }
+
+    pub fn set_flange(&mut self, on: bool) {
+        self.flange = on;
+    }
+
     /// Station-segment start (0x4080d0): starts the running noise (silent, lowest pitch) and
     /// the motor at its base pitch.
     pub fn start_segment(&self, snd: &mut SoundSystem) {
@@ -463,6 +473,69 @@ impl TrainSound {
                 }
             }
         }
+    }
+}
+
+/// Start offsets of the three wheel sets crossing a turnout, m (0x4205c0: 0, −2.5f, −14.5f).
+const TURNOUT_WHEELS: [f32; 3] = [0.0, -2.5, -14.5];
+/// Distance to a wheel set's next click after its 1st, 2nd and 3rd click, m (stack floats in
+/// 0x4204d0).
+const TURNOUT_SPACING: [f32; 3] = [4.0, 3.0, 3.0];
+/// Played when a turnout has been crossed below 40 km/h with the flange flag set (0x4204d0).
+const TURNOUT_SQUEAL: u16 = 0x2f;
+
+/// Turnout clatter: task 0x4204d0, created by 0x4205c0 from the train task (0x422c20) on the
+/// tick after 0x407c10 flagged a turnout under the point 6 ahead (`0x856d96`). Three wheel sets
+/// advance by the speed at creation; each plays the rail-joint code when its distance reaches 0
+/// and then waits for the next spacing (at most three clicks per set). The task ends once every
+/// wheel set has clicked twice, with a squeal (0x2f) at low speed.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TurnoutClatter {
+    /// task+0x3c: metres per tick, `speed × (1/30)` (double 0x459550).
+    step: f32,
+    /// task+0x40..: distance of each wheel set past its next click point, m.
+    wheels: [f32; 3],
+    /// task+0x4c..: clicks so far per wheel set.
+    clicks: [usize; 3],
+}
+
+impl TurnoutClatter {
+    /// 0x4205c0 with the train speed in m/s.
+    pub fn new(speed: f32) -> Self {
+        Self {
+            step: (f64::from(speed) * (1.0 / 30.0)) as f32,
+            wheels: TURNOUT_WHEELS,
+            clicks: [0; 3],
+        }
+    }
+
+    /// One update; `joint` is the stage's rail-joint code (0x856d98), `flange` the flag
+    /// 0x84c400. Returns false when the task has ended.
+    pub fn tick(&mut self, joint: u16, flange: bool, snd: &mut SoundSystem) -> bool {
+        let mut settled = 0;
+        for (pos, clicks) in self.wheels.iter_mut().zip(self.clicks.iter_mut()) {
+            if *pos >= 0.0 && *clicks < 3 {
+                snd.request(joint);
+                // The original indexes past its 3-entry table if a wheel set could skip three
+                // spacings in one tick; no speed the game reaches does (10 m > 2.8 m per tick).
+                while *pos >= 0.0 && *clicks < 3 {
+                    *pos -= TURNOUT_SPACING[*clicks];
+                    *clicks += 1;
+                }
+            }
+            *pos += self.step;
+            if *clicks > 1 {
+                settled += 1;
+            }
+        }
+        if settled < 3 {
+            return true;
+        }
+        // fld +0x3c; fmul 108.0 (0x46c638); fcomp 40.0 (0x4594b0): below 40 km/h.
+        if flange && f64::from(self.step) * 108.0 < 40.0 {
+            snd.request(TURNOUT_SQUEAL);
+        }
+        false
     }
 }
 
@@ -972,5 +1045,39 @@ mod tests {
             snd.take_commands().last(),
             Some(&Command::SetVolume(0x2c, 1))
         );
+    }
+
+    /// Runs a clatter task to its end; returns the update index of every Play.
+    fn clatter(speed: f32, flange: bool) -> Vec<(usize, u16)> {
+        let mut snd = SoundSystem::new(Arc::new(tables()));
+        let mut c = TurnoutClatter::new(speed);
+        let mut out = Vec::new();
+        for i in 0..10_000 {
+            let alive = c.tick(0x32, flange, &mut snd);
+            out.extend(snd.take_commands().into_iter().filter_map(|cmd| match cmd {
+                Command::Play(code) => Some((i, code)),
+                _ => None,
+            }));
+            if !alive {
+                return out;
+            }
+        }
+        panic!("clatter never ended");
+    }
+
+    #[test]
+    fn turnout_clatter() {
+        // 30 m/s = 1 m per tick. Wheel sets at 0 / −2.5 / −14.5 m click at 0, 4, 7; 3, 7, 10;
+        // 15, 19 m travelled (the add follows the click test; at most three clicks each), and
+        // the task ends once the last set has clicked twice.
+        let p = clatter(30.0, true);
+        let ticks: Vec<usize> = p.iter().map(|x| x.0).collect();
+        assert_eq!(ticks, [0, 3, 4, 7, 7, 10, 15, 19]);
+        assert!(p.iter().all(|x| x.1 == 0x32));
+        // Below 40 km/h with the flange flag: squeal at the end.
+        let p = clatter(10.0, true);
+        assert_eq!(p.len(), 9);
+        assert_eq!(p.last().unwrap().1, TURNOUT_SQUEAL);
+        assert_eq!(clatter(10.0, false).len(), 8);
     }
 }

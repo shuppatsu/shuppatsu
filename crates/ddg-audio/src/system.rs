@@ -121,6 +121,12 @@ impl SoundSystem {
         }
     }
 
+    /// A play message posted straight to the sound thread, bypassing the pause flag (the pause
+    /// dialog's clicks, menus.md §1.4). The mixer plays it even while other voices are held.
+    pub fn play_ungated(&mut self, code: u16) {
+        self.post(Command::Play(code));
+    }
+
     /// `snd_post_release` (0x430130).
     pub fn release(&mut self, code: u16) {
         self.post(Command::Release(code));
@@ -274,7 +280,92 @@ impl SoundSystem {
             self.start_sequence_list(&[Step::new(code, delay), Step::new(speed, 0), Step::END]);
         }
     }
+
+    /// Signal call-out (0x420320): up to three phrases built from code immediates, each part
+    /// skipped when its argument is out of range. `prefix` 1..=3 → 0xc1 / 0xc0 / 0xd4 (0x40c010
+    /// passes 3 on passing-station routes, 0 = none); `mode` 0..=2 → 0xd1 / 0xc1 / 0xc0 (block,
+    /// home, starting signal); `aspect` 0..=6 → 0xa7 0xa8 0xa9 0xaa 0xd2 0xbe 0xc2 (green … red,
+    /// then two extra words used for repeaters).
+    pub fn call_signal(&mut self, prefix: i32, mode: i32, aspect: i32) {
+        let mut list = Vec::with_capacity(4);
+        if let Some(&(code, delay)) = usize::try_from(prefix - 1)
+            .ok()
+            .and_then(|i| SIGNAL_PREFIXES.get(i))
+        {
+            list.push(Step::new(code, delay));
+        }
+        if let Some(&(code, delay)) = usize::try_from(mode).ok().and_then(|i| SIGNAL_MODES.get(i)) {
+            list.push(Step::new(code, delay));
+        }
+        if let Some(&code) = usize::try_from(aspect)
+            .ok()
+            .and_then(|i| SIGNAL_ASPECTS.get(i))
+        {
+            list.push(Step::new(code, SIGNAL_ASPECT_DELAY));
+        }
+        list.push(Step::END);
+        self.start_sequence_list(&list);
+    }
+
+    /// Station announcement of course event 2 (0x420040): `name` indexes the second block of
+    /// the pair table (entry [`STATION_CALL_BLOCK`] + `name`). Mode 1 says the name twice,
+    /// mode 0 "next is <name>, <name>", mode 2 "next is <name> <suffix>"; the "next is" and
+    /// suffix phrases depend on the name's code range, and names below 0x112 get the chime
+    /// 0x1a4 first. Other modes pass an uninitialised list in the original; here they play
+    /// nothing.
+    pub fn call_station(&mut self, mode: i32, name: usize) {
+        let Some(&station) = name
+            .checked_add(STATION_CALL_BLOCK)
+            .and_then(|i| self.tables.call_pairs.get(i))
+        else {
+            return;
+        };
+        let code = station.code;
+        let mut list = Vec::with_capacity(5);
+        match mode {
+            1 => {
+                if code < 0x112 {
+                    list.push(Step::new(STATION_CHIME, 0x28));
+                }
+                list.extend([station, station]);
+            }
+            0 | 2 => {
+                let (intro, suffix) = if code < 0x12d {
+                    if code < 0x112 {
+                        list.push(Step::new(STATION_CHIME, 0x46));
+                    }
+                    (0x111, 0x112)
+                } else if code < 0x147 {
+                    (0x147, 0x148)
+                } else {
+                    (0x168, 0x169)
+                };
+                list.push(Step::new(intro, 0x28));
+                list.push(station);
+                list.push(if mode == 2 {
+                    Step::new(suffix, 0)
+                } else {
+                    station
+                });
+            }
+            _ => return,
+        }
+        list.push(Step::END);
+        self.start_sequence_list(&list);
+    }
 }
+
+/// 0x420320: optional prefix phrases (argument 1..=3), as (code, delay).
+const SIGNAL_PREFIXES: [(i16, i16); 3] = [(0xc1, 0x1e), (0xc0, 0x24), (0xd4, 0x1e)];
+/// 0x420320: signal kind phrases (argument 0..=2).
+const SIGNAL_MODES: [(i16, i16); 3] = [(0xd1, 0x1e), (0xc1, 0x1e), (0xc0, 0x24)];
+/// 0x420320: aspect phrases (argument 0..=6), each with delay 0x1c.
+const SIGNAL_ASPECTS: [i16; 7] = [0xa7, 0xa8, 0xa9, 0xaa, 0xd2, 0xbe, 0xc2];
+const SIGNAL_ASPECT_DELAY: i16 = 0x1c;
+/// 0x420040 reads the pair table at 0x46c4d0 = 0x46c368 + 90 entries.
+pub const STATION_CALL_BLOCK: usize = 90;
+/// BGM-slot chime before low-numbered station names (0x420040).
+const STATION_CHIME: i16 = 0x1a4;
 
 #[cfg(test)]
 mod tests {
@@ -450,5 +541,55 @@ mod tests {
         assert!(codes.contains(&0xae) && codes.contains(&0xcd));
         s.call_prefix_speed(7, 50);
         assert!(s.take_commands().is_empty());
+    }
+
+    /// Codes of every phrase a call plays, in order.
+    fn codes(s: &mut SoundSystem) -> Vec<u16> {
+        plays(s, 400).into_iter().map(|p| p.1).collect()
+    }
+
+    #[test]
+    fn signal_call() {
+        let mut s = system();
+        s.call_signal(3, 1, 2);
+        assert_eq!(codes(&mut s), [0xd4, 0xc1, 0xa9]);
+        s.call_signal(0, 0, 4);
+        assert_eq!(codes(&mut s), [0xd1, 0xd2]);
+        s.call_signal(0, 2, 0);
+        assert_eq!(codes(&mut s), [0xc0, 0xa7]);
+        // Out-of-range parts are skipped; nothing left plays nothing.
+        s.call_signal(4, 3, 7);
+        assert!(codes(&mut s).is_empty());
+        // Timing: prefix delay 0x1e → the second phrase 31 sequencer ticks later (frame 16).
+        s.call_signal(1, -1, 5);
+        assert_eq!(plays(&mut s, 40), [(0, 0xc1), (16, 0xbe)]);
+    }
+
+    #[test]
+    fn station_call() {
+        let mut pairs: Vec<Step> = (0..180).map(|_| Step::new(0x150, 30)).collect();
+        pairs[STATION_CALL_BLOCK] = Step::new(0x100, 20);
+        pairs[STATION_CALL_BLOCK + 1] = Step::new(0x130, 20);
+        pairs[STATION_CALL_BLOCK + 2] = Step::new(0x160, 20);
+        let tables = SoundTables {
+            call_pairs: pairs,
+            ..SoundTables::default()
+        };
+        let mut s = SoundSystem::new(Arc::new(tables));
+        s.call_station(1, 0);
+        assert_eq!(codes(&mut s), [0x1a4, 0x100, 0x100]);
+        s.call_station(1, 1);
+        assert_eq!(codes(&mut s), [0x130, 0x130]);
+        s.call_station(0, 0);
+        assert_eq!(codes(&mut s), [0x1a4, 0x111, 0x100, 0x100]);
+        s.call_station(2, 0);
+        assert_eq!(codes(&mut s), [0x1a4, 0x111, 0x100, 0x112]);
+        s.call_station(2, 1);
+        assert_eq!(codes(&mut s), [0x147, 0x130, 0x148]);
+        s.call_station(0, 2);
+        assert_eq!(codes(&mut s), [0x168, 0x160, 0x160]);
+        s.call_station(3, 0);
+        s.call_station(0, 90);
+        assert!(codes(&mut s).is_empty());
     }
 }

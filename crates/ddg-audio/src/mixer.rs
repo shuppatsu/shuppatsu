@@ -147,6 +147,9 @@ struct Voice {
     gain: f32,
     /// Gain actually applied (differs from `gain` only while smoothing).
     applied_gain: f32,
+    /// Stopped by a pause (0x430a00 stops every active buffer); a voice started while paused
+    /// plays, as a new DirectSound buffer would.
+    held: bool,
 }
 
 impl Voice {
@@ -162,6 +165,7 @@ impl Voice {
         hz: 0,
         gain: 0.0,
         applied_gain: 0.0,
+        held: false,
     };
 
     fn is_free(&self) -> bool {
@@ -346,7 +350,13 @@ impl Mixer {
             Command::StopAll => self.voices = [Voice::FREE; VOICES],
             Command::SetPitch(code, p) => self.set_pitch(code, p),
             Command::SetVolume(code, v) => self.set_volume(code, v),
-            Command::Pause(on) => self.paused = on,
+            Command::Pause(on) => {
+                // 0x430a00: Stop (or Play-looping again) on every active voice.
+                self.paused = on;
+                for v in self.voices.iter_mut().filter(|v| !v.is_free()) {
+                    v.held = on;
+                }
+            }
         }
     }
 
@@ -441,8 +451,8 @@ impl Mixer {
         let bank = Arc::clone(&self.bank);
         for frame in out.as_chunks_mut::<2>().0 {
             let (mut l, mut r) = (0.0f32, 0.0f32);
-            if !self.paused {
-                for v in self.voices.iter_mut().filter(|v| !v.is_free()) {
+            {
+                for v in self.voices.iter_mut().filter(|v| !v.is_free() && !v.held) {
                     if self.config.smooth_volume {
                         let d = v.gain - v.applied_gain;
                         v.applied_gain += d.clamp(-self.smooth_step, self.smooth_step);
@@ -739,6 +749,11 @@ mod tests {
         assert_eq!(m.voices().next().unwrap().position, 10);
         m.apply(Command::Pause(false));
         assert_eq!(render(&mut m, 1)[0], 10.0 / 128.0);
+        // A voice started while paused (the pause dialog's clicks) plays; the held ones don't.
+        m.apply(Command::Pause(true));
+        m.apply(Command::Play(2));
+        assert!(render(&mut m, 5).iter().any(|&s| s != 0.0));
+        assert_eq!(m.voices().find(|v| v.code == 1).unwrap().position, 11);
     }
 
     #[test]

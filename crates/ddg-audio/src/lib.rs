@@ -31,7 +31,7 @@ pub use mixer::{Command, Interpolation, Mixer, MixerConfig};
 pub use output::{AudioOutput, OutputError};
 pub use system::SoundSystem;
 pub use tables::{SoundTables, Step};
-pub use train::{AmbientSound, HornEdge, TrainSound, TrainTick};
+pub use train::{AmbientSound, HornEdge, TrainSound, TrainTick, TurnoutClatter};
 
 use thiserror::Error;
 
