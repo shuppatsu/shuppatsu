@@ -10,7 +10,7 @@
 //! previous tick, and draw the 640×480 canvas centred over black (`0x855ffc & 0x1000`; the
 //! port always centres it).
 
-use crate::front::attract::{Attract, AttractStep, AttractTables};
+use crate::front::attract::{Attract, AttractCounters, AttractEnv, AttractStep, AttractTables};
 use crate::front::calibrate::CalibrationScreen;
 use crate::front::dialog::ExitConfirm;
 use crate::front::options::{self, ControlPage, ListResult, OptionsList, SetEffect, ValuePage};
@@ -127,6 +127,8 @@ pub struct App {
     joystick: bool,
     /// The replay-playback flag `0x816974` (R in the train list).
     replay: bool,
+    /// Attract's walk and photo counters (`0x8573c8`, `0x8573cc`), kept across walks.
+    attract_counters: AttractCounters,
     down: [bool; 256],
     menu_input: MenuInput,
     script: play::Script,
@@ -214,9 +216,10 @@ impl App {
                 gpu: None,
             }),
             // Boot: `Game_MainFlow` starts with attract (`0x855ffc & 0x40` clear).
-            screen: Screen::Attract(Attract::new(false)),
+            screen: Screen::Attract(Attract::new(false, AttractCounters::default())),
             joystick,
             replay: false,
+            attract_counters: AttractCounters::default(),
             down: [false; 256],
             menu_input: MenuInput::NONE,
             script,
@@ -293,7 +296,9 @@ impl App {
 
     fn start(&mut self, next: Next, sfx: &mut Vec<Sfx>) -> Result<()> {
         self.screen = match next {
-            Next::Attract { skip_opening } => Screen::Attract(Attract::new(skip_opening)),
+            Next::Attract { skip_opening } => {
+                Screen::Attract(Attract::new(skip_opening, self.attract_counters))
+            }
             Next::Title { cursor } => {
                 // TitleMenu_Run 0x42a1c0 starts the menu BGM.
                 sfx.push(Sfx::Play(snd::BGM_MENU));
@@ -383,9 +388,19 @@ impl App {
         self.screen = match screen {
             Screen::Attract(mut a) => {
                 let marks = |route| r.save.eeprom.clear_mark(route);
-                let komachi = komachi_unlocked(t, marks);
-                match a.tick(&input, &self.defs.attract, komachi, &mut r.layer, &mut sfx) {
+                let aenv = AttractEnv {
+                    komachi: komachi_unlocked(t, marks),
+                    difficulty: r.save.eeprom.difficulty(),
+                };
+                let step = a.tick(&input, &self.defs.attract, aenv, &mut r.layer, &mut sfx);
+                self.attract_counters = a.counters;
+                match step {
                     AttractStep::Running => Screen::Attract(a),
+                    AttractStep::Demo { kind, stage } => {
+                        eprintln!("attract: demo drive {kind:?} on stage {stage} (not built)");
+                        a.demo_done(false);
+                        Screen::Attract(a)
+                    }
                     AttractStep::KomachiMovie => {
                         eprintln!("attract: the Komachi movie would play here (postponed, D2)");
                         Screen::Attract(a)
