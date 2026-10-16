@@ -320,7 +320,7 @@ stats (`0x857020`), the early accumulator and the clock skew, and `0x8570b8 += 1
 | 10 / 11 | no-power section | 10 enters (`0x856fba = 1`), any power → 2; 11 exits: still 1 → **+0x45ad10 s**. Stopping inside costs 10 s | confirmed (name **guess**: AC/DC dead section, only Akita/Ōu stages have bonuses) |
 | 12 | scenery train event | presentation | likely |
 | 14 / 15 / 16 | repeater, display variant | §4.3 | likely |
-| 18 / 19 | `0x84c400 = 1 / 0` | unknown flag | unknown |
+| 18 / 19 | `0x84c400 = 1 / 0` | flange-squeal / departure-sound flag, read by the train sounds (audio-text.md §10) | likely |
 | 20 | `0x857224 = a` | message shown at the next green | confirmed |
 | 21 / 22 | weather on / off | 21 starts only if `remaining ≥ 0x459d20`; level `0x857230` ramps to 254, > 199 sets wet rails `0x84c2e0` (cleared in tunnels); ends after 0x459dc0 ticks | confirmed (physics effect: physics agent) |
 
@@ -526,7 +526,7 @@ Hook points for event-level traces: 0x415080 (every time message: kind, seconds)
 * The horn deadline `0x856d6a` is an i16: with an odometer above 32 767 m a whistle sign would
   expire immediately. No whistle sign lies that far in the shipped data (only the Akita bonus
   section beyond 32 km), so it is latent.
-* Meaning of kinds 18/19 (`0x84c400`) and of display variant `0x8570c2`.
+* Meaning of display variant `0x8570c2`.
 * Difficulty names for columns 0–3.
 
 ## 14. Oracle replay (hilly-drive.csv)
