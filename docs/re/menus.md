@@ -879,8 +879,34 @@ Approximated or left out:
 * No force feedback: the vibration item is skipped as on a PC without an FF device. The Shift
   override's keyboard legends (0x829d08) are not drawn. The difficulty value page writes the
   eeprom; a run reads it at its start.
-* The sprite canvas is always centred with black bars (the port has no non-centred mode), so the
+* The 4:3 layout is always centred (the port has no non-centred mode), so the
   `0x855ffc & 0x1000` toggling has no visible effect.
+* **Enhancement `wide_menus`** (port, approved by the user as widescreen presentation; on
+  whenever the window is wider than 4:3, in both HUD layouts and every `--ui-scaling`): the
+  front end's canvas takes the window's shape (`App::fit_front`) with every slot still
+  centred, so items, header text, legends and cursor keep their 4:3 places and a 4:3 window is
+  unchanged (compared pixel for pixel at 1280×960). Only the **backdrops** are continued to
+  the window edges, never stretched (`front::mark_backdrops`, `SpriteBank::set_wide_fill`,
+  `sprites::Repeat`):
+  * tbl 0x501, the 40×30-tile background of slot 0xb7 (title menu, options and control page,
+    calibration): the diagonal 3000番台 logo pattern is a block of **14×14 tiles (224 px)**
+    that repeats from column 14 to the right edge (and in rows 14–29 from column 0); the
+    top-left block (rows 0–13, columns 0–13) uses other tile ids. **confirmed** (tile ids of
+    tbl.rom entry 0x501);
+  * the header bands of 0x42a820 (per-page i16 table 0x47c50c, e.g. tbl 0x516/0x517) and
+    the route-select bar tbl 0x515: 40×7 tiles, all one black tile (0x2569) except the
+    coloured stripe in columns 3–4, so they repeat with a period of one column.
+    **confirmed** (same).
+
+  The period is not hardcoded: `Repeat::of` finds the shortest period of the columns at the
+  right edge of the map in its tile ids, and every column outside the map maps into that run
+  (`start + (c − start) mod period`), so the tiling phase continues the original's centred
+  picture on both sides. A slot is continued only when it shows the whole map across the
+  full 640-px design. Everything else stays centred with black beside it: the records
+  viewer's framed table (it draws its own black side bars), the route/train select (its
+  background is black; the 0x515 band continues black on black), the departure board, the
+  attract pictures and the stage-flow screens over the 3D view (their panels, e.g. the report
+  card tbl 0x444, are framed art).
 
 ## Open questions
 

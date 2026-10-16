@@ -85,7 +85,8 @@ rebuild.
 
 Decided by the user (enhancements). The 2D layer (sprites, HUD, menus, translated text) is
 composed on the CPU into a canvas of 640×480 × the *canvas multiple* (`SpriteLayer::scale`),
-widened to the window's shape in the enhanced HUD while driving. Three settings, independent of
+widened to the window's shape in the enhanced HUD while driving and, in every layout, on the
+menus (`wide_menus`, menus.md §14). Three settings, independent of
 each other (`crates/ddg-game/src/presentation.rs`, `crates/ddg-render/src/overlay.rs`):
 
 * **Layout** (`hud_layout`). `original`: the original 4:3 layout, centred, at any resolution
