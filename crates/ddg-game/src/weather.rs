@@ -550,6 +550,11 @@ impl Weather {
         }
     }
 
+    /// Starts a jolt task 0x40e3d0 with amplitude `a` (0x40e370; the coupling minigame).
+    pub fn start_jolt(&mut self, a: f32) {
+        self.jolt = Some(a);
+    }
+
     /// The jolt task 0x40e3d0, started by a forced-stop arrival (0x40a0a0, `0x8570b4 == 1`).
     fn step_jolt(&mut self, drive: &Drive) {
         let r = drive.rules();

@@ -15,6 +15,7 @@ mod stage;
 use anyhow::Result;
 use ddg_audio::{AudioOutput, HornEdge, MixerConfig, SoundBank, SoundSystem, SoundTables};
 use ddg_audio::{TrainSound, TrainTick};
+use ddg_engine::coupling::CouplingEvent;
 use ddg_engine::drive::Drive;
 use ddg_engine::rules::RuleEvent;
 use ddg_engine::traffic::TrafficSound;
@@ -114,6 +115,15 @@ impl Sound {
     pub fn events(&mut self, events: &[RuleEvent]) {
         if let Some(p) = self.stage.as_mut() {
             p.events.extend_from_slice(events);
+        }
+        // The coupling minigame (0x4093c0) plays its sounds itself.
+        for e in events {
+            match *e {
+                RuleEvent::Coupling(CouplingEvent::Sound(code)) => self.snd.request(code),
+                RuleEvent::Coupling(CouplingEvent::Music(code)) => self.snd.play_ungated(code),
+                RuleEvent::Coupling(CouplingEvent::StopSounds) => self.snd.stop_all(),
+                _ => {}
+            }
         }
     }
 

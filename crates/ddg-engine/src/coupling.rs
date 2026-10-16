@@ -20,6 +20,8 @@ pub const INTRO_TICKS: u32 = 10 + 0x50 + 0xb4;
 pub const CAPTION_TICK: u32 = 10 + 0x50;
 /// Sprites and BGM 0x19a come after the first 10 ticks.
 pub const SETUP_TICK: u32 = 10;
+/// BGM of the minigame (0x42ff20(0x19a)).
+pub const MUSIC: u16 = 0x19a;
 /// Time limit, ticks (`local_14 = 0x709`, shown with 0x417040).
 pub const TIME_LIMIT_TICKS: i32 = 0x709;
 
@@ -120,6 +122,10 @@ pub enum CouplingPhase {
 pub enum CouplingEvent {
     /// `Sfx_Play(code)` (0x41fda0).
     Sound(u16),
+    /// `Snd_Play(code)` 0x42ff20, not gated by the sound option: the BGM 0x19a at intro tick 10.
+    Music(u16),
+    /// 0x430160 at the cleanup: every voice stops.
+    StopSounds,
     /// The result is decided (sprites 0x17f / 0x180 and 連結成功 0x2dc / 連結失敗 0x2dd).
     Result(CouplingResult),
     /// Camera jolt (0x40e370), see [`JOLT_SOFT`] / [`JOLT_HARD`].
@@ -145,6 +151,8 @@ pub struct Coupling {
     pub dist_m: f32,
     /// `trunc` of the unclamped distance (`0x85722c` during the game).
     pub dist_trunc: i32,
+    /// Speed readout, km/h (`trunc(0x857234 × 3.6)`, f64 3.6 at 0x459420).
+    pub speed_kmh: i32,
     /// Frame of the waiting set's coupler (`0x857244`), 1 once coupled or timed out.
     pub coupler_frame: u8,
 }
@@ -189,6 +197,7 @@ impl Coupling {
             calls: 0,
             dist_m: TARGET_OFFSET_M as f32,
             dist_trunc: 0,
+            speed_kmh: 0,
             coupler_frame: 0,
         }
     }
@@ -210,6 +219,9 @@ impl Coupling {
         let mut out = CouplingTick::default();
         match self.phase {
             CouplingPhase::Intro(t) => {
+                if t == SETUP_TICK {
+                    out.events.push(CouplingEvent::Music(MUSIC));
+                }
                 if let Some(&(_, code)) = INTRO_SOUNDS
                     .iter()
                     .find(|&&(at, _)| t >= CAPTION_TICK && at == t - CAPTION_TICK)
@@ -240,6 +252,7 @@ impl Coupling {
         }
         let d = f64::from(self.dist_m);
         let v = f64::from(input.speed_mps);
+        self.speed_kmh = (v * 3.6) as i32;
         if v <= 0.0 && self.horn == 0 && input.horn_pressed {
             self.points += HORN_FIRST_POINTS;
             self.horn = -1;
@@ -352,6 +365,9 @@ impl Coupling {
             }
         }
         // `len` loop ticks, then the cleanup tick.
+        if t >= len {
+            out.events.push(CouplingEvent::StopSounds);
+        }
         self.phase = if t >= len {
             CouplingPhase::Done(r)
         } else {

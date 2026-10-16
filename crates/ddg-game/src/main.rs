@@ -5,6 +5,7 @@
 
 mod app;
 mod cab;
+mod coupling_hud;
 mod captions;
 mod departure_hud;
 mod front;

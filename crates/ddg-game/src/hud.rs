@@ -93,7 +93,7 @@ const HIGH_SPEED_OFF_KMH: i32 = 100;
 const ATC_SPEEDS: [i32; 8] = [0, 0x1e, 0x46, 0x6e, 0xa0, 0xd2, 0xf5, 0x113];
 const ATC_BAR_MAX: i32 = 10;
 /// Speedometer mode `0x856d34`: 2 = ATC section.
-const SPEED_MODE_ATC: i32 = 2;
+pub const SPEED_MODE_ATC: i32 = 2;
 /// The cab-signal lamp stays 30 more frames after the wait (`0x829d14 = 0x1e`, 0x434fd0).
 const LAMP_AFTER_TICKS: i32 = 0x1e;
 

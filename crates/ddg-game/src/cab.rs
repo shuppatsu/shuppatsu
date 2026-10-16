@@ -9,11 +9,13 @@
 //! first (they are calls made earlier in the same tick), then the task updates.
 
 use crate::captions::{Approach, CaptionDefs, Captions, DEPARTURE_BANNER_Y, DISTANCE};
+use crate::coupling_hud::{CouplingHud, CouplingTables};
 use crate::departure_hud::{DepartureHud, Segment};
 use crate::hints::Hints;
-use crate::hud::{Hud, HudState};
+use crate::hud::{Hud, HudState, SPEED_MODE_ATC};
 use crate::popups::{Popups, time_up_advice};
 use anyhow::Result;
+use ddg_engine::coupling::Coupling;
 use ddg_engine::drive::{Drive, DrivePhase};
 use ddg_engine::rules::{Phase, RuleEvent, STAT_COUNT};
 use ddg_formats::cab_hud::CabTables;
@@ -68,6 +70,10 @@ pub struct Snap {
     /// Timetable "stops" flags and marks (`0x856fe1[station]`).
     pub stops: Vec<bool>,
     pub marks: Vec<u8>,
+    /// The coupling minigame while the rules run it (rules.md §7.5).
+    pub coupling: Option<Coupling>,
+    /// The last `Vehicle_Set` code of the run (0x410320), `None` = the stage's own.
+    pub vehicle_code: Option<u32>,
 }
 
 impl Snap {
@@ -109,6 +115,8 @@ impl Snap {
                 .map_or(0, |row| row.params[1]),
             stops: r.timetable().iter().map(|row| row.stops == 1).collect(),
             marks: r.marks.clone(),
+            coupling: r.coupling.clone().filter(|_| r.phase == Phase::Coupling),
+            vehicle_code: r.vehicle_code,
         }
     }
 
@@ -162,6 +170,10 @@ pub struct CabHud {
     /// Ticks since the game over, and the category of the last statistic added (`0x856d84`).
     game_over_ticks: Option<u32>,
     last_stat: i32,
+    /// The coupling minigame's screen, and the `Vehicle_Set` code the cab shows.
+    coupling: CouplingHud,
+    vehicle_code: Option<u32>,
+    stage_speed_mode: i32,
 }
 
 impl CabHud {
@@ -176,12 +188,14 @@ impl CabHud {
             .unwrap_or_default();
         let captions = Captions::new(CaptionDefs::new(hud.tables(), &cab));
         let vehicle = hud.vehicle(stage as u32);
+        let speed_mode = cab.speed_mode.get(stage).copied().unwrap_or(0);
+        let coupling = CouplingHud::new(CouplingTables::read(exe)?);
         Ok(Self {
             popups: Popups::new(exe, stage, cab.origin, cab.time_up_advice_pos)?,
             hints: Hints::new(horn_on_button),
             captions,
             departure: DepartureHud::new(&cab),
-            speed_mode: cab.speed_mode.get(stage).copied().unwrap_or(0),
+            speed_mode,
             hud,
             stage,
             name_ids,
@@ -195,6 +209,9 @@ impl CabHud {
             vehicle,
             game_over_ticks: None,
             last_stat: -1,
+            coupling,
+            vehicle_code: None,
+            stage_speed_mode: speed_mode,
         })
     }
 
@@ -274,11 +291,24 @@ impl CabHud {
                 RuleEvent::AtsBell => ats_bell = true,
                 RuleEvent::AtsAcknowledged => acknowledged = true,
                 RuleEvent::GameOver => self.game_over_ticks = Some(0),
+                // 0x4093c0: the distance panel goes off (`0x856d0c = 0`).
+                RuleEvent::CouplingStarted => self.panel_active = false,
                 _ => {}
             }
         }
         if s.ats == 0 && !acknowledged {
             self.popups.ats_cleared();
+        }
+        if s.vehicle_code != self.vehicle_code {
+            // `Vehicle_Set` 0x410320: the vehicle plate and, for `0x1000 | n`, the ATC readout.
+            self.vehicle_code = s.vehicle_code;
+            let code = s.vehicle_code.unwrap_or(self.stage as u32);
+            self.vehicle = self.hud.vehicle(code);
+            self.speed_mode = if s.vehicle_code.is_some_and(|c| c & 0x1000 != 0) {
+                SPEED_MODE_ATC
+            } else {
+                self.stage_speed_mode
+            };
         }
 
         // 0x40c4e0 (driving-loop body): panel toggle, approach captions, gradient signs.
@@ -345,7 +375,8 @@ impl CabHud {
             scheduled: s.scheduled,
             clocks_visible: self.clocks_visible,
             clocks_frozen: frozen,
-            remaining_visible: s.drive_phase != DrivePhase::Cleared,
+            remaining_visible: s.drive_phase != DrivePhase::Cleared
+                && !self.coupling.hides_remaining(s.coupling.as_ref()),
             panel_active: self.panel_active,
             panel_on: self.panel_on,
             next_is_stop: s.target_stops,
@@ -366,6 +397,7 @@ impl CabHud {
             lamp_lit: self.lamp_lit,
         };
         self.hud.update(&state, layer);
+        self.coupling.update(s.coupling.as_ref(), events, layer);
 
         // The time-up popup is created after the 20th `Task_Tick` past the game over; its first
         // update is in the next tick.

@@ -310,8 +310,8 @@ suppressed.
 The bar is read as `[0x4655b0 − 4·margin]` (`cab_hud::CabTables::atc_bar`). The analog dial is
 not drawn while driving in ATC mode (Cab_Overlay neither draws nor clears slot 0x81; with no
 per-tick reset the dial image would stay without its needle, the port clears it, **guess**).
-Not reachable in the port yet: the engine does not model the bonus section (stage 1 station
-7 → 0x18 and the stage-2 coupling game) that calls `Vehicle_Set(0x1000 | n)`.
+Reached in the port through the stage-1 bonus section and a successful stage-2 coupling
+(rules.md §7.5): `Rules::vehicle_code` → `CabHud` switches the plate and `speed_mode`.
 
 ### 3.7 Station plates and route strip — confirmed
 
@@ -775,8 +775,8 @@ renderer.md §13, confirmed). None of the HUD elements in §3 use them.
 11. Phase flag `0x855ff8 & 0x100`, which also hides captions, banners and landmarks: its
     setter is not identified; the port ignores it.
 12. ~~`0x85744c` and the 3D signals~~: wired (`Rules::signal_model`, traffic.md §7).
-13. The ATC panel (§3.6) and rows 20/21 of the vehicle table are implemented but unreachable:
-    the engine does not model the bonus sections that call `Vehicle_Set(0x1000 | n)`.
+13. ~~The ATC panel unreachable~~: the bonus sections are modelled (rules.md §7.5). The
+    coupling minigame's screen (slots 0x3f–0x4b, captions, timer) is `coupling_hud.rs`.
 14. The handling-error hint (slots 0x2e/0x2f) counts ticks only in the train task's driving
     branch and resets when `0x855ff8 & 0x200000` is set; that flag is not identified.
 15. Navigator reaction animations (slot 0x61, `NaviAnim` 0x410cb0) are not drawn yet; the sound

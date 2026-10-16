@@ -22,9 +22,10 @@ use crate::screens::tables::ScreenTables;
 use crate::screens::{MenuInput, Sfx};
 use crate::window::Gpu;
 use anyhow::{Context, Result};
+use ddg_engine::coupling::CouplingEvent;
 use ddg_engine::drive::{Drive, DrivePhase, DriverInput, LoadError};
 use ddg_engine::physics::TrainTables;
-use ddg_engine::rules::RuleTables;
+use ddg_engine::rules::{RuleEvent, RuleTables};
 use ddg_formats::exe::Exe;
 use ddg_formats::result_camera::ResultTables;
 use ddg_formats::route::UNITS_PER_POINT;
@@ -675,6 +676,11 @@ impl Play {
             self.reload_scene()?;
         }
         self.update_world();
+        for e in &self.last_events {
+            if let RuleEvent::Coupling(CouplingEvent::Jolt(a)) = *e {
+                self.weather.start_jolt(a);
+            }
+        }
         self.weather.tick(&self.drive, hud_input.segment_started);
         self.weather.apply_to_scene(&mut self.scene);
         self.update_hud(hud_input);
