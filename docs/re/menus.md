@@ -217,11 +217,11 @@ render mode `0x84c128 = 2`, slot 0x26 placed at (0x170, 0x154).
 
 | Phase | Function | Updates | Content |
 |---|---|---|---|
-| A | 0x402fb0 | 145 | render mode 2 (whole 496×400 screen, eye (0.5, 0.13, −2.488), target (−1.041, 0.08, 2.551), 45°): draw 0x403920 = backdrop gradient 0x4692e0 (palette 3 index 1 → 255: sky (213,213,238) to ground (200,200,200)), black rect bars 0–40 and 440–480 px, the track bed 0x2f83 at the origin and the Komachi consist (`*0x4573dc` = 0x450f58, 28-byte records `{part[5], offset, spacing}`) at (0.15, −0.2, t + 0.5·L − offset); t from 10.0, −0.04 per update (f64 0x458ac0); update 2 sets the draw callback and slot 0x10 = tbl 0x198 (platform photo) at (96, 56), palette 0x11 |
+| A | 0x402fb0 | 145 | render mode 2 (eye (0.5, 0.13, −2.488), target (−1.041, 0.08, 2.551), 45°): draw 0x403920 = backdrop gradient 0x4692e0 (palette 3 index 1 → 255: sky (213,213,238) to ground (200,200,200)), black rect bars 0–40 and 440–480 px, the track bed 0x2f83 at the origin and the Komachi consist (`*0x4573dc` = 0x450f58, 28-byte records `{part[5], offset, spacing}`) at (0.15, −0.2, t + 0.5·L − offset); t from 10.0, −0.04 per update (f64 0x458ac0); update 2 sets the draw callback and slot 0x10 = tbl 0x198 (platform photo: the left platform, the rest transparent) at (96, 56), palette 0x11. **Where the 3D goes — confirmed (code + Wine capture):** mode 2's viewport is the full virtual frame (centre (248, 200), half (248, 200)), which `Viewport_Apply` 0x436e14 draws as 496×400 *unscaled* pixels at ((W − 480)/2 + 16, (H − 400)/2 + 16) whenever the resolution index `0x816afc` ≠ 0 (renderer.md §5), i.e. (96, 56) at 640×480: exactly the photo's rectangle, so the 3D platform lines up with the photo and the train passes in front of its edge; everything outside x 96–592, y 56–440 is black (measured on the capture). Projection 45°, aspect 1.25 (0x3fa00000) |
 | B | 0x403080 | 57 | black 3D; slot 0x26 = tbl 0x123 (3000番台 badge); slot 0x10 at (80, 124): frames 0x457a20[0..5] (0x439–0x43d), palette 0xe, the first for 20 updates, then each new frame starts with one update in palette 0x14 (all white: `0x436c20(0x14, 0xffffff)`) at counts 20, 26, 32, 40 |
 | C | 0x4031d0 | 94 | as A with t from 7.0, −0.1953125 per update (0x458ac8): the train rushes past |
 | D | 0x4032a0 | 57 | as B with frames 0x457a20[5..10] (0x43e–0x442); at its end `0x408080(1, 24)` (Morioka on AKITA1C), FOV 30°, the camera jumps 150 units |
-| E | 0x403420 | 89 | render mode 0 on the route, black bars x 0–64 and 576–640 and the bottom band (268–400 virtual); update 0: `0x406e10(spawn 2, flags 0x11, 270 km/h, 0, model 7)` (an E3 set; rear bogie 12 points back instead of 10) and v = 0.1852 units/tick (f32 0x3e3da512); then +0.0038892 per update (0x458ae0) up to 0.51 (0x458ad8); speed readout 0x416f50(`trunc(v · 0.5 · 1079.913607)`), slot 0x75 = tbl 0x53 at (64, 112) and the 7-segment palette entries; at its end list 5 is killed |
+| E | 0x403420 | 89 | render mode 0 on the route, black bars x 0–64 and 576–640 and the bottom band (268–400 virtual) plus the drive callback's own top mask 0–94 (0x486160, scene.md §2.1), so the view is x 64–576, virtual y 94–268 (pixels 113–321, measured); update 0: `0x406e10(spawn 2, flags 0x11, 270 km/h, 0, model 7)` (an E3 set; rear bogie 12 points back instead of 10) and v = 0.1852 units/tick (f32 0x3e3da512); then +0.0038892 per update (0x458ae0) up to 0.51 (0x458ad8); speed readout 0x416f50(`trunc(v · 0.5 · 1079.913607)`), slot 0x75 = tbl 0x53 at (64, 112) and the 7-segment palette entries; at its end list 5 is killed |
 | F | 0x403540 | 91 | white studio (`0x40eed0(8)`, palette 3 all white): the platform set 0x2df3, the 489 car 0x327a at z40 and the EF63 pair 0x2df2 at z20 and z20 + 3.9 (x −1.5); three camera keys (counts 0, 20, 40) with FOV 16°, 12°, 22°; from count 41 z20 and z40 −0.15 per update and slot 0x10 = tbl 0x443 (3000番台 scroller) at (20c − 1376, 140), palette 0xe |
 | G | 0x403750 | 33 | black 3D; slot 0x10 at (80, 124), palette 0xe: 0x457a20[10..12] for counts 0–2, 0x2c2 to 23, 0x2c3 (the navigator girl's salute and wink) to 31; then the title picture 0x4037f0 in the same task |
 
@@ -858,10 +858,14 @@ Approximated or left out:
   drives (`play/demo.rs`: a `Play` on `Drive::start_demo` with the overlay), the photos and the
   poster, with the walk and photo counters kept across walks. The opening is `play/opening.rs`
   on a stage-1 `Play`. Approximated: the opening's E3 spawn uses the normal spawner (rear bogie
-  10 points back, not 12) and the render-mode-2 aspect 1.25 and the studio aspects are not
-  modelled (the port's projection stretch is used); the GMQ logo of the route demo animates on
+  10 points back, not 12); the GMQ logo of the route demo animates on
   the rail-joint clicks of the sound module, so it stands still without sound (headless). The
   Komachi movie is postponed (decision D2): its trigger is logged.
+* The opening on other window shapes: render mode 2 (A, C) is the 496×400 window scaled with
+  the centred 640×480 design (it has to stay on the photo), black around it; in E and F the 3D
+  outside the inset x 64–576 is masked black to the window edges and the canvas bars reach the
+  edges of a wide canvas, so every shape shows the 4:3 picture (compared frame by frame with a
+  Wine capture of the original at 640×480).
 * The ending (`play/ending.rs`) and the bonus game (`ddg_engine::bonus`, `play/bonus.rs`) run in
   the end-of-run flow and between stations. Approximated: the registry ending bits, the bonus
   game's force feedback and motor-pitch sounds, the bonus aspect 1.28; the bonus game is not

@@ -4,7 +4,8 @@
 //!
 //! * A (0x402fb0, 145 updates) and C (0x4031d0, 94): render mode 2, a fixed camera on a
 //!   track-bed strip (0x2f83) with the Komachi consist (model list `*0x4573dc`) coming head-on,
-//!   a platform photo (tbl 0x198) over it and black bars at the top and bottom;
+//!   a platform photo (tbl 0x198) over it, all in the 496×400 window at (96, 56) that
+//!   `Viewport_Apply` gives mode 2 (black around it);
 //! * B (0x403080) and D (0x4032a0), 57 each: black 3D, a 480×208 picture with white flashes
 //!   (palette 0x14) and the 3000番台 badge;
 //! * E (0x403420, 89): the real route from Morioka (stage 1 station 24, AKITA1C) at 30°, with
@@ -24,7 +25,7 @@ use ddg_formats::{part::Part, rom2::Rom2, tex::TexFile};
 use ddg_render::effects::EffectGeometry;
 use ddg_render::sprites::Fan;
 use ddg_render::world::{BgVertex, bg_depth};
-use ddg_render::{Camera, FrameGeometry, PartLibrary};
+use ddg_render::{Camera, FrameGeometry, PartLibrary, Projection, SubView};
 use glam::{Mat4, Vec3};
 
 /// The BGM (0x42ff20(0x1a1)), released by the title picture's destroy 0x403d20.
@@ -116,6 +117,17 @@ const KEYS: [Key; 3] = [
 ];
 const SLIDE: f32 = 0.15;
 const SLIDE_FROM: i32 = 41;
+/// Render mode 2's 3D window in original 640×480 pixels. From 640×480 up (`0x816afc != 0`)
+/// `Viewport_Apply` (0x436e14) draws the full 496×400 virtual frame of mode 2 unscaled at
+/// ((W − 480)/2 + 16, (H − 400)/2 + 16) (16.0 at 0x47cbec), which is the rectangle of the
+/// platform photo (tbl 0x198 at (96, 56)); the rest of the screen stays black.
+const MODE2_WINDOW: [f32; 4] = [96.0, 56.0, 496.0, 400.0];
+/// Render mode 2's projection aspect (f32 1.25 for 0x4183b0 in 0x425680 case 2).
+const MODE2_ASPECT: f32 = 1.25;
+/// The black bars of phases E and F (draw callbacks 0x403c70 / 0x403a60): x 0..64 and
+/// 576..640.
+const INSET_LEFT: i32 = 64;
+const INSET_RIGHT: i32 = 576;
 /// Mask quads in virtual y: the top band 0..94 and the bottom band 268..400.
 const VIEW_TOP: f32 = 52.0;
 const VIEW_H: f32 = 348.0;
@@ -126,6 +138,9 @@ pub(super) struct CustomView {
     pub fov_tenths: u16,
     /// Virtual y where the 3D viewport starts (52 normally, 0 in render mode 2).
     pub full_screen: bool,
+    /// The 3D drawn only in this rectangle of the 640×480 design (original pixels) with the
+    /// rest black: render mode 2's 1:1 window ([`MODE2_WINDOW`]).
+    pub window: Option<[f32; 4]>,
 }
 
 #[derive(Debug, Clone)]
@@ -249,6 +264,9 @@ impl Play {
         let l = &mut self.layer;
         l.fans.clear();
         l.widgets.clear();
+        // On a wide canvas (enhancement `wide_hud`) the bars reach its edges, like the 4:3
+        // screen edges they end at in the original.
+        let room = l.side_room().ceil() as i32;
         match o.phase {
             0 | 2 => {
                 if o.phase == 2 && o.c == 0 {
@@ -263,8 +281,8 @@ impl Play {
                 }
                 // Draw 0x403920's rect-layer bars (top and bottom 40 px).
                 if o.draw {
-                    l.fans.push(bar(0, 0, 640, 40));
-                    l.fans.push(bar(0, 440, 640, 480));
+                    l.fans.push(bar(-room, 0, 640 + room, 40));
+                    l.fans.push(bar(-room, 440, 640 + room, 480));
                 }
             }
             1 | 3 => {
@@ -304,8 +322,7 @@ impl Play {
                     slots::clear(l, SLOT_SPEED);
                 }
                 self.cab.hud.segments(kmh, l);
-                l.fans.push(bar(0, 0, 64, 480));
-                l.fans.push(bar(576, 0, 640, 480));
+                side_bars(l, room);
                 route_units = Some(o.v);
             }
             5 => {
@@ -330,8 +347,7 @@ impl Play {
                     slots::set(l, SLOT_PICTURE, TBL_SCROLLER, (x, 140), PAL_PICTURE, 3);
                 }
                 if o.c < ENDS[5] {
-                    l.fans.push(bar(0, 0, 64, 480));
-                    l.fans.push(bar(576, 0, 640, 480));
+                    side_bars(l, room);
                 }
             }
             _ => {
@@ -414,6 +430,7 @@ impl Play {
         library: &PartLibrary,
         frame: &mut FrameGeometry,
         fx: &mut EffectGeometry,
+        aspect: f32,
     ) -> Option<CustomView> {
         let o = opening?;
         if o.phase == 4 {
@@ -429,6 +446,7 @@ impl Play {
                 camera: studio_camera(),
                 fov_tenths: STUDIO_FOV,
                 full_screen: true,
+                window: None,
             });
         }
         if o.phase == 5 {
@@ -436,6 +454,7 @@ impl Play {
             fx.add_flat_quad(quad(1.0, ndc(94.0)), black, 0);
             fx.add_flat_quad(quad(ndc(268.0), -1.0), black, 0);
             fx.add_flat_quad(quad(ndc(64.0), ndc(384.0)), [1.0; 4], 0x7ffe);
+            inset_masks(fx, aspect);
             let at = |z: f32| Mat4::from_translation(Vec3::new(STUDIO_X, 0.0, z));
             frame.add_instance(library, PART_SET, &Mat4::IDENTITY);
             frame.add_instance(library, PART_CAR, &at(o.z40));
@@ -454,9 +473,10 @@ impl Play {
                 },
                 fov_tenths: key.5,
                 full_screen: false,
+                window: None,
             });
         }
-        // Render mode 2: the whole screen; the backdrop from virtual y 64 to 384.
+        // Render mode 2: the 496×400 window; the backdrop from virtual y 64 to 384.
         let ndc = |vy: f32| 1.0 - 2.0 * (vy / 400.0);
         gradient(fx, ndc(64.0), ndc(384.0));
         frame.add_instance(library, PART_BED, &Mat4::IDENTITY);
@@ -469,11 +489,13 @@ impl Play {
             camera: studio_camera(),
             fov_tenths: STUDIO_FOV,
             full_screen: true,
+            window: Some(MODE2_WINDOW),
         })
     }
 
-    /// Phase E's bottom band (the drive's view).
-    pub(super) fn opening_masks(opening: Option<&Opening>, fx: &mut EffectGeometry) {
+    /// Phase E's top and bottom bands and inset bars over the drive's view; `aspect` is the target's
+    /// width / height.
+    pub(super) fn opening_masks(opening: Option<&Opening>, fx: &mut EffectGeometry, aspect: f32) {
         if opening.is_some_and(|o| o.phase == 4) {
             let ndc = |vy: f32| 1.0 - 2.0 * ((vy - VIEW_TOP) / VIEW_H);
             fx.add_flat_quad(
@@ -486,6 +508,14 @@ impl Play {
                 [0.0, 0.0, 0.0, 1.0],
                 0,
             );
+            // The drive's own callback 0x41e460 masks virtual rows 0..94 (0x486160,
+            // scene.md §2.1), which the cab HUD hides in a run but the opening shows black.
+            fx.add_flat_quad(
+                [[-1.0, 1.0], [1.0, 1.0], [1.0, ndc(94.0)], [-1.0, ndc(94.0)]],
+                [0.0, 0.0, 0.0, 1.0],
+                0,
+            );
+            inset_masks(fx, aspect);
         }
     }
 
@@ -499,6 +529,63 @@ fn studio_camera() -> Camera {
     Camera {
         eye: Vec3::from(STUDIO_EYE),
         target: Vec3::from(STUDIO_TARGET),
+    }
+}
+
+/// Phases E and F: the black bars left and right of the inset, out to the canvas edges.
+fn side_bars(l: &mut ddg_render::sprites::SpriteLayer, room: i32) {
+    l.fans.push(bar(-room, 0, INSET_LEFT, 480));
+    l.fans.push(bar(INSET_RIGHT, 0, 640 + room, 480));
+}
+
+/// NDC x of original canvas x in a 3D view spanning a window of `aspect` (width / height):
+/// the 640×480 design is centred at full height.
+fn canvas_ndc_x(x: i32, aspect: f32) -> f32 {
+    (x as f32 / 320.0 - 1.0) * (4.0 / 3.0) / aspect
+}
+
+/// Phases E and F: the 3D outside the inset x 64..576 is black on any window shape, as
+/// the 4:3 screen shows it (the canvas bars only cover the canvas).
+fn inset_masks(fx: &mut EffectGeometry, aspect: f32) {
+    let black = [0.0, 0.0, 0.0, 1.0];
+    let (l, r) = (
+        canvas_ndc_x(INSET_LEFT, aspect),
+        canvas_ndc_x(INSET_RIGHT, aspect),
+    );
+    fx.add_flat_quad([[-1.0, 1.0], [l, 1.0], [l, -1.0], [-1.0, -1.0]], black, 0);
+    fx.add_flat_quad([[r, 1.0], [1.0, 1.0], [1.0, -1.0], [r, -1.0]], black, 0);
+}
+
+/// Where render mode 2's window ([`CustomView::window`]) lands in a `size` target: the
+/// rectangle scaled with the centred 640×480 design, so it stays on the platform photo, and
+/// the projection aspect 1.25 after the 4.12 round trip of 0x4183b0 (or square pixels).
+pub(super) fn window_view(
+    window: [f32; 4],
+    fov_tenths: u16,
+    (width, height): (u32, u32),
+    square_pixels: bool,
+) -> SubView {
+    let [cx, cy, cw, _] = ddg_render::overlay::canvas_rect(width, height);
+    let s = cw / 640.0;
+    let rect = [
+        cx + window[0] * s,
+        cy + window[1] * s,
+        window[2] * s,
+        window[3] * s,
+    ];
+    let quantised = 4096.0 / (4096.0 / MODE2_ASPECT).trunc();
+    let stretch = if square_pixels {
+        1.0
+    } else {
+        (rect[2] / rect[3]) / quantised
+    };
+    SubView {
+        rect,
+        projection: Projection {
+            fov_tenths,
+            stretch,
+        },
+        clear: true,
     }
 }
 
@@ -559,21 +646,24 @@ impl Play {
         library: &PartLibrary,
         frame: &mut FrameGeometry,
         fx: &mut EffectGeometry,
+        aspect: f32,
     ) -> Option<CustomView> {
         if let Some(camera) = Self::bonus_compose(drive, library, frame, fx) {
             return Some(CustomView {
                 camera,
                 fov_tenths: super::bonus::FOV_TENTHS,
                 full_screen: false,
+                window: None,
             });
         }
-        Self::opening_compose(opening, library, frame, fx)
+        Self::opening_compose(opening, library, frame, fx, aspect)
     }
 
     /// Headless frame of the bonus game or the opening.
     pub(super) fn custom_shot(&self, out: &std::path::Path) -> Result<()> {
         let (w, h) = self.opts.size;
         let filtering = self.opts.texture_filtering;
+        let square_pixels = self.opts.square_pixels;
         crate::shot::render_to_ppm_with(
             (w, h),
             |device, queue, view, format| {
@@ -589,7 +679,12 @@ impl Play {
                     &self.scene.library,
                     &mut frame,
                     &mut fx,
+                    w as f32 / h as f32,
                 );
+                let sub = custom.as_ref().and_then(|v| {
+                    let win = v.window?;
+                    Some(window_view(win, v.fov_tenths, (w, h), square_pixels))
+                });
                 let camera = match custom {
                     Some(v) => {
                         r.band_top = if v.full_screen {
@@ -607,7 +702,7 @@ impl Play {
                         let pos = self.drive.pos();
                         let aspect = w as f32 / (h as f32 * (1.0 - super::HUD_BAND_TOP));
                         self.scene.compose(&mut frame, pos, false, aspect);
-                        Self::opening_masks(self.opening.as_ref(), &mut fx);
+                        Self::opening_masks(self.opening.as_ref(), &mut fx, w as f32 / h as f32);
                         self.scene.cab_camera(pos)
                     }
                     None => {
@@ -617,10 +712,41 @@ impl Play {
                 };
                 r.effects = fx;
                 r.set_geometry(device, queue, &frame);
-                r.render(device, queue, view, (w, h), &camera);
+                match &sub {
+                    Some(sub) => r.render_view(device, queue, view, (w, h), &camera, sub),
+                    None => r.render(device, queue, view, (w, h), &camera),
+                }
             },
             Some((&self.canvas, self.layer.canvas_size())),
             out,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// At 640×480 the mode-2 window is the photo's rectangle 1:1 (0x436e14); on a 16:10 window
+    /// it scales and centres with the 640×480 design.
+    #[test]
+    fn mode2_window_sits_on_the_photo() {
+        let s = window_view(MODE2_WINDOW, STUDIO_FOV, (640, 480), false);
+        assert_eq!(s.rect, [96.0, 56.0, 496.0, 400.0]);
+        // 496 / 400 = 1.24 px against the projection's 1.25031 (4096 / 3276).
+        assert!((s.projection.stretch - 1.24 / (4096.0 / 3276.0)).abs() < 1e-6);
+        let s = window_view(MODE2_WINDOW, STUDIO_FOV, (1280, 800), false);
+        let k = 800.0 / 480.0;
+        let x0 = (1280.0 - 640.0 * k) / 2.0;
+        assert!((s.rect[0] - (x0 + 96.0 * k)).abs() < 1e-3);
+        assert!((s.rect[2] - 496.0 * k).abs() < 1e-3);
+    }
+
+    /// The inset edges x 64 / 576 in NDC: ±0.8 at 4:3, nearer the centre on a wider window.
+    #[test]
+    fn inset_edges_follow_the_centred_design() {
+        assert!((canvas_ndc_x(INSET_LEFT, 4.0 / 3.0) + 0.8).abs() < 1e-6);
+        assert!((canvas_ndc_x(INSET_RIGHT, 4.0 / 3.0) - 0.8).abs() < 1e-6);
+        assert!((canvas_ndc_x(INSET_RIGHT, 16.0 / 9.0) - 0.6).abs() < 1e-6);
     }
 }

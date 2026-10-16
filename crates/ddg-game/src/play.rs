@@ -1144,12 +1144,22 @@ impl Play {
             &self.scene.library,
             &mut self.frame,
             &mut gpu.renderer.effects,
+            width as f32 / height.max(1) as f32,
         );
         gpu.renderer.projection.fov_tenths = match &custom {
             Some(v) => v.fov_tenths,
             None => Self::opening_route_fov(self.opening.as_ref())
                 .unwrap_or((DRIVING_FOV_Y_DEG * 10.0) as u16),
         };
+        let window = custom.as_ref().and_then(|v| {
+            let win = v.window?;
+            Some(opening::window_view(
+                win,
+                v.fov_tenths,
+                (width, height),
+                self.opts.square_pixels,
+            ))
+        });
         gpu.renderer.band_top = if custom.as_ref().is_some_and(|v| v.full_screen) {
             0.0
         } else {
@@ -1167,7 +1177,11 @@ impl Play {
             fx.clear();
             Self::cab_mask(&self.scene, self.ending.as_ref(), band_aspect, fx);
             Self::ending_masks(self.ending.as_ref(), fx);
-            Self::opening_masks(self.opening.as_ref(), fx);
+            Self::opening_masks(
+                self.opening.as_ref(),
+                fx,
+                width as f32 / height.max(1) as f32,
+            );
             Self::ending_camera(self.ending.as_ref(), &mut camera);
             gpu.renderer.fog.enabled = self.opts.fog && self.weather.fog();
         } else {
@@ -1203,9 +1217,20 @@ impl Play {
                 self.opts.square_pixels,
                 alpha,
             ),
-            _ => gpu
-                .renderer
-                .render(&gpu.device, &gpu.queue, &view, (width, height), &camera),
+            _ => match &window {
+                Some(sub) => gpu.renderer.render_view(
+                    &gpu.device,
+                    &gpu.queue,
+                    &view,
+                    (width, height),
+                    &camera,
+                    sub,
+                ),
+                None => {
+                    gpu.renderer
+                        .render(&gpu.device, &gpu.queue, &view, (width, height), &camera)
+                }
+            },
         }
         let size = self.layer.canvas_size();
         let resized = gpu.overlay.resize(&gpu.device, size);
