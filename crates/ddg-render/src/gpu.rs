@@ -85,6 +85,16 @@ struct PageGpu {
     fx_tex_count: u32,
 }
 
+/// A rectangle of the target with its own projection, for [`Renderer::render_view`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SubView {
+    /// x, y, width, height in target pixels.
+    pub rect: [f32; 4],
+    pub projection: Projection,
+    /// Clear the colour target first (the first view of a frame).
+    pub clear: bool,
+}
+
 pub struct Renderer {
     world_pipeline: wgpu::RenderPipeline,
     line_pipeline: wgpu::RenderPipeline,
@@ -476,9 +486,30 @@ impl Renderer {
     ) {
         let band_y = (height as f32 * self.band_top).round();
         let band_h = (height as f32 - band_y).max(1.0);
-        let aspect = width as f32 / band_h;
+        let view = SubView {
+            rect: [0.0, band_y, width as f32, band_h],
+            projection: self.projection,
+            clear: true,
+        };
+        self.render_view(device, queue, target, (width, height), camera, &view);
+    }
+
+    /// Draws the current geometry into one rectangle of `target` with its own projection
+    /// (the station result's two views, scene.md §8). Without `clear` the colour target is
+    /// kept; depth is always cleared.
+    pub fn render_view(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        target: &wgpu::TextureView,
+        (width, height): (u32, u32),
+        camera: &Camera,
+        sub: &SubView,
+    ) {
+        let [vx, vy, vw, vh] = sub.rect;
+        let (vw, vh) = (vw.max(1.0), vh.max(1.0));
         let view = camera.view();
-        let view_proj: Mat4 = self.projection.matrix(aspect) * view;
+        let view_proj: Mat4 = sub.projection.matrix(vw / vh) * view;
         let fog = self.fog;
         let linear = |c: f32| c.powf(2.2);
         let uniform = FrameUniform {
@@ -507,7 +538,11 @@ impl Renderer {
                     resolve_target: None,
                     ops: wgpu::Operations {
                         // The original clears to black (scene.md §6).
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: if sub.clear {
+                            wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+                        } else {
+                            wgpu::LoadOp::Load
+                        },
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -524,7 +559,7 @@ impl Renderer {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            pass.set_viewport(0.0, band_y, width as f32, band_h, 0.0, 1.0);
+            pass.set_viewport(vx, vy, vw, vh, 0.0, 1.0);
             let bg_bytes = u64::from(self.background_count) * size_of::<BgVertex>() as u64;
             if self.background_count > 0
                 && let Some(slice) = self.background.slice(bg_bytes)

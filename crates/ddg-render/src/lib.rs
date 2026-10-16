@@ -13,5 +13,5 @@ pub mod text;
 pub mod world;
 
 pub use camera::{Camera, Projection};
-pub use gpu::{Fog, Renderer};
+pub use gpu::{Fog, Renderer, SubView};
 pub use world::{FrameGeometry, PartLibrary};
