@@ -87,6 +87,11 @@ pub struct RouteScene {
     pub stable_track_variants: bool,
     /// Gradient set: 0 normal, 1 the alternate set of the timed per-stage event (scene.md §6.5).
     pub gradient_variant: usize,
+    /// A palette fade toward `gradient_variant` in progress: (from variant, frame of
+    /// [`ddg_formats::scene::PALETTE_FADE_TICKS`]) (task 0x436a60, scene.md §6.2).
+    pub gradient_fade: Option<(usize, u32)>,
+    /// Skip the panorama sprites (`0x8502ac == 0` while it snows; 0x41dfc0, renderer.md §13).
+    pub hide_panorama: bool,
 }
 
 impl RouteScene {
@@ -157,6 +162,8 @@ impl RouteScene {
             visibility,
             stable_track_variants: false,
             gradient_variant: 0,
+            gradient_fade: None,
+            hide_panorama: false,
         })
     }
 
@@ -234,7 +241,12 @@ impl RouteScene {
         let Some(gradient) = bg.gradients[self.gradient_variant.min(1)].get(r_index) else {
             return;
         };
-        let palette = gradient.palette();
+        let mut palette = gradient.palette();
+        if let Some((from, frame)) = self.gradient_fade
+            && let Some(g) = bg.gradients[from.min(1)].get(r_index)
+        {
+            palette = scene::palette_fade(&g.palette(), &palette, frame);
+        }
         let colour = |word: u16| -> [f32; 4] {
             let [lo, hi] = word.to_le_bytes();
             let srgb = if hi >= 0x80 {
@@ -298,7 +310,12 @@ impl RouteScene {
         let tan_half = ddg_render::camera::quantised_tan_half(DRIVING_FOV_TENTHS);
         let vp = scene::Viewport2d::original(tan_half, scene::DRIVING_ASPECT)
             .hor_plus(screen.half_width());
-        for &i in &plan.sky_sprites {
+        let sky_sprites: &[usize] = if self.hide_panorama {
+            &[]
+        } else {
+            &plan.sky_sprites
+        };
+        for &i in sky_sprites {
             let Some(s) = bg.sky_sprites.get(i) else {
                 continue;
             };

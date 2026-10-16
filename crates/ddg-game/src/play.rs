@@ -292,6 +292,7 @@ impl Play {
             script,
             save,
             meter_m: 0.0,
+            weather: crate::weather::Weather::new(&exe, opts.stage)?,
             opts,
         };
         play.configure_gpu();
@@ -353,6 +354,12 @@ impl Play {
             self.opts.fog,
             self.opts.square_pixels,
         );
+        let (w, h) = self.opts.size;
+        let mut effects = ddg_render::effects::EffectGeometry::default();
+        let band_aspect = w as f32 / (h as f32 * (1.0 - HUD_BAND_TOP)).max(1.0);
+        self.weather
+            .compose(&self.scene, &self.drive, band_aspect, &mut effects);
+        let fog = fog && self.weather.fog();
         crate::shot::render_to_ppm(
             Some((&self.scene, self.drive.pos())),
             self.opts.size,
@@ -362,6 +369,7 @@ impl Play {
                 r.projection.fov_tenths = (DRIVING_FOV_Y_DEG * 10.0) as u16;
                 r.projection.stretch = if square { 1.0 } else { ORIGINAL_STRETCH };
                 r.band_top = HUD_BAND_TOP;
+                r.effects = effects;
             },
             Some(&self.canvas),
             out,
@@ -537,6 +545,7 @@ pub struct Play {
     /// Metres driven with the distance meter shown (`0x8571f0`; reset by 0x40d040 at a run
     /// start, kept over continues).
     meter_m: f32,
+    weather: crate::weather::Weather,
 }
 
 impl Play {
@@ -609,6 +618,8 @@ impl Play {
         if self.drive.com() != self.scene_com {
             self.reload_scene()?;
         }
+        self.weather.tick(&self.drive, hud_input.segment_started);
+        self.weather.apply_to_scene(&mut self.scene);
         self.update_hud(hud_input);
         self.track_meter();
         Ok(())
@@ -871,7 +882,12 @@ impl Play {
         let (width, height) = gpu.size();
         let band_aspect = width as f32 / (height as f32 * (1.0 - HUD_BAND_TOP)).max(1.0);
         self.scene.compose(&mut self.frame, pos, false, band_aspect);
-        let camera = self.scene.cab_camera(pos);
+        let mut camera = self.scene.cab_camera(pos);
+        self.weather.shake(&mut camera);
+        let fx = &mut gpu.renderer.effects;
+        self.weather
+            .compose(&self.scene, &self.drive, band_aspect, fx);
+        gpu.renderer.fog.enabled = self.opts.fog && self.weather.fog();
         let Some(frame) = gpu.acquire() else {
             return Ok(());
         };
