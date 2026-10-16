@@ -251,3 +251,39 @@ fn hud_tables_read_and_point_at_tilemaps() {
     // Seven-segment "8" lights all segments.
     assert_eq!(t.segment_masks[8], 0x7f);
 }
+
+#[test]
+fn cab_hud_tables_match_the_decompiled_code() {
+    use ddg_formats::{cab_hud::CabTables, exe::Exe};
+    let dir = require_data!();
+    let exe_data = exe_bytes(&dir);
+    let exe = Exe::parse(&exe_data).unwrap();
+    let t = CabTables::read(&exe).unwrap();
+    // Star offsets built on the stack by 0x4124f0: row 0 (stage 10 first half) starts
+    // 0x28, 0x48, …; stage 0 (row 1) is 0x40 then 0x318 (unused, off screen).
+    assert_eq!(
+        t.star_offsets[0][..8],
+        [0x28, 0x48, 0x68, 0x88, 0xa8, 200, 0xe8, 0x108]
+    );
+    assert_eq!(t.star_offsets[1][..2], [0x40, 0x318]);
+    assert_eq!(
+        t.star_offsets[3][..6],
+        [0x30, 0x78, 0xb0, 0xd8, 0xf8, 0x118]
+    );
+    assert_eq!(t.star_offsets[20][..4], [0x70, 0x70, 0xb8, 0xf0]);
+    let from = t.plates[0];
+    assert_eq!((from.slot, from.x, from.y), (0x83, 493, 8));
+    assert_eq!(t.caption_pos, (80, 112));
+    assert_eq!(t.lamp_pos, (80, 144));
+    assert_eq!(t.digital_pos, (17, 432));
+    assert_eq!(t.dial_pos, (16, 345));
+    assert_eq!(t.origin, (0, 0));
+    assert_eq!(t.caption_words[..2], [0x6a, 0x11c]);
+    assert_eq!(t.banner_station, 0x71);
+    assert_eq!(t.atc_bar[0], 0x4a);
+    assert_eq!(t.atc_bar[10], 0x40);
+    assert_eq!(t.landmarks[0].sprite, 0x222);
+    assert_eq!(t.route_strips[0][..2], [0x327, 0x32a]);
+    assert_eq!(t.vehicles[0].name, 0x268);
+    assert_eq!(t.speed_mode[0], 1);
+}

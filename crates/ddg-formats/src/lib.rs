@@ -3,6 +3,7 @@
 //! Format specifications with evidence and confidence levels live in `docs/re/`.
 
 pub mod audio;
+pub mod cab_hud;
 pub mod cg;
 pub mod error;
 pub mod exe;
