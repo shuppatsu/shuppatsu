@@ -25,6 +25,7 @@ pub mod output;
 pub mod system;
 pub mod tables;
 pub mod train;
+pub mod voice;
 
 pub use bank::SoundBank;
 pub use mixer::{Command, Interpolation, Mixer, MixerConfig};
@@ -32,6 +33,7 @@ pub use output::{AudioOutput, OutputError};
 pub use system::SoundSystem;
 pub use tables::{SoundTables, Step};
 pub use train::{AmbientSound, HornEdge, TrainSound, TrainTick, TurnoutClatter};
+pub use voice::{Origin, Started, VoiceEvent};
 
 use thiserror::Error;
 

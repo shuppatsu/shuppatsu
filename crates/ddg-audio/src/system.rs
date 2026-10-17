@@ -8,6 +8,7 @@
 use crate::code::SEQUENCE_FLAG;
 use crate::mixer::Command;
 use crate::tables::{SoundTables, Step};
+use crate::voice::{Origin, Started, VoiceEvent};
 use std::sync::Arc;
 
 /// Sequence slots (0x84fb00, 4 × 0x38 bytes).
@@ -28,6 +29,8 @@ const PREFIX_SPEED_TABLE: [i16; 39] = [
     0xc8, 0xc9, 0xca, 0xcb, 0xcc, 0xcd, -1,
 ];
 const PREFIX_COUNT: usize = 7;
+/// Voice events kept unread at most ([`SoundSystem::take_voice_events`]).
+const VOICE_LOG_MAX: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct SeqSlot {
@@ -57,6 +60,9 @@ pub struct SoundSystem {
     sequences_enabled: bool,
     slots: [SeqSlot; SEQUENCE_SLOTS],
     commands: Vec<Command>,
+    /// Port addition for subtitles: record [`VoiceEvent`]s ([`SoundSystem::set_voice_log`]).
+    log_voices: bool,
+    voices: Vec<VoiceEvent>,
 }
 
 impl SoundSystem {
@@ -69,6 +75,8 @@ impl SoundSystem {
             sequences_enabled: true,
             slots: [SeqSlot::FREE; SEQUENCE_SLOTS],
             commands: Vec::new(),
+            log_voices: false,
+            voices: Vec::new(),
         }
     }
 
@@ -95,6 +103,31 @@ impl SoundSystem {
         self.commands.drain(..)
     }
 
+    /// Port addition for subtitles: from now on, record a [`VoiceEvent`] for every single
+    /// sound requested and every sequence started, and for every stop-all and sequencer
+    /// shutdown ([`SoundSystem::take_voice_events`]). Off by default.
+    pub fn set_voice_log(&mut self, on: bool) {
+        self.log_voices = on;
+        if !on {
+            self.voices.clear();
+        }
+    }
+
+    /// Takes the voice events recorded since the last call, in order.
+    pub fn take_voice_events(&mut self) -> Vec<VoiceEvent> {
+        std::mem::take(&mut self.voices)
+    }
+
+    fn log(&mut self, e: VoiceEvent) {
+        if self.log_voices && self.enabled {
+            // Bounded, for owners that stop reading for a while (menus, attract).
+            if self.voices.len() >= VOICE_LOG_MAX {
+                self.voices.remove(0);
+            }
+            self.voices.push(e);
+        }
+    }
+
     fn post(&mut self, cmd: Command) {
         if self.enabled {
             self.commands.push(cmd);
@@ -110,6 +143,12 @@ impl SoundSystem {
         if code & SEQUENCE_FLAG != 0 {
             self.start_sequence((code & 0xfff) as usize);
         } else {
+            if !self.paused {
+                self.log(VoiceEvent::Started(Started {
+                    origin: Origin::Code(code),
+                    steps: vec![Step::new(code as i16, 0)],
+                }));
+            }
             self.play(code);
         }
     }
@@ -134,6 +173,7 @@ impl SoundSystem {
 
     /// `snd_post_stop_all` (0x430160).
     pub fn stop_all(&mut self) {
+        self.log(VoiceEvent::Silenced);
         self.post(Command::StopAll);
     }
 
@@ -186,17 +226,17 @@ impl SoundSystem {
         if list.is_empty() {
             return;
         }
-        self.start_steps(&list);
+        self.start_steps(&list, Origin::Sequence(id));
     }
 
     /// Starts a caller-built sequence (0x41fea0); ignored if it is empty or starts with −1.
-    pub fn start_sequence_list(&mut self, list: &[Step]) {
+    pub fn start_sequence_list(&mut self, list: &[Step], origin: Origin) {
         if list.first().is_some_and(|s| s.code != -1) {
-            self.start_steps(list);
+            self.start_steps(list, origin);
         }
     }
 
-    fn start_steps(&mut self, list: &[Step]) {
+    fn start_steps(&mut self, list: &[Step], origin: Origin) {
         if !self.enabled || !self.sequences_enabled {
             return;
         }
@@ -216,12 +256,23 @@ impl SoundSystem {
             counter: 0,
             steps,
         };
-        // Step 0 goes through snd_request, so it may itself start a sequence.
-        self.request(steps[0].code as u16);
+        self.log(VoiceEvent::Started(Started {
+            origin,
+            steps: steps.iter().copied().take_while(|s| s.code != -1).collect(),
+        }));
+        // Step 0 goes through snd_request, so it may itself start a sequence (logged as its
+        // own line, not as a single sound).
+        let first = steps[0].code as u16;
+        if first & SEQUENCE_FLAG != 0 {
+            self.request(first);
+        } else {
+            self.play(first);
+        }
     }
 
     /// One sequencer tick (0x41ff60).
     fn sequence_tick(&mut self) {
+        let mut dropped = false;
         for i in 0..SEQUENCE_SLOTS {
             let slot = &mut self.slots[i];
             if slot.step < 0 {
@@ -229,6 +280,7 @@ impl SoundSystem {
             }
             if !self.sequences_enabled {
                 slot.step = -1;
+                dropped = true;
             } else if slot.counter >= slot.steps[slot.step as usize].delay {
                 slot.step += 1;
                 slot.counter = 0;
@@ -247,6 +299,9 @@ impl SoundSystem {
             let slot = &mut self.slots[i];
             slot.counter = slot.counter.wrapping_add(1);
         }
+        if dropped {
+            self.log(VoiceEvent::Silenced);
+        }
     }
 
     /// Two-phrase call (0x41ffe0): phrase `second` of the pair table, then phrase `first`.
@@ -257,7 +312,7 @@ impl SoundSystem {
         let (Some(&a), Some(&b)) = (pairs.get(second), pairs.get(first)) else {
             return;
         };
-        self.start_sequence_list(&[a, b, Step::END]);
+        self.start_sequence_list(&[a, b, Step::END], Origin::Pair { first, second });
     }
 
     /// "Prefix + speed" call (0x420180), e.g. a speed-limit call: prefix phrase `prefix`
@@ -277,7 +332,10 @@ impl SoundSystem {
         if speed == -1 {
             self.request(code as u16);
         } else {
-            self.start_sequence_list(&[Step::new(code, delay), Step::new(speed, 0), Step::END]);
+            self.start_sequence_list(
+                &[Step::new(code, delay), Step::new(speed, 0), Step::END],
+                Origin::PrefixSpeed { prefix, kmh },
+            );
         }
     }
 
@@ -304,7 +362,14 @@ impl SoundSystem {
             list.push(Step::new(code, SIGNAL_ASPECT_DELAY));
         }
         list.push(Step::END);
-        self.start_sequence_list(&list);
+        self.start_sequence_list(
+            &list,
+            Origin::Signal {
+                prefix,
+                mode,
+                aspect,
+            },
+        );
     }
 
     /// Station announcement of course event 2 (0x420040): `name` indexes the second block of
@@ -334,11 +399,11 @@ impl SoundSystem {
                     if code < 0x112 {
                         list.push(Step::new(STATION_CHIME, 0x46));
                     }
-                    (0x111, 0x112)
+                    STATION_INTROS[0]
                 } else if code < 0x147 {
-                    (0x147, 0x148)
+                    STATION_INTROS[1]
                 } else {
-                    (0x168, 0x169)
+                    STATION_INTROS[2]
                 };
                 list.push(Step::new(intro, 0x28));
                 list.push(station);
@@ -351,7 +416,7 @@ impl SoundSystem {
             _ => return,
         }
         list.push(Step::END);
-        self.start_sequence_list(&list);
+        self.start_sequence_list(&list, Origin::Station { mode, name });
     }
 }
 
@@ -360,10 +425,13 @@ const SIGNAL_PREFIXES: [(i16, i16); 3] = [(0xc1, 0x1e), (0xc0, 0x24), (0xd4, 0x1
 /// 0x420320: signal kind phrases (argument 0..=2).
 const SIGNAL_MODES: [(i16, i16); 3] = [(0xd1, 0x1e), (0xc1, 0x1e), (0xc0, 0x24)];
 /// 0x420320: aspect phrases (argument 0..=6), each with delay 0x1c.
-const SIGNAL_ASPECTS: [i16; 7] = [0xa7, 0xa8, 0xa9, 0xaa, 0xd2, 0xbe, 0xc2];
+pub const SIGNAL_ASPECTS: [i16; 7] = [0xa7, 0xa8, 0xa9, 0xaa, 0xd2, 0xbe, 0xc2];
 const SIGNAL_ASPECT_DELAY: i16 = 0x1c;
 /// 0x420040 reads the pair table at 0x46c4d0 = 0x46c368 + 90 entries.
 pub const STATION_CALL_BLOCK: usize = 90;
+/// The "next" phrase and the closing phrase of 0x420040 modes 0 / 2, as (intro, suffix), for
+/// station codes below 0x12d, below 0x147 and the rest (code immediates in 0x420040).
+pub const STATION_INTROS: [(i16, i16); 3] = [(0x111, 0x112), (0x147, 0x148), (0x168, 0x169)];
 /// BGM-slot chime before low-numbered station names (0x420040).
 const STATION_CHIME: i16 = 0x1a4;
 
@@ -495,12 +563,12 @@ mod tests {
     #[test]
     fn caller_built_lists() {
         let mut s = system();
-        s.start_sequence_list(&[Step::END]);
-        s.start_sequence_list(&[]);
+        s.start_sequence_list(&[Step::END], Origin::List);
+        s.start_sequence_list(&[], Origin::List);
         assert!(!s.sequence_active());
         // Long lists are cut at 12 steps.
         let long: Vec<Step> = (0..20).map(|i| Step::new(0x40 + i, 0)).collect();
-        s.start_sequence_list(&long);
+        s.start_sequence_list(&long, Origin::List);
         let p = plays(&mut s, 20);
         assert_eq!(p.len(), 12);
         assert_eq!(p.last().unwrap().1, 0x40 + 11);
@@ -563,6 +631,58 @@ mod tests {
         // Timing: prefix delay 0x1e → the second phrase 31 sequencer ticks later (frame 16).
         s.call_signal(1, -1, 5);
         assert_eq!(plays(&mut s, 40), [(0, 0xc1), (16, 0xbe)]);
+    }
+
+    #[test]
+    fn voice_log_records_lines_with_their_call() {
+        let mut s = system();
+        s.request(0x31);
+        assert!(s.take_voice_events().is_empty(), "off by default");
+        s.set_voice_log(true);
+        s.request(0x31);
+        s.request(0x1000);
+        s.call_pair(2, 5);
+        s.stop_all();
+        let started = |origin, steps: &[Step]| {
+            VoiceEvent::Started(Started {
+                origin,
+                steps: steps.to_vec(),
+            })
+        };
+        assert_eq!(
+            s.take_voice_events(),
+            [
+                started(Origin::Code(0x31), &[Step::new(0x31, 0)]),
+                started(
+                    Origin::Sequence(0),
+                    &[Step::new(0x10, 2), Step::new(0x11, 0), Step::new(0x12, 0)]
+                ),
+                started(
+                    Origin::Pair {
+                        first: 2,
+                        second: 5
+                    },
+                    &[Step::new(0x65, 10), Step::new(0x62, 7)]
+                ),
+                VoiceEvent::Silenced,
+            ]
+        );
+        // A sequence that finds no slot was never heard; dropping running ones silences.
+        for _ in 0..3 {
+            s.start_sequence(0);
+        }
+        assert_eq!(
+            s.take_voice_events().len(),
+            2,
+            "two of four slots were free"
+        );
+        s.set_sequences_enabled(false);
+        s.frame();
+        assert_eq!(s.take_voice_events(), [VoiceEvent::Silenced]);
+        // Paused: single sounds are not played, so not logged.
+        s.set_paused(true);
+        s.request(0x31);
+        assert!(s.take_voice_events().is_empty());
     }
 
     #[test]
