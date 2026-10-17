@@ -111,45 +111,51 @@ name = "English"
 
 # ---------------------------------------------------------------------------------------------
 # Navigator hints (hud.md §3.12): balloon 0x135 + id, 224×64. Only the inside of the balloon
-# is replaced; the green border stays. Three short lines at most.
+# is replaced; the green border stays. Three short lines at most. Each region is the balloon's
+# inside over that hint's own lettering (measured; the kanji reach from x 4 to the open right
+# edge at x 223 and from y 3 to 60): the border is x 0–1 on the straight left side and rounds
+# off over rows 2–12 and 51–61 (inside from x 14, 11, 9, 7, 6, 5, 5, 4, 4, 3, 3 at rows 2–12,
+# mirrored below), so a region taller than the lettering would paint the corners white, and
+# the old regions [6, 4, 212, 56] left the end of the lines (。 at x 218–222) and the starts at
+# x 4–5 visible and sized the English from the corner pixels instead of the kanji.
 
-0x135 = { region = [6, 4, 212, 56], text = "The door lamp lights up\nonce the doors close." }            # id 0
-0x136 = { region = [6, 4, 212, 56], text = "Obey a speed-limit sign\nuntil it is lifted." }             # id 1
-0x137 = { region = [6, 4, 212, 56], text = "Sign and signal together?\nObey the lower speed." }         # id 2
-0x138 = { region = [6, 4, 212, 56], text = "At a restrictive signal,\nslow down promptly." }           # id 3
-0x139 = { region = [6, 4, 212, 56], text = "Hold the limit until the\nnext signal is in sight.\nPatience!" } # id 4
-0x13a = { region = [6, 4, 212, 56], text = "You didn't slow down\nin time." }                          # id 5
-0x13b = { region = [6, 4, 212, 56], text = "Don't accelerate yet." }                                   # id 6
-0x13c = { region = [6, 4, 212, 56], text = "Don't use the\nemergency brake." }                         # id 7
-0x13d = { region = [6, 4, 212, 56], text = "A repeater relays the main\nsignal where it can't\nbe seen directly." } # id 8
+0x135 = { region = [2, 13, 222, 37], text = "The door lamp lights up\nonce the doors close." }            # id 0
+0x136 = { region = [2, 14, 222, 36], text = "Obey a speed-limit sign\nuntil it is lifted." }             # id 1
+0x137 = { region = [9, 4, 215, 56], text = "Sign and signal together?\nObey the lower speed." }         # id 2
+0x138 = { region = [2, 13, 222, 37], text = "At a restrictive signal,\nslow down promptly." }           # id 3
+0x139 = { region = [2, 14, 222, 37], text = "Hold the limit until the\nnext signal is in sight.\nPatience!" } # id 4
+0x13a = { region = [2, 13, 222, 37], text = "You didn't slow down\nin time." }                          # id 5
+0x13b = { region = [2, 23, 222, 17], text = "Don't accelerate yet." }                                   # id 6
+0x13c = { region = [2, 14, 222, 36], text = "Don't use the\nemergency brake." }                         # id 7
+0x13d = { region = [9, 4, 215, 56], text = "A repeater relays the main\nsignal where it can't\nbe seen directly." } # id 8
 # id 9 (0x13e) is a picture of the lamp: only its two labels.
-0x13e = { region = [142, 31, 76, 18], text = "door lamp" }   # 知らせ灯 arrow label; the tiny 車内信号 lamp label stays (text fills its band)
-0x13f = { region = [6, 4, 212, 56], text = "Handling error:\nbrake and power\nare both on." }          # id 0xa
-0x140 = { region = [6, 4, 212, 56], text = "The horn is the\nfoot pedal." }                            # id 0xb
-0x141 = { region = [6, 4, 212, 56], text = "A blinking limit sign is\nadvance notice.\nSlow down now." } # id 0xc
-0x142 = { region = [6, 4, 212, 56], text = "The limit applies from\nhere (blinking ends)\nuntil it is lifted." } # id 0xd
-0x143 = { region = [6, 4, 212, 56], text = "The limit is lifted,\nbut keep to the signal's\n70 km/h." }  # id 0xe
-0x144 = { region = [6, 4, 212, 56], text = "You coupled too gently." }                                 # id 0xf
-0x145 = { region = [6, 4, 212, 56], text = "ATC section: enjoy\nthe high-speed run!\nIt's a bonus!" } # id 0x10
-0x146 = { region = [6, 4, 212, 56], text = "Keep to the timetable\neven at passing stations." }          # id 0x11
-0x147 = { region = [6, 4, 212, 56], text = "Stop in a dead section\nand we can't move.\nHmph!" }         # id 0x12
-0x148 = { region = [6, 4, 212, 56], text = "Please depart." }                                          # id 0x13
-0x149 = { region = [6, 4, 212, 56], text = "Start braking." }                                          # id 0x14
-0x14a = { region = [6, 4, 212, 56], text = "Target speed:\n90 km/h." }                                 # id 0x15
-0x14b = { region = [6, 4, 212, 56], text = "Target speed:\n100 km/h." }                                # id 0x16
-0x14c = { region = [6, 4, 212, 56], text = "Target speed:\n110 km/h." }                                # id 0x17
-0x14d = { region = [6, 4, 212, 56], text = "Target speed:\n110–120 km/h." }                            # id 0x18
-0x14e = { region = [6, 4, 212, 56], text = "Keep the timetable even\nwhen passing stations." }        # id 0x19
-0x14f = { region = [6, 4, 212, 56], text = "Stop at the mark,\nthen couple up." }                      # id 0x1a
-0x150 = { region = [6, 4, 212, 56], text = "Follow the ATC speed and\nhead for Shin-Hanamaki." }      # id 0x1b
-0x151 = { region = [6, 4, 212, 56], text = "Target speed:\n120 km/h." }                                # id 0x1c
-0x152 = { region = [6, 4, 212, 56], text = "We pass the\nnext station!" }                              # id 0x1d
-0x153 = { region = [6, 4, 212, 56], text = "We stop at the\nnext station!" }                           # id 0x1e
-0x154 = { region = [6, 4, 212, 56], text = "Target speed:\n80 km/h." }                                 # id 0x1f
-0x155 = { region = [6, 4, 212, 56], text = "Running a little late.\nSpeed up a bit." }                 # id 0x20
-0x156 = { region = [6, 4, 212, 56], text = "Running a little early.\nEase off a bit." }                # id 0x21
-0x508 = { region = [6, 4, 212, 56], text = "The horn is the\nSpace key." }                             # id 0xb, keyboard
-0x509 = { region = [6, 4, 212, 56], text = "The horn is the\nB button." }                              # id 0xb, gamepad
+0x13e = { region = [142, 31, 76, 19], text = "door lamp" }   # 知らせ灯 arrow label (灯 reaches row 49, measured); the tiny 車内信号 lamp label stays (text fills its band)
+0x13f = { region = [11, 3, 213, 56], text = "Handling error:\nbrake and power\nare both on." }          # id 0xa
+0x140 = { region = [2, 23, 222, 18], text = "The horn is the\nfoot pedal." }                            # id 0xb
+0x141 = { region = [11, 5, 213, 56], text = "A blinking limit sign is\nadvance notice.\nSlow down now." } # id 0xc
+0x142 = { region = [9, 4, 215, 55], text = "The limit applies from\nhere (blinking ends)\nuntil it is lifted." } # id 0xd
+0x143 = { region = [9, 5, 215, 55], text = "The limit is lifted,\nbut keep to the signal's\n70 km/h." }  # id 0xe
+0x144 = { region = [2, 20, 222, 21], text = "You coupled too gently." }                                 # id 0xf
+0x145 = { region = [5, 6, 219, 53], text = "ATC section: enjoy\nthe high-speed run!\nIt's a bonus!" } # id 0x10
+0x146 = { region = [4, 11, 220, 44], text = "Keep to the timetable\neven at passing stations." }          # id 0x11
+0x147 = { region = [6, 11, 218, 47], text = "Stop in a dead section\nand we can't move.\nHmph!" }         # id 0x12
+0x148 = { region = [2, 22, 222, 20], text = "Please depart." }                                          # id 0x13
+0x149 = { region = [2, 20, 222, 21], text = "Start braking." }                                          # id 0x14
+0x14a = { region = [4, 9, 220, 43], text = "Target speed:\n90 km/h." }                                 # id 0x15
+0x14b = { region = [5, 8, 219, 43], text = "Target speed:\n100 km/h." }                                # id 0x16
+0x14c = { region = [4, 9, 220, 43], text = "Target speed:\n110 km/h." }                                # id 0x17
+0x14d = { region = [4, 10, 220, 43], text = "Target speed:\n110–120 km/h." }                            # id 0x18
+0x14e = { region = [4, 10, 220, 43], text = "Keep the timetable even\nwhen passing stations." }        # id 0x19
+0x14f = { region = [5, 9, 219, 47], text = "Stop at the mark,\nthen couple up." }                      # id 0x1a
+0x150 = { region = [4, 11, 220, 44], text = "Follow the ATC speed and\nhead for Shin-Hanamaki." }      # id 0x1b
+0x151 = { region = [4, 9, 220, 43], text = "Target speed:\n120 km/h." }                                # id 0x1c
+0x152 = { region = [2, 18, 222, 26], text = "We pass the\nnext station!" }                              # id 0x1d
+0x153 = { region = [2, 18, 222, 27], text = "We stop at the\nnext station!" }                           # id 0x1e
+0x154 = { region = [4, 9, 220, 43], text = "Target speed:\n80 km/h." }                                 # id 0x1f
+0x155 = { region = [4, 11, 220, 44], text = "Running a little late.\nSpeed up a bit." }                 # id 0x20
+0x156 = { region = [4, 10, 220, 45], text = "Running a little early.\nEase off a bit." }                # id 0x21
+0x508 = { region = [2, 21, 222, 20], text = "The horn is the\nSpace key." }                             # id 0xb, keyboard
+0x509 = { region = [2, 17, 222, 30], text = "The horn is the\nB button." }                              # id 0xb, gamepad
 
 # ---------------------------------------------------------------------------------------------
 # Signals (hud.md §3.9), 96×144: the caption under the lamps only. Aspect names follow JR
@@ -299,16 +305,19 @@ name = "English"
 0x2de = "Ready"                      # 準備
 0x2df = "Go!"                        # 開始
 
-# Time-up advice (hud.md §3.16, 0x3f2..0x3fe), 320×128: the inside of the balloon.
-0x3f2 = { region = [8, 20, 176, 84], text = "Don't skip\nyour stops." }                     # 停車駅は守って下さい
-0x3f3 = { region = [8, 20, 176, 84], text = "Your braking\nis too hard." }                   # ブレーキが強すぎます
-0x3f4 = { region = [8, 20, 176, 84], text = "Obey the\nsignals." }                           # 信号は守って下さい
-0x3f5 = { region = [8, 20, 176, 84], text = "A train can't\nstop on a dime." }               # 電車は急に止まれません
-0x3f6 = { region = [8, 20, 176, 84], text = "Make use of\ncoasting." }                       # 惰性走行を使って下さい
-0x3f7 = { region = [8, 20, 176, 84], text = "Never force a level\ncrossing. It's deadly!\nStop and look first!" } # 踏切の無理な横断は…
-0x3f9 = { region = [8, 20, 176, 84], text = "Never release the brake\nbefore the door lamp\nlights up." }        # 知らせ灯点灯前は…
-0x3fa = { region = [8, 20, 176, 84], text = "Brake gently\nand smoothly..." }                # ブレーキ操作はやさしく丁寧に
-0x3fe = { region = [8, 20, 176, 84], text = "Aim for\nprecise driving!" }                    # 正確な運転を心掛けて下さいね
+# Time-up advice (hud.md §3.16, 0x3f2..0x3fe), 320×128: the inside of the balloon, x 3–190, y 22–105
+# (measured: the white balloon spans x 0–193, y 16–111 with rounded corners; the old regions
+# [8, 20, 176, 84] left the lines' first and last characters (quotes at x 6–7, 。 at x 184–189)
+# beside the English). 0x3f8's balloon ends at x 172.
+0x3f2 = { region = [3, 22, 188, 84], text = "Don't skip\nyour stops." }                     # 停車駅は守って下さい
+0x3f3 = { region = [3, 22, 188, 84], text = "Your braking\nis too hard." }                   # ブレーキが強すぎます
+0x3f4 = { region = [3, 22, 188, 84], text = "Obey the\nsignals." }                           # 信号は守って下さい
+0x3f5 = { region = [3, 22, 188, 84], text = "A train can't\nstop on a dime." }               # 電車は急に止まれません
+0x3f6 = { region = [3, 22, 188, 84], text = "Make use of\ncoasting." }                       # 惰性走行を使って下さい
+0x3f7 = { region = [3, 22, 188, 84], text = "Never force a level\ncrossing. It's deadly!\nStop and look first!" } # 踏切の無理な横断は…
+0x3f9 = { region = [3, 22, 188, 84], text = "Never release the brake\nbefore the door lamp\nlights up." }        # 知らせ灯点灯前は…
+0x3fa = { region = [3, 22, 188, 84], text = "Brake gently\nand smoothly..." }                # ブレーキ操作はやさしく丁寧に
+0x3fe = { region = [3, 22, 188, 84], text = "Aim for\nprecise driving!" }                    # 正確な運転を心掛けて下さいね
 
 # ---------------------------------------------------------------------------------------------
 # Station result (menus.md §9). Rows are 480 px wide with gaps where the game draws digits,
@@ -341,11 +350,11 @@ name = "English"
 
 0x24a = { region = [0, 0, 160, 32], text = "Keep going?" }      # 運転継続? (CONTINUE stays), 160×48
 0x24d = "Resuming"                   # 運転再開 continue chosen, 160×32
-0x3f8 = { region = [8, 20, 160, 80], text = "Press START\nto continue!" }    # スタートボタンを押して下さい (コンティニュー スタート)
+0x3f8 = { region = [3, 22, 170, 84], text = "Press START\nto continue!" }    # スタートボタンを押して下さい (コンティニュー スタート)
 0x250 = { region = [0, 0, 160, 32], text = "Run Halted" }       # 運転中止 (GAME OVER stays), 160×48
 0x251 = { region = [0, 0, 160, 32], text = "Run Complete" }     # 運転終了 (GAME OVER stays), 160×48
-0x3fd = { region = [8, 20, 176, 84], text = "A railfan's\ndream run!" }     # 鉄ちゃん感動です! grade 100
-0x3fb = { region = [8, 20, 176, 84], text = "Superb\ndriving!" }            # 素晴らしい運転でした! grade ≥ 90
+0x3fd = { region = [3, 22, 188, 84], text = "A railfan's\ndream run!" }     # 鉄ちゃん感動です! grade 100
+0x3fb = { region = [3, 22, 188, 84], text = "Superb\ndriving!" }            # 素晴らしい運転でした! grade ≥ 90
 # Not traced (likely unused on PC):
 0x24c = "Hazard avoided: OK!"      # 危険回避合格!, 224×32
 0x24e = "Accident"                   # 事故, 192×64
