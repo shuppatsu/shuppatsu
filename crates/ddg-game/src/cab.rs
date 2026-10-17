@@ -235,8 +235,13 @@ impl CabHud {
     ) -> bool {
         self.use_board_names(bank, &phrases.tbl_texts);
         let defs = self.captions.defs();
-        let one =
-            crate::captions::OneLine::new(bank, defs, &phrases.tbl_texts, phrases.by_kind.clone());
+        let one = crate::captions::OneLine::new(
+            bank,
+            defs,
+            &phrases.tbl_texts,
+            phrases.by_kind.clone(),
+            phrases.fonts,
+        );
         match one {
             Some(o) => {
                 self.captions.use_one_line(o);

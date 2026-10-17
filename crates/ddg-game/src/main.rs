@@ -70,7 +70,10 @@ options:
   --debug-title            live debug text in the window title (env DDG_DEBUG_TITLE=1)
   --size <WxH>             window/frame size (default 1280x800, 16:10)
   --lang <code>            text-sprite language (default ja = the original art; env DDG_LANG)
-  --font <file>            TTF/OTF font for translated text sprites (env DDG_FONT)
+  --font <files>           TTF/OTF fonts for translated text, primary first, :-separated
+                           fallbacks (env DDG_FONT)
+  --display-font <files>   the same for display text: headers, menu titles, banners
+                           (env DDG_DISPLAY_FONT; default the --font list)
   --locale-dir <dir>       extra catalogue directory, <dir>/<lang>.toml (env DDG_LOCALE_DIR)
   --hud-layout <original|enhanced>
                            2D layout (env DDG_HUD_LAYOUT; default original = the 4:3 design);

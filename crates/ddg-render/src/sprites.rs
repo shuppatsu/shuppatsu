@@ -3,7 +3,7 @@
 //! original blits them into its back buffer. The canvas is then drawn as one overlay texture.
 
 use crate::label::LabelFont;
-use crate::text::{Align, SubRect, TextOverlay, draw_parts};
+use crate::text::{Align, FontRole, SubRect, TextOverlay, draw_parts};
 use ddg_formats::cg::{CgFile, Palette, TILE_PIXELS, TILE_SIZE, Tilemap};
 
 /// The HUD design size: native pixels of resolution mode 1 (hud.md §1.1).
@@ -143,6 +143,9 @@ pub struct TextStyle {
     pub align: Align,
     /// Rotated 90° clockwise (reads top to bottom); `align` then runs from the top.
     pub vertical: bool,
+    /// The label font role: [`FontRole::Display`] uses the display font when one is
+    /// installed ([`SpriteBank::set_display_label_font`]), else the body font.
+    pub font: FontRole,
 }
 
 /// Horizontal padding of a [`TextStyle::backdrop`], original pixels.
@@ -158,6 +161,7 @@ impl TextStyle {
             backdrop: None,
             align: Align::Center,
             vertical: false,
+            font: FontRole::Body,
         }
     }
 }
@@ -171,6 +175,8 @@ pub struct SpriteBank {
     text: Option<TextOverlay>,
     /// The font of [`WidgetKind::Text`] labels; `None` draws no labels.
     labels: Option<LabelFont>,
+    /// The font of display-role labels ([`TextStyle::font`]); `None` uses `labels`.
+    display_labels: Option<LabelFont>,
     /// Enhancement `wide_menus`: backdrops continued sideways on a wide canvas, by tilemap id
     /// ([`SpriteBank::set_wide_fill`]).
     wide_fill: Vec<(u16, Repeat)>,
@@ -227,6 +233,7 @@ impl SpriteBank {
             tilemaps,
             text: None,
             labels: None,
+            display_labels: None,
             wide_fill: Vec::new(),
         }
     }
@@ -271,8 +278,22 @@ impl SpriteBank {
         self.labels = font;
     }
 
+    /// Installs (or with `None` removes) the font of display-role labels; without one they
+    /// use the body label font.
+    pub fn set_display_label_font(&mut self, font: Option<LabelFont>) {
+        self.display_labels = font;
+    }
+
     pub fn has_label_font(&self) -> bool {
         self.labels.is_some()
+    }
+
+    /// The label font of `role`: the display font falls back to the body font.
+    fn label_font(&self, role: FontRole) -> Option<&LabelFont> {
+        match role {
+            FontRole::Display => self.display_labels.as_ref().or(self.labels.as_ref()),
+            FontRole::Body => self.labels.as_ref(),
+        }
     }
 
     /// The width of `text` in the label font with capitals `cap` pixels high (any unit: the
@@ -707,7 +728,8 @@ impl SpriteLayer {
             }
             WidgetKind::Text { text, style } => {
                 let paint = style.paint;
-                let (Some(pal), Some(font)) = (palette(paint.palette), bank.labels.as_ref()) else {
+                let (Some(pal), Some(font)) = (palette(paint.palette), bank.label_font(style.font))
+                else {
                     return;
                 };
                 let (mw, mh) = (x1 - x0, y1 - y0);
@@ -857,6 +879,7 @@ mod tests {
             }],
             text: None,
             labels: None,
+            display_labels: None,
             wide_fill: Vec::new(),
         }
     }
@@ -900,6 +923,94 @@ mod tests {
         let grouped = rows(&parts(Some("cell")));
         assert_eq!(grouped[0], grouped[1]);
         assert_eq!(grouped[1], alone[1]);
+    }
+
+    /// Inked rows and columns of the first part of tilemap `t` in `overlay`.
+    fn ink_extent(overlay: &TextOverlay, t: u16) -> (usize, usize) {
+        let p = &overlay.get(&(t, (0, 0, 1, 1))).unwrap()[0];
+        let (w, h) = (usize::from(p.region[2]), usize::from(p.region[3]));
+        let rows = (0..h)
+            .filter(|y| p.coverage[y * w..][..w].iter().any(|&c| c > 0))
+            .count();
+        let cols = (0..w)
+            .filter(|&x| (0..h).any(|y| p.coverage[y * w + x] > 0))
+            .count();
+        (rows, cols)
+    }
+
+    #[test]
+    fn display_parts_use_the_display_font() {
+        use crate::text::{
+            FontRole, Fonts, Style, TextOverride, TextPart,
+            tests::{BoxGlyphs, Stretched},
+        };
+        let b = bank(3);
+        let entry = |font| TextOverride {
+            parts: vec![TextPart {
+                text: "I".into(),
+                style: Style::Plain,
+                font,
+                ..TextPart::default()
+            }],
+        };
+        let (body, display) = (entry(FontRole::Body), entry(FontRole::Display));
+        let narrow = Stretched { w: 0.5, h: 1.0 };
+        let two = Fonts {
+            body: &BoxGlyphs,
+            display: Some(&narrow),
+        };
+        let build = |o: &TextOverride, fonts| {
+            ink_extent(
+                &TextOverlay::build_with(&b, [(0, SubRect::WHOLE, o)], fonts, 4),
+                0,
+            )
+        };
+        let plain = build(&body, two);
+        // A display part is drawn in the display font (narrower here; one letter, so the
+        // size is set by the lettering height, not the width) ...
+        assert!(build(&display, two).1 < plain.1, "{plain:?}");
+        // ... a body part is not affected by it ...
+        assert_eq!(build(&body, Fonts::one(&BoxGlyphs)), plain);
+        // ... and without a display font, display parts use the body font.
+        assert_eq!(build(&display, Fonts::one(&BoxGlyphs)), plain);
+    }
+
+    #[test]
+    fn shared_groups_span_font_roles() {
+        use crate::text::{
+            FontRole, Fonts, Style, TextOverride, TextPart,
+            tests::{BoxGlyphs, Stretched},
+        };
+        let mut b = bank(3);
+        b.tilemaps.push(b.tilemaps[0].clone());
+        let entry = |text: &str, font, shared: Option<&str>| TextOverride {
+            parts: vec![TextPart {
+                text: text.into(),
+                style: Style::Plain,
+                font,
+                shared_group: shared.map(Into::into),
+                ..TextPart::default()
+            }],
+        };
+        // The display font's capitals are 1.5 times as tall per font pixel.
+        let tall = Stretched { w: 1.0, h: 1.5 };
+        let fonts = Fonts {
+            body: &BoxGlyphs,
+            display: Some(&tall),
+        };
+        let rows = |shared| {
+            let a = entry("Hi", FontRole::Display, shared);
+            let c = entry("Hello there", FontRole::Body, shared);
+            let list = [(0, SubRect::WHOLE, &a), (1, SubRect::WHOLE, &c)];
+            let overlay = TextOverlay::build_with(&b, list, fonts, 4);
+            [ink_extent(&overlay, 0).0, ink_extent(&overlay, 1).0]
+        };
+        let alone = rows(None);
+        assert!(alone[0] > alone[1] + 2, "{alone:?}");
+        // One capital height for the group, though the fonts differ.
+        let shared = rows(Some("list"));
+        assert!(shared[0].abs_diff(shared[1]) <= 1, "{shared:?}");
+        assert_eq!(shared[1], alone[1]);
     }
 
     #[test]
@@ -1121,6 +1232,38 @@ mod tests {
         assert!((600..700).all(|x| (600..620).all(|y| c[(y * w + x) * 4 + 3] == 0)));
         l.reset_transient();
         assert!(l.widgets.is_empty());
+    }
+
+    #[test]
+    fn display_text_widgets_use_the_display_label_font() {
+        use crate::text::tests::{BoxGlyphs, Stretched};
+        let green = Paint {
+            palette: 0,
+            index: 1,
+        };
+        // Inked canvas columns of "Hello" in role `font`.
+        let width = |b: &SpriteBank, font| {
+            let mut l = SpriteLayer::default();
+            l.palettes[0] = Some(palette());
+            let style = TextStyle {
+                font,
+                ..TextStyle::plain(green, Some(5.0))
+            };
+            l.add_styled_text(0, [100.0, 100.0, 200.0, 20.0], "Hello", style);
+            let mut c = vec![0; CANVAS_W * CANVAS_H * 4];
+            l.compose(b, &mut c);
+            (0..CANVAS_W)
+                .filter(|&x| (0..CANVAS_H).any(|y| pixel(&c, x, y)[3] != 0))
+                .count()
+        };
+        let mut b = bank(1);
+        b.set_label_font(Some(LabelFont::new(Box::new(BoxGlyphs))));
+        let body = width(&b, FontRole::Body);
+        assert!(body > 0);
+        assert_eq!(width(&b, FontRole::Display), body);
+        b.set_display_label_font(Some(LabelFont::new(Box::new(Stretched { w: 0.5, h: 1.0 }))));
+        assert!(width(&b, FontRole::Display) < body);
+        assert_eq!(width(&b, FontRole::Body), body);
     }
 
     #[test]

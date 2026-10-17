@@ -20,7 +20,7 @@ use crate::slots;
 use ddg_formats::cab_hud::{CabTables, LANDMARK_COUNT, WideSprite};
 use ddg_formats::hud::{HudTables, StationNameSprite};
 use ddg_render::sprites::{Anchor, Paint, SpriteBank, SpriteLayer, TextStyle, WidgetKind};
-use ddg_render::text::Align;
+use ddg_render::text::{Align, FontRole};
 use std::collections::HashMap;
 
 const SLOT_CAPTION: usize = 0x36;
@@ -142,16 +142,20 @@ pub struct OneLine {
     phrases: [Option<String>; 7],
     /// Caption (plain) and banner (highlighted) sets.
     looks: [Look; 2],
+    /// Font roles of the two sets (`[caption]` `font` / `banner_font`).
+    fonts: [FontRole; 2],
 }
 
 impl OneLine {
     /// `tbl_texts`: translated texts by tilemap id (the names of the name sprites); `phrases`:
-    /// by kind. `None` when the 駅 sprites have no art.
+    /// by kind; `fonts`: the roles of the captions and the banners. `None` when the 駅 sprites
+    /// have no art.
     pub fn new(
         bank: &SpriteBank,
         defs: &CaptionDefs,
         tbl_texts: &HashMap<u16, String>,
         phrases: [Option<String>; 7],
+        fonts: [FontRole; 2],
     ) -> Option<Self> {
         let names = defs
             .names
@@ -166,6 +170,7 @@ impl OneLine {
                 Look::of(bank, defs.caption_station)?,
                 Look::of(bank, defs.banner_station)?,
             ],
+            fonts,
         })
     }
 
@@ -198,6 +203,7 @@ impl OneLine {
                 backdrop: look.backdrop.map(paint),
                 align,
                 vertical: false,
+                font: self.fonts[usize::from(banner)],
             },
             fill: None,
         })
@@ -306,6 +312,7 @@ impl LandmarkLines {
                 backdrop: l.look.backdrop.map(paint),
                 align: Align::Center,
                 vertical: false,
+                font: FontRole::Body,
             },
             fill: l.look.backdrop.map(|b| ([px, top, pw, h], paint(b))),
         })
@@ -957,6 +964,7 @@ mod tests {
             names: [(1, "Higashi-Kanagawa".to_owned())].into_iter().collect(),
             phrases,
             looks: [look, boxed],
+            fonts: [FontRole::Body, FontRole::Display],
         });
         let mut layer = SpriteLayer::default();
         c.caption(&mut layer, 1, DISTANCE | KIND_STOP, 20, 0.0);
@@ -980,6 +988,7 @@ mod tests {
         assert_eq!(style.align, Align::Left);
         assert_eq!((style.paint.index, style.cap), (0x1c, Some(21.0)));
         assert_eq!(style.outline.map(|p| p.index), Some(0x1d));
+        assert_eq!(style.font, FontRole::Body);
         for s in SLOT_CAPTION..SLOT_CAPTION + 3 {
             assert_eq!(layer.slots[s].tilemap, -1);
         }
@@ -1004,6 +1013,8 @@ mod tests {
         let (_, rect, style) = text(&layer).unwrap();
         assert_eq!(rect, [40.0, 216.0, 560.0, 32.0]);
         assert_eq!(style.backdrop.map(|p| p.index), Some(0x30));
+        // Each set in its own font role.
+        assert_eq!(style.font, FontRole::Display);
         assert_eq!(layer.slots[SLOT_BANNER].tilemap, -1);
     }
 

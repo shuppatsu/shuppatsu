@@ -16,6 +16,8 @@
 #                                     replace only these pixel regions (relative to the
 #                                     sprite); the rest of the art stays (gauges, digits, icons)
 #   style: "auto" (default) | "plain" | "boxed"; align: "center" (default) | "left" | "right"
+#   font: "body" (default) | "display" (headers, menu titles, headlines; the display font,
+#         DDG_DISPLAY_FONT, or the body font when none is set)
 # Colours always come from the slot's palette (the art's own colours), so palette swaps work.
 #
 # Comments give each sprite's role, a short Japanese label for identification, and the size in
@@ -90,20 +92,20 @@ name = "English"
 # ---------------------------------------------------------------------------------------------
 # Time messages: bonus / penalty popups (hud.md §3.11). Width given by the exe (0x415080).
 
-0x1be = "Signal is clear.\nMove the train forward!"   # kind 0 進行信号が現示されています…, 384×64
+0x1be = { text = "Signal is clear.\nMove the train forward!", font = "display" }   # kind 0 進行信号が現示されています…, 384×64
 # 0x1aa "great!" and 0x1ab "good" are English art.
-0x1ac = { text = "Bonus", style = "plain" }   # kind 3 ボーナス logo (the swoosh goes too), 160×64
-0x1af = "Emergency braking"             # kind 4 急制動 EB penalty, 128×32
-0x1b0 = "Missed whistle sign"             # kind 5 標識無視 whistle sign missed, 144×32
-0x1b1 = "Over the speed limit"       # kind 6 制限速度超過, 192×32
-0x1b2 = "Overran the stop"           # kind 7 停車駅通過, 176×32
-0x1c6 = "False start"       # kind 9 知らせ灯確認ミス false start, 256×32
-0x1c7 = "Hit the buffer stop"        # kind 10 車止め激突, 176×32
-0x1c8 = "Excessive horn"              # kind 11 警笛過剰, 144×32
-0x258 = "Coasted dead section"       # kind 12 セクション通過 no-power section bonus, 256×32
-0x259 = { text = "On Time", style = "plain" } # kind 13 定通 on-time pass logo (the swoosh goes too), 160×64
-0x1c5 = "Stopped short"              # kind 14 停止位置手前です, 256×32
-0x1ce = "Collision!"                 # kind 15 車両激突, 176×32
+0x1ac = { text = "Bonus", style = "plain", font = "display" }   # kind 3 ボーナス logo (the swoosh goes too), 160×64
+0x1af = { text = "Emergency braking", font = "display" }             # kind 4 急制動 EB penalty, 128×32
+0x1b0 = { text = "Missed whistle sign", font = "display" }             # kind 5 標識無視 whistle sign missed, 144×32
+0x1b1 = { text = "Over the speed limit", font = "display" }       # kind 6 制限速度超過, 192×32
+0x1b2 = { text = "Overran the stop", font = "display" }           # kind 7 停車駅通過, 176×32
+0x1c6 = { text = "False start", font = "display" }       # kind 9 知らせ灯確認ミス false start, 256×32
+0x1c7 = { text = "Hit the buffer stop", font = "display" }        # kind 10 車止め激突, 176×32
+0x1c8 = { text = "Excessive horn", font = "display" }              # kind 11 警笛過剰, 144×32
+0x258 = { text = "Coasted dead section", font = "display" }       # kind 12 セクション通過 no-power section bonus, 256×32
+0x259 = { text = "On Time", style = "plain", font = "display" } # kind 13 定通 on-time pass logo (the swoosh goes too), 160×64
+0x1c5 = { text = "Stopped short", font = "display" }              # kind 14 停止位置手前です, 256×32
+0x1ce = { text = "Collision!", font = "display" }                 # kind 15 車両激突, 176×32
 0x1ad = "Penalty"                    # 減点 before the seconds of a penalty, 64×32
 0x1bd = "sec"                        # 秒 after the seconds, 48×32
 
@@ -289,7 +291,7 @@ name = "English"
 # Station result (menus.md §9). Rows are 480 px wide with gaps where the game draws digits,
 # so only the words are replaced; Latin art (Cm, EXCELLENT!, m×N) stays.
 
-0x1a0 = "Result"                     # 運転評価 header, 176×48
+0x1a0 = { text = "Result", font = "display" }                     # 運転評価 header, 176×48
 0x1c9 = { parts = [{ region = [12, 0, 196, 32], text = "Stop point", align = "left" }, { region = [384, 0, 96, 32], text = "OK!" }] }   # 停止位置 nn Cm 合格!
 0x1a6 = { parts = [{ region = [12, 0, 196, 32], text = "Stop point", align = "left" }, { region = [360, 0, 120, 32], text = "OK!" }] }   # 停止位置 … 合格!
 0x1cc = { parts = [{ region = [0, 0, 128, 32], text = "Stop point", align = "left" }, { region = [372, 0, 104, 32], text = "OK!!" }] }   # 停止位置 EXCELLENT! … Cm 合格!!
@@ -709,11 +711,11 @@ name = "English"
 # Decided layout (user, option B): the big Japanese title becomes English and the small
 # English subtitle in the bottom right becomes the Japanese title, mirroring the original's
 # bilingual items. The subtitle text needs a font with Japanese glyphs (or a fallback one).
-0 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", text = "Arcade Mode" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "アーケードモード" }] }
-1 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", text = "Game Settings" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "ゲーム設定" }] }
-2 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", text = "Rankings" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "ランキングを見る" }] }
-3 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", text = "Quit Game" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "ゲーム終了" }] }
-4 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", text = "Calibration" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "専用コントローラー設定" }] }   # input mode 6
+0 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", font = "display", text = "Arcade Mode" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "アーケードモード" }] }
+1 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", font = "display", text = "Game Settings" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "ゲーム設定" }] }
+2 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", font = "display", text = "Rankings" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "ランキングを見る" }] }
+3 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", font = "display", text = "Quit Game" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "ゲーム終了" }] }
+4 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", font = "display", text = "Calibration" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "専用コントローラー設定" }] }   # input mode 6
 
 # Options labels and values (0x47c584), selected colouring. Labels 192×32, values 240×32
 # (10–13 are 32×32). Labels 0–5 and the values shown in the list or on the control
@@ -819,19 +821,19 @@ name = "English"
 
 # Screen headers, 288×48. 0 = 0x48c584, 1 = 0x48c58a; the rest have no known descriptor.
 [sheet.0x54d]
-0 = { text = "Select Line", align = "left" }                    # 路線選択
-1 = { text = "Select Train", align = "left" }                   # 電車選択
-main_menu = { rect = [0, 0, -1, 3], align = "left", text = "Main Menu" }              # メインメニュー
-controls = { rect = [0, 3, -1, 3], align = "left", text = "Controls" }                # コントロール
-difficulty = { rect = [0, 6, -1, 3], align = "left", text = "Difficulty" }            # 難易度
-vibration = { rect = [0, 9, -1, 3], align = "left", text = "Vibration" }              # 振動
-sound = { rect = [0, 12, -1, 3], align = "left", text = "Sound" }                     # サウンド
-speedometer = { rect = [0, 15, -1, 3], align = "left", text = "Speedometer" }         # 速度メーター
-distance_meter = { rect = [0, 18, -1, 3], align = "left", text = "Distance Meter" }   # 距離メーター
-load_save = { rect = [0, 21, -1, 3], align = "left", text = "Load / Save" }           # ロード・セーブ
-game_settings = { rect = [0, 24, -1, 3], align = "left", text = "Game Settings" }     # ゲーム設定
-power_setup = { rect = [0, 27, -1, 3], align = "left", text = "Power Lever Setup" }   # マスコン調整
-brake_setup = { rect = [0, 30, -1, 3], align = "left", text = "Brake Lever Setup" }   # ブレーキ調整
+0 = { text = "Select Line", align = "left", font = "display" }                    # 路線選択
+1 = { text = "Select Train", align = "left", font = "display" }                   # 電車選択
+main_menu = { rect = [0, 0, -1, 3], align = "left", font = "display", text = "Main Menu" }              # メインメニュー
+controls = { rect = [0, 3, -1, 3], align = "left", font = "display", text = "Controls" }                # コントロール
+difficulty = { rect = [0, 6, -1, 3], align = "left", font = "display", text = "Difficulty" }            # 難易度
+vibration = { rect = [0, 9, -1, 3], align = "left", font = "display", text = "Vibration" }              # 振動
+sound = { rect = [0, 12, -1, 3], align = "left", font = "display", text = "Sound" }                     # サウンド
+speedometer = { rect = [0, 15, -1, 3], align = "left", font = "display", text = "Speedometer" }         # 速度メーター
+distance_meter = { rect = [0, 18, -1, 3], align = "left", font = "display", text = "Distance Meter" }   # 距離メーター
+load_save = { rect = [0, 21, -1, 3], align = "left", font = "display", text = "Load / Save" }           # ロード・セーブ
+game_settings = { rect = [0, 24, -1, 3], align = "left", font = "display", text = "Game Settings" }     # ゲーム設定
+power_setup = { rect = [0, 27, -1, 3], align = "left", font = "display", text = "Power Lever Setup" }   # マスコン調整
+brake_setup = { rect = [0, 30, -1, 3], align = "left", font = "display", text = "Brake Lever Setup" }   # ブレーキ調整
 
 # Name-entry legends (0x486184 keyboard, 0x48618a lever), 176×64 each.
 [sheet.0x53f]
@@ -964,6 +966,8 @@ replay = { rect = [6, 0, 6, 2], region = [13, 4, 72, 23], style = "plain", text 
 0x23f = "Tama River"                 # 多摩川
 
 [caption]
+# Captions in the body font, banners in the display font (docs/localisation.md, "Fonts").
+banner_font = "display"
 depart_clear = "{name} · Depart: Clear!"
 depart_reduce = "{name} · Depart: Reduce"
 depart_caution = "{name} · Depart: Caution"

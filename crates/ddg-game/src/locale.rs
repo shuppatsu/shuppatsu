@@ -22,7 +22,8 @@ use ddg_formats::exe::Exe;
 use ddg_render::label::LabelFont;
 use ddg_render::sprites::SpriteBank;
 use ddg_render::text::{
-    Align, Backdrop, FontGlyphs, Style, SubRect, TextOverlay, TextOverride, TextPart,
+    Align, Backdrop, FontGlyphs, FontRole, Fonts, Style, SubRect, TextOverlay, TextOverride,
+    TextPart,
 };
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -139,6 +140,9 @@ pub struct Catalogue {
     /// ([`CAPTION_KINDS`]), with `{name}` for the station name (docs/localisation.md,
     /// "Captions and banners").
     pub captions: Vec<(String, String)>,
+    /// `[caption]` `font` and `banner_font`: the font roles of the one-line captions and of
+    /// the banners (body unless set).
+    pub caption_fonts: [FontRole; 2],
 }
 
 /// The `[caption]` keys, by caption kind 0–6 (hud.md §3.13: 出発進行, 出発減速, 出発注意,
@@ -187,6 +191,7 @@ impl Catalogue {
         let mut station_plates = Vec::new();
         let mut landmarks = Vec::new();
         let mut captions = Vec::new();
+        let mut caption_fonts = [FontRole::Body; 2];
         for (section, value) in &root {
             match section.as_str() {
                 "meta" => {
@@ -267,6 +272,18 @@ impl Catalogue {
                 "caption" => {
                     let t = value.as_table().context("[caption] must be a table")?;
                     for (k, v) in t {
+                        let ctx = || format!("caption.{k}");
+                        match k.as_str() {
+                            "font" => {
+                                caption_fonts[0] = parse_role(v).with_context(ctx)?;
+                                continue;
+                            }
+                            "banner_font" => {
+                                caption_fonts[1] = parse_role(v).with_context(ctx)?;
+                                continue;
+                            }
+                            _ => {}
+                        }
                         ensure!(
                             CAPTION_KINDS.contains(&k.as_str()),
                             "unknown caption kind {k:?}"
@@ -286,6 +303,7 @@ impl Catalogue {
             station_plates,
             landmarks,
             captions,
+            caption_fonts,
         })
     }
 
@@ -309,6 +327,8 @@ impl Catalogue {
 pub struct CaptionPhrases {
     pub by_kind: [Option<String>; 7],
     pub tbl_texts: HashMap<u16, String>,
+    /// Font roles of the captions and of the banners.
+    pub fonts: [FontRole; 2],
 }
 
 /// The `[caption]` phrases of `cfg`'s catalogue, or `None` unless text overrides are drawn
@@ -330,6 +350,7 @@ pub fn caption_phrases(cfg: &LocaleConfig) -> Result<Option<CaptionPhrases>> {
     Ok(Some(CaptionPhrases {
         by_kind,
         tbl_texts: cat.tbl_texts(),
+        fonts: cat.caption_fonts,
     }))
 }
 
@@ -422,6 +443,13 @@ fn part_with_text(s: &str) -> TextPart {
     }
 }
 
+/// A font role: `"body"` or `"display"`.
+fn parse_role(v: &toml::Value) -> Result<FontRole> {
+    v.as_str()
+        .and_then(FontRole::parse)
+        .context("font must be body or display")
+}
+
 fn apply_option(p: &mut TextPart, k: &str, v: &toml::Value) -> Result<()> {
     match k {
         "region" => {
@@ -472,6 +500,7 @@ fn apply_option(p: &mut TextPart, k: &str, v: &toml::Value) -> Result<()> {
             ensure!((0.5..=3.0).contains(&em), "line_height must be 0.5 to 3");
             p.line_height = Some(em as f32);
         }
+        "font" => p.font = parse_role(v)?,
         "backdrop" => {
             p.backdrop = match v.as_str() {
                 Some("art") => Backdrop::Art,
@@ -562,6 +591,9 @@ pub struct LocaleConfig {
     /// TTF/OTF font files, `:`-separated like `PATH`: the primary font, then fallbacks for
     /// characters it lacks. No font ships with the project.
     pub font: Option<PathBuf>,
+    /// The display font list (same form), for text marked `font = "display"`: screen
+    /// headers, menu titles, banners. `None` draws those in `font` too.
+    pub display_font: Option<PathBuf>,
     /// Extra catalogue directory (`<dir>/<lang>.toml` overrides the built-in one).
     pub dir: Option<PathBuf>,
     /// The canvas multiple in use: the 2D layer is composed at 640×480 × this (1 = the
@@ -581,6 +613,7 @@ impl Default for LocaleConfig {
         Self {
             lang: IDENTITY_LANG.to_owned(),
             font: None,
+            display_font: None,
             dir: None,
             ui_scale: 1,
             ui_scale_fixed: None,
@@ -609,8 +642,8 @@ impl LocaleConfig {
         self.hud_layout == crate::presentation::HudLayout::Enhanced
     }
 
-    /// `DDG_LANG`, `DDG_FONT`, `DDG_LOCALE_DIR`, `DDG_UI_SCALE`, `DDG_HUD_LAYOUT`,
-    /// `DDG_UI_SCALING` (unknown values are ignored with a warning).
+    /// `DDG_LANG`, `DDG_FONT`, `DDG_DISPLAY_FONT`, `DDG_LOCALE_DIR`, `DDG_UI_SCALE`,
+    /// `DDG_HUD_LAYOUT`, `DDG_UI_SCALING` (unknown values are ignored with a warning).
     pub fn from_env() -> Self {
         let var = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty());
         let mut c = Self::default();
@@ -618,6 +651,7 @@ impl LocaleConfig {
             c.lang = l.to_string_lossy().into_owned();
         }
         c.font = var("DDG_FONT").map(PathBuf::from);
+        c.display_font = var("DDG_DISPLAY_FONT").map(PathBuf::from);
         c.dir = var("DDG_LOCALE_DIR").map(PathBuf::from);
         if let Some(s) = var("DDG_UI_SCALE").and_then(|v| v.to_str()?.parse().ok()) {
             c.ui_scale_fixed = Some(clamp_scale(s));
@@ -638,9 +672,10 @@ impl LocaleConfig {
         c
     }
 
-    /// Takes `--lang <code>`, `--font <file>`, `--locale-dir <dir>`, `--ui-scale <n>`,
-    /// `--hud-layout <original|enhanced>` and `--ui-scaling <smooth|integer|nearest>` out of
-    /// `args` (they override the environment) and leaves everything else.
+    /// Takes `--lang <code>`, `--font <files>`, `--display-font <files>`, `--locale-dir <dir>`,
+    /// `--ui-scale <n>`, `--hud-layout <original|enhanced>` and
+    /// `--ui-scaling <smooth|integer|nearest>` out of `args` (they override the environment)
+    /// and leaves everything else.
     pub fn take_args(&mut self, args: &mut Vec<String>) -> Result<()> {
         let mut rest = Vec::with_capacity(args.len());
         let mut it = std::mem::take(args).into_iter();
@@ -648,6 +683,10 @@ impl LocaleConfig {
             match a.as_str() {
                 "--lang" => self.lang = it.next().context("--lang needs a code")?,
                 "--font" => self.font = Some(it.next().context("--font needs a file")?.into()),
+                "--display-font" => {
+                    let v = it.next().context("--display-font needs a file")?;
+                    self.display_font = Some(v.into());
+                }
                 "--locale-dir" => {
                     self.dir = Some(it.next().context("--locale-dir needs a dir")?.into())
                 }
@@ -691,6 +730,7 @@ pub fn install(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Resu
     if cfg.lang == IDENTITY_LANG {
         bank.set_text(None);
         bank.set_label_font(None);
+        bank.set_display_label_font(None);
         return Ok(0);
     }
     let Some(font_path) = &cfg.font else {
@@ -700,18 +740,29 @@ pub fn install(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Resu
         );
         bank.set_text(None);
         bank.set_label_font(None);
+        bank.set_display_label_font(None);
         return Ok(0);
     };
     let sheets = SheetTables::read(exe)?;
     let locale = Locale::load(&cfg.lang, cfg.dir.as_deref(), &sheets)?;
     // A `:`-separated list (`;` on Windows), like PATH: the primary font, then fallbacks.
-    let paths: Vec<PathBuf> = std::env::split_paths(font_path).collect();
-    let font = FontGlyphs::load_all(&paths)?;
-    let overlay = TextOverlay::build_scaled(bank, locale.overrides(), &font, cfg.ui_scale);
+    let load = |list: &Path| {
+        let paths: Vec<PathBuf> = std::env::split_paths(list).collect();
+        FontGlyphs::load_all(&paths)
+    };
+    let font = load(font_path)?;
+    // The display role (headers, menu titles, banners): its own list, else the body font.
+    let display = cfg.display_font.as_deref().map(load).transpose()?;
+    let fonts = Fonts {
+        body: &font,
+        display: display.as_ref().map(|d| d as _),
+    };
+    let overlay = TextOverlay::build_with(bank, locale.overrides(), fonts, cfg.ui_scale);
     let n = overlay.len();
     bank.set_text(Some(overlay));
-    // The same font for the free text of port-only widgets (the English station plates).
+    // The same fonts for the free text of port-only widgets (captions, banners, plates).
     bank.set_label_font(Some(LabelFont::new(Box::new(font))));
+    bank.set_display_label_font(display.map(|d| LabelFont::new(Box::new(d))));
     Ok(n)
 }
 
@@ -859,6 +910,74 @@ mod tests {
         assert!(ja.is_identity());
         assert!(ja.lookup(0x206, SubRect::WHOLE).is_none());
         assert!(Locale::load("xx", None, &sheets).is_err());
+    }
+
+    #[test]
+    fn font_roles_parse() {
+        let head = "[meta]\nlanguage = \"xx\"\nname = \"X\"\n";
+        let cat = Catalogue::parse(&format!(
+            "{head}[tbl]\n0x10 = \"plain\"\n0x11 = {{ text = \"head\", font = \"display\" }}\n\
+             0x12 = {{ font = \"display\", parts = [{{ region = [0, 0, 8, 8], text = \"a\" }}, \
+             {{ region = [8, 0, 8, 8], text = \"b\", font = \"body\" }}] }}\n\
+             [caption]\nstop = \"{{name}}\"\nbanner_font = \"display\"\n"
+        ))
+        .unwrap();
+        let fonts = |tbl: u16| -> Vec<FontRole> {
+            let e = cat.entries.iter().find(|e| e.key.tbl() == tbl).unwrap();
+            e.text.parts.iter().map(|p| p.font).collect()
+        };
+        assert_eq!(fonts(0x10), [FontRole::Body]);
+        assert_eq!(fonts(0x11), [FontRole::Display]);
+        // An entry's role is its parts' default; a part can set its own.
+        assert_eq!(fonts(0x12), [FontRole::Display, FontRole::Body]);
+        assert_eq!(cat.caption_fonts, [FontRole::Body, FontRole::Display]);
+        assert_eq!(cat.captions.len(), 1);
+        for bad in [
+            "[tbl]\n0x10 = { text = \"a\", font = \"heading\" }",
+            "[tbl]\n0x10 = { text = \"a\", font = 1 }",
+            "[caption]\nfont = \"bold\"",
+        ] {
+            assert!(Catalogue::parse(&format!("{head}{bad}")).is_err(), "{bad}");
+        }
+        // en.toml: headers and titles are display, HUD labels body, banners display.
+        let en = en();
+        let role = |tbl: u16, name: &str| {
+            en.entries
+                .iter()
+                .find(|e| matches!(&e.key, Key::Rect { tbl: t, name: n, .. } if *t == tbl && n == name))
+                .map(|e| e.text.parts[0].font)
+        };
+        assert_eq!(role(0x54d, "main_menu"), Some(FontRole::Display));
+        let tbl = |id: u16| {
+            en.entries
+                .iter()
+                .find(|e| {
+                    e.key
+                        == Key::Tbl {
+                            tbl: id,
+                            rect: SubRect::WHOLE.canonical(),
+                        }
+                })
+                .map(|e| e.text.parts[0].font)
+        };
+        assert_eq!(tbl(0x1af), Some(FontRole::Display));
+        assert_eq!(tbl(0x1a0), Some(FontRole::Display));
+        assert_eq!(tbl(0x206), Some(FontRole::Body));
+        assert_eq!(en.caption_fonts, [FontRole::Body, FontRole::Display]);
+    }
+
+    #[test]
+    fn display_font_from_args() {
+        let mut c = LocaleConfig::default();
+        let mut args: Vec<String> = ["--display-font", "/a.ttf:/b.ttf", "--lang", "en"]
+            .map(String::from)
+            .to_vec();
+        c.take_args(&mut args).unwrap();
+        assert!(args.is_empty());
+        assert_eq!(c.display_font, Some(PathBuf::from("/a.ttf:/b.ttf")));
+        // A display font alone does not turn text on: the body font is still needed.
+        assert!(!c.active());
+        assert!(c.take_args(&mut vec!["--display-font".into()]).is_err());
     }
 
     #[test]

@@ -114,6 +114,60 @@ pub enum Backdrop {
     Solid,
 }
 
+/// Which of the language's fonts a text is drawn in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+pub enum FontRole {
+    /// Everything not marked otherwise: HUD labels, hints, captions, plates, legends.
+    #[default]
+    Body,
+    /// Display lettering: screen headers, menu titles, banners, time-message headlines. Drawn
+    /// in the body font when no display font is configured.
+    Display,
+}
+
+impl FontRole {
+    /// `"body"` or `"display"`, as in the catalogue.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "body" => Some(Self::Body),
+            "display" => Some(Self::Display),
+            _ => None,
+        }
+    }
+}
+
+/// The fonts of one language by role; a missing display font falls back to the body font.
+#[derive(Clone, Copy)]
+pub struct Fonts<'a> {
+    pub body: &'a dyn GlyphSource,
+    pub display: Option<&'a dyn GlyphSource>,
+}
+
+impl<'a> Fonts<'a> {
+    /// One font for every role.
+    pub fn one(body: &'a dyn GlyphSource) -> Self {
+        Self {
+            body,
+            display: None,
+        }
+    }
+
+    /// The font of `role`.
+    pub fn get(&self, role: FontRole) -> &'a dyn GlyphSource {
+        match role {
+            FontRole::Body => self.body,
+            FontRole::Display => self.display.unwrap_or(self.body),
+        }
+    }
+}
+
+/// Capital height per font pixel of `glyphs` (the ink height of `H`): turns a fitted font
+/// size into a size that compares across fonts, for size groups with parts in several roles.
+fn cap_per_px(glyphs: &dyn GlyphSource) -> f32 {
+    let h = glyphs.glyph('H', 100.0).height as f32 / 100.0;
+    if h > 0.0 { h } else { 1.0 }
+}
+
 /// Opaque share of the region's edge above which `Style::Auto` picks `Boxed`.
 pub const BOXED_EDGE: f32 = 0.35;
 
@@ -142,6 +196,8 @@ pub struct TextPart {
     /// drawn at one size: the smallest any of them fits at (the items of one menu list,
     /// which are separate entries of a string sheet or separate tilemaps).
     pub shared_group: Option<String>,
+    /// The font role (`font = "display"` in the catalogue).
+    pub font: FontRole,
 }
 
 /// The replacement for one sprite.
@@ -516,6 +572,38 @@ pub struct TextOverlay {
     scale: usize,
 }
 
+/// The size of a size group: its smallest capital height, kept as the font size it was fitted
+/// at and that font's capital height per pixel, so a part in the same font gets exactly that
+/// font size back and a part in another font the same capital height.
+#[derive(Clone, Copy, Debug)]
+struct GroupMin {
+    px: f32,
+    k: f32,
+}
+
+impl GroupMin {
+    fn cap(self) -> f32 {
+        self.px * self.k
+    }
+
+    /// The font size of this capital height in a font with `k` capital pixels per pixel.
+    fn px_for(self, k: f32) -> f32 {
+        if k == self.k { self.px } else { self.cap() / k }
+    }
+
+    /// Lowers group `g`'s size to a part fitted at `px` in a font with `k`.
+    fn keep<'a>(mins: &mut HashMap<&'a str, GroupMin>, g: &'a str, px: f32, k: f32) {
+        let new = Self { px, k };
+        mins.entry(g)
+            .and_modify(|m| {
+                if new.cap() < m.cap() {
+                    *m = new;
+                }
+            })
+            .or_insert(new);
+    }
+}
+
 impl TextOverlay {
     /// Renders every override against the bank's art. Overrides whose tilemap or rectangle
     /// does not exist are skipped (the art is then drawn as usual).
@@ -533,6 +621,17 @@ impl TextOverlay {
         bank: &SpriteBank,
         overrides: impl IntoIterator<Item = (u16, SubRect, &'a TextOverride)>,
         glyphs: &dyn GlyphSource,
+        scale: usize,
+    ) -> Self {
+        Self::build_with(bank, overrides, Fonts::one(glyphs), scale)
+    }
+
+    /// [`TextOverlay::build_scaled`] with a font per role ([`TextPart::font`]). Size groups
+    /// span roles: their parts share one capital height, whatever their fonts.
+    pub fn build_with<'a>(
+        bank: &SpriteBank,
+        overrides: impl IntoIterator<Item = (u16, SubRect, &'a TextOverride)>,
+        fonts: Fonts<'_>,
         scale: usize,
     ) -> Self {
         let scale = scale.max(1);
@@ -555,7 +654,7 @@ impl TextOverlay {
                 let fitted = o
                     .parts
                     .iter()
-                    .map(|p| render_part_at(p, &art, pw, ph, glyphs, scale, None))
+                    .map(|p| render_part_at(p, &art, pw, ph, fonts.get(p.font), scale, None))
                     .collect();
                 Some(Entry {
                     tbl,
@@ -567,44 +666,50 @@ impl TextOverlay {
                 })
             })
             .collect();
+        let k_of = |p: &TextPart| cap_per_px(fonts.get(p.font));
         // The smallest fitted size of each shared group (across entries and tilemaps).
-        let mut shared_min: HashMap<&str, f32> = HashMap::new();
+        let mut shared_min: HashMap<&str, GroupMin> = HashMap::new();
         for e in &entries {
             for (p, f) in e.o.parts.iter().zip(&e.fitted) {
                 if let (Some(g), Some((_, px))) = (p.shared_group.as_deref(), f) {
-                    let m = shared_min.entry(g).or_insert(f32::MAX);
-                    *m = m.min(*px);
+                    GroupMin::keep(&mut shared_min, g, *px, k_of(p));
                 }
             }
         }
         let mut parts = HashMap::new();
         for e in entries {
             // ... and of each group inside the entry.
-            let mut smallest: HashMap<&str, f32> = HashMap::new();
+            let mut smallest: HashMap<&str, GroupMin> = HashMap::new();
             for (p, f) in e.o.parts.iter().zip(&e.fitted) {
                 if let (Some(g), Some((_, px))) = (p.group.as_deref(), f) {
-                    let m = smallest.entry(g).or_insert(f32::MAX);
-                    *m = m.min(*px);
+                    GroupMin::keep(&mut smallest, g, *px, k_of(p));
                 }
             }
             let (pw, ph) = e.size;
-            let rendered =
-                e.o.parts
-                    .iter()
-                    .zip(e.fitted)
-                    .filter_map(|(p, f)| {
-                        let (part, px) = f?;
-                        let group = p.group.as_deref().map(|g| smallest[g]);
-                        let sheet = p.shared_group.as_deref().map(|g| shared_min[g]);
-                        match group.into_iter().chain(sheet).reduce(f32::min) {
-                            Some(min) if min < px => {
-                                render_part_at(p, &e.art, pw, ph, glyphs, scale, Some(min))
-                                    .map(|(r, _)| r)
-                            }
-                            _ => Some(part),
+            let rendered = e
+                .o
+                .parts
+                .iter()
+                .zip(e.fitted)
+                .filter_map(|(p, f)| {
+                    let (part, px) = f?;
+                    let k = k_of(p);
+                    let group = p.group.as_deref().map(|g| smallest[g]);
+                    let sheet = p.shared_group.as_deref().map(|g| shared_min[g]);
+                    let min = group
+                        .into_iter()
+                        .chain(sheet)
+                        .map(|m| m.px_for(k))
+                        .reduce(f32::min);
+                    match min {
+                        Some(min) if min < px => {
+                            let g = fonts.get(p.font);
+                            render_part_at(p, &e.art, pw, ph, g, scale, Some(min)).map(|(r, _)| r)
                         }
-                    })
-                    .collect::<Vec<_>>();
+                        _ => Some(part),
+                    }
+                })
+                .collect::<Vec<_>>();
             if !rendered.is_empty() {
                 parts.insert((e.tbl, e.rect), rendered);
             }
@@ -964,6 +1069,51 @@ pub(crate) mod tests {
                 coverage: vec![255; width * height],
             }
         }
+    }
+
+    /// [`BoxGlyphs`] with boxes `w` times as wide and `h` times as tall (a second font).
+    pub(crate) struct Stretched {
+        pub w: f32,
+        pub h: f32,
+    }
+
+    impl GlyphSource for Stretched {
+        fn vertical_metrics(&self, px: f32) -> (f32, f32) {
+            BoxGlyphs.vertical_metrics(px)
+        }
+        fn glyph(&self, ch: char, px: f32) -> Glyph {
+            if ch == ' ' {
+                return BoxGlyphs.glyph(ch, px * self.w);
+            }
+            let (width, height) = (
+                (px * 0.5 * self.w) as usize + 2,
+                (px * 0.7 * self.h) as usize + 2,
+            );
+            Glyph {
+                advance: px * 0.55 * self.w,
+                xmin: -1,
+                ymin: -1,
+                width,
+                height,
+                coverage: vec![255; width * height],
+            }
+        }
+    }
+
+    #[test]
+    fn display_role_falls_back_to_the_body_font() {
+        let narrow = Stretched { w: 0.5, h: 1.0 };
+        let body = Fonts::one(&BoxGlyphs);
+        assert!(std::ptr::addr_eq(body.get(FontRole::Display), &BoxGlyphs));
+        let both = Fonts {
+            body: &BoxGlyphs,
+            display: Some(&narrow),
+        };
+        assert!(std::ptr::addr_eq(both.get(FontRole::Body), &BoxGlyphs));
+        assert!(std::ptr::addr_eq(both.get(FontRole::Display), &narrow));
+        assert_eq!(FontRole::parse("display"), Some(FontRole::Display));
+        assert_eq!(FontRole::parse("body"), Some(FontRole::Body));
+        assert_eq!(FontRole::parse("Display"), None);
     }
 
     #[test]
