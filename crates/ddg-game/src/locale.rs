@@ -29,7 +29,11 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 /// Catalogues compiled into the binary (our own translations; no game data).
-const BUILTIN: &[(&str, &str)] = &[("en", include_str!("../../../locales/en.toml"))];
+const BUILTIN: &[(&str, &str)] = &[
+    ("en", include_str!("../../../locales/en.toml")),
+    // Only the port's own strings (`[ui]`): `ja` draws the original art.
+    ("ja", include_str!("../../../locales/ja.toml")),
+];
 
 /// The original language: the art as it is.
 pub const IDENTITY_LANG: &str = "ja";
@@ -146,6 +150,9 @@ pub struct Catalogue {
     /// `[subtitle]`: templates and lines of the subtitles for the Japanese voice lines, by key
     /// (`subtitles.rs`, docs/localisation.md "Subtitles").
     pub subtitles: Vec<(String, String)>,
+    /// `[ui]`: the port's own screens (the settings screen), by string ID
+    /// ([`crate::front::port_settings::known_ui_key`]).
+    pub ui: Vec<(String, String)>,
 }
 
 /// The `[caption]` keys, by caption kind 0–6 (hud.md §3.13: 出発進行, 出発減速, 出発注意,
@@ -196,6 +203,7 @@ impl Catalogue {
         let mut captions = Vec::new();
         let mut caption_fonts = [FontRole::Body; 2];
         let mut subtitles = Vec::new();
+        let mut ui = Vec::new();
         for (section, value) in &root {
             match section.as_str() {
                 "meta" => {
@@ -306,6 +314,18 @@ impl Catalogue {
                         subtitles.push((k.clone(), s.to_owned()));
                     }
                 }
+                "ui" => {
+                    let t = value.as_table().context("[ui] must be a table")?;
+                    for (k, v) in t {
+                        ensure!(
+                            crate::front::port_settings::known_ui_key(k),
+                            "unknown ui key {k:?}"
+                        );
+                        let s = v.as_str().with_context(|| format!("ui.{k}"))?;
+                        ensure!(!s.trim().is_empty(), "ui.{k}: empty text");
+                        ui.push((k.clone(), s.to_owned()));
+                    }
+                }
                 _ => bail!("unknown section [{section}]"),
             }
         }
@@ -318,6 +338,7 @@ impl Catalogue {
             captions,
             caption_fonts,
             subtitles,
+            ui,
         })
     }
 

@@ -18,6 +18,7 @@ use crate::front::calibrate::CalibrationScreen;
 use crate::front::dialog::ExitConfirm;
 use crate::front::language::{Language, LanguageScreen, Look};
 use crate::front::options::{self, ControlPage, ListResult, OptionsList, SetEffect, ValuePage};
+use crate::front::port_settings::{self, PortSettings, UiText};
 use crate::front::prerun::{DepartureBoard, LeverCheck};
 use crate::front::records::{Records, RecordsStep};
 use crate::front::route_select::{Chosen, RouteResult, RouteSelect};
@@ -86,6 +87,9 @@ pub struct AppOptions {
     /// Headless: run this many app ticks, render one frame to a PPM and exit.
     pub shot: Option<(u64, PathBuf)>,
     pub locale: crate::locale::LocaleConfig,
+    /// The settings a flag or the environment fixes for the run (the port settings screen
+    /// shows them locked).
+    pub locks: crate::config::Locks,
     /// Show the first-run language screen before attract (`crate::config::asks_language`).
     pub first_run: bool,
 }
@@ -110,6 +114,8 @@ enum Screen {
     Options(OptionsList),
     Control(ControlPage),
     Value(ValuePage),
+    /// The port settings (port only), from the options list's seventh row.
+    PortSettings(PortSettings),
     Records(Records),
     Calibrate(CalibrationScreen),
     Exit(ExitConfirm),
@@ -130,6 +136,7 @@ struct Defs {
     cursor_x: i16,
     exit_frame: (i16, i16),
     language: Look,
+    port: port_settings::Look,
 }
 
 pub struct App {
@@ -139,6 +146,8 @@ pub struct App {
     res: Option<Shared>,
     screen: Screen,
     joystick: bool,
+    /// The port's own strings in the current language (`[ui]`).
+    ui: UiText,
     /// The replay-playback flag `0x816974` (R in the train list).
     replay: bool,
     /// Attract's walk and photo counters (`0x8573c8`, `0x8573cc`), kept across walks.
@@ -237,6 +246,7 @@ impl App {
         let defs = Defs {
             cursor_x,
             language: Look::new(cursor_x, map_size(&bank, TBL_CURSOR), menu_palette),
+            port: port_settings::Look::new(menu_palette),
             exit_frame: map_size(&bank, usize::try_from(front.exit_dialog.frame)?),
             front,
             screens,
@@ -267,6 +277,7 @@ impl App {
                 Screen::Attract(Attract::new(false, AttractCounters::default()))
             },
             joystick,
+            ui: UiText::load(&opts.locale.lang, opts.locale.dir.as_deref()),
             replay: false,
             attract_counters: AttractCounters::default(),
             demo_attract: None,
@@ -457,6 +468,7 @@ impl App {
         let mut set_option: Option<(usize, u8)> = None;
         let mut calibrated = None;
         let mut language = None;
+        let mut port_change: Option<usize> = None;
         let joy = if matches!(self.screen, Screen::Calibrate(_)) {
             self.joy_state()
         } else {
@@ -526,7 +538,13 @@ impl App {
                             crate::front::clear_all(&mut r.layer);
                             Screen::Wait(TO_ROUTE_SELECT_TICKS, Next::RouteSelect)
                         }
-                        TitleChoice::Options => Screen::Options(OptionsList::new(0)),
+                        TitleChoice::Options => {
+                            // The port's own rows are text; `ja` has no label font otherwise.
+                            if !self.opts.locale.active() {
+                                crate::locale::install_label_font(&mut r.bank)?;
+                            }
+                            Screen::Options(OptionsList::new(0))
+                        }
                         TitleChoice::Ranking => {
                             sfx.push(Sfx::Stop(snd::BGM_MENU));
                             crate::front::clear_all(&mut r.layer);
@@ -556,12 +574,23 @@ impl App {
             },
             Screen::Options(mut m) => {
                 match m.tick(&input, &env, &r.save.eeprom, t, &mut r.layer, &mut sfx) {
-                    None => Screen::Options(m),
+                    None => {
+                        let selected = m.cursor() == options::item::PORT;
+                        let (look, ui) = (&self.defs.port, &self.ui);
+                        port_settings::draw_options_item(&mut r.layer, t, look, ui, selected);
+                        Screen::Options(m)
+                    }
                     Some(res) => {
                         options::destroy(&mut r.layer);
                         match res {
                             ListResult::Back => {
+                                if !self.opts.locale.active() {
+                                    r.bank.set_label_font(None);
+                                }
                                 Screen::Title(TitleMenu::new(1, self.defs.cursor_x))
+                            }
+                            ListResult::Open(options::item::PORT) => {
+                                Screen::PortSettings(PortSettings::new())
                             }
                             ListResult::Open(options::item::CONTROL) => {
                                 let mode = r.save.eeprom.options().control_mode;
@@ -592,6 +621,25 @@ impl App {
                     Screen::Options(OptionsList::new(item))
                 }
             },
+            Screen::PortSettings(mut p) => {
+                let (locks, cfg, settings) = (
+                    &self.opts.locks,
+                    &mut self.opts.locale,
+                    &mut self.opts.settings,
+                );
+                match p.tick(&input, locks, cfg, settings, &mut sfx) {
+                    Some(port_settings::Step::Back) => {
+                        options::destroy(&mut r.layer);
+                        Screen::Options(OptionsList::new(options::item::PORT))
+                    }
+                    step => {
+                        if let Some(port_settings::Step::Changed(i)) = step {
+                            port_change = Some(i);
+                        }
+                        Screen::PortSettings(p)
+                    }
+                }
+            }
             Screen::Records(mut rec) => {
                 let pad_legend = env.analog || env.control_mode == 4;
                 let step = rec.tick(
@@ -698,6 +746,25 @@ impl App {
         if let Some(lang) = language {
             self.choose_language(lang)?;
         }
+        if let Some(i) = port_change {
+            self.apply_port_setting(i)?;
+        }
+        if let Screen::PortSettings(p) = &self.screen {
+            let env = self.env();
+            let r = self.res.as_mut().expect("resources");
+            let o = &self.opts;
+            let d = &self.defs;
+            p.draw(
+                &d.port,
+                &self.ui,
+                &o.locks,
+                &o.locale,
+                &o.settings,
+                &env,
+                &d.front,
+                &mut r.layer,
+            );
+        }
         if let Some(cal) = calibrated {
             self.save_calibration(cal)?;
         }
@@ -772,10 +839,7 @@ impl App {
         let code = lang.code();
         self.opts.locale.lang = code.to_owned();
         self.opts.locale.lang_chosen = true;
-        let r = self.res.as_mut().expect("resources");
-        let exe_bytes = r.data.exe()?;
-        let exe = Exe::parse(&exe_bytes)?;
-        crate::locale::install(&self.opts.locale, &exe, &mut r.bank)?;
+        self.install_language(false)?;
         if self.opts.shot.is_some() {
             return Ok(());
         }
@@ -786,6 +850,59 @@ impl App {
         match crate::config::store_lang(&path, code) {
             Ok(()) => eprintln!("language {code} written to {}", path.display()),
             Err(e) => eprintln!("warning: the language is not remembered: {e:#}"),
+        }
+        Ok(())
+    }
+
+    /// Installs `opts.locale`'s language on the sprite bank (the runs get it through
+    /// `opts.locale`) and loads the port's own strings in it. `labels` keeps the bundled
+    /// label font for `ja` too, for the port's text rows on the options screens.
+    fn install_language(&mut self, labels: bool) -> Result<()> {
+        let r = self.res.as_mut().expect("resources");
+        let exe_bytes = r.data.exe()?;
+        let exe = Exe::parse(&exe_bytes)?;
+        crate::locale::install(&self.opts.locale, &exe, &mut r.bank)?;
+        if labels && !self.opts.locale.active() {
+            crate::locale::install_label_font(&mut r.bank)?;
+        }
+        let cfg = &self.opts.locale;
+        self.ui = UiText::load(&cfg.lang, cfg.dir.as_deref());
+        Ok(())
+    }
+
+    /// A port setting changed on the settings screen (already set on `opts`): applied where
+    /// the front end can apply it at once, then written to `config.toml` (except in headless
+    /// runs, which never read it). The runs read the rest from `opts` when they start.
+    fn apply_port_setting(&mut self, index: usize) -> Result<()> {
+        let item = &port_settings::ITEMS[index];
+        let s = self.opts.settings;
+        match item.key {
+            "lang" => self.install_language(true)?,
+            "ui_scaling" | "ui_scale" | "wide_menus" => {
+                crate::shot::set_ui_scaling(self.opts.locale.ui_scaling);
+                if let Some(g) = self.res.as_mut().and_then(|r| r.gpu.as_mut()) {
+                    g.overlay.scaling = self.opts.locale.ui_scaling;
+                }
+                self.fit_front()?;
+            }
+            "save_on_change" => self.res().save.save_on_change = s.save_on_change,
+            "keyboard_with_controller" => {
+                self.opts.pad.keyboard_with_controller = s.keyboard_with_controller;
+                let mode = self.res().save.eeprom.options().control_mode;
+                self.rebuild_controls(mode)?;
+            }
+            _ => {}
+        }
+        if self.opts.shot.is_some() {
+            return Ok(());
+        }
+        let Some(path) = crate::config::path() else {
+            eprintln!("warning: no config dir; {} is not remembered", item.key);
+            return Ok(());
+        };
+        let value = item.file_value(&self.opts.locale, &self.opts.settings);
+        if let Err(e) = crate::config::store(&path, item.key, value) {
+            eprintln!("warning: {} is not remembered: {e:#}", item.key);
         }
         Ok(())
     }
@@ -1120,6 +1237,60 @@ mod tests {
             choice = choice.or(m.tick(&input, &env, &t, &mut l, &mut sfx));
         }
         assert_eq!(choice, Some(TitleChoice::Exit));
+    }
+
+    /// The port settings screen's live hooks: the language is installed on the bank with
+    /// the port's strings in it, the UI scale refits the canvas, the save and exit switches
+    /// reach what reads them. Headless, so nothing is written. Needs `DDG_DATA_DIR`.
+    #[test]
+    fn port_settings_apply_live() {
+        if std::env::var_os("DDG_DATA_DIR").is_none() {
+            eprintln!("skipped: DDG_DATA_DIR not set");
+            return;
+        }
+        let opts = AppOptions {
+            size: (1280, 800),
+            settings: crate::settings::Settings::default(),
+            mute: true,
+            pad: PadOptions::default(),
+            inputs: None,
+            shot: Some((0, std::env::temp_dir().join("ddg-unused.ppm"))),
+            locale: crate::locale::LocaleConfig::default(),
+            locks: crate::config::Locks::default(),
+            first_run: false,
+        };
+        let mut app = App::new(opts).unwrap();
+        let index = |k| {
+            port_settings::ITEMS
+                .iter()
+                .position(|i| i.key == k)
+                .unwrap()
+        };
+        let (cfg, s) = (&mut app.opts.locale, &mut app.opts.settings);
+        port_settings::ITEMS[index("lang")].step(cfg, s, 1);
+        app.apply_port_setting(index("lang")).unwrap();
+        assert_eq!(app.ui.get("title"), "Port Settings");
+        assert!(app.res().bank.text().is_some(), "the English overlay");
+        let (cfg, s) = (&mut app.opts.locale, &mut app.opts.settings);
+        port_settings::ITEMS[index("lang")].step(cfg, s, 1);
+        app.apply_port_setting(index("lang")).unwrap();
+        assert_eq!(app.ui.get("title"), "ポート設定");
+        assert!(app.res().bank.text().is_none(), "the original art");
+
+        let before = app.res().layer.scale;
+        app.opts.locale.ui_scale_fixed = Some(if before == 3 { 2 } else { 3 });
+        app.apply_port_setting(index("ui_scale")).unwrap();
+        let want = app.opts.locale.ui_scale_fixed.unwrap();
+        assert_eq!(app.res().layer.scale, want);
+        let (w, h) = app.res().layer.canvas_size();
+        assert_eq!(app.canvas.len(), w * h * 4, "a canvas of the new size");
+
+        app.opts.settings.save_on_change = false;
+        app.apply_port_setting(index("save_on_change")).unwrap();
+        assert!(!app.res().save.save_on_change);
+        app.opts.settings.wide_menus = false;
+        app.apply_port_setting(index("wide_menus")).unwrap();
+        assert_eq!(app.res().layer.wide, 0, "the 4:3 menus");
     }
 
     /// Setting `exit_no_to_menu` off: the original's いいえ, attract from the title picture

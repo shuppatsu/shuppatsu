@@ -215,13 +215,14 @@ fn parse_play_args() -> Result<play::PlayOptions> {
 fn parse_app_args() -> Result<app::AppOptions> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let headless = args.iter().any(|a| a == "--shot");
-    let (locale, settings) = config::load(&mut args, headless)?;
+    let (locale, settings, locks) = config::load_locked(&mut args, headless)?;
     identity::take_debug_title_flag(&mut args);
     // Hidden: the first-run language screen even when a language is set (headless checks).
     let forced = args.iter().any(|a| a == "--first-run");
     args.retain(|a| a != "--first-run");
     let mut opts = app::AppOptions {
         first_run: config::asks_language(&locale, headless, forced),
+        locks,
         size: (1280, 800),
         settings,
         mute: false,

@@ -78,7 +78,7 @@ impl Look {
 }
 
 /// The palette index (1..=255) closest to `rgb`.
-fn nearest(p: &Palette, rgb: [u8; 3]) -> u8 {
+pub(super) fn nearest(p: &Palette, rgb: [u8; 3]) -> u8 {
     (1..=255u8)
         .min_by_key(|&i| {
             let c = p.rgba(i);

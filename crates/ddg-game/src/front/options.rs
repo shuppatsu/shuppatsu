@@ -29,6 +29,9 @@ pub mod item {
     pub const SOUND: usize = 3;
     pub const SPEED_METER: usize = 4;
     pub const DISTANCE_METER: usize = 5;
+    /// Port only: the port settings screen (`super::super::port_settings`), a seventh row
+    /// after the original six. Not an `Options_Get` item.
+    pub const PORT: usize = 6;
 }
 
 /// The second picture of the control page per mode 0–5 (0x42ad10 immediates): tilemap and
@@ -147,6 +150,13 @@ impl OptionsList {
             sfx.push(Sfx::Play(snd::CANCEL));
             return Some(ListResult::Back);
         }
+        // Port only: with the levers the cursor follows the power notch (P0–P5) and cannot
+        // reach the seventh row, so the horn opens the port settings (nothing reads it here
+        // in the original).
+        if input.notch.is_some() && input.horn {
+            sfx.push(Sfx::Play(snd::DECIDE_SOFT));
+            return Some(ListResult::Open(item::PORT));
+        }
         let (ff, sound) = (env.force_feedback, env.sound_device);
         match input.notch {
             None => {
@@ -159,7 +169,7 @@ impl OptionsList {
                     if !ff && self.cursor == 2 {
                         self.cursor = 1;
                     }
-                } else if self.cursor < 5 && input.down {
+                } else if self.cursor < item::PORT as i32 && input.down {
                     sfx.push(Sfx::Play(snd::MOVE));
                     self.cursor += 1;
                     if !ff && self.cursor == 2 {
@@ -438,10 +448,42 @@ mod tests {
         for _ in 0..10 {
             m.tick(&down, &quiet, &e, &t, &mut l, &mut sfx);
         }
-        assert_eq!(m.cursor(), 5, "clamped at the last item");
+        assert_eq!(m.cursor(), item::PORT, "clamped at the port's row");
+        m.tick(&up, &quiet, &e, &t, &mut l, &mut sfx);
         let r = m.tick(&press(|i| i.confirm = true), &env, &e, &t, &mut l, &mut sfx);
         assert_eq!(r, Some(ListResult::Open(5)));
         assert_eq!(sfx.last(), Some(&Sfx::Play(snd::DECIDE_SOFT)));
+    }
+
+    /// Port only: the seventh row opens the port settings; the six original rows keep their
+    /// places, and with the levers (cursor = power notch, P0–P5) the horn opens it.
+    #[test]
+    fn port_settings_row() {
+        let t = tables();
+        let e = eeprom();
+        let mut l = SpriteLayer::default();
+        let mut sfx = Vec::new();
+        let env = Env::default();
+        let mut m = OptionsList::new(item::DISTANCE_METER);
+        m.tick(&press(|i| i.down = true), &env, &e, &t, &mut l, &mut sfx);
+        assert_eq!(m.cursor(), item::PORT);
+        let r = m.tick(&press(|i| i.confirm = true), &env, &e, &t, &mut l, &mut sfx);
+        assert_eq!(r, Some(ListResult::Open(item::PORT)));
+        // Levers: P5 is the last original row; the horn opens the port settings.
+        let mut m = OptionsList::new(0);
+        let lever = |n| press(|i| i.notch = Some(n));
+        m.tick(&lever(5), &env, &e, &t, &mut l, &mut sfx);
+        assert_eq!(m.cursor(), item::DISTANCE_METER);
+        let horn = press(|i| {
+            i.notch = Some(5);
+            i.horn = true;
+        });
+        let r = m.tick(&horn, &env, &e, &t, &mut l, &mut sfx);
+        assert_eq!(r, Some(ListResult::Open(item::PORT)));
+        // The keys' horn does nothing here, as in the original.
+        let mut m = OptionsList::new(0);
+        let r = m.tick(&press(|i| i.horn = true), &env, &e, &t, &mut l, &mut sfx);
+        assert_eq!(r, None);
     }
 
     #[test]

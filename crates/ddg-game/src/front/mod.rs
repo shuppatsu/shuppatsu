@@ -12,6 +12,7 @@ pub mod calibrate;
 pub mod dialog;
 pub mod language;
 pub mod options;
+pub mod port_settings;
 pub mod prerun;
 pub mod records;
 pub mod route_select;

@@ -31,6 +31,10 @@ pub struct MenuInput {
     /// 0x10 / 0x20: cursor up / down (press, then repeat pulses).
     pub up: bool,
     pub down: bool,
+    /// 0x80 / 0x40: cursor left / right pulses (no menu of the original reads them; the port
+    /// settings screen changes a value with them).
+    pub left: bool,
+    pub right: bool,
     /// 0x100: horn (Space).
     pub horn: bool,
     /// 0x4000: the R key (route select: replay playback toggle).
@@ -58,6 +62,8 @@ impl MenuInput {
             pause: on(bits::PAUSE),
             up: on(bits::UP_PULSE),
             down: on(bits::DOWN_PULSE),
+            left: on(bits::LEFT_PULSE),
+            right: on(bits::RIGHT_PULSE),
             horn: on(bits::HORN),
             a: on(bits::A),
             key_r: on(bits::KEY_R),
@@ -74,6 +80,8 @@ impl MenuInput {
         pause: false,
         up: false,
         down: false,
+        left: false,
+        right: false,
         horn: false,
         a: false,
         key_r: false,
