@@ -707,6 +707,8 @@ impl App {
                 sfx.push(Sfx::Play(snd::BGM_MENU));
             }
         }
+        // Written at once (decided port behaviour; the original saves only at exit).
+        self.res().save.persist("an options change");
         Ok(())
     }
 
@@ -721,18 +723,17 @@ impl App {
     }
 
     /// Writes `joystick.dat` (0x434a00 writes it to the current directory; the port keeps it
-    /// next to `eeprom.dat`) and reloads the input with it.
+    /// next to `eeprom.dat`) and reloads the input with it. Both files are written at once,
+    /// atomically (decided port behaviour; the original saves `eeprom.dat` only at exit).
     fn save_calibration(&mut self, cal: crate::gamepad::Calibration) -> Result<()> {
         if self.opts.shot.is_some() {
             return Ok(());
         }
         if let Some(path) = joystick_dat(&self.opts.pad) {
-            if let Some(dir) = path.parent() {
-                std::fs::create_dir_all(dir).with_context(|| dir.display().to_string())?;
-            }
-            std::fs::write(&path, cal.to_bytes()).with_context(|| path.display().to_string())?;
+            crate::save::write_atomic(&path, &cal.to_bytes())?;
             eprintln!("calibration written to {}", path.display());
         }
+        self.res().save.persist("a calibration");
         let mode = self.res().save.eeprom.options().control_mode;
         self.rebuild_controls(mode)
     }

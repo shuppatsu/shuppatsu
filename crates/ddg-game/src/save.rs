@@ -8,8 +8,13 @@
 //! is copied in. The defaults are read from the user's exe, never stored here.
 //!
 //! Rankings live twice, as in the original: unpacked in memory (`0x84fca0` / `0x84fc00`, what the
-//! screens show and edit) and packed in the mirror (what is written). The name entry only packs
-//! its table when a name is completed (0x41e670); a timed-out entry stays in memory only.
+//! screens show and edit) and packed in the mirror (what is written). The original's name entry
+//! only packs its table when a name is completed (0x41e670); the port packs a timed-out entry
+//! too (decided port behaviour, menus.md §14).
+//!
+//! The original writes the file only at exit (0x434f50). The port also writes it right after
+//! every change (a ranking entry, a clear mark, an options change, a calibration; decided port
+//! behaviour, menus.md §14), atomically and in the same format: see [`Save::persist`].
 
 use anyhow::{Context, Result};
 use ddg_formats::exe::Exe;
@@ -286,17 +291,53 @@ impl Save {
 
     /// Writes the mirror (0x434f50, at exit). Written to a temporary file and renamed.
     pub fn write(&self) -> Result<()> {
-        let Some(path) = &self.path else {
-            return Ok(());
-        };
-        if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).with_context(|| dir.display().to_string())?;
+        match &self.path {
+            Some(path) => write_atomic(path, self.eeprom.bytes()),
+            None => Ok(()),
         }
-        let tmp = path.with_extension("dat.tmp");
-        std::fs::write(&tmp, self.eeprom.bytes()).with_context(|| tmp.display().to_string())?;
-        std::fs::rename(&tmp, path).with_context(|| path.display().to_string())?;
-        Ok(())
     }
+
+    /// The port's write right after a change (decided port behaviour; the original only
+    /// writes at exit). A failure is reported and play goes on; the exit write tries again.
+    /// Without a path (headless shots) nothing is written.
+    pub fn persist(&self, what: &str) {
+        if let Err(e) = self.write() {
+            eprintln!("warning: saving after {what}: {e:#}");
+        }
+    }
+
+    /// The name entry ended (`Action::RankingDone`): `rows` replace the in-memory `table`;
+    /// with `commit` the table is packed (0x41e670) and the file written.
+    pub fn finish_ranking(&mut self, table: usize, rows: Table, commit: bool) {
+        let Some(t) = self.rankings.get_mut(table) else {
+            return;
+        };
+        *t = rows;
+        if commit {
+            self.commit_table(table);
+            self.persist("a ranking entry");
+        }
+    }
+
+    /// A cleared run's mark ([`Eeprom::raise_clear_mark`]), then the file written.
+    pub fn mark_clear(&mut self, route: usize, continues: i32) {
+        self.eeprom.raise_clear_mark(route, continues);
+        self.persist("a clear mark");
+    }
+}
+
+/// Writes `bytes` to a temporary file next to `path` and renames it over `path`, so an
+/// interrupted write never leaves a truncated file.
+pub fn write_atomic(path: &Path, bytes: &[u8]) -> Result<()> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).with_context(|| dir.display().to_string())?;
+    }
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    std::fs::write(&tmp, bytes).with_context(|| tmp.display().to_string())?;
+    std::fs::rename(&tmp, path).with_context(|| path.display().to_string())?;
+    Ok(())
 }
 
 /// `eeprom.dat` in the user's config dir ([`config_dir`]).
@@ -307,17 +348,19 @@ pub fn default_path() -> Option<PathBuf> {
 /// The port's directory for `eeprom.dat`, `joystick.dat` and `config.toml`: `%APPDATA%\ddg`
 /// on Windows, else `$XDG_CONFIG_HOME/ddg` or `~/.config/ddg` (relative values are ignored).
 pub fn config_dir() -> Option<PathBuf> {
+    config_dir_in(|k| std::env::var_os(k))
+}
+
+/// [`config_dir`] with the environment looked up by `env` (tests point `XDG_CONFIG_HOME` at a
+/// temporary directory without touching the process environment or the real home).
+pub fn config_dir_in(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
     let absolute = |v: std::ffi::OsString| Some(PathBuf::from(v)).filter(|p| p.is_absolute());
     let dir = if cfg!(windows) {
-        std::env::var_os("APPDATA").and_then(absolute)?
+        env("APPDATA").and_then(absolute)?
     } else {
-        std::env::var_os("XDG_CONFIG_HOME")
+        env("XDG_CONFIG_HOME")
             .and_then(absolute)
-            .or_else(|| {
-                std::env::var_os("HOME")
-                    .and_then(absolute)
-                    .map(|h| h.join(".config"))
-            })?
+            .or_else(|| env("HOME").and_then(absolute).map(|h| h.join(".config")))?
     };
     Some(dir.join("ddg"))
 }
@@ -394,6 +437,75 @@ mod tests {
         assert_eq!(again.rankings[0][0].score, 4321);
         assert_eq!(again.eeprom.clear_mark(7), 3);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// A fresh `$XDG_CONFIG_HOME` under the system temp dir (never the real home); the
+    /// environment is passed to [`config_dir_in`], not set on the process.
+    fn temp_xdg(name: &str) -> (PathBuf, PathBuf) {
+        let xdg = std::env::temp_dir().join(format!("ddg-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&xdg);
+        let env = |k: &str| (k == "XDG_CONFIG_HOME").then(|| xdg.clone().into_os_string());
+        let path = config_dir_in(env).unwrap().join("eeprom.dat");
+        assert!(path.starts_with(&xdg), "{}", path.display());
+        (xdg, path)
+    }
+
+    fn on_disk(path: &Path, d: &Eeprom) -> Save {
+        Save::new(Eeprom::load(&std::fs::read(path).unwrap(), d), None)
+    }
+
+    #[test]
+    fn saves_after_every_change() {
+        use crate::front::options::{self, item};
+        if cfg!(windows) {
+            return;
+        }
+        let (xdg, path) = temp_xdg("persist");
+        let d = defaults();
+        let mut save = Save::new(d.clone(), Some(path.clone()));
+
+        // A name entry that ends without packing (no such path is left in the port, but the
+        // flag is honoured) writes nothing.
+        let mut rows = save.rankings[2];
+        rows[0].score = 1234;
+        save.finish_ranking(2, rows, false);
+        assert!(!path.exists());
+
+        // A ranking entry (completed or timed out: both commit) is on disk at once.
+        save.finish_ranking(2, rows, true);
+        assert_eq!(on_disk(&path, &d).rankings[2][0].score, 1234);
+
+        // A clear mark.
+        save.mark_clear(5, 2);
+        assert_eq!(on_disk(&path, &d).eeprom.clear_mark(5), 2);
+
+        // An options change (App::apply → options::set, then persist).
+        options::set(&mut save.eeprom, item::DIFFICULTY, 3);
+        save.persist("an options change");
+        assert_eq!(on_disk(&path, &d).eeprom.difficulty(), 3);
+
+        // A calibration (App::save_calibration writes joystick.dat, then persists).
+        save.eeprom.set_option(item::CONTROL, 6);
+        save.persist("a calibration");
+        assert_eq!(on_disk(&path, &d).eeprom.options().control_mode, 6);
+
+        // Same format, no temporary file left behind.
+        assert_eq!(std::fs::read(&path).unwrap(), save.eeprom.bytes());
+        let names: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name())
+            .collect();
+        assert_eq!(names, ["eeprom.dat"]);
+        std::fs::remove_dir_all(&xdg).unwrap();
+    }
+
+    #[test]
+    fn headless_saves_never_write() {
+        let mut save = Save::new(defaults(), None);
+        save.mark_clear(1, 0);
+        save.finish_ranking(0, save.rankings[0], true);
+        save.persist("a test");
+        assert!(save.path().is_none());
     }
 
     #[test]

@@ -829,7 +829,8 @@ impl Play {
         if cleared {
             // Select stage 20 keeps its own mark (`Stage_Run` sets `0x8570a4 = 0x14` around it).
             let mark = if self.opts.variant { 20 } else { stage };
-            self.save.eeprom.raise_clear_mark(mark, r.continues);
+            // Written at once (decided port behaviour; the original saves only at exit).
+            self.save.mark_clear(mark, r.continues);
         }
         if cleared && self.has_ending() {
             // Stage_Run: the ending (0x4040a0) between the clear mark and the ranking.
@@ -976,12 +977,8 @@ impl Play {
                 rows,
                 commit,
             } => {
-                if let Some(t) = self.save.rankings.get_mut(table) {
-                    *t = rows;
-                }
-                if commit {
-                    self.save.commit_table(table);
-                }
+                // Packed and written at once (decided port behaviour, menus.md §14).
+                self.save.finish_ranking(table, rows, commit);
                 eprintln!("ranking table {table} updated (packed into the save: {commit})");
             }
             Action::Quit | Action::RunOver => {
