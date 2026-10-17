@@ -5,10 +5,14 @@
 use crate::label::LabelFont;
 use crate::text::{Align, FontRole, SubRect, TextOverlay, draw_parts};
 use ddg_formats::cg::{CgFile, Palette, TILE_PIXELS, TILE_SIZE, Tilemap};
+use hires::{Hires, View};
 pub use paper::Paper;
 use paper::{PaperCache, PaperFill};
 use std::sync::{Arc, Mutex};
 
+pub mod hires;
+#[cfg(test)]
+mod hires_tests;
 mod paper;
 pub mod xbrz;
 
@@ -193,6 +197,11 @@ pub struct SpriteBank {
     /// The paper fills synthesised for [`WideFill::Paper`] maps, one per map ([`PaperCache`]:
     /// kept across palette fades; at art resolution, so one serves every canvas scale).
     paper: Mutex<Vec<PaperCache>>,
+    /// Enhancement `hud_upscale`: the art drawn from xBRZ-upscaled images ([`hires`]) at
+    /// canvas multiples 2–4; off draws whole-pixel blocks, as the original.
+    upscale: bool,
+    /// The upscaled images, built on first use.
+    hires: Mutex<hires::Cache>,
 }
 
 /// How a backdrop continues past the edges of the 4:3 design on a wide canvas (enhancement
@@ -260,7 +269,67 @@ impl SpriteBank {
             display_labels: None,
             wide_fill: Vec::new(),
             paper: Mutex::default(),
+            upscale: false,
+            hires: Mutex::default(),
         }
+    }
+
+    /// Enhancement `hud_upscale`: draws the art from xBRZ-upscaled palette indices at canvas
+    /// multiples 2–4 ([`hires`]); off (the default) draws each art pixel as a block.
+    pub fn set_upscale(&mut self, on: bool) {
+        self.upscale = on;
+    }
+
+    pub fn upscale(&self) -> bool {
+        self.upscale
+    }
+
+    /// Upscaled images built so far ([`hires::Cache::builds`]).
+    pub fn upscale_builds(&self) -> usize {
+        self.hires.lock().unwrap_or_else(|e| e.into_inner()).builds
+    }
+
+    /// Forgets the upscaled images, so they are built again from the current tiles and
+    /// tilemaps on their next use (a replaced tilemap is noticed without this).
+    pub fn clear_upscaled(&mut self) {
+        self.hires
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear();
+    }
+
+    /// The upscaled image of `view` of map `tbl` at canvas multiple `scale`, when
+    /// `hud_upscale` is on and the multiple has one; `palette` is the one the map is drawn
+    /// with (the reference for the edge decisions on first use).
+    fn hires(
+        &self,
+        tbl: u16,
+        scale: usize,
+        view: View,
+        palette: &Palette,
+        repeat: Option<Repeat>,
+    ) -> Option<Arc<Hires>> {
+        if !self.upscale || !hires::MULTIPLES.contains(&scale) {
+            return None;
+        }
+        let map = self.tilemaps.get(usize::from(tbl))?;
+        let key = hires::Key { tbl, scale, view };
+        let mut cache = self.hires.lock().unwrap_or_else(|e| e.into_inner());
+        cache.get(key, map, palette, || {
+            let (mw, mh) = (i32::from(map.width), i32::from(map.height));
+            let cols: Vec<i32> = match view {
+                View::Whole => (0..mw).collect(),
+                View::Wide { first, last } => (first..=last)
+                    .map(|tx| match repeat {
+                        Some(r) if !(0..mw).contains(&tx) => r.source(tx),
+                        _ => tx,
+                    })
+                    .collect(),
+            };
+            let rows: Vec<i32> = (0..mh).collect();
+            let px = self.render_cells(map, &cols, &rows);
+            (cols.len() * TILE_SIZE, rows.len() * TILE_SIZE, px)
+        })
     }
 
     /// Enhancement `wide_menus`: marks tilemap `tbl` as a backdrop that a wide canvas
@@ -392,19 +461,26 @@ impl SpriteBank {
     /// Palette indices of a resolved `(col, row, w, h)` tile rectangle of map `tbl`,
     /// `w·16 × h·16` row-major; empty cells and missing tiles are 0.
     pub(crate) fn render_rect(&self, tbl: u16, (c0, r0, w, h): (u8, u8, u8, u8)) -> Vec<u8> {
-        let (pw, ph) = (usize::from(w) * TILE_SIZE, usize::from(h) * TILE_SIZE);
-        let mut out = vec![0u8; pw * ph];
-        let Some(map) = self.tilemaps.get(usize::from(tbl)) else {
-            return out;
-        };
-        let mw = usize::from(map.width);
-        for ty in 0..usize::from(h) {
-            for tx in 0..usize::from(w) {
-                let (mc, mr) = (usize::from(c0) + tx, usize::from(r0) + ty);
-                if mc >= mw || mr >= usize::from(map.height) {
+        let cols: Vec<i32> = (0..i32::from(w)).map(|t| i32::from(c0) + t).collect();
+        let rows: Vec<i32> = (0..i32::from(h)).map(|t| i32::from(r0) + t).collect();
+        match self.tilemaps.get(usize::from(tbl)) {
+            Some(map) => self.render_cells(map, &cols, &rows),
+            None => vec![0; cols.len() * rows.len() * TILE_PIXELS],
+        }
+    }
+
+    /// Palette indices of the tiles of `map` at columns `cols` and rows `rows`, side by side
+    /// in that order; cells outside the map, empty cells and missing tiles are 0.
+    fn render_cells(&self, map: &Tilemap, cols: &[i32], rows: &[i32]) -> Vec<u8> {
+        let pw = cols.len() * TILE_SIZE;
+        let mut out = vec![0u8; pw * rows.len() * TILE_SIZE];
+        let (mw, mh) = (i32::from(map.width), i32::from(map.height));
+        for (ty, &mr) in rows.iter().enumerate() {
+            for (tx, &mc) in cols.iter().enumerate() {
+                if !(0..mw).contains(&mc) || !(0..mh).contains(&mr) {
                     continue;
                 }
-                let id = map.tiles[mr * mw + mc];
+                let id = map.tiles[(mr * mw + mc) as usize];
                 let Some(tile) = (id != 0).then(|| self.tile(id)).flatten() else {
                     continue;
                 };
@@ -665,6 +741,21 @@ impl SpriteLayer {
             let last = (right - sx0 - 1).div_euclid(ts);
             cols.extend((first..0).chain(mw..=last));
         }
+        // Enhancement `hud_upscale`: the art from the map's upscaled image, if it has one.
+        let view = match repeat {
+            Some(_) => View::Wide {
+                first: cols.iter().copied().min().unwrap_or(0),
+                last: cols.iter().copied().max().unwrap_or(0),
+            },
+            None => View::Whole,
+        };
+        let hires = u16::try_from(slot.tilemap)
+            .ok()
+            .and_then(|t| bank.hires(t, c.s, view, palette, repeat));
+        let colours: [[u8; 4]; 256] = match hires {
+            Some(_) => std::array::from_fn(|i| palette.rgba(i as u8)),
+            None => [[0; 4]; 256],
+        };
         for ty in 0..h {
             for &tx in &cols {
                 let (mc, mr) = match repeat {
@@ -674,12 +765,34 @@ impl SpriteLayer {
                 if !(0..mw).contains(&mc) || !(0..mh).contains(&mr) {
                     continue;
                 }
+                let ox = sx0 + tx * ts;
+                let oy = sy0 + ty * ts;
+                if let Some(hi) = &hires {
+                    // Every cell, empty ones too: shaped edges reach into them.
+                    let (ic, ir) = match view {
+                        View::Whole => (mc, mr),
+                        View::Wide { first, .. } => (tx - first, ty),
+                    };
+                    // Translated text only covers the slot's own columns.
+                    let open = text.filter(|_| (0..w).contains(&tx)).map(|parts| {
+                        std::array::from_fn(|k| {
+                            let bx = (tx * ts) as usize + k % TILE_SIZE;
+                            let by = (ty * ts) as usize + k / TILE_SIZE;
+                            !parts.iter().any(|p| p.contains(bx * c.s, by * c.s))
+                        })
+                    });
+                    let cell = Cell {
+                        image: (ic, ir),
+                        at: (ox * s + shift, oy * s),
+                        open,
+                    };
+                    blit_hires(hi, &cell, &colours, c, canvas);
+                    continue;
+                }
                 let id = map.tiles[(mr * mw + mc) as usize];
                 let Some(tile) = (id != 0).then(|| bank.tile(id)).flatten() else {
                     continue;
                 };
-                let ox = sx0 + tx * ts;
-                let oy = sy0 + ty * ts;
                 for py in 0..ts {
                     for px in 0..ts {
                         let index = tile[(py * ts + px) as usize];
@@ -995,6 +1108,53 @@ fn resample_sprite(
     }
 }
 
+/// One tile cell of an upscaled image: its tile column and row in the image, the canvas
+/// pixel of its top left and, under translated text, which of its art pixels are drawn.
+struct Cell {
+    image: (i32, i32),
+    at: (i32, i32),
+    open: Option<[bool; TILE_PIXELS]>,
+}
+
+/// Draws one tile cell of an upscaled image ([`hires`]) at canvas multiple `c.s`: index 0
+/// transparent, other indices in `colours` (the slot's palette).
+fn blit_hires(hi: &Hires, cell: &Cell, colours: &[[u8; 4]; 256], c: Canvas, canvas: &mut [u8]) {
+    let t = hires::tile_px(c.s) as i32;
+    let s = c.s as i32;
+    let (ox, oy) = cell.at;
+    let (ic, ir) = cell.image;
+    let xs = (-ox).max(0)..(c.w as i32 - ox).min(t);
+    let ys = (-oy).max(0)..(c.h as i32 - oy).min(t);
+    if xs.is_empty() || ys.is_empty() {
+        return;
+    }
+    let x0 = (ic * t + xs.start) as usize;
+    let x1 = (ic * t + xs.end) as usize;
+    for yy in ys {
+        let row = hi.row(x0, x1, (ir * t + yy) as usize);
+        let line = ((oy + yy) as usize * c.w + (ox + xs.start) as usize) * 4;
+        let (dst, _) = canvas[line..line + row.len() * 4].as_chunks_mut::<4>();
+        match &cell.open {
+            None => {
+                for (px, &i) in dst.iter_mut().zip(row) {
+                    if i != 0 {
+                        *px = colours[usize::from(i)];
+                    }
+                }
+            }
+            Some(open) => {
+                let art_row = (yy / s) as usize * TILE_SIZE;
+                for (k, (px, &i)) in dst.iter_mut().zip(row).enumerate() {
+                    let art = art_row + ((xs.start + k as i32) / s) as usize;
+                    if i != 0 && open[art] {
+                        *px = colours[usize::from(i)];
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Draws a paper fill ([`WideFill::Paper`]) of a picture whose top left is at original pixel
 /// `(x0, y0)`: its ramp columns over the picture's edges and the fill out to the canvas edges,
 /// each original pixel an `s × s` block like the art. Opaque.
@@ -1091,6 +1251,8 @@ mod tests {
             display_labels: None,
             wide_fill: Vec::new(),
             paper: Mutex::default(),
+            upscale: false,
+            hires: Mutex::default(),
         }
     }
 

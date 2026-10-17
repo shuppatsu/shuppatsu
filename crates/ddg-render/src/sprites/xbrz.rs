@@ -148,7 +148,7 @@ pub fn scale(src: &[[u8; 3]], w: usize, h: usize, n: usize) -> Vec<[u8; 3]> {
     scale_by(
         src,
         src,
-        (w, h, n),
+        (w, h, n, false),
         colour_dist,
         |c| c.map(f32::from),
         |p, c, a| {
@@ -165,7 +165,9 @@ pub fn scale(src: &[[u8; 3]], w: usize, h: usize, n: usize) -> Vec<[u8; 3]> {
 /// The same edge shapes without new colours, for palettised art: the decisions are made on
 /// `colours` (`w`×`h` RGB), and every output pixel takes the `payload` (e.g. the palette
 /// index) of its own source pixel, or of the neighbour along the edge where more than half of
-/// it lies beyond the edge. Palette effects keep working on the result.
+/// it lies beyond the edge. Palette effects keep working on the result. Low-contrast blocks
+/// (all four colours within [`EQUAL_TOLERANCE`] of each other: dithered texture, shading)
+/// keep their pixels, so only real edges are shaped.
 pub fn scale_indexed<T: Copy>(
     colours: &[[u8; 3]],
     payload: &[T],
@@ -178,7 +180,14 @@ pub fn scale_indexed<T: Copy>(
     if n <= 1 || w == 0 || h == 0 {
         return payload.to_vec();
     }
-    scale_by(colours, payload, (w, h, n), colour_dist, |t| t, take_half)
+    scale_by(
+        colours,
+        payload,
+        (w, h, n, true),
+        colour_dist,
+        |t| t,
+        take_half,
+    )
 }
 
 /// An output pixel takes the neighbour's payload when more than half of it lies beyond the
@@ -190,10 +199,7 @@ fn take_half<T>(p: &mut T, t: T, a: f32) {
 }
 
 /// Distances between the 256 palette indices, for [`scale_indices`]: the YCbCr distance of
-/// their reference colours, but never below [`EQUAL_TOLERANCE`] for two different indices.
-/// So the decisions follow the colours where they differ clearly, and an edge between two
-/// indices exists whatever colour a palette effect gives them later (an unlit segment of the
-/// speed readout, a palette fading in from black).
+/// their reference colours (a palette the art is drawn with).
 pub struct IndexMetric {
     lut: Box<[f32]>,
 }
@@ -204,7 +210,7 @@ impl IndexMetric {
         let mut lut = vec![0.0f32; 256 * 256].into_boxed_slice();
         for i in 0..256 {
             for j in i + 1..256 {
-                let d = colour_dist(colours[i], colours[j]).max(EQUAL_TOLERANCE);
+                let d = colour_dist(colours[i], colours[j]);
                 lut[i * 256 + j] = d;
                 lut[j * 256 + i] = d;
             }
@@ -218,7 +224,8 @@ impl IndexMetric {
 }
 
 /// Index-preserving xBRZ on palette indices (`w`×`h`, row-major), with the decisions made by
-/// `metric`: the result holds only indices of `idx`, so it is drawn with any palette.
+/// `metric`: the result holds only indices of `idx`, so it is drawn with any palette. The
+/// same as [`scale_indexed`] with the reference colours as keys.
 pub fn scale_indices(idx: &[u8], w: usize, h: usize, n: usize, metric: &IndexMetric) -> Vec<u8> {
     assert_eq!(idx.len(), w * h);
     if n <= 1 || w == 0 || h == 0 {
@@ -227,7 +234,7 @@ pub fn scale_indices(idx: &[u8], w: usize, h: usize, n: usize, metric: &IndexMet
     scale_by(
         idx,
         idx,
-        (w, h, n),
+        (w, h, n, true),
         |a, b| metric.dist(a, b),
         |t| t,
         take_half,
@@ -236,11 +243,11 @@ pub fn scale_indices(idx: &[u8], w: usize, h: usize, n: usize, metric: &IndexMet
 
 /// The scaler: corners classified on `keys` (compared with `dist`); each pixel becomes an
 /// `n`×`n` block started from its payload (`start`) and blended towards a neighbour's payload
-/// with weight `a` (`mix`).
+/// with weight `a` (`mix`). With `flat`, blocks without contrast are left alone.
 fn scale_by<K: Copy + PartialEq, T: Copy, P: Copy>(
     keys: &[K],
     payload: &[T],
-    (w, h, n): (usize, usize, usize),
+    (w, h, n, flat): (usize, usize, usize, bool),
     dist: impl Fn(K, K) -> f32,
     start: impl Fn(T) -> P,
     mix: impl Fn(&mut P, T, f32),
@@ -266,6 +273,13 @@ fn scale_by<K: Copy + PartialEq, T: Copy, P: Copy>(
             let k = |dx: i32, dy: i32| px(x + dx, y + dy);
             let (f, g, j, kk) = (k(0, 0), k(1, 0), k(0, 1), k(1, 1));
             if (f == g && j == kk) || (f == j && g == kk) {
+                continue;
+            }
+            if flat
+                && [(f, g), (f, j), (f, kk), (g, j), (g, kk), (j, kk)]
+                    .iter()
+                    .all(|&(a, b)| eq(a, b))
+            {
                 continue;
             }
             let (b, c) = (k(0, -1), k(1, -1));
@@ -467,18 +481,16 @@ mod tests {
     }
 
     #[test]
-    fn different_indices_are_edges_even_in_one_colour() {
-        // Two indices with the same reference colour (an unlit segment on its background):
-        // still an edge, shaped the same as when they differ.
-        let mut same = [[0u8; 3]; 256];
-        same[5] = [40; 3];
-        same[6] = [40; 3];
-        let m = IndexMetric::new(&same);
-        assert_eq!(m.dist(5, 6), EQUAL_TOLERANCE);
-        assert_eq!(m.dist(5, 5), 0.0);
-        let out = scale_indices(&staircase(5, 6), 8, 8, 4, &m);
-        assert_ne!(out, nearest(&staircase(5, 6), 8, 8, 4));
-        // A uniform colour scale of the reference does not change the shapes.
+    fn low_contrast_is_left_alone() {
+        // Two close greys (texture noise, shading): kept as blocks.
+        let m = grey_metric();
+        let near = staircase(100, 110);
+        assert_eq!(scale_indices(&near, 8, 8, 4, &m), nearest(&near, 8, 8, 4));
+        // The colour scaler for textures still blends them.
+        let keys: Vec<[u8; 3]> = near.iter().map(|&i| [i; 3]).collect();
+        let blocks: Vec<[u8; 3]> = nearest(&near, 8, 8, 4).iter().map(|&i| [i; 3]).collect();
+        assert_ne!(scale(&keys, 8, 8, 4), blocks);
+        // Contrast well above the tolerance: a brighter reference gives the same shapes.
         let bright = IndexMetric::new(&std::array::from_fn(|i| [(i as u8).saturating_mul(2); 3]));
         let src: Vec<u8> = (0..64).map(|i| [3, 60, 120][(i * 7 + i / 8) % 3]).collect();
         assert_eq!(
