@@ -97,3 +97,77 @@ Tests: `ddg_formats::texpack::tests` (QOI round trip, bad input, paths and facto
 `texpack::tests` in ddg-game (a synthetic pack replaces pages, keeps UVs, rejects bad
 sizes), `upscale::tests` (rect pixels, regions, padding without neighbour bleed, colour fill
 and alpha, mask smoothing) and `xbrz::tests` in ddg-tools.
+
+## HUD sprites: comparison only (`ddg-tools upscale-sprites`)
+
+There is no runtime pack for the 2D sprites (`cg.rom` tiles, `tbl.rom` tilemaps, the exe's
+palettes; re/hud.md) yet. This tool writes contact sheets that compare upscalers on the HUD
+art, plus whole frames recomposed with each method, so a method can be chosen first:
+
+```sh
+DDG_SHOT_LAYER=1 ddg-game play 0 --lang ja --hud-layout enhanced --size 2560x1440 \
+    --shot 420:$PWD/out/explain/upscale_hud/frame/wide_t420.ppm   # also .world.ppm, .layer.txt
+nix shell nixpkgs#realesrgan-ncnn-vulkan nixpkgs#waifu2x-converter-cpp -c \
+  ddg-tools upscale-sprites --frame out/explain/upscale_hud/frame/wide_t420.layer.txt
+```
+
+Output (default `out/explain/upscale_hud/`): `sheet_x2.png`, `sheet_x4.png` (a row per sprite
+group, a column per method, 1:1), `rows/<group>_x{2,4}.png` (the same rows one file each),
+`zoom_x4.png` (crops magnified twice more), `frames/<shot>_<method>.png` (window size) and
+`<shot>_crops.png` (HUD corners at 1:1, the first row being the game's current output).
+
+* `DDG_SHOT_LAYER=1` (debug aid, `shot.rs`): a `play` shot also writes the frame without the
+  2D layer (`.world.ppm`) and the sprite layer as text (`.layer.txt`: canvas, visible slots in
+  draw order with their anchor shifts, the palettes they use as stored, the rect-layer fans).
+  The tool recomposes the canvas from it and presents it like the overlay (sharp bilinear,
+  alpha test at one half, premultiplied blending in linear light). Checked: with nearest
+  neighbour at the game's own multiple the recomposition differs from the game's shot in
+  38 of 3.7 M pixels (the needle's edge). Translated text widgets are not recomposed (shoot
+  with `--lang ja`).
+* Methods: `nearest` ×2/×4; sharp bilinear (the overlay with the original art: canvas ×4
+  shown at 1600 px height, ×3.33); `xbrz` (colour, as for textures); **`xbrz-indexed`**
+  (new: the xBRZ edge shapes, but each output pixel keeps the palette index of its own
+  source pixel or of the neighbour beyond the edge when more than half of it lies there:
+  no new colours); **`scale2x`/`scale4x`** (AdvMAME2x on indices, twice for ×4);
+  Real-ESRGAN `realesrgan-x4plus`, `realesrgan-x4plus-anime`, `realesr-animevideov3` (×2, ×4);
+  waifu2x-converter-cpp (its bundled anime-style-art models) with noise 0 and 1, ×2 and ×4.
+* Transparency: index 0 is the only transparent value. Index methods keep it exactly. Colour
+  methods dilate the opaque colours into the transparent pixels before upscaling and rebuild
+  the alpha from the index-0 mask alone (xBRZ on black/white, threshold one half), so no halo
+  and binary alpha, as for textures.
+
+### Palette effects: a constraint for any HUD pack
+
+The sprite layer is palettised at run time (`SpriteLayer::compose` looks every pixel up in the
+slot's palette each frame), and the HUD relies on it:
+
+* **Palette swaps**: the same art in palettes 4/5/6 (clock, remaining-time and distance
+  digits change colour when late, at ≤ 14 s, at an overrun, for passing stations; re/hud.md
+  §3.2–3.4), vehicle pictures in 9/10.
+* **Animated entries**: the seven-segment speed readout (tbl 0x53) is lit by rewriting
+  palette 4 entries 0xdb..0xef every tick (§3.5); the route strip's arrows are entries
+  0x50..0x5f (green progress, the current segment blinking every 10 ticks, §3.7).
+* **Fades**: none on the driving HUD; the title and attract screens fade palettes 0x15–0x17
+  in from black (menus.md), and the sky's palette 3 fades are 3D only.
+
+So a pack cannot simply be one RGBA image per tilemap. Options: (1) an **index** pack (the
+indices at ×N, `xbrz-indexed` or `scale4x`): compose stays a palette lookup and every swap,
+animation and fade keeps working unchanged; (2) RGBA per (tilemap, palette) for art drawn
+with fixed palettes only, with a fade applied as a multiply (fades from black are linear in
+colour, exact for linear scalers, close for AI output) and the animated maps (0x53, the route
+strips) kept indexed. AI output blends lit and unlit segments and neighbouring palette
+entries, so it cannot be recoloured per entry.
+
+### Runtime integration (not done)
+
+* Packs per tilemap at a whole factor N: slots address 16-px tile rects (`col, row, w, h`),
+  which map to 16·N-px rects; translated text (`text.rs`), the `wide_menus` repeat and paper
+  fills work on art pixels and would need the same factor (or keep the original art).
+* The canvas multiple (`ui_scale`, `overlay::auto_multiple`) must match N or the art be
+  resampled: smooth gives ×3 at 1440 and ×4 at 1600/2160, integer ×3 at 1440 and ×4 at
+  2160. A ×4 pack on a ×3 canvas has to be shrunk (or the canvas raised to ×4 and the
+  overlay shrinks it by 0.75 with plain bilinear, as the recomposed frames show: softer than
+  the native ×3). Best: build packs at ×3 and ×4 (index methods are instant) and pick by
+  the multiple; nearest blocks remain for multiples above the pack.
+* Colour methods would make the canvas compose RGBA sprites with binary alpha; index
+  methods need only larger index tiles (`SpriteBank` per tilemap instead of per 16×16 tile).

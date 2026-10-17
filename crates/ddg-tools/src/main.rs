@@ -3,6 +3,7 @@
 mod check;
 mod export;
 mod gltf;
+mod hud_upscale;
 mod inventory;
 mod pe;
 mod sound;
@@ -34,7 +35,10 @@ commands:
                                   sequence n) live, or render it to a WAV (gitignored out/)
   upscale-textures --method <xbrz|esrgan|waifu2x|nearest> [--scale N] [--out DIR] [...]
                                   build a texture pack from $DDG_DATA_DIR (upscale-textures
-                                  --help for the options; docs/texture-packs.md)";
+                                  --help for the options; docs/texture-packs.md)
+  upscale-sprites [--frame <shot.layer.txt>]... [--out DIR]
+                                  contact sheets of the HUD sprites upscaled by every method
+                                  (upscale-sprites --help; docs/texture-packs.md)";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -63,6 +67,13 @@ fn main() -> Result<()> {
                 return Ok(());
             }
             upscale::run(&args[1..])
+        }
+        "upscale-sprites" => {
+            if args.iter().any(|a| a == "--help" || a == "-h") {
+                println!("{}", hud_upscale::USAGE);
+                return Ok(());
+            }
+            hud_upscale::run(&args[1..])
         }
         "trace-replay" => {
             let dirs = export::GameDirs::from_env()?;
