@@ -47,6 +47,7 @@ Values are a string, or a table with `text` and options:
 | `backdrop` | Boxed style: `art` (default, the backdrop as drawn) or `solid` (the backdrop's opaque colour fills the transparent half of a dither too, so the text never sits on the dither; the signal captions). |
 | `group` | Parts of one entry with the same group name are drawn at one size, the smallest any of them fits at (the words of one callout cell). |
 | `shared_group` | The same across entries: every part with this name, in any entry of any sheet or tilemap, is drawn at the smallest size any of them fits at (the items of one menu list: the title items `title.items`, the options labels and values, the route select's line names). Names are global, so they carry a screen prefix. |
+| `font` | `body` (default) or `display`: which font list draws the text ("Fonts" below). On an entry it is the default of its parts; a part can set its own. |
 | `line_height` | Lines this many font sizes apart instead of the font's own line height (e.g. `1.1` for two lines in the signals' caption band). |
 
 `\n` breaks lines; the font size is fitted to the rectangle. Comments in `en.toml` give each
@@ -68,7 +69,8 @@ sprite) is an error, not a silent fallback.
 | Setting | Env | Argument |
 |---|---|---|
 | Language (default `ja`) | `DDG_LANG` | `--lang <code>` |
-| Font file (TTF/OTF) | `DDG_FONT` | `--font <file>` |
+| Body font list (TTF/OTF, `:`-separated: primary, then fallbacks) | `DDG_FONT` | `--font <files>` |
+| Display font list (same form; default: the body list) | `DDG_DISPLAY_FONT` | `--display-font <files>` |
 | Extra catalogue directory | `DDG_LOCALE_DIR` | `--locale-dir <dir>` |
 | HUD layout: `original` (default) or `enhanced` | `DDG_HUD_LAYOUT` | `--hud-layout <layout>` |
 | Presentation: `smooth` (default), `integer`, `nearest` | `DDG_UI_SCALING` | `--ui-scaling <mode>` |
@@ -81,6 +83,49 @@ should cover Latin Extended-A and arrows. A language without a font keeps the or
 prints a warning. Built-in catalogues (`en`) are compiled into the binary;
 `<locale-dir>/<lang>.toml` overrides them, which is how a new language can be tried without a
 rebuild.
+
+## Fonts
+
+Two font roles, each a `PATH`-style list (the primary font, then fallbacks for the characters
+it lacks, e.g. the Japanese menu subtitles):
+
+* **body** (`--font`): everything not marked otherwise;
+* **display** (`--display-font`): text marked `font = "display"` in the catalogue, and the
+  station banners (`[caption]` `banner_font = "display"`).
+
+Without a display font, display text is drawn in the body font, so a single `--font` looks
+exactly as before. The display list needs its own fallbacks: a Latin-only display font
+followed by the body font (`--display-font Michroma-Regular.ttf:MPLUS1p-Black.ttf`) keeps
+macrons and kana drawable. Free-text widgets (captions, banners, plates, landmarks, route
+board) take the role from their `TextStyle::font`; `SpriteBank::set_display_label_font`
+installs the display label font next to the body one.
+
+Size groups (`group`, `shared_group`) span roles: a group's parts share one **capital
+height** (the ink height of `H`), not one font size, so a display word and a body word in one
+group still read as the same size although the fonts' proportions differ. With a single font
+this is the same as one font size.
+
+What `en.toml` marks as display, and why. The original's own Latin lettering (the small
+"Arcade Mode" subtitles of the main menu) is a wide, square, technical face in the
+Microgramma family, used for **titling**; the rest of its text is heavy Japanese gothic
+lettering. The display role follows that split: display for short headings that name a
+screen or announce an event, body for anything read as information, at small sizes, or next
+to digits.
+
+| Display | Why |
+|---|---|
+| Screen headers, sheet 0x54d (Select Line, Select Train, Main Menu, Controls, Difficulty, … Brake Lever Setup) | One title per screen, large, on the header bar. |
+| Main-menu item titles, sheet 0x513 (Arcade Mode, Game Settings, Rankings, Quit Game, Calibration) | The original pairs them with its Microgramma subtitles. The Japanese subtitles that replace those stay body (the display font has no kana; body has them). |
+| Station banners (`[caption]` `banner_font`) | The big centred yellow-on-navy announcement. The small green captions stay body. |
+| Time-message headlines: 0x1be, 0x1ac Bonus, 0x1af, 0x1b0, 0x1b1, 0x1b2, 0x1c5, 0x1c6, 0x1c7, 0x1c8, 0x1ce, 0x258, 0x259 On Time | The popup's headline, the event itself. |
+| Result header 0x1a0 | The station-result screen's title. |
+
+Kept on the body font: HUD labels (gauges, distance panel, lamps), navigator hints, the
+small captions, signal and sign captions, station plates, landmark names, the route board,
+legends, options labels and values, dialogs, the report card, and the words around digits in
+the time messages (0x1ad "Penalty", 0x1bd "sec"), which sit in the digits' line and are read
+with them. A wide display face would also be too wide for most of these boxes and get
+shrunk well below its neighbours.
 
 ## UI scaling
 
@@ -233,6 +278,8 @@ captions.rs` (`OneLine`):
   in its second (dark). The banners' art is on a box (most of its edge is opaque): the line is
   the commonest colour that is not the box's (yellow) on a box of the box colour (navy), the
   sprite's full height and as wide as the text plus 4 px each side.
+* **Fonts**: captions in the `[caption]` `font` role, banners in `banner_font` (`en.toml`:
+  body and display, "Fonts" above).
 * The landmark captions have their own enhancement (below); the time messages (word +
   digits) are not changed.
 
@@ -306,7 +353,7 @@ Nothing calls this yet. Three edits turn it on for `ddg-game play`:
    ```rust
    let mut args: Vec<String> = std::env::args().skip(2).collect();
    let mut locale = locale::LocaleConfig::from_env();
-   locale.take_args(&mut args)?; // removes --lang/--font/--locale-dir
+   locale.take_args(&mut args)?; // removes --lang/--font/--display-font/--locale-dir
    // ... PlayOptions { ..., locale, }
    ```
 
