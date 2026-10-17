@@ -214,6 +214,68 @@ Set once after device creation (pair table built on the stack at 0x42884a), and 
 - 2D passes use `ScopedRenderState`: CULLMODE = 1 (NONE) for the 2D quads; ZENABLE = 0 and
   ZWRITEENABLE = 0 for the rect layer.
 
+### 6.1 Depth: 16-bit Z, LESSEQUAL, draw order, and coplanar track layers
+
+User report: shimmer at crossovers and where grass meets the ballast, with every enhancement
+on or off. Shots, crops and counts: `out/explain/track_zfight/` (gitignored).
+
+**What overlaps — confirmed (data, keihin1a.com engine index 4964).** Every rail part
+(e.g. 0x2d6b–0x2d6d) has vertices only at file y = −5, 0 and 3 (ballast foot, the bed with the
+sleepers painted on, the rails), and the track-side kind parts (e.g. 0x24b3, 0x24b8) lie at
+y = −5. On level track every piece is placed at y = h/4096 with no pitch (scene.md §2.3–§2.7),
+so at a crossover the two tracks' beds are exactly coplanar, and so are the grass strips and
+the ballast foot they overlap. Their triangles differ, so the interpolated depths differ only
+by rounding.
+
+**Cause in the port — confirmed (experiment).** The port stored that depth in a reversed
+32-bit float buffer, fine enough to resolve the rounding: which surface won changed from pixel
+to pixel and with every camera move (jagged interleaved patches). It is independent of
+`max_lod`, `early_activation`, `draw_distance` and `distance_fade` (each off, and all off:
+the same patches; skipping the main line or the kind runs in a debug build removes the
+crossover or the grass-edge patches respectively), and of `msaa`, `ground_detiling`,
+`ground_variation`; those only shade or sample the surfaces.
+
+**What the original does — confirmed (code) / likely (behaviour).** It never sets ZFUNC
+(§6: the only render states are the eight of `Gfx_InitDevice`), so the DX6 default
+D3DCMP_LESSEQUAL applies; its Z buffer is 16-bit (§3); it draws part by part, sub-mesh by
+sub-mesh, in the scene's order (`Model_Draw` 0x431f70; main line, bucket runs, scenery,
+scene.md §2.1). Coplanar surfaces then land on the same 16-bit step almost everywhere and
+the later one drawn wins; only a pixel where the rounding straddles a step boundary can
+differ. Experiment: storing D3D z rounded to 16 bits in the port's shader removed the patches
+at the Keihin crossover, at a Hokuhoku crossover (world coordinates ≈ 2200), at the Shinagawa
+start of stage 11 and on the grass edges. A Wine capture of stage 11 standing at tick 300
+(`scripts/capture-original.sh zfight11 2 0`, wined3d on llvmpipe with its D16 surface) agrees
+better with the 16-bit rendering on the overlap pixels (mean difference 0.154 against 0.205
+for the float one), which is the "likely": llvmpipe is not 1999 hardware, and 640×480 is too
+coarse to see the pattern directly. The rounding of 16-bit z (nearest or truncated) is a
+**guess** (nearest); it does not change which surface wins.
+
+**Port (`DepthSteps`, `stepped_depth` in shader.wgsl).** The world pass writes its own depth:
+- the step of the fragment's depth: `D16` = the original's 16-bit D3D z (`fine_depth` off), or
+  `Fine` = the eye depth in steps of 1/1024 octave (0.068 % of the distance: 22 cm at 320 m,
+  87 cm at 1280 m) with `fine_depth` on (default). 16-bit steps grow with the square of the
+  distance (3 m at 320 m, 12 m at 640 m), which matters once `draw_distance` reaches further;
+- inside the step, a place set by the instance's draw order (`Vertex::order`: the frame's
+  instances in the order the scene adds them, the original's order): the later instance
+  nearer. That gives LESSEQUAL-with-draw-order results although the batches are drawn per
+  texture page (drawing in the exact order instead took ~6 500 draw calls a frame, +2.3 ms of
+  CPU at 4K; this costs nothing extra). Float precision leaves at least ~250 places per step
+  from the cab's eye height outwards, so neighbouring instances may share a place and then
+  fall back to page order; overlapping layers are far apart in the order;
+- `Fine` also chooses the later instance's step as if it were up to 0.01 % nearer
+  (`FINE_ORDER_BIAS`), above the rounding between coplanar surfaces, so the one-pixel slivers
+  along step boundaries go too (1e-5 left a few). `D16` keeps the original's slivers.
+- Vertices are stored relative to the cab eye (`FrameGeometry::origin`, transformed in f64),
+  which makes the GPU's rounding small even far from the world origin.
+
+Result (1280×800, two frames 1 mm apart, pixels changed by > 10 %, Keihin crossover):
+before 5 194, after 1 991 (the rest is nearest-sampling texture swim; with `anisotropic 16`
+to remove the swim: 2 702 before, 101 after). Original mode (`--no-max-lod
+--no-early-activation --draw-distance original --no-distance-fade --no-fine-depth`): 5 607
+before, 1 744 after. Tests: `camera::tests::depth_steps_merge_coplanar_and_keep_layers`,
+`fine_depth_lets_the_later_coplanar_instance_win`, `d16_steps_are_the_originals`,
+`world::tests::vertices_carry_their_instance_order`, `positions_are_relative_to_the_origin`.
+
 ## 7. Fog — confirmed
 
 - Registry values (strings, parsed with `atof`): `FOGENABLE` → `DAT_00816830`, `FOGTABLESTART` →
