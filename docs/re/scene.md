@@ -516,7 +516,11 @@ viewports. Code: `ddg_engine::stop_replay`, `ddg_formats::result_camera`,
   lists switch in when the record shows a standstill (sample < 0.01) for more than 29 / 39 draws,
   counted from `task+0x1cc` = −9999 (0 if `0x855ff8 & 0x40000`). After the coupling (station >
   23) the lead row is 8 (train type 14) or 7 (type 12); other types leave `+0x1d0` unset.
-  **confirmed** (code); not exercised: the port's engine has no course event 12 yet.
+  0x419730 clears 0x40000 and the bit it used. Which bit is set and when: rules.md §7.5 (a
+  stop that is not perfect clears both, so only a stop that started the minigame shows the
+  waiting train). **confirmed** (code); port screenshots of stage 17 after a coupling in
+  `out/explain/coupling/` (no Wine comparison yet: stage 17 is only reached through stage
+  10's extension and stage 2's station 23 needs 23 perfect stops first).
 
 ### 8.2 The record — confirmed (code)
 
@@ -589,8 +593,8 @@ Faithful: everything above except the items below. **Approximated / differs:**
   shifted or made-up samples if nothing new was recorded; never in normal play).
 - High refresh rates interpolate the replayed distance between ticks (standard render
   interpolation; the original steps at 30 Hz).
-- The coupling flags are always clear (no course event 12 in the engine): the coupling
-  stations show rows 12/13 without the waiting train or the 40 m shift.
+- The coupling flags come from `Rules::result_coupling_flags` (the engine keeps them past the
+  result instead of clearing them; only the coupling station's result reads them).
 - The "after" list counter counts ticks instead of drawn frames (equal at 30 fps).
 - After a time-out at a station (continue screen) the port shows the cab view again; the
   original's 3D layer stays empty until a segment starts (not traced further).
@@ -612,6 +616,5 @@ Faithful: everything above except the items below. **Approximated / differs:**
   vertical offset, corner/UV orientation against the bottom-up page rows).
 - Station-result replay (§8): compare with a Wine screenshot of a result (viewport placement,
   monitor pose, the train's stop offset `0x4696cc`); whether the camera task really first
-  updates on the tick after its creation; what course event 12 / 0x40e350 decide for the
-  coupling flags, what sets `0x855ff8 & 0x40000` (the "after" car lists), and who reads the
-  copy at 0x8502c0 (0x41c750).
+  updates on the tick after its creation; who reads the copy at 0x8502c0 (0x41c750). (Course
+  event 12 and `0x855ff8 & 0x40000`: resolved, rules.md §7.5.)

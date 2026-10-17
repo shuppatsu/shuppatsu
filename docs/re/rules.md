@@ -337,8 +337,64 @@ hud.md §3.6), train type `0x84c3fc = 0xc` (280 km/h; the stage's own type 16 to
 final leg (9.7 km, ATC limits from course event 7). Bit 0x20000000 is cleared on every
 0x40d340. The train task reads `0x84c3fc` every tick (0x422c20), so the new type acts at once.
 
-Course event 12 (0x40acd0) picks the waiting set before the coupling station: marks so far
-(`0x40e350(0, d78)`) < 13 → `0x855ff8 |= 0x10000000`, else `|= 0x8000000`; it also places the
+**The waiting set: course event 12 (0x40acd0 case 0xc) and 0x406c50 — confirmed (code, port screenshots)**
+
+Course event 12 sits on the coupling leg (stage 17 station 15: it fired at 200 m to the stop
+in the port's autopilot run). It sums the marks so far, `0x40e350(0, d78)` = Σ `0x856fe0[0..=d78]`
+(i8 each; 0x856fe0[0] is never written, so these are the marks of stations 1..=d78), and:
+
+| Marks | Flag | Rows (0x45735c[row·3]) | Head past the stop | Set |
+|---|---|---|---|---|
+| < 13 | `0x855ff8 \|= 0x10000000` | 0x14 / 0x15 (20 / 21) | 294.25 m (f64 0x4594e0) | 10 cars, spacing 2.55 units (25.5 m), kind 2 |
+| ≥ 13 | `\|= 0x8000000` | 0x11 / 0x12 (17 / 18) | 239.5 m (f64 0x4594f0) | 8 cars, spacing 2.5 units (25 m), kind 2 |
+
+The call is `0x406c50(0x8502a4 − ftol((0x85708c + head) × −0.8), rowA, rowB)` (0x40b15f /
+0x40b19f; f64 −0.8 at 0x4594e8 = −1/1.25 m per point): the head car's front bogie stands
+`head` metres past the stop marker on the player's own track, counted in track points from the
+cab's engine index. 0x406c50 (0x406c50..0x406e0e) then creates one task per car of row A's
+direction-1 list in task list 5 (0x84c1bc) with the ordinary traffic callbacks (update 0x405420,
+draw 0x405640): `+0x30 = 1` (forward, facing away from the player), speed, mode, delay and the
+accel all 0 (parked), `+0x3c = 9000` (sound gate; no sound anyway at speed 0), `+0x6c` = row A's
+record, `+0x70` = row B's record of the same index. Each car is walked back from the previous
+one by `|spacing|` with the 0.125-unit point steps and the carried fraction of the spawner's
+spaced mode (0x4078c0 = previous point), the rear bogie 12 points behind (0x406d94; the
+spawner uses 10). Last, `0x857244 = 0`.
+
+Both sets put the last car's front bogie at ≈ 64.6 m past the stop marker (239.5 − 7 × 25,
+294.25 − 9 × 25.5), its origin (mid-bogie) 7.5 m behind that and its rear end, half a car
+further, at ≈ 44.5 m: the cab meets it where the minigame's distance reaches 0 (40 m past the
+marker, 0x4594b0). In the port the cab eye is 15.1 m from the last car's origin at the moment
+of coupling (`tests/coupling_set.rs`).
+
+**Coupler frame `0x857244`.** The draw callback picks the part as `[task + 0x6c + 4·0x857244]
+[lod]` (0x40598c), so every car draws row B's record once `0x857244 = 1`. Writers: 0 by
+0x406c50, 1 at success outro tick 60 (0x409ddd) and at time-up (0x409ec4); nothing resets it
+otherwise. The spawners store the same record in both fields (0x4052bc/0x4052d5, 0x4060ae,
+0x406c32), so only the waiting set changes: rows 18 / 21 differ from 17 / 20 in the last car
+only (parts 0x2e59.. vs 0x2e58.., 0x2e87.. vs 0x2e86..); that it is the nose with its coupler
+connected is a **guess** (the change is too small to see in the port's cab shots).
+Readers 0x405e20, 0x4066ea, 0x406792 and 0x4074b3 are the other draw callbacks, same pattern.
+
+**Lifetime.** The set is ordinary list-5 traffic: it is there from the event through the stop,
+the minigame and its outro, and goes with `TaskList_KillAll(0x84c1bc)` before the station result
+(traffic.md §3) or when a continue closes. It neither moves nor sounds.
+
+**`0x855ff8 & 0x40000`** is set by the minigame on a coupling (0x409d8b). Its other setter,
+the game-flow loop (0x419679, when A and the horn are both held, active-low `0x48c428 &
+0x100100 == 0`), only feeds the route-select secret (EB + P3, input.md, Stage_Run 0x408177),
+and Stage_Run then clears all of `0x855ff8` (0x4081bd, `ebp = 0`) before the stage starts. So in
+play it means "coupled". The result replay's creation (0x419730) reads it (`task+0x1cc` = 0
+instead of −9999, scene.md §8.1) and clears it (0x419830); at the coupling station it also
+clears 0x8000000 / 0x10000000 after using them (0x41995d, 0x4199e8). A stop that is not perfect
+at the coupling station clears both set bits (0x40aa1c), so that result shows no waiting train.
+
+Port: `traffic::WaitingSet` / `Traffic::place_waiting_set` / `set_coupler_frame`,
+`Rules::waiting_set` (taken by `Drive::traffic_events` with the cab's engine index of the tick
+before the camera moves), `Rules::result_coupling_flags`. The game draws the set with the other
+traffic (`traffic::add_cars`; stage 17's TR sets hold the parts, shots in `out/explain/coupling/`), so with
+`far_traffic` it is visible from the placement on, with `--original-traffic` from 150 m.
+
+|= 0x10000000`, else `|= 0x8000000`; it also places the
 set's model (0x406c50, presentation).
 
 `0x855ff8 & 0x40000000` chooses the ending (menus.md §12): 0x404110 when clear, 0x404920 when
@@ -395,7 +451,7 @@ Not traced in the original: no oracle run has reached these legs.
 | 8 | obstacle stop | only if armed by a scripted signal kind 1 and not used yet: bell, stop target `odo + a·1.25 − 5`; the clock stops; reaching it forces v = 0; when stopped, ~36 ticks of scripted recovery, wet rails | confirmed (code), hold length guess |
 | 9, 13, 17, 23 | HUD/screen effects | presentation | likely |
 | 10 / 11 | no-power section | 10 enters (`0x856fba = 1`), any power → 2; 11 exits: still 1 → **+0x45ad10 s**. Stopping inside costs 10 s | confirmed (name **guess**: AC/DC dead section, only Akita/Ōu stages have bonuses) |
-| 12 | coupling set | picks the waiting set by the marks so far (§7.5) and places its model | confirmed |
+| 12 | coupling set | picks the waiting set by the marks so far and parks it on the track ahead (§7.5) | confirmed |
 | 14 / 15 / 16 | repeater, display variant | §4.3 | likely |
 | 18 / 19 | `0x84c400 = 1 / 0` | flange-squeal / departure-sound flag, read by the train sounds (audio-text.md §10) | likely |
 | 20 | `0x857224 = a` | message shown at the next green | confirmed |

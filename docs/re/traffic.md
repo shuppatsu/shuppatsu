@@ -58,6 +58,9 @@ mask 0 and are dead data. **confirmed** (code bytes)
 - **0x406e10** (the attract opening's phase E, menus.md §2.3): spawn 2 of AKITA1C, flags 0x11,
   270 km/h, model 7, rear bogie 12 points back (0x404f10 uses 10). Ported with the normal
   spawner. **confirmed**
+- **0x406c50** (course event 12, the coupling minigame's waiting set): its own placement of a
+  parked set on the player's track ahead of the stop, with a second car list for the coupler
+  frame `0x857244` (rules.md §7.5). Ported as `Traffic::place_waiting_set`. **confirmed**
 
 ### 1.3 Spawn points and the model table
 
