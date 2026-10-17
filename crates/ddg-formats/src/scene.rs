@@ -1210,7 +1210,7 @@ pub fn track_instances_with(
     }
     let mut out = b.out;
     if let Some(reach) = options.reach {
-        let mut covered = Coverage::default();
+        let mut covered = Coverage::new(route);
         if let Some(bucket) = route.buckets.get(current) {
             bucket.iter().for_each(|r| covered.add(r));
         }
@@ -1253,23 +1253,44 @@ fn main_line_bands(reach: Option<f32>) -> [usize; 6] {
     bands
 }
 
-/// Track slots already drawn from a nearer bucket, rails and other kinds apart.
-#[derive(Default)]
-struct Coverage(std::collections::HashSet<(bool, usize)>);
+/// Track slots already drawn from a nearer bucket, rails and other kinds apart (one bit per
+/// slot), and the run records seen (consecutive buckets list mostly the same runs).
+struct Coverage {
+    bits: [Vec<u64>; 2],
+    runs: std::collections::HashSet<(u16, usize, usize)>,
+}
 
 impl Coverage {
+    fn new(route: &Route) -> Self {
+        let words = route.slots.len().div_ceil(64) + 1;
+        Self {
+            bits: [vec![0; words], vec![0; words]],
+            runs: std::collections::HashSet::new(),
+        }
+    }
+
     fn add(&mut self, run: &TrackRun) {
+        if !self.runs.insert((run.kind, run.slots.start, run.slots.end)) {
+            return;
+        }
+        let bits = &mut self.bits[usize::from(run.kind == 1)];
         for s in run.slots.clone() {
-            self.0.insert((run.kind == 1, s));
+            if let Some(w) = bits.get_mut(s / 64) {
+                *w |= 1 << (s % 64);
+            }
         }
     }
 
     fn covers(&self, rail: bool, slot: usize) -> bool {
-        self.0.contains(&(rail, slot))
+        self.bits[usize::from(rail)]
+            .get(slot / 64)
+            .is_some_and(|w| w & (1 << (slot % 64)) != 0)
     }
 
     fn covers_all(&self, run: &TrackRun) -> bool {
-        run.slots.clone().all(|s| self.covers(run.kind == 1, s))
+        self.runs
+            .contains(&(run.kind, run.slots.start, run.slots.end))
+            || run.slots.clone().all(|s| self.covers(run.kind == 1, s))
     }
 }
 
@@ -1394,7 +1415,7 @@ pub fn track_instances_wide_with(
 ) -> Vec<TrackInstance> {
     let mut out = track_instances_with(route, tables, ctx, pos, camera, options);
     let current = pos.engine_index / 4;
-    let mut covered = Coverage::default();
+    let mut covered = Coverage::new(route);
     // The camera's bucket and those ahead that track_instances_with drew from.
     let ahead = options.reach.map_or(0, buckets_within);
     for k in current..=current + ahead {
