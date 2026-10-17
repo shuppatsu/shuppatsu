@@ -42,6 +42,7 @@ mod demo;
 mod ending;
 mod intro;
 mod opening;
+pub use intro::has_stage_intro;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};

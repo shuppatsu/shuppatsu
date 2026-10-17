@@ -139,6 +139,14 @@ impl Sound {
         self.flush();
     }
 
+    /// The stage half dropped with the voices left playing: the stage intro (0x4091a0) leaves
+    /// its music to run out over the departure board.
+    pub fn leave_stage(&mut self) {
+        self.stage = None;
+        self.snd.set_paused(false);
+        self.flush();
+    }
+
     /// The sound option (`0x856356`): when off, the sound thread ignores play messages.
     pub fn set_enabled(&mut self, on: bool) {
         self.enabled = on;

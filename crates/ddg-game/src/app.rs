@@ -2,7 +2,7 @@
 //! (main-loop.md §5, menus.md §2–§7):
 //!
 //! attract → title menu (options, records, calibration, exit) → route select → lever check
-//! (analog modes) → departure board → [`Play`] → back to attract / the title.
+//! (analog modes) → stage intro → departure board → [`Play`] → back to attract / the title.
 //!
 //! [`App`] owns the window and GPU, the sprite bank and the persistent sprite layer, the save,
 //! the input and the sound device, and lends them to a run ([`play::Shared`]). The front-end
@@ -58,9 +58,13 @@ const TO_RECORDS_TICKS: i32 = 10;
 /// Route select cancelled: `Stage_Run`'s exit path (one tick, then two) and two more ticks of
 /// `Game_MainFlow` before the title menu comes back without attract (`0x855ffc & 0x40`).
 const BACK_TO_TITLE_TICKS: i32 = 5;
-/// Between the route select (or the lever check) and the departure board: BGM release, route
-/// data, `0x425490(15)` and the setup calls' five `Task_Tick`s (0x4080d0).
-const TO_BOARD_TICKS: i32 = 20;
+/// Between the route select (or the lever check) and the stage intro: BGM release, route data,
+/// `0x425490(15)` and one `Task_Tick` (0x4080d0; the oracle trace shows 16 ticks with
+/// `0x855ff8 == 2` before the intro's first).
+const TO_INTRO_TICKS: i32 = 16;
+/// After the stage intro (0x408ec0): `Stage_Run`'s two ticks and those after 0x407900 and
+/// 0x40f7e0, then the departure board.
+const TO_BOARD_TICKS: i32 = 4;
 /// After the board: one tick, then the route load and the run.
 const TO_PLAY_TICKS: i32 = 1;
 /// After a run: `Stage_Run`'s tail and `Game_MainFlow`'s two ticks.
@@ -93,6 +97,7 @@ enum Next {
     Title { cursor: i32 },
     RouteSelect,
     Records,
+    Intro(Chosen),
     Board(Chosen),
     Play(Chosen),
 }
@@ -140,6 +145,9 @@ pub struct App {
     attract_counters: AttractCounters,
     /// Attract waiting for its demo drive (the run in [`Screen::Play`]) to end.
     demo_attract: Option<Attract>,
+    /// The stage intro is the run in [`Screen::Play`]; the departure board of this choice
+    /// follows it.
+    intro_chosen: Option<Chosen>,
     down: [bool; 256],
     menu_input: MenuInput,
     script: play::Script,
@@ -262,6 +270,7 @@ impl App {
             replay: false,
             attract_counters: AttractCounters::default(),
             demo_attract: None,
+            intro_chosen: None,
             down: [false; 256],
             menu_input: MenuInput::NONE,
             script,
@@ -366,6 +375,14 @@ impl App {
                 let b = DepartureBoard::new(&self.defs.front, route, chosen.variant, layer);
                 Screen::Board(b, chosen)
             }
+            Next::Intro(chosen) if play::has_stage_intro(chosen.route) => {
+                let mut play = self.start_play(chosen)?;
+                play.start_stage_intro()?;
+                self.intro_chosen = Some(chosen);
+                Screen::Play(Box::new(play))
+            }
+            // 0x408f40, the intro of the other stages, is not ported: its ticks are left out.
+            Next::Intro(chosen) => Screen::Wait(TO_BOARD_TICKS, Next::Board(chosen)),
             Next::Play(chosen) => Screen::Play(Box::new(self.start_play(chosen)?)),
         };
         Ok(())
@@ -410,6 +427,7 @@ impl App {
             speedometer: None,
             variant: chosen.variant,
             ending: None,
+            intro: false,
             locale: self.opts.locale.clone(),
         };
         eprintln!(
@@ -643,7 +661,7 @@ impl App {
                             // Digital modes force P0 / EB (0x4332c0(0, 9)).
                             r.controls.reset_levers();
                             sfx.push(Sfx::Stop(snd::BGM_MENU));
-                            Screen::Wait(TO_BOARD_TICKS, Next::Board(chosen))
+                            Screen::Wait(TO_INTRO_TICKS, Next::Intro(chosen))
                         }
                     }
                 }
@@ -651,7 +669,7 @@ impl App {
             Screen::LeverCheck(mut c, chosen) => {
                 if c.tick(&input, &mut r.layer) {
                     sfx.push(Sfx::Stop(snd::BGM_MENU));
-                    Screen::Wait(TO_BOARD_TICKS, Next::Board(chosen))
+                    Screen::Wait(TO_INTRO_TICKS, Next::Intro(chosen))
                 } else {
                     Screen::LeverCheck(c, chosen)
                 }
@@ -818,12 +836,16 @@ impl App {
                 }
                 Screen::Attract(a)
             }
-            None => Screen::Wait(
-                AFTER_RUN_TICKS,
-                Next::Attract {
-                    skip_opening: p.quit(),
-                },
-            ),
+            // The stage intro (0x408ec0) returns to `Stage_Run`: the departure board next.
+            None => match self.intro_chosen.take() {
+                Some(chosen) => Screen::Wait(TO_BOARD_TICKS, Next::Board(chosen)),
+                None => Screen::Wait(
+                    AFTER_RUN_TICKS,
+                    Next::Attract {
+                        skip_opening: p.quit(),
+                    },
+                ),
+            },
         };
         let Screen::Play(p) = std::mem::replace(&mut self.screen, next) else {
             unreachable!()

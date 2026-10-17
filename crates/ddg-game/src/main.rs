@@ -168,6 +168,7 @@ fn parse_play_args() -> Result<play::PlayOptions> {
         speedometer: None,
         variant: false,
         ending: None,
+        intro: false,
         locale,
     };
     let mut rest = args[1..].iter();
@@ -181,6 +182,7 @@ fn parse_play_args() -> Result<play::PlayOptions> {
             "--difficulty" => opts.difficulty = value("a number")?.parse()?,
             "--station" => opts.station = value("a number")?.parse()?,
             "--ending" => opts.ending = Some(value("full or plain")? == "full"),
+            "--intro" => opts.intro = true,
             "--keys" => opts.control_mode = value("a mode")?.parse()?,
             "--joystick-dat" => opts.pad.joystick_dat = Some(value("a file")?.into()),
             "--combo" => opts.pad.combo_table = Some(value("a file")?.into()),
