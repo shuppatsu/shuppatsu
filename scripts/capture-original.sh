@@ -29,6 +29,15 @@
 # pick ticks where the train stands still. Rendering is wined3d on llvmpipe; the game still
 # runs at its 30 Hz tick.
 #
+# Difficulty: the original plays at the difficulty of the prefix's save, BIN\eeprom.dat (+6 bits
+# 14-15, docs/re/menus.md §13.1). With no eeprom.dat (the prefix as installed) it boots with the
+# exe's default save image (0x467768), whose difficulty is 1 (Normal): 0x40e910 sets 0x829d10
+# from it whether or not a file was read. `ddg-game play` defaults to difficulty 0 (Easy), so
+# pass the same `--difficulty N` to the port for comparisons; the trace's `difficulty` column
+# says which one the original used. Example: stage 5 starts with 30 s at difficulty 1 and 90 s
+# at 0 (start-time table 0x4599b0), so the same inputs left 015 s in the original and 080 s in
+# the port at difficulty 0, and 015 s at `--difficulty 1`.
+#
 # Example (stage 9, stopped ~860 m before 十日町 passing):
 #   scripts/capture-original.sh horizon9 0 3 out/explain/horizon_verify/hook_inputs.txt 5700
 set -euo pipefail
