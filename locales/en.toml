@@ -294,6 +294,7 @@ name = "English"
 0x2d8 = "Bonus Game"                 # ボーナスゲーム, 320×48
 0x2d9 = { region = [8, 20, 264, 71], text = "Couple up within\nthe time limit,\nwithout a jolt!" }  # instruction balloon, 368×96
 0x2dc = "Coupled!"                   # 連結成功
+0x17c = { region = [212, 2, 84, 28], text = "Tōhoku" }  # 東北 (the line of the km post 496.5 km) on the readout bar, 480×32
 0x2dd = "Coupling failed"            # 連結失敗
 0x2de = "Ready"                      # 準備
 0x2df = "Go!"                        # 開始
