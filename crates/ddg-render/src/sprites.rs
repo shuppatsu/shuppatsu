@@ -182,8 +182,99 @@ pub struct SpriteBank {
     /// The font of display-role labels ([`TextStyle::font`]); `None` uses `labels`.
     display_labels: Option<LabelFont>,
     /// Enhancement `wide_menus`: backdrops continued sideways on a wide canvas, by tilemap id
-    /// ([`SpriteBank::set_wide_fill`]).
-    wide_fill: Vec<(u16, Repeat)>,
+    /// ([`SpriteBank::set_wide_fill`], [`SpriteBank::set_wide_mirror`]).
+    wide_fill: Vec<(u16, WideFill)>,
+}
+
+/// How a backdrop continues past the edges of the 4:3 design on a wide canvas (enhancement
+/// `wide_menus`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WideFill {
+    /// Its tile pattern repeats ([`Repeat`]).
+    Repeat(Repeat),
+    /// A plain strip at each edge is mirrored back and forth ([`Mirror`]).
+    Mirror(Mirror),
+}
+
+impl WideFill {
+    /// The map column and row drawn at column `col` (outside the map) of row `row`, and
+    /// whether that tile is flipped horizontally.
+    pub fn source(&self, col: i32, row: i32) -> (i32, i32, bool) {
+        match self {
+            Self::Repeat(r) => (r.source(col), row, false),
+            Self::Mirror(m) => {
+                let (c, flip) = m.source(col);
+                (c, m.row(row), flip)
+            }
+        }
+    }
+}
+
+/// A mirrored continuation of a picture without a tile pattern (enhancement `wide_menus`):
+/// past the right edge column `width + k` shows column `width − 1 − k` flipped, past the left
+/// edge column `−1 − k` shows column `k` flipped, so the picture continues seamlessly without
+/// stretching. Only the `strip` columns at each edge are used: beyond them the mirror turns
+/// round (ping-pong, period `2 · strip`), so art further in (a logo) is never mirrored. Rows
+/// whose edge strip holds art can take the continuation from other rows ([`RowBorrow`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Mirror {
+    pub width: i32,
+    pub strip: i32,
+    pub borrow: Option<RowBorrow>,
+}
+
+/// Rows `start .. start + len` of a [`Mirror`]ed picture continue with the mirrored edge of
+/// rows `from .. from + len`: for a band whose edge strip is too narrow (art close to the
+/// edge), the continuation shows the plain texture of a band without art there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RowBorrow {
+    pub start: i32,
+    pub len: i32,
+    pub from: i32,
+}
+
+impl Mirror {
+    /// A mirror over `strip` columns at each edge of a `width`-column map (`strip` is
+    /// clamped to `1..=width`).
+    pub fn new(width: i32, strip: i32, borrow: Option<RowBorrow>) -> Self {
+        let width = width.max(1);
+        Self {
+            width,
+            strip: strip.clamp(1, width),
+            borrow,
+        }
+    }
+
+    /// The map column drawn at column `col` and whether it is flipped horizontally (columns
+    /// of the map map to themselves, unflipped).
+    pub fn source(&self, col: i32) -> (i32, bool) {
+        let (w, n) = (self.width, self.strip);
+        if (0..w).contains(&col) {
+            return (col, false);
+        }
+        // The distance from the edge (0 for the first column outside it) and the place in
+        // the back-and-forth walk: inwards mirrored, then outwards again unflipped.
+        let k = if col >= w { col - w } else { -1 - col };
+        let m = k.rem_euclid(2 * n);
+        let (inward, flip) = if m < n {
+            (m, true)
+        } else {
+            (2 * n - 1 - m, false)
+        };
+        if col >= w {
+            (w - 1 - inward, flip)
+        } else {
+            (inward, flip)
+        }
+    }
+
+    /// The map row the continuation shows in row `row`.
+    pub fn row(&self, row: i32) -> i32 {
+        match self.borrow {
+            Some(b) if (b.start..b.start + b.len).contains(&row) => b.from + row - b.start,
+            _ => row,
+        }
+    }
 }
 
 /// A horizontally periodic run of a tilemap's columns: columns `start..` up to the right
@@ -250,13 +341,31 @@ impl SpriteBank {
         let Some(r) = self.tilemaps.get(usize::from(tbl)).and_then(Repeat::of) else {
             return false;
         };
-        if !self.wide_fill.iter().any(|&(t, _)| t == tbl) {
-            self.wide_fill.push((tbl, r));
-        }
+        self.put_wide_fill(tbl, WideFill::Repeat(r));
         true
     }
 
-    fn wide_fill(&self, tbl: u16) -> Option<Repeat> {
+    /// Enhancement `wide_menus`: marks tilemap `tbl` as a picture that a wide canvas
+    /// continues sideways by mirroring the `strip` tile columns at each edge ([`Mirror`],
+    /// with an optional [`RowBorrow`] for a band with art near the edges): for a picture with
+    /// plain texture at its edges but no tile pattern. Returns whether the map exists.
+    pub fn set_wide_mirror(&mut self, tbl: u16, strip: u8, borrow: Option<RowBorrow>) -> bool {
+        let Some(map) = self.tilemaps.get(usize::from(tbl)) else {
+            return false;
+        };
+        let m = Mirror::new(i32::from(map.width), i32::from(strip), borrow);
+        self.put_wide_fill(tbl, WideFill::Mirror(m));
+        true
+    }
+
+    fn put_wide_fill(&mut self, tbl: u16, fill: WideFill) {
+        match self.wide_fill.iter_mut().find(|(t, _)| *t == tbl) {
+            Some(e) => e.1 = fill,
+            None => self.wide_fill.push((tbl, fill)),
+        }
+    }
+
+    fn wide_fill(&self, tbl: u16) -> Option<WideFill> {
         self.wide_fill
             .iter()
             .find(|&&(t, _)| t == tbl)
@@ -561,20 +670,25 @@ impl SpriteLayer {
         let s = c.s as i32;
         let (sx0, sy0) = (i32::from(slot.x) + sx, i32::from(slot.y) + sy);
         // The columns to draw: the slot's own and, for a backdrop on a wide canvas, its
-        // continuation past both edges of the design (enhancement `wide_menus`).
-        let mut cols: Vec<(i32, i32)> = (0..w).map(|tx| (tx, c0 + tx)).collect();
-        if let Some(rep) = self.backdrop_repeat(bank, slot, mw) {
+        // continuation past both edges of the design (`wide_menus`), mapped by `fill`.
+        let mut cols: Vec<i32> = (0..w).collect();
+        let fill = self.backdrop_fill(bank, slot, mw);
+        if fill.is_some() {
             // The original pixels the canvas shows: [-shift / s, (c.w - shift) / s).
             let left = (-shift).div_euclid(s);
             let right = (c.w as i32 - shift + s - 1).div_euclid(s);
             let first = (left - sx0).div_euclid(ts);
             let last = (right - sx0 - 1).div_euclid(ts);
-            cols.extend((first..0).chain(mw..=last).map(|tx| (tx, rep.source(tx))));
+            cols.extend((first..0).chain(mw..=last));
         }
         for ty in 0..h {
-            for &(tx, mc) in &cols {
-                let mr = r0 + ty;
-                if mc >= mw || mr >= mh {
+            for &tx in &cols {
+                // The map tile and whether it is drawn flipped.
+                let (mc, mr, flip) = match fill {
+                    Some(f) if !(0..w).contains(&tx) => f.source(tx, r0 + ty),
+                    _ => (c0 + tx, r0 + ty, false),
+                };
+                if !(0..mw).contains(&mc) || !(0..mh).contains(&mr) {
                     continue;
                 }
                 let id = map.tiles[(mr * mw + mc) as usize];
@@ -585,7 +699,8 @@ impl SpriteLayer {
                 let oy = sy0 + ty * ts;
                 for py in 0..ts {
                     for px in 0..ts {
-                        let index = tile[(py * ts + px) as usize];
+                        let spx = if flip { ts - 1 - px } else { px };
+                        let index = tile[(py * ts + spx) as usize];
                         if index == 0 {
                             continue;
                         }
@@ -625,10 +740,11 @@ impl SpriteLayer {
         }
     }
 
-    /// Enhancement `wide_menus`: the repeat of a backdrop slot on a wide canvas. Only a slot
-    /// showing a whole marked map ([`SpriteBank::set_wide_fill`]) across the full 640-px
-    /// design is continued; everything else keeps its 4:3 place.
-    fn backdrop_repeat(&self, bank: &SpriteBank, slot: &Slot, mw: i32) -> Option<Repeat> {
+    /// Enhancement `wide_menus`: the continuation of a backdrop slot on a wide canvas. Only a
+    /// slot showing a whole marked map ([`SpriteBank::set_wide_fill`],
+    /// [`SpriteBank::set_wide_mirror`]) across the full 640-px design is continued;
+    /// everything else keeps its 4:3 place.
+    fn backdrop_fill(&self, bank: &SpriteBank, slot: &Slot, mw: i32) -> Option<WideFill> {
         let whole = slot.col <= 0 && slot.row <= 0 && slot.w <= 0 && slot.h <= 0;
         let x = i32::from(slot.x);
         let spans = x <= 0 && x + mw * TILE_SIZE as i32 >= CANVAS_W as i32;
@@ -1450,6 +1566,112 @@ mod tests {
         assert_eq!((r.start, r.period, r.source(-3), r.source(6)), (3, 1, 3, 3));
         // A frame is no pattern.
         assert_eq!(Repeat::of(&map(6, &[1, 2, 2, 2, 2, 3])), None);
+    }
+
+    #[test]
+    fn mirrors_turn_round_at_the_end_of_the_strip() {
+        // A plain mirror (the strip is the whole map): column 5 + k shows 4 − k flipped.
+        let m = Mirror::new(5, 5, None);
+        assert_eq!(m.source(2), (2, false));
+        assert_eq!(
+            [5, 6, 9, 10].map(|c| m.source(c)),
+            [(4, true), (3, true), (0, true), (0, false)]
+        );
+        assert_eq!(
+            [-1, -2, -5].map(|c| m.source(c)),
+            [(0, true), (1, true), (4, true)]
+        );
+        // A two-column strip: mirrored inwards, unflipped outwards again, period 4.
+        let m = Mirror::new(5, 2, None);
+        assert_eq!(
+            [5, 6, 7, 8, 9, 13].map(|c| m.source(c)),
+            [
+                (4, true),
+                (3, true),
+                (3, false),
+                (4, false),
+                (4, true),
+                (4, true)
+            ]
+        );
+        assert_eq!(
+            [-1, -2, -3, -4, -5].map(|c| m.source(c)),
+            [(0, true), (1, true), (1, false), (0, false), (0, true)]
+        );
+        // The strip is clamped to the map.
+        assert_eq!(Mirror::new(3, 0, None).strip, 1);
+        assert_eq!(Mirror::new(3, 9, None).strip, 3);
+        // Rows 1–2 continue with the edge of rows 5–6; the map columns stay mirrored.
+        let b = RowBorrow {
+            start: 1,
+            len: 2,
+            from: 5,
+        };
+        let m = WideFill::Mirror(Mirror::new(5, 2, Some(b)));
+        assert_eq!(
+            [(5, 0), (5, 1), (6, 2), (-1, 3), (7, 2)].map(|(c, r)| m.source(c, r)),
+            [
+                (4, 0, true),
+                (4, 5, true),
+                (3, 6, true),
+                (0, 3, true),
+                (3, 6, false)
+            ]
+        );
+        // A repeat keeps the row and never flips.
+        let r = WideFill::Repeat(Repeat {
+            start: 2,
+            period: 3,
+        });
+        assert_eq!(r.source(6, 4), (3, 4, false));
+    }
+
+    #[test]
+    fn mirrored_backdrops_flip_their_tiles() {
+        // A 40 × 1 map of one tile: index 1 (green) in pixel columns 0–7, 2 (red) in 8–15.
+        let mut b = bank(1);
+        let mut tile = [1; TILE_PIXELS];
+        for (i, p) in tile.iter_mut().enumerate() {
+            if i % TILE_SIZE >= 8 {
+                *p = 2;
+            }
+        }
+        b.tiles[1] = Some(Box::new(tile));
+        b.tilemaps[0] = Tilemap {
+            width: 40,
+            height: 1,
+            tiles: vec![1; 40],
+        };
+        assert!(b.set_wide_mirror(0, 1, None));
+        assert!(!b.set_wide_mirror(7, 1, None), "no such map");
+        let mut l = SpriteLayer::default();
+        l.palettes[0] = Some(palette());
+        l.fit_window(1280, 720);
+        l.slots[0] = Slot::new(0, 0, 0, 0, 3, true);
+        let (w, h) = l.canvas_size();
+        let mut c = vec![0; w * h * 4];
+        l.compose(&b, &mut c);
+        let px_of = |c: &[u8], x: usize| -> [u8; 4] { c[x * 4..][..4].try_into().unwrap() };
+        let px = |x: usize| px_of(&c, x);
+        let (green, red) = ([0, 255, 0, 255], [255, 0, 0, 255]);
+        // The design spans 106..746. Left of it column −1 is column 0 flipped (green at the
+        // seam, red 16 px out), column −2 column 0 again unflipped (red, then green).
+        assert_eq!((px(106), px(113), px(114)), (green, green, red));
+        assert_eq!((px(105), px(98), px(97), px(90)), (green, green, red, red));
+        assert_eq!((px(89), px(82), px(81), px(74)), (red, red, green, green));
+        // Right of it column 40 is column 39 flipped (red at the seam).
+        assert_eq!((px(745), px(746), px(753), px(754)), (red, red, red, green));
+        assert_eq!(px(w - 1)[3], 255, "filled to the edge");
+        // At 4:3 nothing is continued.
+        l.fit_window(1280, 960);
+        let (w, h) = l.canvas_size();
+        let mut c = vec![0; w * h * 4];
+        l.compose(&b, &mut c);
+        assert_eq!((l.wide, w), (0, CANVAS_W));
+        assert_eq!(
+            (px_of(&c, 0), px_of(&c, 7), px_of(&c, 8)),
+            (green, green, red)
+        );
     }
 
     #[test]
