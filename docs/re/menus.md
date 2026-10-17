@@ -928,11 +928,42 @@ Approximated or left out:
   right edge of the map in its tile ids, and every column outside the map maps into that run
   (`start + (c − start) mod period`), so the tiling phase continues the original's centred
   picture on both sides. A slot is continued only when it shows the whole map across the
-  full 640-px design. Everything else stays centred with black beside it: the records
-  viewer's framed table (it draws its own black side bars), the route/train select (its
-  background is black; the 0x515 band continues black on black), the departure board, the
-  attract pictures and the stage-flow screens over the 3D view (their panels, e.g. the report
-  card tbl 0x444, are framed art).
+  full 640-px design.
+
+  The **attract title picture tbl 0x410** (§2.6, slot 0xf at (0, 0)) has no tile pattern
+  (`Repeat::of` finds none) but plain paper texture at its edges, so it is **mirrored**
+  (`SpriteBank::set_wide_mirror`, `sprites::Mirror`): past the right edge column 40 + k shows
+  column 39 − k with every tile flipped horizontally, past the left edge column −1 − k shows
+  column k flipped, so the texture continues without a seam and without stretching. Only the
+  8 outermost tile columns per side are used; further out the mirror turns round (ping-pong,
+  period 16 tiles), so the continuation never reaches the art. Measured on a 640×480 shot of
+  tbl 0x410 in palette 0x17 (**confirmed**, by eye on the shot):
+  * outside the logo band "PRESS START BUTTON", the TAITO logo and the copyright lines lie in
+    x ≈ 140–500, so tile columns 0–7 and 32–39 are plain texture;
+  * in tile rows 3–15 the 電車でGO! logo's glow starts at x ≈ 19 and the shadow of 番台 / the
+    signal head reaches x ≈ 623: only one tile column per side is clean there, and a one-tile
+    ping-pong looks like a kaleidoscope (tried at 2560×1080). Those rows instead continue with
+    the mirrored edge of rows 16–28 (`sprites::RowBorrow`, constants in `front/attract.rs`).
+    The texture changes slightly at the picture's edge in those rows (the glow there is a
+    little lighter than the borrowed texture); the extension itself has no seam at rows 3 and
+    16.
+
+  The 21:9 window (2560×1080) needs 249 original pixels per side, 32:9 (3840×1080) 533; both
+  show only texture (`out/explain/title_wide/`).
+
+  Everything else stays centred with black beside it: the records viewer's framed table (it
+  draws its own black side bars), the route/train select (its background is black; the 0x515
+  band continues black on black), the departure board (black around the board), the TAITO
+  logo item (black), the photos (small, centred on black), the posters tbl 0x412 / 0x40f
+  (photographs to their edges: a mirror would show mirrored trains and signs) and the
+  stage-flow screens over the 3D view (their panels, e.g. the report card tbl 0x444, are
+  framed art).
+
+  At 4:3 nothing changes (1280×960 smooth, integer and nearest and 1024×768 compared pixel
+  for pixel). With `--ui-scaling integer` a 4:3 window that is not a whole multiple of
+  640×480 (e.g. 1600×1200) gets a canvas as wide as the window (`wide_canvas_width`), so
+  there the backdrops, and now the title picture, fill the side margins too, as since the
+  menu backdrops were added.
 
 ### 14.1 Decided port behaviour (deviations, on by default)
 
