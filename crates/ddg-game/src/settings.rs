@@ -124,6 +124,10 @@ settings! {
     interpolate = true;
     /// Present with vsync; off = uncapped (`--uncapped`).
     vsync = true;
+    /// Borderless full screen on the current monitor (Alt+Enter or F11 switch it, and the
+    /// switch is remembered); off (default) = a window. The original ran full screen at
+    /// 640×480 (renderer.md §3), windowed only with `-debug`.
+    fullscreen = false;
     /// Menu backdrops continued to the edges of a wide window (menus.md §14); off = the 4:3
     /// menus centred over black.
     wide_menus = true;

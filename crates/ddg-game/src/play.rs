@@ -427,6 +427,10 @@ impl Play {
         self.gpu.as_ref()
     }
 
+    pub fn gpu_mut(&mut self) -> Option<&mut Gpu> {
+        self.gpu.as_mut()
+    }
+
     pub fn save(&self) -> &Save {
         &self.save
     }
@@ -1405,6 +1409,7 @@ impl Play {
             "ddg-game play",
             self.opts.size,
             !self.opts.settings.vsync,
+            self.opts.settings.fullscreen,
             self.opts.locale.ui_scale,
         )?);
         self.configure_gpu();
@@ -1457,6 +1462,13 @@ impl ApplicationHandler for Play {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        // Alt+Enter / F11, kept from the run (`ddg-game play`; in the game, `App` sees them).
+        if let Some(t) = self.gpu.as_mut().and_then(|g| g.fullscreen_key(&event)) {
+            if let crate::window::Toggle::Switched(on) = t {
+                crate::window::remember_fullscreen(on);
+            }
+            return;
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => {

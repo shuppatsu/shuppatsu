@@ -123,6 +123,7 @@ switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml
   --distance-fade          the far edge dissolves into the background [off]
   --interpolate            camera, trains, wiper, snow, needle between ticks [on]
   --vsync                  present with vsync [on] (--uncapped)
+  --fullscreen             borderless full screen; Alt+Enter or F11 switch it [off]
   --wide-menus             menu backdrops to the edges of a wide window [on]
   --one-line-captions      translation: captions and banners as one line [on]
   --landmark-names         translation: names under the landmark plates [on]
@@ -518,6 +519,7 @@ impl App {
             "ddg-game view",
             self.opts.size,
             !self.opts.settings.vsync,
+            self.opts.settings.fullscreen,
             self.opts.locale.ui_scale,
         )?;
         configure_renderer(&mut gpu.renderer, &self.opts);
@@ -675,6 +677,15 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        // Alt+Enter / F11: full screen for this viewer only (not remembered).
+        if self
+            .gpu
+            .as_mut()
+            .and_then(|g| g.fullscreen_key(&event))
+            .is_some()
+        {
+            return;
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {

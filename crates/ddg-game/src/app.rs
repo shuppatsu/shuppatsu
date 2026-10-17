@@ -31,7 +31,7 @@ use crate::save::Save;
 use crate::scene::GameData;
 use crate::screens::tables::ScreenTables;
 use crate::screens::{MenuInput, Sfx};
-use crate::window::Gpu;
+use crate::window::{Gpu, Toggle};
 use anyhow::{Context, Result};
 use ddg_engine::demo::DemoKind;
 use ddg_formats::exe::Exe;
@@ -885,6 +885,11 @@ impl App {
                 }
                 self.fit_front()?;
             }
+            "fullscreen" => {
+                if let Some(g) = self.gpu() {
+                    g.set_fullscreen(s.fullscreen);
+                }
+            }
             "save_on_change" => self.res().save.save_on_change = s.save_on_change,
             "keyboard_with_controller" => {
                 self.opts.pad.keyboard_with_controller = s.keyboard_with_controller;
@@ -1097,6 +1102,30 @@ impl App {
         }
     }
 
+    fn gpu_mut(&mut self) -> Option<&mut Gpu> {
+        match &mut self.screen {
+            Screen::Play(p) => p.gpu_mut(),
+            _ => self.res.as_mut().and_then(|r| r.gpu.as_mut()),
+        }
+    }
+
+    /// Alt+Enter / F11 ([`Gpu::fullscreen_key`]): `true` when `event` was one, kept from the
+    /// game. A switch is mirrored in setting `fullscreen` (the settings screen shows it) and
+    /// remembered.
+    fn fullscreen_key(&mut self, event: &WindowEvent) -> bool {
+        match self.gpu_mut().and_then(|g| g.fullscreen_key(event)) {
+            None => false,
+            Some(Toggle::Swallowed) => true,
+            Some(Toggle::Switched(on)) => {
+                self.opts.settings.fullscreen = on;
+                if self.opts.shot.is_none() {
+                    crate::window::remember_fullscreen(on);
+                }
+                true
+            }
+        }
+    }
+
     fn exit(&mut self, event_loop: &ActiveEventLoop) {
         event_loop.exit();
     }
@@ -1115,6 +1144,7 @@ impl ApplicationHandler for App {
             "ddg-game",
             self.opts.size,
             !self.opts.settings.vsync,
+            self.opts.settings.fullscreen,
             self.opts.locale.ui_scale,
         ) {
             Ok(gpu) => {
@@ -1130,6 +1160,9 @@ impl ApplicationHandler for App {
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
+        if self.fullscreen_key(&event) {
+            return;
+        }
         match &event {
             WindowEvent::CloseRequested => return self.exit(event_loop),
             WindowEvent::Focused(false) => self.down = [false; 256],

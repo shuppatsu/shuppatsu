@@ -496,6 +496,7 @@ mod tests {
         ("distance_fade", false),
         ("interpolate", true),
         ("vsync", true),
+        ("fullscreen", false),
         ("wide_menus", true),
         ("one_line_captions", true),
         ("landmark_names", true),

@@ -62,11 +62,11 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
   options screens are open.
 * **Groups**: Language & text (`lang`, `one_line_captions`, `landmark_names`, `board_names`,
   `subtitles`, `font`, `display_font`); Display (`hud_layout`, `ui_scaling`, `ui_scale`,
-  `wide_menus`, `interpolate`, `vsync`); 3D & effects (`wide_visibility`, `square_pixels`,
+  `wide_menus`, `interpolate`, `vsync`, `fullscreen`); 3D & effects (`wide_visibility`, `square_pixels`,
   `stable_track_variants`, `texture_filtering`, `anisotropic`, `msaa`, `ground_variation`,
   `ground_detiling`, `texture_pack`, `fog`, `wide_weather`, `far_traffic`); Saves & controls
   (`save_on_change`, `save_timed_out_names`, `keyboard_with_controller`, `exit_no_to_menu`).
-  All 29 keys of the table below.
+  All 30 keys of the table below.
 * **Keys**: up/down move (no wrap, repeat on hold), left/right step the value (switches flip,
   `ui_scale` runs Auto, 1×…4×, the others wrap), Enter (confirm) steps it on, Esc (cancel)
   goes back to the options list on the new row. Pad: the same through its menu bindings.
@@ -77,7 +77,7 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
   (`--shot`) never write it, as they never read it.
 * **When it applies** (the status line): *Applies now*: `lang` (the locale is installed again:
   sprite text, header art and these strings switch at once), `ui_scaling`, `ui_scale`,
-  `wide_menus` (the canvas is refitted), `save_on_change`, `keyboard_with_controller` (the
+  `wide_menus` (the canvas is refitted), `fullscreen`, `save_on_change`, `keyboard_with_controller` (the
   input is rebuilt), `exit_no_to_menu`. *Applies from the next stage*: everything a run reads
   when it starts (the HUD layout, interpolation, the 3D and caption switches,
   `save_timed_out_names`). *Applies after a restart*: `vsync` (the surface's present mode is
@@ -115,6 +115,7 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
 | `far_traffic` | on | `--[no-]far-traffic`, `--original-traffic` | AI trains drawn up to 150 m ahead | up to the far plane (320 m), the farthest LOD beyond 150 m; spawning and sounds unchanged (traffic.md §4, renderer.md §13.9) |
 | `interpolate` | on | `--[no-]interpolate` | everything moves at the 30 Hz tick | the camera along the track, AI trains, wiper, snow scroll and speedometer needle placed between the last two ticks at the display's rate (renderer.md §13.9); off: every frame shows the last tick |
 | `vsync` | on | `--[no-]vsync`, `--uncapped` | — (DirectDraw flip) | presents with vsync (FIFO); off: uncapped |
+| `fullscreen` | off | `--[no-]fullscreen`; Alt+Enter / F11 at any time | full screen at 640×480 (DirectDraw exclusive; windowed only with `-debug`, renderer.md §3) | borderless full screen on the window's monitor at its own resolution; off: a window. Alt+Enter and F11 switch it in every window (menus, play, view) and write the new state to `config.toml`, unless a flag or `DDG_FULLSCREEN` fixed it for the run |
 | `wide_menus` | on | `--[no-]wide-menus` | the 640×480 menus and attract title picture centred over black | on a wide window the menu backdrops continue to the edges (their tile pattern repeated) and so does the attract title picture tbl 0x410 (paper synthesised from its plain edges, blended in at the seams), never stretched; at 4:3 pixel-identical (menus.md §14) |
 | `one_line_captions` | on | `--[no-]one-line-captions` | — (Japanese sprites) | with a translation: station captions and banners as one line of text instead of three sprites translated one by one (localisation.md) |
 | `landmark_names` | on | `--[no-]landmark-names` | — | with a translation: the landmark's English name under its kanji plate (localisation.md) |

@@ -127,6 +127,7 @@ pub const ITEMS: &[Item] = {
         switch("wide_menus", Display, Now),
         switch("interpolate", Display, NextStage),
         switch("vsync", Display, Restart),
+        switch("fullscreen", Display, Now),
         switch("wide_visibility", Effects, NextStage),
         switch("square_pixels", Effects, NextStage),
         switch("stable_track_variants", Effects, NextStage),
