@@ -8,7 +8,8 @@
 //!   the brake lever, a symbol taken by confirm or by raising the power lever from N. Four
 //!   letters or 終 complete the name (filter 0x41e7a0, then the table is packed into the eeprom
 //!   mirror, 0x41e670) and the page changes 30 ticks later; ← deletes. After 930 ticks the page
-//!   changes anyway, with the name as far as it got, filtered but **not** packed.
+//!   changes anyway, with the name as far as it got, filtered. The original does **not** pack
+//!   a timed-out name; the port does (decided port behaviour, menus.md §14).
 //! * Ranking page (page 1): cells reveal one per tick with a 16-tick flicker, the new row's rank
 //!   label blinks every 4 ticks; it ends after 150 ticks or on the A button or the horn.
 
@@ -438,7 +439,8 @@ impl NameEntry {
         &self.rows
     }
 
-    /// The name was completed and the table packed into the eeprom mirror (0x41e670).
+    /// The table is to be packed into the eeprom mirror (0x41e670): the name was completed,
+    /// or (port) the entry timed out.
     pub fn committed(&self) -> bool {
         self.committed
     }
@@ -529,6 +531,10 @@ impl NameEntry {
             self.page = Page::Ranking;
             self.counter = 0;
             self.filter();
+            // Decided port behaviour (menus.md §14): a timed-out name is saved like a
+            // completed one. The original skips `Ranking_ToEeprom` here, so the row lives
+            // only in the unpacked table and is lost at exit.
+            self.committed = true;
         }
     }
 
@@ -946,7 +952,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn timeout_filters_but_does_not_commit() {
+    fn timeout_filters_and_commits() {
         let rankings = vec![[Row::EMPTY; ROWS]; 13];
         let mut e = NameEntry::new(defs(), &request(&rankings)).unwrap();
         assert_eq!(e.rank(), 0);
@@ -957,7 +963,8 @@ pub(crate) mod tests {
             n += 1;
         }
         assert_eq!(n, TIMEOUT);
-        assert!(!e.committed());
+        // The original leaves it unpacked; the port saves it (menus.md §14).
+        assert!(e.committed());
         // The all-blank name is in the exact list: replaced by the route's default name.
         assert_eq!(e.rows()[0].name, [16, 3, 55, BLANK]);
     }

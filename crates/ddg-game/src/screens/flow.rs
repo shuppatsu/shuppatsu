@@ -79,7 +79,8 @@ pub enum Action {
     /// (menus.md §11.4).
     Ranking { cleared: bool },
     /// The name entry ended: `rows` replace the in-memory ranking `table`; with `commit` the
-    /// name was completed and the table is packed into the eeprom mirror (0x41e670).
+    /// table is packed into the eeprom mirror (0x41e670) and written: a completed name, or
+    /// (port, menus.md §14) a timed-out one.
     RankingDone {
         table: usize,
         rows: Table,
@@ -636,7 +637,8 @@ mod tests {
         else {
             panic!("{a:?}");
         };
-        assert_eq!((n, table, commit), (930 + 151, 3, false));
+        // Committed: the port saves a timed-out name (menus.md §14).
+        assert_eq!((n, table, commit), (930 + 151, 3, true));
         assert_eq!((rows[0].score, rows[0].pro), (500, true));
         let (n, a) = until_action(&mut f, &o, |_| NONE);
         assert_eq!((n, a), (151 + 2, Action::RunOver));
