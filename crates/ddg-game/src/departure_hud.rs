@@ -12,7 +12,7 @@ use ddg_formats::cab_hud::{CabTables, ROUTE_STRIP_ENTRIES, STAR_SLOTS, STRIP_COL
 use ddg_render::sprites::SpriteLayer;
 
 const SLOT_STRIP: usize = 0x7a;
-const SLOT_DIAGRAM: usize = 0x7b;
+pub(crate) const SLOT_DIAGRAM: usize = 0x7b;
 const SLOT_STARS: usize = 0x3f;
 /// Strip and diagram at `origin + (0x90, 0x88)` and `+ (0x90, 0xb8)`; stars at
 /// `origin + (0x90 + offset, 0x90)` (0x4124f0).

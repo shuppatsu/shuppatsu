@@ -1113,7 +1113,14 @@ impl Play {
         self.cab
             .tick(&snap, &input, &self.last_events, &mut self.layer);
         if let Some(s) = &self.subtitles {
-            s.draw(&mut self.layer);
+            // The pre-departure route board (slot 0x7b, departure_hud.rs) sits where the
+            // subtitles go; while it is up they move under it.
+            let board = self.layer.slots[crate::departure_hud::SLOT_DIAGRAM];
+            let board_bottom = u16::try_from(board.tilemap)
+                .ok()
+                .and_then(|t| self.bank.tilemaps.get(usize::from(t)))
+                .map(|m| f32::from(board.y) + f32::from(m.height) * 16.0);
+            s.draw_below(&mut self.layer, board_bottom);
         }
         self.flow.draw(&mut self.layer);
         self.centre_screen();
