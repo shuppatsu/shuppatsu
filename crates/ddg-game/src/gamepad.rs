@@ -343,8 +343,11 @@ impl Joystick {
         }
     }
 
-    /// One poll (0x4341c0). `keyboard_held` is this tick's keyboard word: Esc, Enter and R
-    /// still act while the joystick is active (input.md §6).
+    /// One poll (0x4341c0). `keyboard_held` is this tick's keyboard word. The original lets
+    /// only Esc (pause + cancel), Enter (menu confirm) and R through while the joystick is
+    /// active (input.md §6); the port also lets the keyboard's driving buttons through, Space
+    /// (horn) and Enter (the A button: ATS confirm, HUD panel), OR-ed with the pad's (decided
+    /// port behaviour, input.md §10.3). The levers stay the joystick's.
     pub fn poll(&mut self, state: &JoyState, keyboard_held: u32) -> ButtonState {
         let mut buttons = state.buttons;
         if self.mode == JoyMode::Digital {
@@ -381,7 +384,7 @@ impl Joystick {
         if keyboard_held & bits::PAUSE != 0 {
             held |= bits::PAUSE | bits::CANCEL;
         }
-        held |= keyboard_held & (bits::KEY_R | bits::MENU_CONFIRM);
+        held |= keyboard_held & (bits::KEY_R | bits::MENU_CONFIRM | bits::HORN | bits::A);
         let word = ButtonWord::new(self.prev_word, held);
         self.prev_word = held;
         ButtonState::from_word(word)
@@ -1357,13 +1360,58 @@ mod tests {
     #[test]
     fn keyboard_passes_through_in_joystick_modes() {
         let mut j = joy(JoyMode::Digital);
-        // Keyboard Esc is pause + cancel; Enter only menu confirm; Space (horn) is dropped.
+        // Keyboard Esc is pause + cancel, Enter menu confirm and (port) the A button, Space
+        // (port) the horn. The original drops A and the horn (input.md §6).
         let b = j.poll(
             &JoyState::default(),
             bits::PAUSE | bits::CANCEL | bits::A | bits::MENU_CONFIRM | bits::HORN,
         );
         assert!(b.pause_pressed && b.cancel_pressed && b.menu_confirm_pressed);
-        assert!(!b.confirm_pressed && !b.horn_held);
+        assert!(b.confirm_pressed && b.horn_pressed && b.horn_held);
+    }
+
+    /// Decided port behaviour (input.md §10.3): in mode 4 with a pad, the keyboard's horn and
+    /// ATS confirm work while driving, OR-ed with the pad's buttons; the levers stay the pad's.
+    #[test]
+    fn keyboard_drives_buttons_alongside_a_mode_4_pad() {
+        use crate::input::tests::{DIK_RETURN, DIK_SPACE, bindings};
+        let mut kb = Keyboard::new(&bindings(), 0).unwrap();
+        let mut j = joy(JoyMode::Digital);
+        j.brake = 0;
+        // A fake pad: nothing held, then btn1 (horn in mode 4).
+        let idle = JoyState::default();
+        let pad_horn = JoyState {
+            buttons: 0b010,
+            ..Default::default()
+        };
+        let mut tick = |pad: &JoyState, key: Option<u8>| {
+            let k = kb.poll(|c| Some(c) == key);
+            j.poll(pad, k.word.held)
+        };
+
+        let b = tick(&idle, Some(DIK_SPACE));
+        assert!(b.horn_pressed && b.horn_held && !b.confirm_pressed);
+        let b = tick(&idle, Some(DIK_SPACE));
+        assert!(b.horn_held && !b.horn_pressed, "one edge per hold");
+        tick(&idle, None);
+
+        let b = tick(&idle, Some(DIK_RETURN));
+        assert!(b.confirm_pressed && b.menu_confirm_pressed && !b.horn_held);
+        tick(&idle, None);
+
+        // Pad horn held, then the keyboard joins: no second edge; either keeps it held.
+        let b = tick(&pad_horn, None);
+        assert!(b.horn_pressed);
+        let b = tick(&pad_horn, Some(DIK_SPACE));
+        assert!(b.horn_held && !b.horn_pressed);
+        let b = tick(&idle, Some(DIK_SPACE));
+        assert!(b.horn_held && !b.horn_pressed);
+
+        // The keyboard's lever keys do not move the pad's levers (↓ is power+ in mode 0).
+        for _ in 0..20 {
+            tick(&idle, Some(0xd0));
+        }
+        assert_eq!((j.power, j.brake), (0, 0));
     }
 
     #[test]

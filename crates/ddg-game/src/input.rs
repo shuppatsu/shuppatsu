@@ -389,17 +389,17 @@ enum Step {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
-    const DIK_SPACE: u8 = 0x39;
-    const DIK_RETURN: u8 = 0x1c;
+    pub(crate) const DIK_SPACE: u8 = 0x39;
+    pub(crate) const DIK_RETURN: u8 = 0x1c;
     const DIK_ESCAPE: u8 = 0x01;
     /// Mode-0 row bytes [4..14]: arrows, Enter, Space, Enter, Esc, Esc, R.
     pub(crate) const ROW0_BUTTONS: [u8; BUTTON_SLOTS] =
         [0xc8, 0xd0, 0xcb, 0xcd, 0x1c, 0x39, 0x1c, 0x01, 0x01, 0x13];
 
-    fn bindings() -> Bindings {
+    pub(crate) fn bindings() -> Bindings {
         // Modes 0 and 3 rows of the exe table (input.md §4).
         let m0 = LeverKeys {
             power_up: 0xd0,
