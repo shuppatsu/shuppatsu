@@ -52,6 +52,9 @@ pub struct PortConfig {
     /// `smooth`, `integer` or `nearest` (`--ui-scaling`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ui_scaling: Option<String>,
+    /// `original`, `2x`, `3x` or `max` (`--draw-distance`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub draw_distance: Option<String>,
     /// A fixed canvas multiple, 1..=4 (`--ui-scale`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ui_scale: Option<i64>,
@@ -116,6 +119,12 @@ impl PortConfig {
             match UiScaling::parse(v) {
                 Some(s) => cfg.ui_scaling = s,
                 None => warn("ui_scaling", "\"smooth\", \"integer\" or \"nearest\""),
+            }
+        }
+        if let Some(v) = &self.draw_distance {
+            match crate::scene::DrawDistance::parse(v) {
+                Some(d) => cfg.draw_distance = d,
+                None => warn("draw_distance", "\"original\", \"2x\", \"3x\" or \"max\""),
             }
         }
         if let Some(n) = self.ui_scale {
@@ -324,6 +333,7 @@ const VALUE_FLAGS: &[(&str, &str)] = &[
     ("--hud-layout", "hud_layout"),
     ("--ui-scaling", "ui_scaling"),
     ("--texture-pack", "texture_pack"),
+    ("--draw-distance", "draw_distance"),
 ];
 
 /// Every key of docs/settings.md: the values, then the switches.
@@ -481,6 +491,9 @@ mod tests {
         ("fog", true),
         ("wide_weather", true),
         ("far_traffic", true),
+        ("max_lod", false),
+        ("early_activation", false),
+        ("distance_fade", false),
         ("interpolate", true),
         ("vsync", true),
         ("wide_menus", true),
@@ -533,6 +546,7 @@ mod tests {
             "font",
             "display_font",
             "texture_pack",
+            "draw_distance",
         ]) {
             assert!(rows.contains(k), "{k} is not in docs/settings.md");
         }
@@ -553,6 +567,7 @@ mod tests {
                     "font",
                     "display_font",
                     "texture_pack",
+                    "draw_distance",
                 ]
                 .contains(r);
             assert!(known, "docs/settings.md lists {r}, which is no setting");

@@ -654,6 +654,9 @@ pub struct LocaleConfig {
     /// `--texture-pack` / `DDG_TEXTURE_PACK` (enhancement `texture_pack`, docs/texture-packs.md):
     /// a directory of replacement 3D texture pages; `None` = the original textures.
     pub texture_pack: Option<PathBuf>,
+    /// `--draw-distance` / `DDG_DRAW_DISTANCE` (enhancement `draw_distance`, the 3D view's
+    /// far plane; kept here with the other valued settings).
+    pub draw_distance: crate::scene::DrawDistance,
 }
 
 impl Default for LocaleConfig {
@@ -669,6 +672,7 @@ impl Default for LocaleConfig {
             hud_layout: Default::default(),
             ui_scaling: Default::default(),
             texture_pack: None,
+            draw_distance: Default::default(),
         }
     }
 }
@@ -734,6 +738,12 @@ impl LocaleConfig {
                 None => eprintln!("DDG_UI_SCALING: expected smooth, integer or nearest"),
             }
         }
+        if let Some(v) = var("DDG_DRAW_DISTANCE") {
+            match crate::scene::DrawDistance::parse(&v.to_string_lossy()) {
+                Some(d) => c.draw_distance = d,
+                None => eprintln!("DDG_DRAW_DISTANCE: expected original, 2x, 3x or max"),
+            }
+        }
         c.ui_scale = c.ui_scale_fixed.unwrap_or(1);
     }
 
@@ -777,6 +787,11 @@ impl LocaleConfig {
                     let v = it.next().unwrap_or_default();
                     self.ui_scaling = ddg_render::overlay::UiScaling::parse(&v)
                         .context("--ui-scaling needs smooth, integer or nearest")?;
+                }
+                "--draw-distance" => {
+                    let v = it.next().unwrap_or_default();
+                    self.draw_distance = crate::scene::DrawDistance::parse(&v)
+                        .context("--draw-distance needs original, 2x, 3x or max")?;
                 }
                 _ => rest.push(a),
             }

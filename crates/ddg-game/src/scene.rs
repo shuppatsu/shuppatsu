@@ -87,6 +87,98 @@ const GROUND_FLAT_DEPTH: u16 = 0x7ffd;
 /// Bucket look-back for side tracks in wide mode (scene.md §5.2).
 const WIDE_EXTRA_BUCKETS: usize = 16;
 
+/// Enhancement `draw_distance`: the far plane as a multiple of the original's 32 units
+/// (320 m).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DrawDistance {
+    /// 32 units, the original's far plane.
+    #[default]
+    Original,
+    Double,
+    Triple,
+    /// 4×, 128 units: as far as the panorama's anchor (scene.md §6.4), behind which the
+    /// background shows mountains anyway.
+    Max,
+}
+
+impl DrawDistance {
+    pub const ALL: [Self; 4] = [Self::Original, Self::Double, Self::Triple, Self::Max];
+
+    /// The far plane in world units.
+    pub fn far(self) -> f32 {
+        ddg_render::camera::FAR
+            * match self {
+                Self::Original => 1.0,
+                Self::Double => 2.0,
+                Self::Triple => 3.0,
+                Self::Max => 4.0,
+            }
+    }
+
+    /// The name in `config.toml`, on the command line and in the environment.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Original => "original",
+            Self::Double => "2x",
+            Self::Triple => "3x",
+            Self::Max => "max",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim().to_ascii_lowercase();
+        Self::ALL.into_iter().find(|d| {
+            d.name() == s || (*d == Self::Double && s == "2") || (*d == Self::Triple && s == "3")
+        })
+    }
+}
+
+/// The geometry enhancements of the route view (docs/settings.md); `Default` is the
+/// original.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Geometry {
+    /// `max_lod`: the most detailed model of every track piece and AI-train car at every
+    /// distance (scene.md §5.3).
+    pub max_lod: bool,
+    /// `early_activation`: scenery and side tracks from where they come within the far plane
+    /// instead of the original's activation points (scene.md §5.3).
+    pub early_activation: bool,
+    /// `draw_distance`: the far plane; beyond the original, scenery and track are activated
+    /// and built out to it.
+    pub draw_distance: DrawDistance,
+    /// `distance_fade`: the world dissolves into the background over the last stretch before
+    /// the panorama's depth instead of ending at a hard edge.
+    pub distance_fade: bool,
+}
+
+impl Geometry {
+    pub fn far(&self) -> f32 {
+        self.draw_distance.far()
+    }
+
+    /// How far ahead track and scenery are activated: `None` = the original's lists.
+    pub fn reach(&self) -> Option<f32> {
+        (self.early_activation || self.draw_distance != DrawDistance::Original).then(|| self.far())
+    }
+
+    /// The eye depths of `distance_fade`: it ends where the panorama (depth word 0x7ff0,
+    /// drawn in front of everything behind it) starts to hide the world, and spans a quarter
+    /// of the far plane.
+    pub fn fade(&self) -> Option<(f32, f32)> {
+        self.distance_fade.then(|| {
+            let far = self.far();
+            let end = ddg_render::camera::background_eye_depth(scene::SKY_SPRITE_DEPTH, far);
+            (end - far / 4.0, end)
+        })
+    }
+
+    /// Sets the far plane and the fade on a renderer drawing this scene.
+    pub fn configure(&self, r: &mut ddg_render::Renderer) {
+        r.projection.far = self.far();
+        r.distance_fade = self.fade();
+    }
+}
+
 pub struct RouteScene {
     pub route: Route,
     pub tables: SceneTables,
@@ -94,7 +186,11 @@ pub struct RouteScene {
     pub library: PartLibrary,
     pub eye_height: f32,
     intervals: Vec<LiveInterval>,
+    /// The intervals before `early_activation` / `draw_distance` (original or widened).
+    base_intervals: Vec<LiveInterval>,
     visibility: Visibility,
+    /// The geometry enhancements ([`RouteScene::set_geometry`]).
+    geometry: Geometry,
     /// Enhancement `stable_track_variants` (off = the original's flicker): side-track model
     /// variants anchored to the track instead of switching every point.
     pub stable_track_variants: bool,
@@ -178,8 +274,10 @@ impl RouteScene {
             tables,
             ctx,
             library,
+            base_intervals: intervals.clone(),
             intervals,
             visibility,
+            geometry: Geometry::default(),
             stable_track_variants: false,
             gradient_variant: 0,
             gradient_fade: None,
@@ -188,6 +286,37 @@ impl RouteScene {
             traffic_reach: None,
             signal_model: 0,
         })
+    }
+
+    /// Applies the geometry enhancements: activation moved ahead to their reach.
+    pub fn set_geometry(&mut self, geometry: Geometry) {
+        self.geometry = geometry;
+        self.intervals = match geometry.reach() {
+            None => self.base_intervals.clone(),
+            Some(reach) => {
+                let tan_half_fov_x = match self.visibility {
+                    Visibility::Original => ORIGINAL_TAN_HALF_FOV_X,
+                    Visibility::Wide { tan_half_fov_x } => tan_half_fov_x,
+                };
+                let library = &self.library;
+                scene::activate_early(
+                    &self.route,
+                    &self.base_intervals,
+                    scene::EarlyView {
+                        reach,
+                        tan_half_fov_x,
+                        // Twice the reach in points: the track may wind.
+                        max_extra_points: (2.0 * reach / ddg_formats::route::UNITS_PER_POINT)
+                            as usize,
+                    },
+                    |part| library.horizontal_radius(part),
+                )
+            }
+        };
+    }
+
+    pub fn geometry(&self) -> Geometry {
+        self.geometry
     }
 
     /// The camera position range the original allows on this route.
@@ -207,12 +336,16 @@ impl RouteScene {
     /// `aspect` is the viewport's width / height in pixels (for the 2D background layout).
     pub fn compose(&self, frame: &mut FrameGeometry, pos: TrackPos, show_lines: bool, aspect: f32) {
         frame.clear(&self.library);
+        let far = self.geometry.far();
+        frame.far = (far != ddg_render::camera::FAR).then_some(far);
         let cam = scene::cab_camera(&self.route, pos, self.eye_height, 0.0);
 
         self.background(frame, pos, ScreenMap { aspect });
 
         let options = scene::TrackOptions {
             anchor_side_variants: self.stable_track_variants,
+            max_lod: self.geometry.max_lod,
+            reach: self.geometry.reach(),
         };
         let pieces = match self.visibility {
             Visibility::Original => {

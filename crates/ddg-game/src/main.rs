@@ -98,6 +98,9 @@ options:
                            nearest = plain nearest neighbour (uneven pixels)
   --ui-scale <1..4>        fixed 2D canvas multiple (640x480 x n; env DDG_UI_SCALE); default:
                            follows the window height (smooth: ceil(h/480), integer: floor(h/480))
+  --draw-distance <original|2x|3x|max>
+                           the 3D view's far plane (env DDG_DRAW_DISTANCE): original 320 m,
+                           2x, 3x, max 1280 m; scenery and track are built out to it
 
 switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml key <name> with
   _ for -, env DDG_<NAME> = 1/0. Off is the original's behaviour. [default]
@@ -115,6 +118,9 @@ switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml
   --fog                    the snow fog of DengoSetting's FOGENABLE [on]
   --wide-weather           raindrops and snow over the whole width [on] (--original-weather)
   --far-traffic            AI trains drawn to the far plane, not 150 m [on] (--original-traffic)
+  --max-lod                track and trains in their most detailed models at any distance [off]
+  --early-activation       scenery and side tracks activated at the far plane [off]
+  --distance-fade          the far edge dissolves into the background [off]
   --interpolate            camera, trains, wiper, snow, needle between ticks [on]
   --vsync                  present with vsync [on] (--uncapped)
   --wide-menus             menu backdrops to the edges of a wide window [on]
@@ -357,6 +363,17 @@ fn configure_renderer(renderer: &mut Renderer, opts: &Options) {
     } else {
         ORIGINAL_STRETCH
     };
+    geometry(opts).configure(renderer);
+}
+
+/// The geometry settings of a `view` / `shot` run.
+fn geometry(opts: &Options) -> scene::Geometry {
+    scene::Geometry {
+        max_lod: opts.settings.max_lod,
+        early_activation: opts.settings.early_activation,
+        draw_distance: opts.locale.draw_distance,
+        distance_fade: opts.settings.distance_fade,
+    }
 }
 
 struct App {
@@ -730,6 +747,7 @@ fn run_main() -> Result<()> {
     let t = Instant::now();
     let mut scene = RouteScene::load(&data, &opts.route, visibility)?;
     scene.stable_track_variants = opts.settings.stable_track_variants;
+    scene.set_geometry(geometry(&opts));
     scene.gradient_variant = opts.gradient_variant;
     eprintln!(
         "{}: area {}, COM {}, eye height {:.3}, {} placements, visibility {:?}, loaded in {:.2?}",

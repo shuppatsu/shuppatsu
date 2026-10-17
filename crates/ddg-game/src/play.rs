@@ -516,6 +516,7 @@ impl Play {
                 r.fog.enabled = fog;
                 r.projection.fov_tenths = (DRIVING_FOV_Y_DEG * 10.0) as u16;
                 r.projection.stretch = if square { 1.0 } else { ORIGINAL_STRETCH };
+                self.scene.geometry().configure(r);
                 r.band_top = band;
                 r.effects = effects;
             },
@@ -603,6 +604,16 @@ fn visibility(opts: &PlayOptions) -> Visibility {
     }
 }
 
+/// The geometry settings of a run.
+pub fn geometry(opts: &PlayOptions) -> crate::scene::Geometry {
+    crate::scene::Geometry {
+        max_lod: opts.settings.max_lod,
+        early_activation: opts.settings.early_activation,
+        draw_distance: opts.locale.draw_distance,
+        distance_fade: opts.settings.distance_fade,
+    }
+}
+
 fn load_scene(
     data: &GameData,
     com: &str,
@@ -612,10 +623,12 @@ fn load_scene(
     let t = Instant::now();
     let mut scene = RouteScene::load(data, com, visibility)?;
     scene.stable_track_variants = opts.settings.stable_track_variants;
+    let geometry = geometry(opts);
+    scene.set_geometry(geometry);
     scene.traffic_reach = opts
         .settings
         .far_traffic
-        .then_some(f64::from(ddg_render::camera::FAR));
+        .then_some(f64::from(geometry.far()));
     crate::traffic::load_stage_trains(&mut scene, data, opts.stage)?;
     eprintln!("{com}: loaded in {:.2?}", t.elapsed());
     Ok(scene)
@@ -893,7 +906,7 @@ impl Play {
         }
         let r = self.drive.rules();
         let field7 = self.drive.next_station().1.map_or(0, |row| row.params[3]);
-        self.result_view = Some(ResultView::new(
+        let mut view = ResultView::new(
             &self.tables.result,
             &self.tables.stages.train_models,
             ResultViewInput {
@@ -904,7 +917,9 @@ impl Play {
                 record: &r.stop_record,
                 coupling: r.result_coupling_flags(),
             },
-        ));
+        );
+        view.max_lod = self.opts.settings.max_lod;
+        self.result_view = Some(view);
     }
 
     /// The end of `Stage_Run` after the report card (0x4080d0, menus.md §11.4): the clear mark,
@@ -1403,6 +1418,7 @@ impl Play {
             ORIGINAL_STRETCH
         };
         r.band_top = HUD_BAND_TOP;
+        self.scene.geometry().configure(r);
         gpu.renderer
             .upload_pages(&gpu.device, &gpu.queue, &self.scene.library.pages);
     }

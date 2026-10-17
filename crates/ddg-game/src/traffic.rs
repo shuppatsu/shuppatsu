@@ -45,6 +45,8 @@ pub fn add_cars(scene: &RouteScene, frame: &mut FrameGeometry, pos: TrackPos, ca
         let Some(lod) = lod_for_view(x, far_z(z, scene.traffic_reach)) else {
             continue;
         };
+        // Enhancement `max_lod`: the nearest band's model wherever the car is drawn.
+        let lod = if scene.geometry().max_lod { 0 } else { lod };
         let (part, m) = car.instance(lod);
         frame.add_instance(
             &scene.library,

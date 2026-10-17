@@ -22,6 +22,7 @@ use super::{Env, PAL_MENU, snd};
 use crate::config::{Lock, Locks};
 use crate::locale::LocaleConfig;
 use crate::presentation::HudLayout;
+use crate::scene::DrawDistance;
 use crate::screens::{MenuInput, Sfx};
 use crate::settings::Settings;
 use ddg_formats::cg::Palette;
@@ -70,6 +71,8 @@ pub enum Kind {
     TexturePack,
     /// `msaa` / `anisotropic`: off or one of the level's steps ([`Settings::level_values`]).
     Level,
+    /// `draw_distance`: one of [`DrawDistance::ALL`].
+    DrawDistance,
 }
 
 /// When a change takes effect, seen from the menus (the only place the screen is reached).
@@ -136,6 +139,10 @@ pub const ITEMS: &[Item] = {
         switch("fog", Effects, NextStage),
         switch("wide_weather", Effects, NextStage),
         switch("far_traffic", Effects, NextStage),
+        switch("max_lod", Effects, NextStage),
+        switch("early_activation", Effects, NextStage),
+        item("draw_distance", Effects, Kind::DrawDistance, NextStage),
+        switch("distance_fade", Effects, NextStage),
         switch("save_on_change", Saves, Now),
         switch("save_timed_out_names", Saves, NextStage),
         switch("keyboard_with_controller", Saves, Now),
@@ -216,6 +223,11 @@ impl Item {
                 }
             }
             Kind::Font | Kind::DisplayFont | Kind::TexturePack => {}
+            Kind::DrawDistance => {
+                let all = DrawDistance::ALL;
+                let i = all.iter().position(|d| *d == cfg.draw_distance);
+                cfg.draw_distance = all[cycle(i.unwrap_or(0), dir, all.len())];
+            }
         }
     }
 
@@ -237,6 +249,7 @@ impl Item {
             Kind::DisplayFont => path(&cfg.display_font),
             Kind::TexturePack => path(&cfg.texture_pack),
             Kind::Level => s.level(self.key).map(|v| Value::Integer(i64::from(v))),
+            Kind::DrawDistance => Some(Value::String(cfg.draw_distance.name().to_owned())),
         }
     }
 
@@ -296,6 +309,14 @@ impl Item {
                 Some(v) if v > 1 => format!("{v}×"),
                 _ => ui.get("off").to_owned(),
             },
+            Kind::DrawDistance => ui
+                .get(match cfg.draw_distance {
+                    DrawDistance::Original => "distance_original",
+                    DrawDistance::Double => "distance_2x",
+                    DrawDistance::Triple => "distance_3x",
+                    DrawDistance::Max => "distance_max",
+                })
+                .to_owned(),
         }
     }
 }
@@ -319,6 +340,10 @@ const UI_IDS: &[&str] = &[
     "font_bundled",
     "display_font_same",
     "texture_pack_none",
+    "distance_original",
+    "distance_2x",
+    "distance_3x",
+    "distance_max",
     "status_now",
     "status_stage",
     "status_restart",

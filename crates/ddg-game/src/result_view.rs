@@ -46,6 +46,8 @@ pub struct ResultView {
     prev_dist: f32,
     /// `task+0x1cc`: draws since the record showed the train stopped (coupling stations).
     stopped: i32,
+    /// Enhancement `max_lod`: the cars in their nearest band's model wherever they are drawn.
+    pub max_lod: bool,
 }
 
 impl ResultView {
@@ -77,6 +79,7 @@ impl ResultView {
             dist,
             prev_dist: dist,
             stopped: input.coupling.stopped_counter_start(),
+            max_lod: false,
         }
     }
 
@@ -119,7 +122,7 @@ impl ResultView {
         for car in lead {
             z += car.spacing;
             if let Some(lod) = result_camera::car_lod(0.0, z) {
-                let part = car.lods[lod];
+                let part = car.lods[if self.max_lod { 0 } else { lod }];
                 frame.add_instance(
                     library,
                     part,
