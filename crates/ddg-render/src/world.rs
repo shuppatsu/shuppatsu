@@ -12,6 +12,13 @@ use std::collections::HashMap;
 pub struct Vertex {
     pub pos: [f32; 3],
     pub uv: [f32; 2],
+    /// The stored part UV in rect units (1.0 = one repeat of the rect): `uv = rect.xy +
+    /// tile · rect.zw`. For the shader's in-rect wrap (`ground_detiling`).
+    pub tile: [f32; 2],
+    /// The group's rect in page UV: origin and the size of one repeat ([`TexRect::map_uv`]).
+    pub rect: [f32; 4],
+    /// [`crate::ground`] surface bits (0 for everything that is not ground).
+    pub surface: u32,
 }
 
 #[repr(C)]
@@ -62,6 +69,10 @@ pub struct PartLibrary {
     rects: HashMap<u16, (usize, TexRect)>,
     /// Part id → part. The first parts file wins (table 0x817c7c).
     parts: HashMap<u16, Part>,
+    /// Global rect id → whether its texture wraps seamlessly along u and v
+    /// ([`crate::ground::seamless_axes`] of the page it was added with), worked out the first
+    /// time a terrain group uses the rect.
+    seams: HashMap<u16, (usize, std::sync::OnceLock<[bool; 2]>)>,
 }
 
 impl PartLibrary {
@@ -77,6 +88,10 @@ impl PartLibrary {
         }
         for r in &tex.rects {
             self.rects.insert(r.id, (base + usize::from(r.page), *r));
+            self.seams.insert(
+                r.id,
+                (base + usize::from(r.page), std::sync::OnceLock::new()),
+            );
         }
     }
 
@@ -93,6 +108,19 @@ impl PartLibrary {
 
     pub fn rect(&self, id: u16) -> Option<(usize, TexRect)> {
         self.rects.get(&id).copied()
+    }
+
+    /// Whether rect `id`'s texture wraps seamlessly along u and v ([`crate::ground`]).
+    pub fn seams(&self, id: u16) -> [bool; 2] {
+        let (Some((page, cell)), Some((_, rect))) = (self.seams.get(&id), self.rects.get(&id))
+        else {
+            return [false; 2];
+        };
+        *cell.get_or_init(|| {
+            self.pages
+                .get(*page)
+                .map_or([false; 2], |p| crate::ground::seamless_axes(p, rect))
+        })
     }
 
     /// Horizontal (XZ) bounding radius of a part around its origin, in world units.
@@ -146,24 +174,67 @@ impl FrameGeometry {
 
     /// Adds part `id` with a model-to-world transform. Returns false if the part is unknown.
     pub fn add_instance(&mut self, library: &PartLibrary, id: u32, transform: &Mat4) -> bool {
+        self.add_part(library, id, transform, false)
+    }
+
+    /// [`FrameGeometry::add_instance`] for a terrain candidate (non-rail runs and scenery):
+    /// its groups that face up are marked as ground for the `ground_variation` and
+    /// `ground_detiling` enhancements ([`crate::ground`]). Drawn the same otherwise.
+    pub fn add_terrain_instance(
+        &mut self,
+        library: &PartLibrary,
+        id: u32,
+        transform: &Mat4,
+    ) -> bool {
+        self.add_part(library, id, transform, true)
+    }
+
+    fn add_part(
+        &mut self,
+        library: &PartLibrary,
+        id: u32,
+        transform: &Mat4,
+        terrain: bool,
+    ) -> bool {
         let Some(part) = library.part(id) else {
             self.missing_parts += 1;
             return false;
         };
+        let shape = terrain.then(|| crate::ground::PartShape::of(part, transform));
         for g in &part.groups {
             let Some((page, rect)) = library.rect(g.rect_id) else {
                 continue;
             };
             let batch = &mut self.batches[page];
             let base = batch.vertices.len() as u32;
+            let [u0, v0] = rect.map_uv([0, 0]);
+            let [u1, v1] = rect.map_uv([256, 256]);
+            let rect_uv = [u0, v0, u1 - u0, v1 - v0];
             batch.vertices.extend(g.vertices.iter().map(|v| {
                 Vertex {
                     pos: transform
                         .transform_point3(Vec3::from(v.position()))
                         .to_array(),
                     uv: rect.map_uv(v.uv),
+                    tile: v.uv.map(|c| f32::from(c) / 256.0),
+                    rect: rect_uv,
+                    surface: 0,
                 }
             }));
+            if let Some(shape) = &shape {
+                let added = &mut batch.vertices[base as usize..];
+                let points: Vec<Vec3> = added.iter().map(|v| Vec3::from(v.pos)).collect();
+                let bits = crate::ground::surface_bits(
+                    &points,
+                    g.triangles(),
+                    g.vertices.iter().map(|v| v.uv),
+                    library.seams(g.rect_id),
+                    shape,
+                );
+                for v in added {
+                    v.surface = bits;
+                }
+            }
             batch
                 .indices
                 .extend(g.triangles().flatten().map(|i| base + u32::from(i)));

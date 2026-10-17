@@ -230,7 +230,13 @@ impl RouteScene {
         };
         for p in &pieces {
             let m = Mat4::from_cols_array(&p.transform.to_cols_array());
-            frame.add_instance(&self.library, p.part_id, &m);
+            // Non-rail runs (fields, snow, gravel, verges) may be ground for the shading
+            // enhancements; rails, buffer stops and the tunnel plug never are (ddg_render::ground).
+            if matches!(p.source, scene::PieceSource::Kind { .. }) {
+                frame.add_terrain_instance(&self.library, p.part_id, &m);
+            } else {
+                frame.add_instance(&self.library, p.part_id, &m);
+            }
         }
 
         let live = scene::live_at(&self.intervals, pos.engine_index);
@@ -245,7 +251,8 @@ impl RouteScene {
                     .unwrap_or(s.part_id),
                 _ => s.part_id,
             };
-            frame.add_instance(&self.library, part, &m);
+            // Scenery may hold ground slabs (only its upward-facing groups count).
+            frame.add_terrain_instance(&self.library, part, &m);
         }
         crate::traffic::add_cars(self, frame, pos, &self.traffic);
 

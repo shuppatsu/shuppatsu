@@ -6,6 +6,7 @@
 pub mod camera;
 pub mod effects;
 pub mod gpu;
+pub mod ground;
 pub mod label;
 pub mod mip;
 pub mod overlay;
