@@ -61,20 +61,20 @@ name = "English"
 
 # Distance-to-stop panel headers (hud.md §3.4). Top band = label; bottom-left word sits before
 # the digits (max 24 px wide); the unit (m / Cm) and OVER are Latin art and stay.
-# Metres, 128×64:
+# Metres, 128×64; the label sits inside the plates' panel (x 1–126, lettering y 3–28, measured):
 0x58 = { parts = [{ region = [0, 4, 128, 26], text = "Stop Point" }, { region = [0, 40, 24, 24], text = "dist" }] }   # 停止位置 あと
-0x59 = { parts = [{ region = [0, 4, 128, 26], text = "Pass Station" }, { region = [0, 40, 24, 24], text = "dist" }] }  # 通過駅 まで
-0x5a = { parts = [{ region = [0, 4, 128, 26], text = "In Range" }, { region = [0, 40, 24, 24], text = "dist" }] }     # 合格範囲 あと
-0x5b = { parts = [{ region = [0, 4, 128, 26], text = "In Range" }, { region = [0, 40, 24, 24], text = "dist" }] }     # 合格範囲 あと (Cm art; unused)
-0x5c = { parts = [{ region = [0, 4, 128, 26], text = "In Range" }] }      # 合格範囲 OVER
-0x5d = { parts = [{ region = [0, 4, 128, 26], text = "In Range" }] }      # 合格範囲 OVER (Cm art; unused)
-0x5e = { parts = [{ region = [0, 4, 128, 26], text = "Overrun" }] }       # 過走 OVER
-# Centimetres, 160×64:
-0x551 = { parts = [{ region = [0, 2, 160, 30], text = "Pass Station" }, { region = [0, 40, 24, 24], text = "dist" }] } # 通過駅 まで
+0x59 = { parts = [{ region = [1, 3, 126, 26], text = "Pass Station" }, { region = [0, 40, 24, 24], text = "dist" }] }  # 通過駅 まで
+0x5a = { parts = [{ region = [1, 3, 126, 26], text = "In Range" }, { region = [0, 40, 24, 24], text = "dist" }] }     # 合格範囲 あと
+0x5b = { parts = [{ region = [1, 3, 126, 26], text = "In Range" }, { region = [0, 40, 24, 24], text = "dist" }] }     # 合格範囲 あと (Cm art; unused)
+0x5c = { parts = [{ region = [1, 3, 126, 26], text = "In Range" }] }      # 合格範囲 OVER
+0x5d = { parts = [{ region = [1, 3, 126, 26], text = "In Range" }] }      # 合格範囲 OVER (Cm art; unused)
+0x5e = { parts = [{ region = [1, 3, 126, 26], text = "Overrun" }] }       # 過走 OVER
+# Centimetres, 160×64 (the art is 152 wide; panel x 1–150):
+0x551 = { parts = [{ region = [1, 1, 150, 30], text = "Pass Station" }, { region = [0, 40, 24, 24], text = "dist" }] } # 通過駅 まで
 0x4fe = { parts = [{ region = [0, 2, 160, 30], text = "Stop Point" }, { region = [0, 40, 24, 24], text = "dist" }] }   # 停止位置 あと
-0x4fc = { parts = [{ region = [0, 2, 160, 30], text = "In Range" }, { region = [0, 40, 24, 24], text = "dist" }] }     # 合格範囲 あと
-0x4fd = { parts = [{ region = [0, 2, 160, 30], text = "In Range" }] }     # 合格範囲 OVER
-0x507 = { parts = [{ region = [0, 2, 160, 30], text = "Overrun" }] }      # 過走 OVER
+0x4fc = { parts = [{ region = [1, 1, 150, 30], text = "In Range" }, { region = [0, 40, 24, 24], text = "dist" }] }     # 合格範囲 あと
+0x4fd = { parts = [{ region = [1, 1, 150, 30], text = "In Range" }] }     # 合格範囲 OVER
+0x507 = { parts = [{ region = [1, 1, 150, 30], text = "Overrun" }] }      # 過走 OVER
 
 # Handle gauges (hud.md §3.1): only the label; the bar and the 7-segment digit stay. 48×80.
 0x09 = { parts = [{ region = [0, 24, 48, 26], text = "Rel.", style = "plain" }] }   # 解除 brake released
