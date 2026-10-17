@@ -66,6 +66,9 @@ const PRO_LIMIT_M: f32 = 30.0;
 pub struct PlayOptions {
     pub stage: usize,
     pub difficulty: usize,
+    /// No `--difficulty` given: use the save's (a fresh install's default image says 1, Normal,
+    /// like the original).
+    pub difficulty_from_save: bool,
     pub station: usize,
     /// Control mode 0..=6 (0–3 keyboard, 4–6 joystick; input.md §4–§5).
     pub control_mode: usize,
@@ -157,7 +160,7 @@ pub fn load_bank(
 }
 
 /// `ddg-game play <stage>`: one run in its own window (or headless with `--shot`).
-pub fn run(opts: PlayOptions) -> Result<()> {
+pub fn run(mut opts: PlayOptions) -> Result<()> {
     let data = GameData::from_env()?;
     let exe_bytes = data.exe()?;
     let exe = Exe::parse(&exe_bytes)?;
@@ -168,6 +171,9 @@ pub fn run(opts: PlayOptions) -> Result<()> {
         crate::save::default_path()
     };
     let mut save = Save::open(&exe, save_path)?;
+    if opts.difficulty_from_save {
+        opts.difficulty = usize::from(save.eeprom.difficulty());
+    }
     save.save_on_change = opts.settings.save_on_change;
     if let Some(p) = save.path() {
         eprintln!("save: {}", p.display());

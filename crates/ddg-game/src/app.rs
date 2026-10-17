@@ -416,6 +416,7 @@ impl App {
         let opts = PlayOptions {
             stage: chosen.route,
             difficulty: usize::from(shared.save.eeprom.difficulty()),
+            difficulty_from_save: false,
             station: 0,
             control_mode: usize::from(o.control_mode),
             pad: self.opts.pad.clone(),

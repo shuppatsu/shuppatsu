@@ -53,7 +53,7 @@ use winit::window::WindowId;
 const USAGE: &str = "\
 usage: ddg-game [options] [--joystick-dat <file>] [--combo <file>] [--mute]
                 [--inputs <script>] [--shot <ticks>:<file.ppm>]
-       ddg-game play <stage 0..19> [--difficulty <0..>] [--station <n>] [--keys <0..6>] [options]
+       ddg-game play <stage 0..19> [--difficulty <0..3, default: the save's>] [--station <n>] [--keys <0..6>] [options]
                      [--joystick-dat <file>] [--combo <file>]
                      [--inputs <script>] [--shot <ticks>:<file.ppm>] [--speedometer <0|1|2>]
        ddg-game view <route.com> [options]
@@ -154,6 +154,7 @@ fn parse_play_args() -> Result<play::PlayOptions> {
             .parse()
             .context("stage must be a number")?,
         difficulty: 0,
+        difficulty_from_save: true,
         station: 0,
         control_mode: 0,
         pad: gamepad::PadOptions {
@@ -179,7 +180,10 @@ fn parse_play_args() -> Result<play::PlayOptions> {
                 .cloned()
         };
         match a.as_str() {
-            "--difficulty" => opts.difficulty = value("a number")?.parse()?,
+            "--difficulty" => {
+                opts.difficulty = value("a number")?.parse()?;
+                opts.difficulty_from_save = false;
+            }
             "--station" => opts.station = value("a number")?.parse()?,
             "--ending" => opts.ending = Some(value("full or plain")? == "full"),
             "--intro" => opts.intro = true,
