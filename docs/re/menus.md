@@ -931,22 +931,32 @@ Approximated or left out:
   full 640-px design.
 
   The **attract title picture tbl 0x410** (§2.6, slot 0xf at (0, 0)) has no tile pattern
-  (`Repeat::of` finds none) but plain paper texture at its edges, so it is **mirrored**
-  (`SpriteBank::set_wide_mirror`, `sprites::Mirror`): past the right edge column 40 + k shows
-  column 39 − k with every tile flipped horizontally, past the left edge column −1 − k shows
-  column k flipped, so the texture continues without a seam and without stretching. Only the
-  8 outermost tile columns per side are used; further out the mirror turns round (ping-pong,
-  period 16 tiles), so the continuation never reaches the art. Measured on a 640×480 shot of
-  tbl 0x410 in palette 0x17 (**confirmed**, by eye on the shot):
-  * outside the logo band "PRESS START BUTTON", the TAITO logo and the copyright lines lie in
-    x ≈ 140–500, so tile columns 0–7 and 32–39 are plain texture;
-  * in tile rows 3–15 the 電車でGO! logo's glow starts at x ≈ 19 and the shadow of 番台 / the
-    signal head reaches x ≈ 623: only one tile column per side is clean there, and a one-tile
-    ping-pong looks like a kaleidoscope (tried at 2560×1080). Those rows instead continue with
-    the mirrored edge of rows 16–28 (`sprites::RowBorrow`, constants in `front/attract.rs`).
-    The texture changes slightly at the picture's edge in those rows (the glow there is a
-    little lighter than the borrowed texture); the extension itself has no seam at rows 3 and
-    16.
+  (`Repeat::of` finds none) but plain paper texture at its edges, so it continues with
+  **paper synthesised from that texture** (`SpriteBank::set_wide_paper`, `sprites::Paper`,
+  `sprites/paper.rs`; constants in `front/attract.rs`), on the CPU at art resolution, for
+  the palette it is drawn with (rebuilt when the palette changes, e.g. during its fade-in):
+  * **exemplars**: rows 256–479 of the 128 outermost columns on each side, minus their light
+    (blurred row and column means), made tileable by offset-and-blend (each wrap edge
+    cross-fades with a copy offset by half a period, contrast-preserving);
+  * **synthesis**: tiling-and-blending by example (Heitz & Neyret 2018): every vertex of a
+    triangle lattice (40-px edges) shows one exemplar at a hashed offset, and each pixel mixes
+    the three vertices of its triangle by (sharpened) barycentric weight with a
+    variance-preserving blend, so nothing repeats even at 32:9 and the joins do not go flat;
+  * **light**: the mean colour of 12 columns at each edge (skipping the outermost, which on
+    the right is lighter than the paper next to it), row by row, blurred vertically (σ 12 px
+    at the picture, turning to σ 40 px over the first 96 px out, so the edge's blotches do
+    not run on as streaks): the picture's vertical lighting gradient continues;
+  * **ramp**: the 24 outermost columns of the picture fade into the fill (smoothstep,
+    contrast-preserving). In the logo band (rows 48–255) the glow left of 電 reaches x ≈ 15
+    and the shadow of 番台 / the signal head x ≈ 631, but the art itself stays inside
+    x = 32–609, so only glow and shadow fade out; outside the band "PRESS START BUTTON", the
+    TAITO logo and the copyright lines lie in x ≈ 141–500. **confirmed** (measured on a
+    640×480 shot of tbl 0x410 in palette 0x17).
+
+  This replaces a mirrored continuation (tile columns flipped about the edges, the logo band
+  borrowing the edge of rows 16–28), which showed a line at the mirror axis and a brightness
+  step at the borrowed band. Before/after crops of both seams at 1280×800, 2560×1080 and
+  3840×1080 are in `out/explain/title_wide/seam_*`.
 
   The 21:9 window (2560×1080) needs 249 original pixels per side, 32:9 (3840×1080) 533; both
   show only texture (`out/explain/title_wide/`).
