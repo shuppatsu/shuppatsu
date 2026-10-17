@@ -694,7 +694,8 @@ normal spawner. Compared frame by frame with the original (stages 1 and 13, tick
 - The intro's BGM runs on over the board (`Sound::leave_stage` instead of the stop-all a run
   ends with).
 - **Not ported**: 0x408f40 (§9.2); those stages keep the 20-tick gap without their 145 ticks.
-  The caption cards are not translated (Japanese art with `--lang en`).
+- **Translation**: the 13 caption cards (0x39b–0x3a7, the fly-by's and the chase's) are in
+  `locales/en.toml`, one size per card, white as the title (the `ink` option, localisation.md).
 
 ## 10. Open questions
 

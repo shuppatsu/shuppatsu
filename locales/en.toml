@@ -354,6 +354,78 @@ name = "English"
 0x248 = "Set each lever to\nits start position."  # 各レバーをスタート位置に合わせて下さい, 352×64
 0x3d8 = { region = [84, 4, 244, 32], text = "Departures" }  # 発車案内 board header, 416×160 (est.)
 
+# Stage-intro caption cards (scene.md §9: 0x4316e0 at (24, 408), palette 4), 320×64, white
+# lettering on a black box: the series and two lines about the train. Each line is a part
+# with the art's own left edge; the parts of a card share one `group`, so a card reads at one
+# size. The bands cover the whole card (rows 0–20, 21–41, 42–62) so no old lettering is left.
+# The colour comes from the title band (`ink`): lines with small half-width glyphs (E311,
+# ATS-P, 140km/h) are mostly grey antialiasing and would otherwise come out grey.
+0x39b = { align = "left", group = "card", ink = [0, 0, 320, 21], parts = [  # 201系
+    { region = [6, 0, 310, 21], text = "201 series" },
+    { region = [20, 21, 296, 21], text = "DC commuter EMU with thyristor chopper control." },
+    { region = [20, 42, 296, 21], text = "An energy saver, on air-sprung bogies." },
+] }
+0x39c = { align = "left", group = "card", ink = [0, 0, 320, 21], parts = [  # 205系
+    { region = [6, 0, 310, 21], text = "205 series" },
+    { region = [19, 21, 297, 21], text = "DC commuter EMU; field-added excitation control." },
+    { region = [19, 42, 297, 21], text = "The Yamanote six-door SaHa 204 has colour LCDs." },
+] }
+0x39d = { align = "left", group = "card", ink = [0, 0, 320, 21], parts = [  # 207系1000番代
+    { region = [4, 0, 312, 21], text = "207-1000 series" },
+    { region = [4, 21, 312, 21], text = "DC commuter EMU. A wide body in stainless steel." },
+    { region = [4, 42, 312, 21], text = "Each inverter drives a single traction motor." },
+] }
+0x39e = { align = "left", group = "card", ink = [0, 0, 320, 21], parts = [  # 209系
+    { region = [6, 0, 310, 21], text = "209 series" },
+    { region = [6, 21, 310, 21], text = "DC commuter EMU designed for mass production," },
+    { region = [6, 42, 310, 21], text = "with many innovations that break with convention." },
+] }
+0x39f = { align = "left", group = "card", ink = [0, 0, 320, 21], parts = [  # 221系
+    { region = [5, 0, 311, 21], text = "221 series" },
+    { region = [5, 21, 311, 21], text = "DC suburban EMU, run in sets of 2 up to 12 cars." },
+    { region = [5, 42, 311, 21], text = "Maximum operating speed 120 km/h." },
+] }
+0x3a0 = { align = "left", group = "card", ink = [0, 0, 320, 21], parts = [  # 223系1000番代
+    { region = [5, 0, 311, 21], text = "223-1000 series" },
+    { region = [23, 21, 293, 21], text = "DC suburban EMU with a stainless-steel body" },
+    { region = [23, 42, 293, 21], text = "and a high top service speed of 130 km/h." },
+] }
+0x3a1 = { align = "left", group = "card", ink = [0, 0, 320, 21], parts = [  # 485系
+    { region = [5, 0, 311, 21], text = "485 series" },
+    { region = [5, 21, 311, 21], text = "Limited express EMU for DC and 50/60 Hz AC." },
+    { region = [5, 42, 311, 21], text = "Refurbished with a new interior and livery." },
+] }
+0x3a2 = { align = "left", group = "card", ink = [0, 0, 320, 21], parts = [  # 485系3000番代
+    { region = [5, 0, 311, 21], text = "485-3000 series" },
+    { region = [15, 21, 301, 21], text = "AC/DC limited express EMU, rebuilt inside and" },
+    { region = [15, 42, 301, 21], text = "out so thoroughly that it feels like a new train." },
+] }
+0x3a3 = { align = "left", group = "card", ink = [0, 0, 320, 21], parts = [  # 681系2000番代
+    { region = [6, 0, 310, 21], text = "681-2000 series" },
+    { region = [19, 21, 297, 21], text = "AC/DC limited express EMU, with transponders" },
+    { region = [19, 42, 297, 21], text = "for ATS-P. Capable of running at 140 km/h." },
+] }
+0x3a4 = { align = "left", group = "card", ink = [0, 0, 320, 21], parts = [  # 701系
+    { region = [10, 0, 306, 21], text = "701 series" },
+    { region = [49, 21, 267, 21], text = "AC suburban EMU in service across Tōhoku." },
+    { region = [49, 42, 267, 21], text = "One-man operation; built for cold and snow." },
+] }
+0x3a5 = { align = "left", group = "card", ink = [0, 0, 320, 21], parts = [  # 701系5000番代
+    { region = [7, 0, 309, 21], text = "701-5000 series" },
+    { region = [13, 21, 303, 21], text = "Standard-gauge version on light bolsterless bogies." },
+    { region = [13, 42, 303, 21], text = "Its visible hallmark is the single-arm pantograph." },
+] }
+0x3a6 = { align = "left", group = "card", ink = [0, 0, 320, 21], parts = [  # E3系
+    { region = [5, 0, 311, 21], text = "E3 series" },
+    { region = [20, 21, 296, 21], text = "Aluminium-alloy body, 4M1T formation." },
+    { region = [20, 42, 296, 21], text = "The Tōkyō-end E311 has the splitting/coupling gear." },
+] }
+0x3a7 = { align = "left", group = "card", ink = [0, 0, 320, 21], parts = [  # HK100形
+    { region = [6, 0, 310, 21], text = "HK100" },
+    { region = [29, 21, 287, 21], text = "DC EMU with inverter control. Brisk acceleration" },
+    { region = [29, 42, 287, 21], text = "and braking for fast running on a high-spec line." },
+] }
+
 # Departure-board flaps (menus.md §7: lists 0x466fa0 series, 0x466fd8 type, 0x466ff8 stations).
 0x3c9 = { region = [4, 0, 120, 38], text = "Tōkyō" }                      # 東京
 0x3ca = { region = [4, 0, 120, 38], text = "Ueno" }                       # 上野

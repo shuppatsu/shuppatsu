@@ -49,6 +49,7 @@ Values are a string, or a table with `text` and options:
 | `shared_group` | The same across entries: every part with this name, in any entry of any sheet or tilemap, is drawn at the smallest size any of them fits at (the items of one menu list: the title items `title.items`, the options labels and values, the route select's line names). Names are global, so they carry a screen prefix. |
 | `font` | `body` (default) or `display`: which font list draws the text ("Fonts" below). On an entry it is the default of its parts; a part can set its own. |
 | `line_height` | Lines this many font sizes apart instead of the font's own line height (e.g. `1.1` for two lines in the signals' caption band). |
+| `ink = [x, y, w, h]` | Boxed style: the lettering colour is taken from this rectangle of the sprite instead of the region. For lines whose own lettering is mostly grey antialiasing (small half-width glyphs such as `E311` or `140km/h` in the stage-intro cards, which take the colour of their title). |
 
 `\n` breaks lines; the font size is fitted to the rectangle. Comments in `en.toml` give each
 sprite's role, a short Japanese label for identification and the pixel size (decided: these
@@ -465,7 +466,8 @@ landmark names.
   4-lamp, repeater, emergency: 37), every sign caption (27), station captions/banners and
   departure words, 85 station names (plain and highlighted), the 30 landmarks (`[landmark]`,
   under the kanji) and 通過, the progress strips, all-clear, emergency-brake, time-up and its
-  9 advice balloons, the coupling bonus game.
+  9 advice balloons, the coupling bonus game, the 13 stage-intro caption cards (0x39b–0x3a7,
+  scene.md §9).
 * Screens: station result rows, continue, run end (both grades), report card, lever check,
   departure board (header and all 37 flaps), route select (groups, difficulty, rank badges,
   Shizukuishi tags), records (header, 7 line and 13 series plates, legends), press START,
