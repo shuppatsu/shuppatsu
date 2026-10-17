@@ -713,7 +713,7 @@ name = "English"
 1 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", text = "Game Settings" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "ゲーム設定" }] }
 2 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", text = "Rankings" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "ランキングを見る" }] }
 3 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", text = "Quit Game" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "ゲーム終了" }] }
-4 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", text = "Controller Setup" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "専用コントローラー設定" }] }   # input mode 6
+4 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", text = "Calibration" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "専用コントローラー設定" }] }   # input mode 6
 
 # Options labels and values (0x47c584), selected colouring. Labels 192×32, values 240×32
 # (10–13 are 32×32). Labels 0–5 and the values shown in the list or on the control
