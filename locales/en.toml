@@ -71,7 +71,7 @@ name = "English"
 0x5e = { parts = [{ region = [1, 3, 126, 26], text = "Overrun" }] }       # 過走 OVER
 # Centimetres, 160×64 (the art is 152 wide; panel x 1–150):
 0x551 = { parts = [{ region = [1, 1, 150, 30], text = "Pass Station" }, { region = [0, 40, 24, 24], text = "dist" }] } # 通過駅 まで
-0x4fe = { parts = [{ region = [0, 2, 160, 30], text = "Stop Point" }, { region = [0, 40, 24, 24], text = "dist" }] }   # 停止位置 あと
+0x4fe = { parts = [{ region = [1, 1, 150, 30], text = "Stop Point" }, { region = [0, 40, 24, 24], text = "dist" }] }   # 停止位置 あと
 0x4fc = { parts = [{ region = [1, 1, 150, 30], text = "In Range" }, { region = [0, 40, 24, 24], text = "dist" }] }     # 合格範囲 あと
 0x4fd = { parts = [{ region = [1, 1, 150, 30], text = "In Range" }] }     # 合格範囲 OVER
 0x507 = { parts = [{ region = [1, 1, 150, 30], text = "Overrun" }] }      # 過走 OVER
@@ -258,26 +258,28 @@ name = "English"
 # 通過 (pass) sprite, 0x240 (next to the landmarks in tbl.rom).
 0x240 = "Passing"                    # 通過
 
-# Pre-departure progress strips (hud.md §3.7), 352×48: 発 / 着 at the ends (glyphs in rows 9–23).
+# Pre-departure progress strips (hud.md §3.7), 352×48: 発 / 着 at the ends (glyphs in rows 8–23,
+# measured). The regions start at row 8, under the strip's top line (row 7), which they used to
+# paint over.
 # The regions stop at row 24: on some strips the arrows start at row 25, right under the words.
-0x318 = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
-0x31c = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
-0x31d = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
-0x326 = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
-0x327 = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
-0x328 = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
-0x331 = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
-0x33a = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
-0x34b = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
-0x353 = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
-0x362 = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
-0x36b = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
-0x36c = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
-0x37a = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
-0x37b = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
-0x38a = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
-0x38b = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
-0x38d = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
+0x318 = { parts = [{ region = [8, 8, 44, 17], text = "Dep" }, { region = [304, 8, 40, 17], text = "Arr" }] }
+0x31c = { parts = [{ region = [8, 8, 44, 17], text = "Dep" }, { region = [304, 8, 40, 17], text = "Arr" }] }
+0x31d = { parts = [{ region = [8, 8, 44, 17], text = "Dep" }, { region = [304, 8, 40, 17], text = "Arr" }] }
+0x326 = { parts = [{ region = [8, 8, 44, 17], text = "Dep" }, { region = [304, 8, 40, 17], text = "Arr" }] }
+0x327 = { parts = [{ region = [8, 8, 44, 17], text = "Dep" }, { region = [304, 8, 40, 17], text = "Arr" }] }
+0x328 = { parts = [{ region = [8, 8, 44, 17], text = "Dep" }, { region = [304, 8, 40, 17], text = "Arr" }] }
+0x331 = { parts = [{ region = [8, 8, 44, 17], text = "Dep" }, { region = [304, 8, 40, 17], text = "Arr" }] }
+0x33a = { parts = [{ region = [8, 8, 44, 17], text = "Dep" }, { region = [304, 8, 40, 17], text = "Arr" }] }
+0x34b = { parts = [{ region = [8, 8, 44, 17], text = "Dep" }, { region = [304, 8, 40, 17], text = "Arr" }] }
+0x353 = { parts = [{ region = [8, 8, 44, 17], text = "Dep" }, { region = [304, 8, 40, 17], text = "Arr" }] }
+0x362 = { parts = [{ region = [8, 8, 44, 17], text = "Dep" }, { region = [304, 8, 40, 17], text = "Arr" }] }
+0x36b = { parts = [{ region = [8, 8, 44, 17], text = "Dep" }, { region = [304, 8, 40, 17], text = "Arr" }] }
+0x36c = { parts = [{ region = [8, 8, 44, 17], text = "Dep" }, { region = [304, 8, 40, 17], text = "Arr" }] }
+0x37a = { parts = [{ region = [8, 8, 44, 17], text = "Dep" }, { region = [304, 8, 40, 17], text = "Arr" }] }
+0x37b = { parts = [{ region = [8, 8, 44, 17], text = "Dep" }, { region = [304, 8, 40, 17], text = "Arr" }] }
+0x38a = { parts = [{ region = [8, 8, 44, 17], text = "Dep" }, { region = [304, 8, 40, 17], text = "Arr" }] }
+0x38b = { parts = [{ region = [8, 8, 44, 17], text = "Dep" }, { region = [304, 8, 40, 17], text = "Arr" }] }
+0x38d = { parts = [{ region = [8, 8, 44, 17], text = "Dep" }, { region = [304, 8, 40, 17], text = "Arr" }] }
 
 # Ending clock panel (menus.md §12.2, 0x417410), 240×32 / 176×32: 定刻 over 到着時刻 or
 # 通過時刻 at x 6–73, then the clock separators and (240 wide) the stop error. The orange and
@@ -292,7 +294,7 @@ name = "English"
 
 0x20f = { region = [0, 0, 272, 59], text = "Full line clear!" }  # 全区間走破 (ALL ROUND CLEAR stays), 272×80
 0x24b = "Use the emergency brake!"   # 非常ブレーキ使え obstacle, 256×32
-0x252 = { region = [40, 12, 150, 34], text = "Time up!" }        # 時間切れ, 224×64 (est.)
+0x252 = { region = [40, 16, 150, 31], text = "Time up!" }        # 時間切れ, 224×64: the train body under the lettering, x 40–189, y 16–46 (measured; the old region began on row 12, a clear stripe of the art, which made every other row of the box transparent)
 0x459 = { region = [0, 0, 128, 32], text = "Shift Done" }        # 乗務完了 with the conductor, 128×160 (est.)
 0x45a = { region = [0, 0, 128, 32], text = "Shift Done" }        # 乗務完了, second frame (est.)
 
@@ -326,7 +328,7 @@ name = "English"
 0x1a0 = { text = "Result", font = "display" }                     # 運転評価 header, 176×48
 0x1c9 = { parts = [{ region = [12, 0, 196, 32], text = "Stop point", align = "left" }, { region = [384, 0, 96, 32], text = "OK!" }] }   # 停止位置 nn Cm 合格!
 0x1a6 = { parts = [{ region = [12, 0, 196, 32], text = "Stop point", align = "left" }, { region = [360, 0, 120, 32], text = "OK!" }] }   # 停止位置 … 合格!
-0x1cc = { parts = [{ region = [0, 0, 128, 32], text = "Stop point", align = "left" }, { region = [372, 0, 104, 32], text = "OK!!" }] }   # 停止位置 EXCELLENT! … Cm 合格!!
+0x1cc = { parts = [{ region = [0, 0, 129, 32], text = "Stop point", align = "left" }, { region = [372, 0, 104, 32], text = "OK!!" }] }   # 停止位置 EXCELLENT! … Cm 合格!!
 0x1c0 = "Re-powered at station"     # 駅構内再加速 re-power penalty row, 192×32
 0x1c4 = "Penalty"                    # 減点, 64×32
 0x1bf = "sec"                        # 秒, 48×32
@@ -334,11 +336,11 @@ name = "English"
 0x1c3 = "None"                       # なし no penalty, 64×32
 0x1a9 = { parts = [{ region = [8, 14, 80, 34], text = "Total" }, { region = [96, 14, 144, 34], text = "minus" }, { region = [428, 14, 52, 34], text = "sec" }] }  # 合計 マイナス … 秒, 480×48
 0x1a3 = { parts = [{ region = [0, 0, 180, 32], text = "Overrun", align = "left" }, { region = [428, 0, 52, 32], text = "sec" }] }  # オーバーラン … m×1秒
-0x1a4 = { parts = [{ region = [0, 0, 180, 32], text = "Overrun", align = "left" }, { region = [428, 0, 52, 32], text = "sec" }] }  # オーバーラン … m×2秒
-0x1a5 = { parts = [{ region = [0, 0, 180, 32], text = "Overrun", align = "left" }, { region = [428, 0, 52, 32], text = "sec" }] }  # オーバーラン … m×3秒
+0x1a4 = { parts = [{ region = [0, 0, 180, 32], text = "Overrun", align = "left" }, { region = [431, 0, 49, 32], text = "sec" }] }  # オーバーラン … m×2秒 (the digit before 秒 reaches x 430, measured)
+0x1a5 = { parts = [{ region = [0, 0, 180, 32], text = "Overrun", align = "left" }, { region = [431, 0, 49, 32], text = "sec" }] }  # オーバーラン … m×3秒 (the digit before 秒 reaches x 430, measured)
 # Result words whose caller was not traced (same sheet family):
 0x1a1 = { region = [16, 0, 104, 32], text = "Timetable" }       # ダイヤ, 128×32
-0x1a2 = { parts = [{ region = [16, 0, 104, 32], text = "Timetable" }, { region = [236, 0, 76, 32], text = "late" }, { region = [428, 0, 52, 32], text = "sec" }] }  # ダイヤ … 遅れ … 秒
+0x1a2 = { parts = [{ region = [16, 0, 104, 32], text = "Timetable" }, { region = [236, 0, 76, 32], style = "plain", text = "late" }, { region = [428, 0, 52, 32], text = "sec" }] }  # ダイヤ … 遅れ … 秒 (遅れ fills its region top to bottom, so `auto` took it for a box)
 0x1a7 = "On time!"                   # 定刻!, 80×32
 0x1a8 = "Early"                      # 早着, 64×32
 0x1cb = "Behind schedule"            # ダイヤ遅れ, 176×32
@@ -364,10 +366,10 @@ name = "English"
 0x444 = { parts = [
     { region = [120, 4, 240, 40], text = "Driving Report" },                # 運転評価
     { region = [6, 52, 272, 26], text = "Timekeeping" },                    # ダイヤの正確さ
-    { region = [6, 84, 272, 26], text = "Braking (ride comfort)" },         # ブレーキ(乗り心地)
+    { region = [6, 83, 272, 27], text = "Braking (ride comfort)" },         # ブレーキ(乗り心地)
     { region = [6, 116, 272, 26], text = "Stopping accuracy" },             # 停止位置の正確さ
     { region = [6, 148, 272, 26], text = "Signals and signs" },             # 信号・標識を守る
-    { region = [6, 180, 272, 26], text = "Safety awareness" },              # 安全性への配慮
+    { region = [7, 180, 271, 26], text = "Safety awareness" },              # 安全性への配慮
     { region = [120, 214, 180, 40], text = "Overall" },                     # 総合評価
     { region = [404, 214, 60, 40], text = "pts" },                          # 点
 ] }
@@ -463,44 +465,47 @@ name = "English"
     { region = [29, 42, 287, 21], text = "and braking for fast running on a high-spec line." },
 ] }
 
-# Departure-board flaps (menus.md §7: lists 0x466fa0 series, 0x466fd8 type, 0x466ff8 stations).
-0x3c9 = { region = [4, 0, 120, 38], text = "Tōkyō" }                      # 東京
-0x3ca = { region = [4, 0, 120, 38], text = "Ueno" }                       # 上野
-0x3cb = { region = [4, 0, 120, 38], text = "Yokohama" }                   # 横浜
-0x3cc = { region = [4, 0, 120, 38], text = "Ōsaka" }                      # 大阪
-0x3cd = { region = [4, 0, 120, 38], text = "Shinjuku" }                   # 新宿
-0x3ce = { region = [4, 0, 120, 38], text = "Kōbe" }                       # 神戸
-0x3cf = { region = [4, 0, 120, 38], text = "Rapid" }                      # 快速
-0x3d0 = { region = [4, 0, 120, 38], text = "Local" }                      # 普通
-0x3d1 = { region = [4, 0, 120, 38], text = "223 series" }                 # 223系
-0x3d2 = { region = [4, 0, 120, 38], text = "209 series" }                 # 209系
-0x3d3 = { region = [4, 0, 120, 38], text = "221 series" }                 # 221系
-0x3d4 = { region = [4, 0, 120, 38], text = "205 series" }                 # 205系
-0x3d9 = { region = [4, 0, 120, 38], text = "Akita" }                      # 秋田
-0x3da = { region = [4, 0, 120, 38], text = "Ōmagari" }                    # 大曲
-0x3db = { region = [4, 0, 120, 38], text = "Morioka" }                    # 盛岡
-0x3dc = { region = [4, 0, 120, 38], text = "Shin-Hanamaki" }              # 新花巻
-0x3dd = { region = [4, 0, 120, 38], text = "Naoetsu" }                    # 直江津
-0x3de = { region = [4, 0, 120, 38], text = "Muikamachi" }                 # 六日町
-0x3df = { region = [4, 0, 120, 38], text = "Echigo-Yuzawa" }              # 越後湯沢
-0x3e0 = { region = [4, 0, 120, 38], text = "681 series" }                 # 681系
-0x3e1 = { region = [4, 0, 120, 38], text = "485 series" }                 # 485系
-0x3e2 = { region = [4, 0, 120, 38], text = "200 series" }                 # 200系
-0x3e3 = { region = [4, 0, 120, 38], text = "E2' series" }                 # E2'系
-0x3e4 = { region = [4, 0, 120, 38], text = "E3 series" }                  # E3系
-0x3e5 = { region = [4, 0, 120, 38], text = "207 series" }                 # 207系
-0x3e6 = { region = [4, 0, 120, 38], text = "201 series" }                 # 201系
-0x3e7 = { region = [4, 0, 120, 38], text = "HK100" }                      # HK100形
-0x3e8 = { region = [4, 0, 120, 38], text = "701 series" }                 # 701系
-0x3e9 = { region = [4, 0, 120, 38], text = "Ltd. Exp. Hakutaka" }         # 特急はくたか
-0x3ea = { region = [4, 0, 120, 38], text = "Komachi" }                    # こまち
-0x3eb = { region = [4, 0, 120, 38], text = "Yamabiko" }                   # やまびこ
-0x3ec = { region = [4, 0, 120, 38], text = "Special Rapid" }              # 新快速
-0x3ed = { region = [4, 0, 120, 38], text = "Shinagawa" }                  # 品川
-0x3ee = { region = [4, 0, 120, 38], text = "Uragawara" }                  # うらがわら
-0x3ef = { region = [4, 0, 120, 38], text = "Shibuya" }                    # 渋谷
-0x3f0 = { region = [4, 0, 120, 38], text = "Ōsaki" }                      # 大崎
-0x3f1 = { region = [4, 0, 120, 38], text = "Tazawako" }                   # 田沢湖
+# Departure-board flaps (menus.md §7: lists 0x466fa0 series, 0x466fd8 type, 0x466ff8 stations),
+# 128×48: the regions are the flap's face inside its bevel (x 6–121, y 2–37, measured; the bevel
+# at x 5 / 122 and rows 1 / 38 stays). The split-flap gap across the middle (rows 19–24) goes
+# with the lettering, as it did before.
+0x3c9 = { region = [6, 2, 116, 36], text = "Tōkyō" }                      # 東京
+0x3ca = { region = [6, 2, 116, 36], text = "Ueno" }                       # 上野
+0x3cb = { region = [6, 2, 116, 36], text = "Yokohama" }                   # 横浜
+0x3cc = { region = [6, 2, 116, 36], text = "Ōsaka" }                      # 大阪
+0x3cd = { region = [6, 2, 116, 36], text = "Shinjuku" }                   # 新宿
+0x3ce = { region = [6, 2, 116, 36], text = "Kōbe" }                       # 神戸
+0x3cf = { region = [6, 2, 116, 36], text = "Rapid" }                      # 快速
+0x3d0 = { region = [6, 2, 116, 36], text = "Local" }                      # 普通
+0x3d1 = { region = [6, 2, 116, 36], text = "223 series" }                 # 223系
+0x3d2 = { region = [6, 2, 116, 36], text = "209 series" }                 # 209系
+0x3d3 = { region = [6, 2, 116, 36], text = "221 series" }                 # 221系
+0x3d4 = { region = [6, 2, 116, 36], text = "205 series" }                 # 205系
+0x3d9 = { region = [6, 2, 116, 36], text = "Akita" }                      # 秋田
+0x3da = { region = [6, 2, 116, 36], text = "Ōmagari" }                    # 大曲
+0x3db = { region = [6, 2, 116, 36], text = "Morioka" }                    # 盛岡
+0x3dc = { region = [6, 2, 116, 36], text = "Shin-Hanamaki" }              # 新花巻
+0x3dd = { region = [6, 2, 116, 36], text = "Naoetsu" }                    # 直江津
+0x3de = { region = [6, 2, 116, 36], text = "Muikamachi" }                 # 六日町
+0x3df = { region = [6, 2, 116, 36], text = "Echigo-Yuzawa" }              # 越後湯沢
+0x3e0 = { region = [6, 2, 116, 36], text = "681 series" }                 # 681系
+0x3e1 = { region = [6, 2, 116, 36], text = "485 series" }                 # 485系
+0x3e2 = { region = [6, 2, 116, 36], text = "200 series" }                 # 200系
+0x3e3 = { region = [6, 2, 116, 36], text = "E2' series" }                 # E2'系
+0x3e4 = { region = [6, 2, 116, 36], text = "E3 series" }                  # E3系
+0x3e5 = { region = [6, 2, 116, 36], text = "207 series" }                 # 207系
+0x3e6 = { region = [6, 2, 116, 36], text = "201 series" }                 # 201系
+0x3e7 = { region = [6, 2, 116, 36], text = "HK100" }                      # HK100形
+0x3e8 = { region = [6, 2, 116, 36], text = "701 series" }                 # 701系
+0x3e9 = { parts = [{ region = [8, 5, 25, 30], text = "Ltd.\nExp." }, { region = [34, 5, 86, 30], text = "Hakutaka" }] }   # 特急はくたか: the red 特急 badge (x 8–32) and the white name panel (x 34–119), y 5–34 (measured)
+0x3ea = { region = [12, 5, 104, 30], text = "Komachi" }                    # こまち: the coloured panel x 12–115, y 5–34 (measured; it stays pink)
+0x3eb = { region = [12, 5, 104, 30], text = "Yamabiko" }                   # やまびこ: as 0x3ea (it stays green)
+0x3ec = { region = [6, 2, 116, 36], text = "Special Rapid" }              # 新快速
+0x3ed = { region = [6, 2, 116, 36], text = "Shinagawa" }                  # 品川
+0x3ee = { region = [6, 2, 116, 36], text = "Uragawara" }                  # うらがわら
+0x3ef = { region = [6, 2, 116, 36], text = "Shibuya" }                    # 渋谷
+0x3f0 = { region = [6, 2, 116, 36], text = "Ōsaki" }                      # 大崎
+0x3f1 = { region = [6, 2, 116, 36], text = "Tazawako" }                   # 田沢湖
 
 # ---------------------------------------------------------------------------------------------
 # Route select (menus.md §6.1)
@@ -509,18 +514,18 @@ name = "English"
 0x125 = { text = "Kansai Lines", shared_group = "route.lines" }               # 関西路線
 0x126 = { text = "Hokuriku Lines", shared_group = "route.lines" }             # 北陸路線
 0x127 = { text = "Tōhoku Lines", shared_group = "route.lines" }               # 東北路線
-0x30f = "Difficulty"                 # 難易度, 64×16
+0x30f = { text = "Difficulty", style = "plain", outline = true }   # 難易度, 64×16: lettering in two shades on transparency, edge to edge (so `auto` took it for a box)
 0x314 = "Beginner"                   # 初級 rank badge (1–2 stars), 64×32
 0x315 = "Intermediate"               # 中級 (3)
 0x316 = "Advanced"                   # 上級 (4)
 0x317 = "Expert"                     # 特級 (5)
-0x549 = "Stops at\nShizukuishi"      # 雫石停車 tag, 48×32
-0x548 = "Passes\nShizukuishi"        # 雫石通過 tag, 48×32
+0x549 = { parts = [{ region = [8, 1, 32, 14], group = "tag", text = "Shizukuishi" }, { region = [8, 17, 32, 14], group = "tag", text = "Stops" }] }   # 雫石停車 tag, 48×32: panel x 3–44 inside its frame, side marks x 4–7 / 40–43 and the divider at rows 13–20 stay; 雫石 y 2–14, 停車 y 18–30 (measured)
+0x548 = { parts = [{ region = [8, 1, 32, 14], group = "tag", text = "Shizukuishi" }, { region = [8, 17, 32, 14], group = "tag", text = "Passes" }] }  # 雫石通過 tag, 48×32: as 0x549
 
 # ---------------------------------------------------------------------------------------------
 # Records / ranking (menus.md §5, §11.2)
 
-0x41d = { region = [8, 6, 144, 36], font = "display", text = "Records" }   # 乗務記録 header, 160×48: the face inside its bevel (the bevel stays)
+0x41d = { region = [10, 6, 140, 36], font = "display", text = "Records" }   # 乗務記録 header, 160×48: the face inside its bevel, between the rivets (x 7–9 and 150–152, measured; the bevel and rivets stay)
 # Header plates 0x46bc10 (line) and 0x46bc64 (series), 240×32 with a slanted bar.
 0x41f = { region = [64, 0, 176, 32], text = "Tazawako Line" }       # 田沢湖線 (bar est.)
 0x420 = { region = [64, 0, 176, 32], text = "Tōkaidō Main Line" }   # 東海道本線
@@ -554,7 +559,9 @@ name = "English"
 # The words of one cell share a `group`, so they are drawn at one size (the smallest that fits
 # them all); the label cells of a diagram (Brake, Power, Horn) are one group too.
 # Keyboard A and B put 解除 and 非常 beside a horizontal ◆◆, so that cell is redrawn whole. The
-# controller pictures (0x493–0x498, 0x4a1) and the A / B / B・C button tabs stay.
+# controller pictures (0x493–0x498, 0x4a1) and the A / B / B・C button tabs stay. A value region
+# ends a row short of its arrow's tip (the tips reach into the cell; measured with
+# `ddg-game label-audit`), so the arrows are not clipped.
 # Keyboard A (mode 0).
 0x49e = { parts = [
     { region = [26, 2, 92, 21], group = "pro", text = "Pro Mode" },          # PROモード (the Professional plate)
@@ -562,8 +569,8 @@ name = "English"
     { region = [174, 23, 61, 22], group = "labels", text = "Brake" },           # ブレーキ
     { region = [238, 2, 112, 68], backdrop = "solid", text = "Release\n▲▼\nEmergency" }, # 解除 ◆◆ 非常: the words sit beside the arrow, so it is redrawn (↔ is not in the bundled font)
     { region = [174, 254, 61, 22], group = "labels", text = "Power" },          # マスコン
-    { region = [238, 233, 60, 25], backdrop = "solid", group = "power", text = "Off" },            # 切る ↕ (kept)
-    { region = [238, 277, 60, 24], backdrop = "solid", group = "power", text = "Accelerate" },     # 加速
+    { region = [238, 233, 60, 24], backdrop = "solid", group = "power", text = "Off" },            # 切る ↕ (kept)
+    { region = [238, 278, 60, 23], backdrop = "solid", group = "power", text = "Accelerate" },     # 加速
     { region = [25, 242, 93, 20], group = "labels", text = "Horn" },            # 警笛
 ] }
 # Keyboard B (mode 1).
@@ -573,18 +580,18 @@ name = "English"
     { region = [174, 23, 61, 22], group = "labels", text = "Brake" },
     { region = [238, 2, 112, 68], backdrop = "solid", text = "Release\n▲▼\nEmergency" },
     { region = [2, 255, 61, 22], group = "labels", text = "Power" },
-    { region = [66, 234, 60, 25], backdrop = "solid", group = "power", text = "Off" },
-    { region = [66, 278, 60, 24], backdrop = "solid", group = "power", text = "Accelerate" },
+    { region = [66, 234, 60, 24], backdrop = "solid", group = "power", text = "Off" },
+    { region = [66, 279, 60, 23], backdrop = "solid", group = "power", text = "Accelerate" },
     { region = [225, 242, 93, 20], group = "labels", text = "Horn" },
 ] }
 # Keyboard C (mode 2): number keys for the notches.
 0x4a0 = { parts = [
     { region = [2, 23, 61, 22], group = "labels", text = "Power" },
-    { region = [116, 2, 54, 25], backdrop = "solid", group = "power", text = "Off" },              # 切る ↕
-    { region = [66, 46, 106, 24], backdrop = "solid", group = "power", text = "1–5: Accelerate" }, # 1〜5:加速
+    { region = [116, 2, 54, 24], backdrop = "solid", group = "power", text = "Off" },              # 切る ↕
+    { region = [66, 47, 106, 23], backdrop = "solid", group = "power", text = "1–5: Accelerate" }, # 1〜5:加速
     { region = [207, 23, 61, 22], group = "labels", text = "Brake" },
-    { region = [271, 2, 79, 25], backdrop = "solid", group = "brake", text = "9: Emergency" },     # 9:非常 ↕
-    { region = [271, 46, 79, 24], backdrop = "solid", group = "brake", text = "0: Release" },      # 0:解除
+    { region = [271, 2, 79, 24], backdrop = "solid", group = "brake", text = "9: Emergency" },     # 9:非常 ↕
+    { region = [271, 47, 79, 23], backdrop = "solid", group = "brake", text = "0: Release" },      # 0:解除
     { region = [178, 242, 92, 21], group = "pro", text = "Pro Mode" },
     { region = [178, 265, 92, 21], group = "pro", text = "On/Off" },
     { region = [25, 242, 93, 20], group = "labels", text = "Horn" },
@@ -595,19 +602,19 @@ name = "English"
     { region = [26, 25, 92, 21], group = "pro", text = "On/Off" },
     { region = [174, 227, 61, 22], group = "labels", text = "Brake" },
     { region = [174, 270, 61, 22], group = "labels", text = "Power" },
-    { region = [238, 218, 60, 22], backdrop = "solid", group = "lever", text = "Emergency" },
-    { region = [238, 248, 60, 24], backdrop = "solid", group = "lever", text = "Off" },
-    { region = [238, 280, 60, 22], backdrop = "solid", group = "lever", text = "Accelerate" },
+    { region = [238, 218, 60, 21], backdrop = "solid", group = "lever", text = "Emergency" },
+    { region = [238, 250, 60, 19], backdrop = "solid", group = "lever", text = "Off" },
+    { region = [238, 281, 60, 21], backdrop = "solid", group = "lever", text = "Accelerate" },
     { region = [25, 242, 93, 20], group = "labels", text = "Horn" },
 ] }
 # Gamepad (mode 4).
 0x49a = { parts = [
     { region = [2, 23, 61, 22], group = "labels", text = "Brake" },
-    { region = [66, 2, 60, 25], backdrop = "solid", group = "brake", text = "Emergency" },         # 非常 ↕
-    { region = [66, 46, 60, 24], backdrop = "solid", group = "brake", text = "Release" },          # 解除
+    { region = [66, 2, 60, 24], backdrop = "solid", group = "brake", text = "Emergency" },         # 非常 ↕
+    { region = [66, 47, 60, 23], backdrop = "solid", group = "brake", text = "Release" },          # 解除
     { region = [2, 247, 61, 22], group = "labels", text = "Power" },
-    { region = [66, 226, 60, 25], backdrop = "solid", group = "power", text = "Off" },
-    { region = [66, 270, 60, 24], backdrop = "solid", group = "power", text = "Accelerate" },
+    { region = [66, 226, 60, 24], backdrop = "solid", group = "power", text = "Off" },
+    { region = [66, 271, 60, 23], backdrop = "solid", group = "power", text = "Accelerate" },
     { region = [234, 234, 92, 21], group = "pro", text = "Pro Mode" },
     { region = [234, 257, 92, 21], group = "pro", text = "On/Off" },
     { region = [233, 26, 93, 20], group = "labels", text = "Horn" },
@@ -619,18 +626,18 @@ name = "English"
     { region = [217, 18, 93, 20], group = "labels", text = "Horn" },
     { region = [2, 227, 61, 22], group = "labels", text = "Brake" },
     { region = [2, 270, 61, 22], group = "labels", text = "Power" },
-    { region = [66, 218, 60, 22], backdrop = "solid", group = "lever", text = "Emergency" },
-    { region = [66, 248, 60, 24], backdrop = "solid", group = "lever", text = "Off" },
-    { region = [66, 280, 60, 22], backdrop = "solid", group = "lever", text = "Accelerate" },
+    { region = [66, 218, 60, 21], backdrop = "solid", group = "lever", text = "Emergency" },
+    { region = [66, 250, 60, 19], backdrop = "solid", group = "lever", text = "Off" },
+    { region = [66, 281, 60, 21], backdrop = "solid", group = "lever", text = "Accelerate" },
 ] }
 # DDG controller (mode 6), 352×272.
 0x49d = { parts = [
     { region = [2, 23, 61, 22], group = "labels", text = "Power" },
-    { region = [66, 2, 60, 25], backdrop = "solid", group = "power", text = "Off" },
-    { region = [66, 46, 60, 24], backdrop = "solid", group = "power", text = "Accelerate" },
+    { region = [66, 2, 60, 24], backdrop = "solid", group = "power", text = "Off" },
+    { region = [66, 47, 60, 23], backdrop = "solid", group = "power", text = "Accelerate" },
     { region = [154, 23, 61, 22], group = "labels", text = "Brake" },
-    { region = [218, 2, 60, 25], backdrop = "solid", group = "brake", text = "Emergency" },
-    { region = [218, 46, 60, 24], backdrop = "solid", group = "brake", text = "Release" },
+    { region = [218, 2, 60, 24], backdrop = "solid", group = "brake", text = "Emergency" },
+    { region = [218, 47, 60, 23], backdrop = "solid", group = "brake", text = "Release" },
     { region = [67, 226, 92, 21], group = "pro", text = "Pro Mode" },
     { region = [67, 249, 92, 21], group = "pro", text = "On/Off" },
     { region = [225, 250, 93, 20], group = "labels", text = "Horn" },
@@ -822,9 +829,9 @@ name = "English"
 # bilingual items. The subtitle text needs a font with Japanese glyphs (or a fallback one).
 0 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", font = "display", text = "Arcade Mode" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "アーケードモード" }] }
 1 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", font = "display", text = "Game Settings" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "ゲーム設定" }] }
-2 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", font = "display", text = "Rankings" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "ランキングを見る" }] }
+2 = { parts = [{ region = [88, 7, 408, 65], shared_group = "title.items", font = "display", text = "Rankings" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "ランキングを見る" }] }
 3 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", font = "display", text = "Quit Game" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "ゲーム終了" }] }
-4 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", font = "display", text = "Calibration" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "専用コントローラー設定" }] }   # input mode 6
+4 = { parts = [{ region = [88, 8, 408, 66], shared_group = "title.items", font = "display", text = "Calibration" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "専用コントローラー設定" }] }   # input mode 6
 
 # Options labels and values (0x47c584), selected colouring. Labels 192×32, values 240×32
 # (10–13 are 32×32). Labels 0–5 and the values shown in the list or on the control
@@ -916,11 +923,11 @@ name = "English"
 # Calibration prompts (input.md §5), 176×32: the arrow on the left stays.
 16 = { region = [88, 0, 84, 32], text = "Up" }      # 上
 17 = { region = [88, 0, 84, 32], text = "Up" }
-18 = { region = [88, 0, 84, 32], text = "Down" }    # 下
-19 = { region = [88, 0, 84, 32], text = "Down" }
+18 = { region = [87, 0, 85, 32], text = "Down" }    # 下 (from x 87, measured)
+19 = { region = [87, 0, 85, 32], text = "Down" }
 20 = { region = [88, 0, 84, 32], text = "Left" }    # 左
 21 = { region = [88, 0, 84, 32], text = "Left" }
-22 = { region = [88, 0, 84, 32], text = "Right" }   # 右
+22 = { region = [88, 0, 84, 32], text = "Right" }   # 右 (from x 88, where the arrow's tip touches it)
 23 = { region = [88, 0, 84, 32], text = "Right" }
 24 = "Reset to default"              # 標準に戻す
 25 = "Reset to default"
@@ -941,8 +948,8 @@ speedometer = { rect = [0, 15, -1, 3], align = "left", font = "display", text = 
 distance_meter = { rect = [0, 18, -1, 3], align = "left", font = "display", text = "Distance Meter" }   # 距離メーター
 load_save = { rect = [0, 21, -1, 3], align = "left", font = "display", text = "Load / Save" }           # ロード・セーブ
 game_settings = { rect = [0, 24, -1, 3], align = "left", font = "display", text = "Game Settings" }     # ゲーム設定
-power_setup = { rect = [0, 27, -1, 3], align = "left", font = "display", text = "Power Lever Setup" }   # マスコン調整
-brake_setup = { rect = [0, 30, -1, 3], align = "left", font = "display", text = "Brake Lever Setup" }   # ブレーキ調整
+power_setup = { rect = [0, 27, -1, 3], region = [0, 0, 274, 48], align = "left", font = "display", text = "Power Lever Setup" }   # マスコン調整 (art x 0–273, measured)
+brake_setup = { rect = [0, 30, -1, 3], region = [0, 0, 274, 48], align = "left", font = "display", text = "Brake Lever Setup" }   # ブレーキ調整 (art x 0–273, measured)
 
 # Name-entry legends (0x486184 keyboard, 0x48618a lever), 176×64 each.
 [sheet.0x53f]
