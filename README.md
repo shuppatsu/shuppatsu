@@ -110,7 +110,8 @@ The game looks for your extracted data in this order (the first that exists wins
 1. the `DDG_DATA_DIR` environment variable;
 2. `--data <dir>` on the command line;
 3. a folder `data/extracted` or `data` next to the `ddg-game` executable;
-4. `data_dir = "…"` in `config.toml` (see [Settings](#settings)).
+4. a folder `data/extracted` or `data` in the current directory (e.g. `nix run .` in a checkout);
+5. `data_dir = "…"` in `config.toml` (see [Settings](#settings)).
 
 Each can point at an extracted disc (the folder holding `install/`) or at an installed copy of
 the original game (the folder holding `DATA` and `BIN`, e.g. `C:\Program Files\TAITO\DENGO3K`).
