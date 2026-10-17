@@ -48,8 +48,11 @@ const TICK: Duration = Duration::from_millis(33);
 /// Title choice 0: BGM stopped, sprites cleared, three ticks (0x42a1c0), then the one-tick
 /// "press START" of the PC build (0x4122d0) before `Stage_Run` creates the route select.
 const TO_ROUTE_SELECT_TICKS: i32 = 4;
-/// Title cancel / exit declined: three ticks (0x42a1c0), then attract from the title picture.
+/// Title cancel (and the original's exit declined): three ticks (0x42a1c0), then attract from
+/// the title picture.
 const TO_ATTRACT_TICKS: i32 = 3;
+/// The title menu's ゲーム終了 item (menus.md §3, index 3).
+const EXIT_ITEM: i32 = 3;
 /// Title choice 2: BGM stopped, sprites cleared, ten ticks before the records viewer.
 const TO_RECORDS_TICKS: i32 = 10;
 /// Route select cancelled: `Stage_Run`'s exit path (one tick, then two) and two more ticks of
@@ -156,6 +159,13 @@ fn map_size(bank: &ddg_render::sprites::SpriteBank, tbl: usize) -> (i16, i16) {
     bank.tilemaps.get(tbl).map_or((0, 0), |m| {
         (i16::from(m.width) * TILE_PX, i16::from(m.height) * TILE_PX)
     })
+}
+
+/// The exit dialog's いいえ (or cancel / pause): decided port behaviour (menus.md §14), the
+/// title menu again after the same three ticks, its cursor on ゲーム終了 (the menu BGM restarts
+/// with it). The original goes to attract at the title picture instead (0x42a1c0 case 0).
+fn exit_declined() -> (i32, Next) {
+    (TO_ATTRACT_TICKS, Next::Title { cursor: EXIT_ITEM })
 }
 
 fn joystick_dat(opts: &PadOptions) -> Option<PathBuf> {
@@ -607,7 +617,8 @@ impl App {
                             s.set_paused(false);
                         }
                         crate::front::clear_all(&mut r.layer);
-                        Screen::Wait(TO_ATTRACT_TICKS, Next::Attract { skip_opening: true })
+                        let (ticks, then) = exit_declined();
+                        Screen::Wait(ticks, then)
                     }
                 }
             }
@@ -1044,5 +1055,49 @@ pub fn run(opts: AppOptions) -> Result<()> {
     match app.error {
         Some(e) => Err(e),
         None => save.context("writing the save"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::screens::tables::TextDesc;
+
+    /// Decided port behaviour (menus.md §14): いいえ in the exit dialog leads back to the title
+    /// menu with the cursor on ゲーム終了, not to attract.
+    #[test]
+    fn exit_no_returns_to_the_menu_on_quit() {
+        let t = crate::front::tests_support::tables();
+        let env = Env::default();
+        let text = vec![TextDesc::default(); 29];
+        let mut l = SpriteLayer::default();
+        let mut sfx = Vec::new();
+        let confirm = MenuInput {
+            confirm: true,
+            ..MenuInput::NONE
+        };
+
+        // The dialog opens on いいえ; confirming it declines.
+        let mut d = ExitConfirm::new(t.exit_dialog.clone(), (320, 192), &mut l);
+        let mut declined = None;
+        for i in 0..8 {
+            let input = if i == 1 { confirm } else { MenuInput::NONE };
+            declined = declined.or(d.tick(&input, &text, &mut l, &mut sfx));
+        }
+        assert_eq!(declined, Some(false));
+
+        let (ticks, then) = exit_declined();
+        assert_eq!(ticks, TO_ATTRACT_TICKS);
+        let Next::Title { cursor } = then else {
+            panic!("{then:?}");
+        };
+        // The menu comes back on ゲーム終了: confirming it opens the dialog again.
+        let mut m = TitleMenu::new(cursor, 0);
+        let mut choice = None;
+        for i in 0..40 {
+            let input = if i == 0 { confirm } else { MenuInput::NONE };
+            choice = choice.or(m.tick(&input, &env, &t, &mut l, &mut sfx));
+        }
+        assert_eq!(choice, Some(TitleChoice::Exit));
     }
 }
