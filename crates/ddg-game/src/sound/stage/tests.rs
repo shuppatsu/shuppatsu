@@ -66,6 +66,7 @@ impl Rig {
             segment_started: false,
             track_classes: None,
             turnout_entered: false,
+            demo: false,
         })
     }
 
@@ -239,6 +240,35 @@ fn ats_bell_and_chime() {
     assert!(cmds.contains(&Command::Release(ATS_CHIME)));
 }
 
+/// The demo tasks (0x40e630, 0x40e860) never call 0x40c4e0: `0x8570d4` still holds its initial
+/// 0 there (no departure reset it), but no chime and no approach call is requested.
+#[test]
+fn demo_drives_have_no_chime() {
+    let mut r = Rig::new(1);
+    let s = Snap {
+        ats_chime_from: 0,
+        leg_distance: 2000.0,
+        ..Snap::default()
+    };
+    let mut demo = |clock| {
+        let s = Snap { clock, ..s };
+        r.run(&TickInfo {
+            before: s,
+            after: s,
+            events: &[],
+            segment_started: false,
+            track_classes: None,
+            turnout_entered: false,
+            demo: true,
+        })
+    };
+    for clock in [0, 1, 32, 64] {
+        assert!(!plays(&demo(clock)).contains(&ATS_CHIME), "clock {clock}");
+    }
+    // The same state in a stage run chimes.
+    assert!(plays(&r.drive(Snap { clock: 96, ..s }, &[])).contains(&ATS_CHIME));
+}
+
 #[test]
 fn penalty_buzzer_and_pass_jingle() {
     let mut r = Rig::new(5);
@@ -377,6 +407,7 @@ fn segment_start() {
         segment_started: true,
         track_classes: None,
         turnout_entered: false,
+        demo: false,
     });
     let p = plays(&cmds);
     // Running noise and motor (0 in these tables), the departure bell, then rain at level / 2.
@@ -644,6 +675,7 @@ fn rain_start_and_tunnels() {
         segment_started: false,
         track_classes: Some([0, 3, 0]),
         turnout_entered: false,
+        demo: false,
     };
     let cmds = r.run(&info);
     assert!(cmds.contains(&Command::Release(RAIN)));
@@ -732,6 +764,7 @@ fn stage_run_with_game_data() {
             segment_started: out.segment_started,
             track_classes: drive.track_classes(),
             turnout_entered: drive.turnout_entered(),
+            demo: drive.demo_counter().is_some(),
         };
         st.loop_part(&mut snd, &mut ts, &info);
         st.task_part(&mut snd, &ts, &info);
@@ -746,4 +779,77 @@ fn stage_run_with_game_data() {
         DEPART_VOICES.iter().any(|c| codes.contains(c)),
         "no departure voice: {codes:x?}"
     );
+}
+
+/// Both attract demos on the user's data, through the real engine: the ATS chime never rings
+/// (it rang every 32 ticks while the demos ran 0x40c4e0's sounds), the running noise starts and
+/// the lesson's signal call-outs still play. Skips without `DDG_DATA_DIR`.
+#[test]
+fn demo_drives_with_game_data() {
+    use ddg_engine::demo::{DemoKind, DemoTables};
+    use ddg_engine::drive::{DriverInput, LoadError};
+    use ddg_engine::physics::TrainTables;
+    use ddg_engine::rules::RuleTables;
+    use ddg_formats::exe::Exe;
+
+    let Ok(data) = crate::scene::GameData::from_env() else {
+        eprintln!("DDG_DATA_DIR not set; skipped");
+        return;
+    };
+    let Ok(exe_bytes) = data.exe() else {
+        eprintln!("no exe under DDG_DATA_DIR; skipped");
+        return;
+    };
+    let exe = Exe::parse(&exe_bytes).unwrap();
+    let train = TrainTables::read(&exe).unwrap();
+    let rules = RuleTables::read(&exe).unwrap();
+    let stages = ddg_formats::stages::StageTables::read(&exe).unwrap();
+    let demos = DemoTables::read(&exe).unwrap();
+    let sound_tables = Arc::new(SoundTables::from_exe(&exe).unwrap());
+    for (kind, stage) in [
+        (DemoKind::Route, 1),
+        (DemoKind::Lesson, DemoKind::LESSON_STAGE),
+    ] {
+        let data = crate::scene::GameData::from_env().unwrap();
+        let loader = move |name: &str| -> Result<Vec<u8>, LoadError> {
+            data.read(name)
+                .map_err(|e| LoadError::from(format!("{e:#}")))
+        };
+        let mut drive = Drive::new(&train, &rules, &stages, stage, 1, 0, loader).unwrap();
+        drive.start_demo(kind, &demos);
+        let mut st = StageSound::new(StageTables::read(&exe, stage).unwrap());
+        let mut snd = SoundSystem::new(sound_tables.clone());
+        let mut ts = TrainSound::new(&sound_tables, stage, drive.train().train_type, &mut snd);
+        // `Sound::start_demo`: the creators start the running noise and the motor.
+        ts.start_segment(&mut snd);
+        let mut codes = plays(&snd.take_commands());
+        while !drive.demo_finished() {
+            let before = Snap::of(&drive);
+            let out = drive.tick(DriverInput::default());
+            let info = TickInfo {
+                before,
+                after: Snap::of(&drive),
+                events: &out.events,
+                segment_started: out.segment_started,
+                track_classes: drive.track_classes(),
+                turnout_entered: drive.turnout_entered(),
+                demo: drive.demo_counter().is_some(),
+            };
+            st.loop_part(&mut snd, &mut ts, &info);
+            st.task_part(&mut snd, &ts, &info);
+            snd.frame();
+            codes.extend(plays(&snd.take_commands()));
+        }
+        eprintln!("{kind:?} demo: {} plays: {codes:x?}", codes.len());
+        assert!(!codes.contains(&ATS_CHIME), "{kind:?}: chime in {codes:x?}");
+        // 0x8570d4 was never reset (no departure), which is what made the chime ring.
+        if kind == DemoKind::Route {
+            assert_ne!(drive.rules().ats_chime_from, -1);
+        }
+        assert_eq!(drive.demo_counter(), Some(kind.ticks()));
+        assert_eq!(codes[0], RUNNING_NOISE, "{kind:?}");
+        if kind == DemoKind::Lesson {
+            assert!(codes.iter().any(|c| ASPECT_CALLS.contains(c)), "{codes:x?}");
+        }
+    }
 }

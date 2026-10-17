@@ -616,6 +616,31 @@ notch slam, overrun ×2 (stage 0: 2, 1, 3, 3).
   5 → 0xf2, 6 → 0xeb (stat 0 < 1) / 0xf3, 7 → 0xec, 9 → 0xf5, 0xb → 0xfb, else 0xf6. The
   matching sprites 0x3f2..0x3fe are hud.md §3.16.
 
+### 10.8a Attract demo drives (0x40e4b0, 0x40e6e0) — confirmed (code)
+
+The demos (menus.md §2.4) are not the stage loop, so most of §10.2's loop-body sounds never run:
+
+* **Start:** both creators request the running noise 9 (pitch 0x7f, volume 1) and the stage's
+  motor `0x8570b6` at its base pitch `0x45adb0[stage]`, the same calls as a segment start in
+  0x4080d0 (0x40e4b0 / 0x40e6e0: `0x41fda0(9)`, `0x430180(9, 0x7f)`, `0x4301b0(9, 1)`,
+  `0x42ff30(9, 1)`, `0x41fda0(motor)`, `0x430180(motor, …)`). No departure bell (0x4124f0 does
+  not run).
+* **Per tick:** the route demo's task 0x40e630 calls only 0x40dad0 and 0x40b710; the lesson's
+  task 0x40e860 calls 0x40dad0, 0x40acd0, 0x40c010 and 0x40b780. Neither calls 0x407c10
+  (ambient), **0x40c4e0** (approach call, ATS bell and chime, rain) or 0x40a0a0 (stopped
+  train). The train task 0x422c20, the HUD (clocks, countdown 0x15) and the sequencer run as
+  usual, and in the lesson 0x40c010's call-outs play.
+* **The ATS chime does not ring.** `0x8570d4` starts at 0 and only 0x4080d0 (leaving the
+  pre-departure wait), 0x40a0a0, 0x40c010 and 0x40c4e0 set it to −1, so in a route demo it is
+  still 0 (≠ −1). Its test-and-request (`(0x8570b0 − 0x8570d4) % 32 == 0` → `0x41fda0(0xd)`)
+  sits only in 0x40c4e0, which the demo tasks never call.
+
+Reimplementation: `TickInfo::demo` (from `Drive::demo_counter`) keeps `StageSound::loop_part`
+from running 0x40c4e0's sounds and the stopped-train handler's in a demo; `Sound::start_demo`
+starts the running noise and the motor. Bug fixed: the port ran the whole loop body in the
+demos, so with `0x8570d4` = 0 the ATS chime 0xd rang every 32 ticks through the route demo,
+and the demos had no running noise or motor.
+
 ### 10.9 BGM: what plays when — confirmed
 
 There is **no music while driving**. BGM-slot codes (0x197–0x1a8) used around a stage:

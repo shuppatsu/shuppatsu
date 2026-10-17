@@ -391,6 +391,9 @@ pub struct TickInfo<'a> {
     pub track_classes: Option<[i16; 3]>,
     /// [`Drive::turnout_entered`].
     pub turnout_entered: bool,
+    /// An attract demo drive ([`Drive::demo_counter`] is `Some`): its task (0x40e630 /
+    /// 0x40e860) calls only part of the loop body, never 0x40c4e0 or 0x40a0a0.
+    pub demo: bool,
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -488,6 +491,10 @@ impl StageSound {
         }
 
         let loop_body = b.runs_loop_body();
+        // The demo tasks run 0x40dad0 (and in the lesson 0x40acd0, 0x40c010, 0x40b780) but not
+        // 0x40c4e0 or the stopped-train handler 0x40a0a0, so no ATS chime, approach call or
+        // rain from there (docs/re/audio-text.md §10.2).
+        let tail_runs = loop_body && !t.demo;
         // 0x407c10: ambient sounds, and the probe-4 transitions the rain uses.
         let mut entered = 0;
         let mut left = 0;
@@ -508,7 +515,7 @@ impl StageSound {
             .iter()
             .any(|e| matches!(e, RuleEvent::StationPassed { .. }));
         for e in t.events {
-            if loop_body && !late_done && is_from_stop_handler(e) {
+            if tail_runs && !late_done && is_from_stop_handler(e) {
                 late_done = true;
                 self.loop_tail(snd, t, entered, left, station_passed);
                 self.stop_handler_start(snd, t);
@@ -590,7 +597,7 @@ impl StageSound {
                     snd.release(ATS_CHIME);
                 }
             }
-            if !late_done {
+            if tail_runs && !late_done {
                 self.loop_tail(snd, t, entered, left, station_passed);
                 self.stop_handler_start(snd, t);
             }

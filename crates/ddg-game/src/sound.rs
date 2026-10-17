@@ -200,6 +200,7 @@ impl Sound {
             segment_started,
             track_classes: drive.track_classes(),
             turnout_entered: drive.turnout_entered(),
+            demo: drive.demo_counter().is_some(),
         };
         p.stage.loop_part(&mut self.snd, &mut p.train, &info);
 
