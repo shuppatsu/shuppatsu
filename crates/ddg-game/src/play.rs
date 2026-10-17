@@ -911,6 +911,11 @@ impl Play {
     /// The station result's replay camera: created at result countdown 94 (0x419730), one
     /// update per tick after that (0x41a010), gone when the result closes (scene.md §8).
     fn update_world(&mut self) {
+        // The ending (0x4040a0) builds its own world after the run's lists were killed; it
+        // sets the view itself (ending.rs).
+        if self.ending.is_some() {
+            return;
+        }
         self.world = self.flow.world_view();
         if self.world != WorldView::ResultReplay {
             self.result_view = None;
@@ -1162,6 +1167,9 @@ impl Play {
             self.layer.slots.fill(Slot::CLEAR);
             self.flow.draw(&mut self.layer);
             self.layer.compose(&self.bank, &mut self.canvas);
+            if let Some(rgb) = self.flow.backdrop() {
+                crate::screens::fill_backdrop(&self.layer, &mut self.canvas, rgb);
+            }
             self.canvas_dirty = true;
             return;
         }

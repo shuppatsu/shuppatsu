@@ -917,6 +917,10 @@ impl App {
             return;
         };
         r.layer.compose(&r.bank, &mut self.canvas);
+        if matches!(self.screen, Screen::Records(_)) {
+            // `Records_Create` sets the grey clear colour (0x428990(0x70, 0x7070), menus.md §5).
+            crate::screens::fill_backdrop(&r.layer, &mut self.canvas, crate::screens::RANKING_GREY);
+        }
         self.canvas_dirty = true;
     }
 

@@ -360,8 +360,9 @@ List of six items, label at (x0+96, y0+160+48·i) slot 0x90+i and current value 
 ## 5. Records viewer (0x41f5e0)
 
 * Created from the title (item 2, with `0x855ffc |= 8` → interactive) and from attract.
-  Sets `0x855ffc |= 0x1000`, `0x855ff8 |= 0x2000` (and `|= 4` in attract), dims the 3D layer
-  (0x428990(0x70, 0x7070)). **confirmed**
+  Sets `0x855ffc |= 0x1000`, `0x855ff8 |= 0x2000` (and `|= 4` in attract), sets the grey clear
+  colour 0x707070 (0x428990(0x70, 0x7070); no 3D task runs behind it, so the page is on grey).
+  **confirmed**
 * Pages: the route index `r` steps through 0, 1, 2, … and shows a page when bit `r` of `0x8500b0`
   is set and the ranking-table index `0x46bbe8[r] ≠ −1`; it ends after the first `r > 12` that fails.
   With `0x8500b0 = 0x3f9da` (bits 1, 3, 4, 6, 7, 8, 11–17) this gives **routes 1, 3, 4, 6, 7, 8,
@@ -595,7 +596,10 @@ Created after the arrival wait (rules.md §7.3 gives the deductions). Timing and
 
 Implemented in `crates/ddg-game/src/screens/ranking.rs` (tables read from the exe) and wired by
 `screens/flow.rs` / `play.rs`; headless shots of stage 1 (time-out run, value 70 → rank 6)
-show the art lining up with these positions.
+show the art lining up with these positions. Compared with a Wine capture of the original
+(stage 1, train left standing until game over, `scripts/capture-original.sh` with a 200 s
+recording; 2026-10-17): the Japanese name entry at 640×480 matches pixel for pixel except the
+timer digits, on the same black. Shots in `out/explain/name_entry/`.
 
 * Ranking value (rules.md §9) capped at 9999. Routes with no ranking table
   (`0x46bbe8[r] = −1`: 0, 2, 5) skip this screen.
@@ -622,6 +626,11 @@ show the art lining up with these positions.
   0x41c selection frame (288,324), 0xf = 0x30 (112,392), 0x10/0x11 = 0x34 (80,360)/(496,360)
   (black covers at the wheel ends), BGM 0x19d (0x42ff20). Every tick: slot 0x6d = legend
   descriptor 0x486184 (keyboard/pad) or 0x48618a (analog lever) at (408,60).
+* Background: **black**. The 3D view is gone (`Stage_Run` killed the world lists before the
+  report card, §11.4) and the clear colour is still black, so the covers 0x34 and 0x30 (palette
+  colour 0,0,8) are invisible and only cut off the wheel's outer symbols. **confirmed** (capture;
+  the port once drew the frozen cab view behind the entry, which showed the covers as black
+  boxes over the scenery)
 * The **59-symbol wheel** (`0x46bd30[0..58]`: 0–9, 10 = "00", 11 = blank, A–Z, `. - ! ? /`,
   train-class abbreviations and katakana pairs, 系, 形, 57 = ← (delete), 58 = 終 (end)):
   * Keyboard/pad (input modes without the analog lever): left held (held bit 4) checked first:
@@ -666,7 +675,10 @@ show the art lining up with these positions.
   (slots 0xd–0x5c, 8 per row at `0x46be42` x = 144 176 208 240 360 392 424 472, y 92 + 32·row)
   set to the blank symbol; PRO badge slots 0x5d+row placed at (cell 3 x + 32, y). The draw
   callback becomes 0x41fc60 (black rect-layer bars x 0–80 and 560–640, adjusted by the screen
-  offset bytes +0x338/+0x339) and the 3D layer is dimmed (0x428990(0x70, 0x7070)).
+  offset bytes +0x338/+0x339) and the clear colour becomes grey 0x707070
+  (`Gfx_SetClearColour` 0x428990(0x70, 0x7070), renderer.md); destroy sets it back to black.
+  With no 3D task left (§11.4) the page therefore sits on grey between the black bars.
+  **confirmed** (Wine capture: 115,113,115 in the 16-bit frame, bars 0,0,0)
 * Each tick while the counter < 140: cell `u` (row `u/8`, column `u%8`) appears at counter `u`:
   for 16 ticks it alternates tbl `0x46be1c`/`0x46be20` (0x274/0x275), then shows the symbol of
   the unpacked byte (name 0–3, score digits 4–7, leading zeros shown); with column 3 the row's
@@ -695,6 +707,13 @@ show the art lining up with these positions.
   > 3 (flag `0x855ffc & 0x800`) → ranking value with `+remaining·1000` → name entry → banner 1.
 * Quit from pause: straight back to the title, no report.
 * Replay playback runs skip the report/ranking (`0x42e910 ≠ 0`).
+* Before any of these, right after the station loop, `Stage_Run` kills task lists 2 (world),
+  5 (traffic, weather) and 3 (HUD, UI) (`0x425380` on 0x84c198, 0x84c1bc, 0x84c1a4), runs one
+  `Task_Tick` and stops every sound. The report card, name entry, ranking page and banner are
+  therefore drawn over the clear colour only: black, grey 0x707070 on the ranking page. The
+  continue countdown before still has the cab view. **confirmed** (code at 0x4080d0; Wine
+  capture). The port: `StageFlow::world_view` is `Hidden` whenever `hud_visible` is false; the
+  ending (0x4040a0) builds its own world and keeps the cab view while it runs.
 
 ## 12. Bonus game, coupling minigame and ending
 
@@ -1013,8 +1032,9 @@ Evidence: unit tests `screens::ranking::tests::timeout_filters_and_commits`,
 4. The PRO flag (`0x8571f0 ≤ 30.0`, metres driven with the distance meter drawn, §11.2): the
    code is clear; that it is meant as "driven with the Professional plate" is still to be seen
    in a run with the meter on and off.
-9. Whether the name-entry art really leaves the 3D view undimmed (the dim 0x428990 only comes
-   with the ranking page) and what 0x428990(0x70, 0x7070) does exactly; the port does not dim.
+9. ~~Whether the name-entry art leaves the 3D view undimmed~~: resolved, there is no 3D view
+   after the run (§11.4); 0x428990(0x70, 0x7070) is the grey clear colour of the ranking page
+   and the records viewer (§11.2, §5).
 10. Whether the A-button/horn end of the ranking page and the confirm of the name entry can
     collide with a key still held from the report card (both read edges, so probably not).
 5. Attract, the opening, the demos, the bonus game and the ending are read from code (§2, §12);

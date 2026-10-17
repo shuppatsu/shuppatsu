@@ -707,6 +707,13 @@ impl NameEntry {
         }
     }
 
+    /// The clear colour under the 2D layer when it is not black: the page sets grey
+    /// (`0x428990(0x70, 0x7070)` in its first update); the name entry keeps the black left when
+    /// `Stage_Run` killed the 3D task lists (menus.md §11.2).
+    pub fn backdrop(&self) -> Option<[u8; 3]> {
+        (self.page == Page::Ranking).then_some(super::RANKING_GREY)
+    }
+
     /// The slots, plus the page's side bars (draw callback 0x41fc60, page only).
     pub fn draw(&self, layer: &mut SpriteLayer) {
         self.slots.draw(layer);
@@ -963,6 +970,7 @@ pub(crate) mod tests {
         let rankings = vec![[Row::EMPTY; ROWS]; 13];
         let mut e = NameEntry::new(defs(), &request(&rankings)).unwrap();
         assert_eq!(e.rank(), 0);
+        assert_eq!(e.backdrop(), None);
         let mut sfx = Vec::new();
         let mut n = 0;
         while !e.on_page() {
@@ -970,6 +978,8 @@ pub(crate) mod tests {
             n += 1;
         }
         assert_eq!(n, TIMEOUT);
+        // The entry is on black; the page sets the grey clear colour (0x428990(0x70, 0x7070)).
+        assert_eq!(e.backdrop(), Some(super::super::RANKING_GREY));
         // The original leaves it unpacked; the port saves it (menus.md §14).
         assert!(e.committed());
         // The all-blank name is in the exact list: replaced by the route's default name.

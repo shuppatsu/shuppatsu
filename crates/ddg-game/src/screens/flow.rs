@@ -211,8 +211,14 @@ impl StageFlow {
     /// What the 3D layer shows (scene.md §8). `Stage_Run` kills the drive's task list after
     /// the third tick ending in `Arrived`, so the cab view is gone for the last two of them and
     /// the result's first tick; the replay camera exists from countdown 94 until the tick the
-    /// result closes, and the cab returns with the next segment.
+    /// result closes, and the cab returns with the next segment. When the run is over
+    /// `Stage_Run` kills the world, effect and HUD lists together (0x84c198, 0x84c1bc,
+    /// 0x84c1a4, after the station loop of 0x4080d0), so the report card, the name entry, the
+    /// ranking page and the banner are drawn over the clear colour alone (menus.md §11.2).
     pub fn world_view(&self) -> WorldView {
+        if !self.hud_visible() {
+            return WorldView::Hidden;
+        }
         match &self.state {
             State::Run { arrived, .. } if *arrived > DRIVE_KILLED_AFTER_ARRIVED_TICKS => {
                 WorldView::Hidden
@@ -422,6 +428,14 @@ impl StageFlow {
         };
     }
 
+    /// The clear colour under the 2D layer when it is not black (the ranking page's grey).
+    pub fn backdrop(&self) -> Option<[u8; 3]> {
+        match &self.state {
+            State::Ranking { entry, .. } => entry.backdrop(),
+            _ => None,
+        }
+    }
+
     /// The slots the last [`StageFlow::draw`] wrote.
     pub fn drawn(&self) -> &[usize] {
         &self.drawn
@@ -616,8 +630,11 @@ mod tests {
         let mut f = StageFlow::new(defs());
         f.station_finished(StationOutcome::Cleared, false);
         let o = obs(DrivePhase::Cleared);
+        assert_eq!(f.world_view(), WorldView::Cab);
         let (_, a) = until_action(&mut f, &o, |_| NONE);
         assert_eq!(a, Action::Ranking { cleared: true });
+        // Stage_Run killed the world with the HUD: the screens are drawn over the clear colour.
+        assert_eq!(f.world_view(), WorldView::Hidden);
         let rankings = vec![[Row::EMPTY; ROWS]; 13];
         let req = RankingRequest {
             route: 1,
@@ -628,6 +645,7 @@ mod tests {
             save_timed_out: true,
         };
         f.start_ranking(Some(&req), &mut Vec::new());
+        assert_eq!((f.world_view(), f.backdrop()), (WorldView::Hidden, None));
         // Time-out after 930 ticks, then the page's 151.
         let (n, a) = until_action(&mut f, &o, |_| NONE);
         let Action::RankingDone {

@@ -208,6 +208,32 @@ pub fn digits3(v: i32) -> [usize; 3] {
     [v / 100, v / 10 % 10, v % 10]
 }
 
+/// The clear colour `Gfx_SetClearColour(0x70, 0x7070)` (0x428990) of the ranking page and the
+/// records viewer (menus.md §5, §11.2): with no 3D task left, the whole 640×480 frame is this
+/// grey under the 2D layer. Measured 115,113,115 in a 16-bit capture of the original.
+pub const RANKING_GREY: [u8; 3] = [0x70, 0x70, 0x70];
+
+/// Puts `rgb` under the composed `canvas` (premultiplied RGBA8 of `layer`'s canvas size) in
+/// the centred 640×480 design rectangle: the original's clear colour behind its 2D layer. The
+/// rest of a wide canvas stays transparent, so it shows the black around a 4:3 screen.
+pub fn fill_backdrop(layer: &SpriteLayer, canvas: &mut [u8], rgb: [u8; 3]) {
+    use ddg_render::sprites::{CANVAS_H, CANVAS_W};
+    let (cw, ch) = layer.canvas_size();
+    let s = layer.scale.max(1);
+    let x0 = (layer.wide / 2).min(cw);
+    let x1 = (x0 + CANVAS_W * s).min(cw);
+    for y in 0..(CANVAS_H * s).min(ch) {
+        let row = &mut canvas[4 * (y * cw + x0)..4 * (y * cw + x1)];
+        for px in row.as_chunks_mut::<4>().0 {
+            let under = 255 - u16::from(px[3]);
+            for (c, &b) in px[..3].iter_mut().zip(&rgb) {
+                *c += (u16::from(b) * under / 255) as u8;
+            }
+            px[3] = 255;
+        }
+    }
+}
+
 /// HUD remaining-time digit slots 0x18–0x1a (hud.md §2), reused by the result and continue
 /// screens.
 pub const SLOT_REMAINING: usize = 0x18;
@@ -238,5 +264,30 @@ mod tests {
         );
         assert_eq!(digits3(507), [5, 0, 7]);
         assert_eq!(digits3(1500), [9, 9, 9]);
+    }
+
+    /// The grey goes under the 2D layer in the centred 4:3 rectangle only.
+    #[test]
+    fn backdrop_fills_under_the_design_rect() {
+        let layer = SpriteLayer {
+            wide: 100,
+            ..SpriteLayer::default()
+        };
+        let mut canvas = layer.new_canvas();
+        let cw = layer.canvas_size().0;
+        let px = |x: usize, y: usize| 4 * (y * cw + x);
+        // An opaque texel and a half-covered (premultiplied) one inside, one outside.
+        canvas[px(60, 10)..px(60, 10) + 4].copy_from_slice(&[200, 0, 0, 255]);
+        canvas[px(61, 10)..px(61, 10) + 4].copy_from_slice(&[100, 0, 0, 128]);
+        fill_backdrop(&layer, &mut canvas, RANKING_GREY);
+        assert_eq!(canvas[px(49, 0)..px(49, 0) + 4], [0; 4]);
+        assert_eq!(canvas[px(50, 0)..px(50, 0) + 4], [0x70, 0x70, 0x70, 255]);
+        assert_eq!(
+            canvas[px(689, 479)..px(689, 479) + 4],
+            [0x70, 0x70, 0x70, 255]
+        );
+        assert_eq!(canvas[px(690, 479)..px(690, 479) + 4], [0; 4]);
+        assert_eq!(canvas[px(60, 10)..px(60, 10) + 4], [200, 0, 0, 255]);
+        assert_eq!(canvas[px(61, 10)..px(61, 10) + 4], [155, 55, 55, 255]);
     }
 }
