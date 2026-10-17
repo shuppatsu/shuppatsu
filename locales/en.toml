@@ -118,44 +118,48 @@ name = "English"
 # mirrored below), so a region taller than the lettering would paint the corners white, and
 # the old regions [6, 4, 212, 56] left the end of the lines (。 at x 218–222) and the starts at
 # x 4–5 visible and sized the English from the corner pixels instead of the kanji.
+# The English uses the whole balloon (user's decision): each region is the largest rectangle
+# inside the rounded border that still covers that hint's lettering, with `backdrop = "solid"` so
+# the text may fill it, and one size per kind (`shared_group`): the one- and two-line hints share
+# one, so short hints do not blow up; the three-line hints share a smaller one.
 
-0x135 = { region = [2, 13, 222, 37], text = "The door lamp lights up\nonce the doors close." }            # id 0
-0x136 = { region = [2, 14, 222, 36], text = "Obey a speed-limit sign\nuntil it is lifted." }             # id 1
-0x137 = { region = [9, 4, 215, 56], text = "Sign and signal together?\nObey the lower speed." }         # id 2
-0x138 = { region = [2, 13, 222, 37], text = "At a restrictive signal,\nslow down promptly." }           # id 3
-0x139 = { region = [2, 14, 222, 37], text = "Hold the limit until the\nnext signal is in sight.\nPatience!" } # id 4
-0x13a = { region = [2, 13, 222, 37], text = "You didn't slow down\nin time." }                          # id 5
-0x13b = { region = [2, 23, 222, 17], text = "Don't accelerate yet." }                                   # id 6
-0x13c = { region = [2, 14, 222, 36], text = "Don't use the\nemergency brake." }                         # id 7
-0x13d = { region = [9, 4, 215, 56], text = "A repeater relays the main\nsignal where it can't\nbe seen directly." } # id 8
+0x135 = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "The door lamp lights up\nonce the doors close." }            # id 0
+0x136 = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "Obey a speed-limit sign\nuntil it is lifted." }             # id 1
+0x137 = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "Sign and signal together?\nObey the lower speed." }         # id 2
+0x138 = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "At a restrictive signal,\nslow down promptly." }           # id 3
+0x139 = { region = [7, 5, 217, 54], backdrop = "solid", shared_group = "navigator.hints3", text = "Hold the limit until the\nnext signal is in sight.\nPatience!" } # id 4
+0x13a = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "You didn't slow down\nin time." }                          # id 5
+0x13b = { region = [4, 9, 220, 46], backdrop = "solid", shared_group = "navigator.hints", text = "Don't accelerate yet." }                                   # id 6
+0x13c = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "Don't use the\nemergency brake." }                         # id 7
+0x13d = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints3", text = "A repeater relays the main\nsignal where it can't\nbe seen directly." } # id 8
 # id 9 (0x13e) is a picture of the lamp: only its two labels.
 0x13e = { region = [142, 31, 76, 19], text = "door lamp" }   # 知らせ灯 arrow label (灯 reaches row 49, measured); the tiny 車内信号 lamp label stays (text fills its band)
-0x13f = { region = [11, 3, 213, 56], text = "Handling error:\nbrake and power\nare both on." }          # id 0xa
-0x140 = { region = [2, 23, 222, 18], text = "The horn is the\nfoot pedal." }                            # id 0xb
-0x141 = { region = [11, 5, 213, 56], text = "A blinking limit sign is\nadvance notice.\nSlow down now." } # id 0xc
-0x142 = { region = [9, 4, 215, 55], text = "The limit applies from\nhere (blinking ends)\nuntil it is lifted." } # id 0xd
-0x143 = { region = [9, 5, 215, 55], text = "The limit is lifted,\nbut keep to the signal's\n70 km/h." }  # id 0xe
-0x144 = { region = [2, 20, 222, 21], text = "You coupled too gently." }                                 # id 0xf
-0x145 = { region = [5, 6, 219, 53], text = "ATC section: enjoy\nthe high-speed run!\nIt's a bonus!" } # id 0x10
-0x146 = { region = [4, 11, 220, 44], text = "Keep to the timetable\neven at passing stations." }          # id 0x11
-0x147 = { region = [6, 11, 218, 47], text = "Stop in a dead section\nand we can't move.\nHmph!" }         # id 0x12
-0x148 = { region = [2, 22, 222, 20], text = "Please depart." }                                          # id 0x13
-0x149 = { region = [2, 20, 222, 21], text = "Start braking." }                                          # id 0x14
-0x14a = { region = [4, 9, 220, 43], text = "Target speed:\n90 km/h." }                                 # id 0x15
-0x14b = { region = [5, 8, 219, 43], text = "Target speed:\n100 km/h." }                                # id 0x16
-0x14c = { region = [4, 9, 220, 43], text = "Target speed:\n110 km/h." }                                # id 0x17
-0x14d = { region = [4, 10, 220, 43], text = "Target speed:\n110–120 km/h." }                            # id 0x18
-0x14e = { region = [4, 10, 220, 43], text = "Keep the timetable even\nwhen passing stations." }        # id 0x19
-0x14f = { region = [5, 9, 219, 47], text = "Stop at the mark,\nthen couple up." }                      # id 0x1a
-0x150 = { region = [4, 11, 220, 44], text = "Follow the ATC speed and\nhead for Shin-Hanamaki." }      # id 0x1b
-0x151 = { region = [4, 9, 220, 43], text = "Target speed:\n120 km/h." }                                # id 0x1c
-0x152 = { region = [2, 18, 222, 26], text = "We pass the\nnext station!" }                              # id 0x1d
-0x153 = { region = [2, 18, 222, 27], text = "We stop at the\nnext station!" }                           # id 0x1e
-0x154 = { region = [4, 9, 220, 43], text = "Target speed:\n80 km/h." }                                 # id 0x1f
-0x155 = { region = [4, 11, 220, 44], text = "Running a little late.\nSpeed up a bit." }                 # id 0x20
-0x156 = { region = [4, 10, 220, 45], text = "Running a little early.\nEase off a bit." }                # id 0x21
-0x508 = { region = [2, 21, 222, 20], text = "The horn is the\nSpace key." }                             # id 0xb, keyboard
-0x509 = { region = [2, 17, 222, 30], text = "The horn is the\nB button." }                              # id 0xb, gamepad
+0x13f = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints3", text = "Handling error:\nbrake and power\nare both on." }          # id 0xa
+0x140 = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "The horn is the\nfoot pedal." }                            # id 0xb
+0x141 = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints3", text = "A blinking limit sign is\nadvance notice.\nSlow down now." } # id 0xc
+0x142 = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints3", text = "The limit applies from\nhere (blinking ends)\nuntil it is lifted." } # id 0xd
+0x143 = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints3", text = "The limit is lifted,\nbut keep to the signal's\n70 km/h." }  # id 0xe
+0x144 = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "You coupled too gently." }                                 # id 0xf
+0x145 = { region = [5, 6, 219, 53], backdrop = "solid", shared_group = "navigator.hints3", text = "ATC section: enjoy\nthe high-speed run!\nIt's a bonus!" } # id 0x10
+0x146 = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "Keep to the timetable\neven at passing stations." }          # id 0x11
+0x147 = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints3", text = "Stop in a dead section\nand we can't move.\nHmph!" }         # id 0x12
+0x148 = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "Please depart." }                                          # id 0x13
+0x149 = { region = [11, 3, 213, 58], backdrop = "solid", shared_group = "navigator.hints", text = "Start braking." }                                          # id 0x14
+0x14a = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "Target speed:\n90 km/h." }                                 # id 0x15
+0x14b = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "Target speed:\n100 km/h." }                                # id 0x16
+0x14c = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "Target speed:\n110 km/h." }                                # id 0x17
+0x14d = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "Target speed:\n110–120 km/h." }                            # id 0x18
+0x14e = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "Keep the timetable even\nwhen passing stations." }        # id 0x19
+0x14f = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "Stop at the mark,\nthen couple up." }                      # id 0x1a
+0x150 = { region = [5, 7, 219, 50], backdrop = "solid", shared_group = "navigator.hints", text = "Follow the ATC speed and\nhead for Shin-Hanamaki." }      # id 0x1b
+0x151 = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "Target speed:\n120 km/h." }                                # id 0x1c
+0x152 = { region = [9, 4, 215, 56], backdrop = "solid", shared_group = "navigator.hints", text = "We pass the\nnext station!" }                              # id 0x1d
+0x153 = { region = [9, 4, 215, 56], backdrop = "solid", shared_group = "navigator.hints", text = "We stop at the\nnext station!" }                           # id 0x1e
+0x154 = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "Target speed:\n80 km/h." }                                 # id 0x1f
+0x155 = { region = [5, 7, 219, 50], backdrop = "solid", shared_group = "navigator.hints", text = "Running a little late.\nSpeed up a bit." }                 # id 0x20
+0x156 = { region = [6, 6, 218, 52], backdrop = "solid", shared_group = "navigator.hints", text = "Running a little early.\nEase off a bit." }                # id 0x21
+0x508 = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "The horn is the\nSpace key." }                             # id 0xb, keyboard
+0x509 = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "The horn is the\nB button." }                              # id 0xb, gamepad
 
 # ---------------------------------------------------------------------------------------------
 # Signals (hud.md §3.9), 96×144: the caption under the lamps only. Aspect names follow JR
