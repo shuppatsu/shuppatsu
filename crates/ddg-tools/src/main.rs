@@ -9,7 +9,6 @@ mod pe;
 mod sound;
 mod trace;
 mod upscale;
-mod xbrz;
 
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;

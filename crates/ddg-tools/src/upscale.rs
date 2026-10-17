@@ -15,10 +15,10 @@
 //!    keep their dilated colour with alpha 0 (smooth filtering blends towards it, not black).
 
 use crate::export::GameDirs;
-use crate::xbrz;
 use anyhow::{Context, Result, bail};
 use ddg_formats::tex::{TexFile, TexRect};
 use ddg_formats::texpack::{RgbaImage, encode_qoi, page_path};
+use ddg_render::sprites::xbrz;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;

@@ -514,6 +514,7 @@ dependencies = [
  "ddg-audio",
  "ddg-engine",
  "ddg-formats",
+ "ddg-render",
  "encoding_rs",
  "image",
  "pelite",

@@ -13,6 +13,7 @@ workspace = true
 ddg-formats.workspace = true
 ddg-engine.workspace = true
 ddg-audio.workspace = true
+ddg-render.workspace = true
 anyhow.workspace = true
 encoding_rs.workspace = true
 pelite.workspace = true

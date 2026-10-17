@@ -14,12 +14,12 @@
 
 use crate::export::GameDirs;
 use crate::upscale::{self, Method, Options, Tile, fill_keyed, scale_mask};
-use crate::xbrz;
 use anyhow::{Context, Result, bail};
 use ddg_formats::cab_hud::CabTables;
 use ddg_formats::cg::{self, CgFile, Palette, TILE_SIZE, Tilemap};
 use ddg_formats::exe::Exe;
 use ddg_formats::hud::HudTables;
+use ddg_render::sprites::xbrz;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 

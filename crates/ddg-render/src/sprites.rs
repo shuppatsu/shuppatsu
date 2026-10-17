@@ -10,6 +10,7 @@ use paper::{PaperCache, PaperFill};
 use std::sync::{Arc, Mutex};
 
 mod paper;
+pub mod xbrz;
 
 /// The HUD design size: native pixels of resolution mode 1 (hud.md §1.1).
 pub const CANVAS_W: usize = 640;
