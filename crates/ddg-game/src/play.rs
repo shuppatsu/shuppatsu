@@ -69,16 +69,8 @@ pub struct PlayOptions {
     pub control_mode: usize,
     pub pad: PadOptions,
     pub size: (u32, u32),
-    pub uncapped: bool,
-    pub square_pixels: bool,
-    pub original_visibility: bool,
-    pub stable_track_variants: bool,
-    pub texture_filtering: bool,
-    pub fog: bool,
-    /// Enhancement `wide_weather`: drops and snow over the whole visible width.
-    pub wide_weather: bool,
-    /// Enhancement `far_traffic`: AI trains drawn to the far plane, not only 150 m.
-    pub far_traffic: bool,
+    /// The port's switches (docs/settings.md).
+    pub settings: crate::settings::Settings,
     pub mute: bool,
     /// Scripted inputs: `tick notch brake` lines (the oracle's format, drive ticks), held from
     /// each tick on, and `key <tick>[-<last>] <enter|esc|space|up|down|left|right>` lines: the
@@ -171,7 +163,8 @@ pub fn run(opts: PlayOptions) -> Result<()> {
     } else {
         crate::save::default_path()
     };
-    let save = Save::open(&exe, save_path)?;
+    let mut save = Save::open(&exe, save_path)?;
+    save.save_on_change = opts.settings.save_on_change;
     if let Some(p) = save.path() {
         eprintln!("save: {}", p.display());
     }
@@ -277,17 +270,25 @@ impl Play {
             cab.hud.use_horizontal_plates(&bank, &names);
         }
         // Enhancement `landmark_names`: with a translation drawn, the name under the kanji.
-        if bank.has_label_font() {
+        if opts.settings.landmark_names && bank.has_label_font() {
             let names = crate::locale::landmark_names(&opts.locale)?;
             if !names.is_empty() {
                 cab.use_landmark_names(&bank, &names);
             }
         }
-        // Enhancement `one_line_captions` (docs/localisation.md): with a translation drawn.
-        if bank.has_label_font()
+        // Enhancements `one_line_captions` and `board_names` (docs/localisation.md): with a
+        // translation drawn.
+        let s = opts.settings;
+        if (s.one_line_captions || s.board_names)
+            && bank.has_label_font()
             && let Some(p) = crate::locale::caption_phrases(&opts.locale)?
         {
-            cab.use_one_line_captions(&bank, &p);
+            if s.one_line_captions {
+                cab.use_one_line_captions(&bank, &p);
+            }
+            if s.board_names {
+                cab.use_board_names(&bank, &p.tbl_texts);
+            }
         }
         cab.create(&mut layer);
         let screen_tables = ScreenTables::read(&exe)?;
@@ -346,7 +347,7 @@ impl Play {
             script,
             save,
             meter_m: 0.0,
-            weather: crate::weather::Weather::new(&exe, opts.stage, opts.wide_weather)?,
+            weather: crate::weather::Weather::new(&exe, opts.stage, opts.settings.wide_weather)?,
             needle: Default::default(),
             result_view: None,
             world: WorldView::Cab,
@@ -430,9 +431,9 @@ impl Play {
             return self.custom_shot(out);
         }
         let (texture_filtering, fog, square) = (
-            self.opts.texture_filtering,
-            self.opts.fog,
-            self.opts.square_pixels,
+            self.opts.settings.texture_filtering,
+            self.opts.settings.fog,
+            self.opts.settings.square_pixels,
         );
         let (w, h) = self.opts.size;
         let ui_rect = ddg_render::overlay::design_rect(ddg_render::overlay::present_rect(
@@ -532,14 +533,14 @@ fn wide_hud(opts: &PlayOptions) -> bool {
 }
 
 fn visibility(opts: &PlayOptions) -> Visibility {
-    if opts.original_visibility {
+    if !opts.settings.wide_visibility {
         return Visibility::Original;
     }
     let mut p = ddg_render::Projection {
         fov_tenths: (DRIVING_FOV_Y_DEG * 10.0) as u16,
         ..Default::default()
     };
-    if opts.square_pixels {
+    if opts.settings.square_pixels {
         p.stretch = 1.0;
     }
     let band_aspect = opts.size.0 as f32 / (opts.size.1 as f32 * (1.0 - HUD_BAND_TOP));
@@ -556,8 +557,9 @@ fn load_scene(
 ) -> Result<RouteScene> {
     let t = Instant::now();
     let mut scene = RouteScene::load(data, com, visibility)?;
-    scene.stable_track_variants = opts.stable_track_variants;
+    scene.stable_track_variants = opts.settings.stable_track_variants;
     scene.traffic_reach = opts
+        .settings
         .far_traffic
         .then_some(f64::from(ddg_render::camera::FAR));
     crate::traffic::load_stage_trains(&mut scene, data, opts.stage)?;
@@ -870,6 +872,7 @@ impl Play {
             pro,
             power: self.controls.power(),
             rankings: &self.save.rankings,
+            save_timed_out: self.opts.settings.save_timed_out_names,
         };
         self.flow.start_ranking(Some(&req), sfx);
     }
@@ -1125,23 +1128,24 @@ impl Play {
         }
         // Interpolate the track distance between the last two ticks (along the track, so the
         // camera follows curves), then evaluate the original's cab camera there. Frozen while
-        // paused.
+        // paused. Setting `interpolate` off: every frame shows the last tick (alpha 1).
         let (prev, cur) = (units(self.drive.prev_pos()), units(self.drive.pos()));
-        let alpha = self.accumulator.as_secs_f32() / TICK.as_secs_f32();
-        let pos = if self.interpolate && !self.flow.paused() {
+        let alpha = if self.opts.settings.interpolate {
+            self.accumulator.as_secs_f32() / TICK.as_secs_f32()
+        } else {
+            1.0
+        };
+        let smooth = self.opts.settings.interpolate && self.interpolate && !self.flow.paused();
+        let pos = if smooth {
             track_pos(prev + (cur - prev) * alpha)
         } else {
             self.drive.pos()
         };
-        if self.interpolate && !self.flow.paused() {
+        if smooth {
             self.scene.traffic = self.drive.traffic_poses(alpha);
         }
         // The wiper, snow scroll and needle follow the camera (1 = the last tick).
-        let fx_alpha = if self.interpolate && !self.flow.paused() {
-            alpha
-        } else {
-            1.0
-        };
+        let fx_alpha = if smooth { alpha } else { 1.0 };
         if self.world == WorldView::Cab && self.needle.frame(fx_alpha, &mut self.layer) {
             self.layer.compose(&self.bank, &mut self.canvas);
             self.canvas_dirty = true;
@@ -1176,7 +1180,7 @@ impl Play {
                 win,
                 v.fov_tenths,
                 (width, height),
-                self.opts.square_pixels,
+                self.opts.settings.square_pixels,
             ))
         });
         gpu.renderer.band_top = if custom.as_ref().is_some_and(|v| v.full_screen) {
@@ -1202,7 +1206,7 @@ impl Play {
                 width as f32 / height.max(1) as f32,
             );
             Self::ending_camera(self.ending.as_ref(), &mut camera);
-            gpu.renderer.fog.enabled = self.opts.fog && self.weather.fog();
+            gpu.renderer.fog.enabled = self.opts.settings.fog && self.weather.fog();
         } else {
             // The drive's task list (scenery, traffic, weather, fog) is gone at a station result.
             match &self.result_view {
@@ -1233,7 +1237,7 @@ impl Play {
                     self.layer.canvas_size(),
                     self.opts.locale.ui_scaling,
                 )),
-                self.opts.square_pixels,
+                self.opts.settings.square_pixels,
                 alpha,
             ),
             _ => match &window {
@@ -1289,7 +1293,7 @@ impl Play {
             event_loop,
             "ddg-game play",
             self.opts.size,
-            self.opts.uncapped,
+            !self.opts.settings.vsync,
             self.opts.locale.ui_scale,
         )?);
         self.configure_gpu();
@@ -1304,10 +1308,10 @@ impl Play {
         self.last_frame = Instant::now();
         self.accumulator = Duration::ZERO;
         let r = &mut gpu.renderer;
-        r.texture_filtering = self.opts.texture_filtering;
-        r.fog.enabled = self.opts.fog;
+        r.texture_filtering = self.opts.settings.texture_filtering;
+        r.fog.enabled = self.opts.settings.fog;
         r.projection.fov_tenths = (DRIVING_FOV_Y_DEG * 10.0) as u16;
-        r.projection.stretch = if self.opts.square_pixels {
+        r.projection.stretch = if self.opts.settings.square_pixels {
             1.0
         } else {
             ORIGINAL_STRETCH

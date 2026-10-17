@@ -662,8 +662,8 @@ impl Play {
     /// Headless frame of the bonus game or the opening.
     pub(super) fn custom_shot(&self, out: &std::path::Path) -> Result<()> {
         let (w, h) = self.opts.size;
-        let filtering = self.opts.texture_filtering;
-        let square_pixels = self.opts.square_pixels;
+        let filtering = self.opts.settings.texture_filtering;
+        let square_pixels = self.opts.settings.square_pixels;
         crate::shot::render_to_ppm_with(
             (w, h),
             |device, queue, view, format| {

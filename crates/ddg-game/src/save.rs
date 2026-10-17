@@ -251,6 +251,9 @@ pub struct Save {
     pub rankings: [Table; TABLE_COUNT],
     /// Where [`Save::write`] puts it; `None` keeps it in memory (headless shots).
     path: Option<PathBuf>,
+    /// Setting `save_on_change` (default on): [`Save::persist`] writes the file at once; off,
+    /// only the exit write does, as the original.
+    pub save_on_change: bool,
 }
 
 impl Save {
@@ -260,6 +263,7 @@ impl Save {
             eeprom,
             rankings,
             path,
+            save_on_change: true,
         }
     }
 
@@ -299,8 +303,11 @@ impl Save {
 
     /// The port's write right after a change (decided port behaviour; the original only
     /// writes at exit). A failure is reported and play goes on; the exit write tries again.
-    /// Without a path (headless shots) nothing is written.
+    /// Without a path (headless shots), or with `save_on_change` off, nothing is written.
     pub fn persist(&self, what: &str) {
+        if !self.save_on_change {
+            return;
+        }
         if let Err(e) = self.write() {
             eprintln!("warning: saving after {what}: {e:#}");
         }
@@ -496,6 +503,34 @@ mod tests {
             .map(|e| e.unwrap().file_name())
             .collect();
         assert_eq!(names, ["eeprom.dat"]);
+        std::fs::remove_dir_all(&xdg).unwrap();
+    }
+
+    /// Setting `save_on_change` off: the original's single write at exit.
+    #[test]
+    fn without_save_on_change_only_the_exit_writes() {
+        use crate::front::options::{self, item};
+        if cfg!(windows) {
+            return;
+        }
+        let (xdg, path) = temp_xdg("exit-only");
+        let d = defaults();
+        let mut save = Save::new(d.clone(), Some(path.clone()));
+        save.save_on_change = false;
+        let mut rows = save.rankings[2];
+        rows[0].score = 4321;
+        save.finish_ranking(2, rows, true);
+        save.mark_clear(5, 2);
+        options::set(&mut save.eeprom, item::DIFFICULTY, 3);
+        save.persist("an options change");
+        save.persist("a calibration");
+        assert!(!path.exists(), "nothing before the exit");
+        // The exit write (0x434f50) has everything.
+        save.write().unwrap();
+        let back = on_disk(&path, &d);
+        assert_eq!(back.rankings[2][0].score, 4321);
+        assert_eq!(back.eeprom.clear_mark(5), 2);
+        assert_eq!(back.eeprom.difficulty(), 3);
         std::fs::remove_dir_all(&xdg).unwrap();
     }
 

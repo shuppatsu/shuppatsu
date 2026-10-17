@@ -73,15 +73,8 @@ const TBL_CURSOR: usize = 0x504;
 #[derive(Clone, Debug)]
 pub struct AppOptions {
     pub size: (u32, u32),
-    pub uncapped: bool,
-    pub square_pixels: bool,
-    pub original_visibility: bool,
-    pub stable_track_variants: bool,
-    pub texture_filtering: bool,
-    pub fog: bool,
-    /// Enhancements `wide_weather` and `far_traffic` (see `PlayOptions`).
-    pub wide_weather: bool,
-    pub far_traffic: bool,
+    /// The port's switches (docs/settings.md), passed on to every run.
+    pub settings: crate::settings::Settings,
     pub mute: bool,
     pub pad: PadOptions,
     /// Scripted keys, `key <tick>[-<last>] <name>` (app ticks, the run's included).
@@ -164,11 +157,17 @@ fn map_size(bank: &ddg_render::sprites::SpriteBank, tbl: usize) -> (i16, i16) {
     })
 }
 
-/// The exit dialog's いいえ (or cancel / pause): decided port behaviour (menus.md §14), the
-/// title menu again after the same three ticks, its cursor on ゲーム終了 (the menu BGM restarts
-/// with it). The original goes to attract at the title picture instead (0x42a1c0 case 0).
-fn exit_declined() -> (i32, Next) {
-    (TO_ATTRACT_TICKS, Next::Title { cursor: EXIT_ITEM })
+/// The exit dialog's いいえ (or cancel / pause). With setting `exit_no_to_menu` (decided port
+/// behaviour, menus.md §14.1) the title menu again after the same three ticks, its cursor on
+/// ゲーム終了 (the menu BGM restarts with it); off, the original's: attract at the title picture
+/// (0x42a1c0 case 0).
+fn exit_declined(to_menu: bool) -> (i32, Next) {
+    let next = if to_menu {
+        Next::Title { cursor: EXIT_ITEM }
+    } else {
+        Next::Attract { skip_opening: true }
+    };
+    (TO_ATTRACT_TICKS, next)
 }
 
 fn joystick_dat(opts: &PadOptions) -> Option<PathBuf> {
@@ -189,6 +188,7 @@ impl App {
             crate::save::default_path()
         };
         let mut save = Save::open(&exe, save_path)?;
+        save.save_on_change = opts.settings.save_on_change;
         if let Some(p) = save.path() {
             eprintln!("save: {}", p.display());
         }
@@ -403,14 +403,7 @@ impl App {
             control_mode: usize::from(o.control_mode),
             pad: self.opts.pad.clone(),
             size: self.opts.size,
-            uncapped: self.opts.uncapped,
-            square_pixels: self.opts.square_pixels,
-            original_visibility: self.opts.original_visibility,
-            stable_track_variants: self.opts.stable_track_variants,
-            texture_filtering: self.opts.texture_filtering,
-            fog: self.opts.fog,
-            wide_weather: self.opts.wide_weather,
-            far_traffic: self.opts.far_traffic,
+            settings: self.opts.settings,
             mute: self.opts.mute,
             inputs: None,
             shot: None,
@@ -622,7 +615,7 @@ impl App {
                             s.set_paused(false);
                         }
                         crate::front::clear_all(&mut r.layer);
-                        let (ticks, then) = exit_declined();
+                        let (ticks, then) = exit_declined(self.opts.settings.exit_no_to_menu);
                         Screen::Wait(ticks, then)
                     }
                 }
@@ -878,7 +871,7 @@ impl App {
             &mut r.bank,
             &mut r.layer,
             window,
-            true,
+            self.opts.settings.wide_menus,
         )?;
         let (w, h) = r.layer.canvas_size();
         if self.canvas.len() != w * h * 4 {
@@ -981,7 +974,7 @@ impl ApplicationHandler for App {
             event_loop,
             "ddg-game",
             self.opts.size,
-            self.opts.uncapped,
+            !self.opts.settings.vsync,
             self.opts.locale.ui_scale,
         ) {
             Ok(gpu) => {
@@ -1091,7 +1084,7 @@ mod tests {
         }
         assert_eq!(declined, Some(false));
 
-        let (ticks, then) = exit_declined();
+        let (ticks, then) = exit_declined(crate::settings::Settings::default().exit_no_to_menu);
         assert_eq!(ticks, TO_ATTRACT_TICKS);
         let Next::Title { cursor } = then else {
             panic!("{then:?}");
@@ -1104,5 +1097,17 @@ mod tests {
             choice = choice.or(m.tick(&input, &env, &t, &mut l, &mut sfx));
         }
         assert_eq!(choice, Some(TitleChoice::Exit));
+    }
+
+    /// Setting `exit_no_to_menu` off: the original's いいえ, attract from the title picture
+    /// after the same three ticks (0x42a1c0 case 0), like the title menu's cancel.
+    #[test]
+    fn exit_no_without_the_setting_goes_to_attract() {
+        let (ticks, then) = exit_declined(false);
+        assert_eq!(ticks, TO_ATTRACT_TICKS);
+        assert!(
+            matches!(then, Next::Attract { skip_opening: true }),
+            "{then:?}"
+        );
     }
 }

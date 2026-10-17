@@ -358,6 +358,23 @@ impl Wiper {
     }
 }
 
+/// The drop tiles: 0 is the original's area; `wide` (setting `wide_weather`) adds
+/// [`WIDE_TILES`] on each side.
+fn drop_tiles(wide: bool) -> impl Iterator<Item = i32> {
+    let side = if wide { WIDE_TILES } else { 0 };
+    std::iter::once(0).chain((1..=side).flat_map(|k| [-k, k]))
+}
+
+/// The x range (virtual units) the drops and the snow band are drawn over: the visible
+/// width with `wide` (setting `wide_weather`), else the original's 4:3 area 0..496.
+fn shown_range(wide: bool, map: ScreenMap) -> (f32, f32) {
+    if wide {
+        map.x_range()
+    } else {
+        (0.0, TILE_W as f32)
+    }
+}
+
 /// A drop task (0x424f20 / 0x425000): counter +0x30, quad origin, visibility +0x5c.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Drop {
@@ -529,8 +546,7 @@ impl Weather {
 
     /// The drop tiles: the original's area first, then `wide_weather`'s side tiles.
     fn tiles(&self) -> impl Iterator<Item = i32> + use<> {
-        let side = if self.wide { WIDE_TILES } else { 0 };
-        std::iter::once(0).chain((1..=side).flat_map(|k| [-k, k]))
+        drop_tiles(self.wide)
     }
 
     /// 0x424f20: a drop at a random place of `tile`; its visibility is fixed at creation. Side
@@ -669,11 +685,7 @@ impl Weather {
         let map = ScreenMap { aspect };
         let ndc = |c: [[i32; 2]; 4]| c.map(|[x, y]| map.ndc(x as f32, y as f32));
         // `wide_weather` draws what overlaps the visible width; the original only its area.
-        let (left, right) = if self.wide {
-            map.x_range()
-        } else {
-            (0.0, TILE_W as f32)
-        };
+        let (left, right) = shown_range(self.wide, map);
         let shown = |x0: i32, x1: i32| x1 as f32 > left + 0.5 && (x0 as f32) < right - 0.5;
         // Draw order of list 5: wiper, then the drops, then (snow types) the snow task.
         if let Some(w) = &o.wiper {
@@ -861,6 +873,29 @@ mod tests {
         assert_eq!(snow_offsets(80, 88, 1.0), words(88));
         // n = 84: −252 ≡ 4, 86, 46.
         assert_eq!(snow_offsets(80, 88, 0.5), [4.0, 86.0, 46.0]);
+    }
+
+    /// Setting `wide_weather` off gives the original's 4:3 weather at any aspect: one drop
+    /// tile (seed 1's) and the 496-unit area; on (the default), side tiles over the visible
+    /// width, the same area at 4:3.
+    #[test]
+    fn wide_weather_off_is_the_original_area() {
+        let wide = crate::settings::Settings::default().wide_weather;
+        assert!(wide);
+        let map = ScreenMap { aspect: 21.0 / 9.0 };
+        assert_eq!(drop_tiles(false).collect::<Vec<_>>(), [0]);
+        assert_eq!(shown_range(false, map), (0.0, TILE_W as f32));
+        assert_eq!(drop_tiles(wide).count(), 1 + 2 * WIDE_TILES as usize);
+        let (l, r) = shown_range(wide, map);
+        assert!(l < -100.0 && r > TILE_W as f32 + 100.0, "{l} {r}");
+        // At 4:3 (the 3D band of 640×480: 640 × 417.6) the wide range is the original's area.
+        let (l, r) = shown_range(
+            true,
+            ScreenMap {
+                aspect: 640.0 / 417.6,
+            },
+        );
+        assert!(l.abs() < 1.0 && (r - TILE_W as f32).abs() < 1.0, "{l} {r}");
     }
 
     #[test]

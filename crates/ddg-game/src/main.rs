@@ -25,6 +25,7 @@ mod result_view;
 mod save;
 mod scene;
 mod screens;
+mod settings;
 mod shot;
 mod slots;
 mod smooth;
@@ -61,17 +62,8 @@ usage: ddg-game [options] [--joystick-dat <file>] [--combo <file>] [--mute]
 
 options:
   --speed <km/h>           fly-through speed (default 80)
-  --uncapped               present without vsync
-  --square-pixels          disable the original's 7.9 % horizontal stretch
-  --original-visibility    the original 4:3 visibility lists, even in a wider window
-  --stable-track-variants  enhancement: side-track models don't switch every point (no flicker)
-  --texture-filtering      enhancement: mipmaps + trilinear/anisotropic filtering (no shimmer)
   --gradient-variant <0|1> sky/ground gradient set (1 = the timed alternate set)
-  --fog                    linear fog: in play, the snow fog of DengoSetting's FOGENABLE (on by
-                           default; config key fog); in view, everywhere (off by default)
-  --no-fog                 play: no snow fog (as a fresh install of the original)
-  --original-weather       play: raindrops and snow only in the original 4:3 area
-  --original-traffic       play: AI trains drawn only up to 150 m ahead, as the original
+  --fog                    view: linear fog everywhere (off by default); elsewhere the switch
   --hud                    the driving HUD over the view (test values)
   --debug-title            live debug text in the window title (env DDG_DEBUG_TITLE=1)
   --size <WxH>             window/frame size (default 1280x800, 16:10)
@@ -93,9 +85,31 @@ options:
   --ui-scale <1..4>        fixed 2D canvas multiple (640x480 x n; env DDG_UI_SCALE); default:
                            follows the window height (smooth: ceil(h/480), integer: floor(h/480))
 
+switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml key <name> with
+  _ for -, env DDG_<NAME> = 1/0. Off is the original's behaviour. [default]
+  --wide-visibility        scenery for the window's wider view [on] (--original-visibility)
+  --square-pixels          no 7.9 % horizontal stretch of the 3D view [off]
+  --stable-track-variants  side-track models don't switch every point (no flicker) [off]
+  --texture-filtering      mipmaps + trilinear/anisotropic filtering (no shimmer) [off]
+  --fog                    the snow fog of DengoSetting's FOGENABLE [on]
+  --wide-weather           raindrops and snow over the whole width [on] (--original-weather)
+  --far-traffic            AI trains drawn to the far plane, not 150 m [on] (--original-traffic)
+  --interpolate            camera, trains, wiper, snow, needle between ticks [on]
+  --vsync                  present with vsync [on] (--uncapped)
+  --wide-menus             menu backdrops to the edges of a wide window [on]
+  --one-line-captions      translation: captions and banners as one line [on]
+  --landmark-names         translation: names under the landmark plates [on]
+  --board-names            translation: romaji under the route board's kanji [on]
+  --save-on-change         eeprom.dat written after every change, not only at exit [on]
+  --save-timed-out-names   a timed-out name entry is saved [on]
+  --keyboard-with-controller
+                           keyboard horn and ATS confirm in controller modes [on]
+  --exit-no-to-menu        exit dialog No returns to the title menu, not attract [on]
+
 settings file: $XDG_CONFIG_HOME/ddg/config.toml (~/.config/ddg; %APPDATA%\\ddg on Windows),
-  keys lang, hud_layout, ui_scaling, ui_scale, font, display_font, fog. Flags override the
-  environment, which overrides the file. Headless --shot runs never read it.
+  keys lang, hud_layout, ui_scaling, ui_scale, font, display_font and the switches above
+  (docs/settings.md, docs/localisation.md). Flags override the environment, which overrides
+  the file. Headless --shot runs never read it.
 
 play keys (mode 0): Down/Up power +/-, Right/Left brake +/- (one more press past B8 = EB),
   Space horn, Enter ATS confirm / panel / menu confirm, Esc pause / cancel, Up/Down menu cursor
@@ -116,11 +130,8 @@ struct Options {
     out: Option<std::path::PathBuf>,
     route: String,
     speed_kmh: f32,
-    uncapped: bool,
-    square_pixels: bool,
-    original_visibility: bool,
-    stable_track_variants: bool,
-    texture_filtering: bool,
+    settings: settings::Settings,
+    /// `view`: linear fog everywhere (`--fog`; the `fog` setting is the snow fog of play).
     fog: bool,
     hud: bool,
     gradient_variant: usize,
@@ -131,7 +142,7 @@ struct Options {
 fn parse_play_args() -> Result<play::PlayOptions> {
     let mut args: Vec<String> = std::env::args().skip(2).collect();
     let headless = args.iter().any(|a| a == "--shot");
-    let locale = config::locale(&mut args, headless)?;
+    let (locale, settings) = config::load(&mut args, headless)?;
     identity::take_debug_title_flag(&mut args);
     let mut opts = play::PlayOptions {
         stage: args
@@ -142,16 +153,12 @@ fn parse_play_args() -> Result<play::PlayOptions> {
         difficulty: 0,
         station: 0,
         control_mode: 0,
-        pad: gamepad::PadOptions::default(),
+        pad: gamepad::PadOptions {
+            keyboard_with_controller: settings.keyboard_with_controller,
+            ..Default::default()
+        },
         size: (1280, 800),
-        uncapped: false,
-        square_pixels: false,
-        original_visibility: false,
-        stable_track_variants: false,
-        texture_filtering: false,
-        fog: locale.fog,
-        wide_weather: true,
-        far_traffic: true,
+        settings,
         mute: false,
         inputs: None,
         shot: None,
@@ -187,15 +194,6 @@ fn parse_play_args() -> Result<play::PlayOptions> {
                 let (w, h) = s.split_once('x').context("--size needs WxH")?;
                 opts.size = (w.parse()?, h.parse()?);
             }
-            "--uncapped" => opts.uncapped = true,
-            "--square-pixels" => opts.square_pixels = true,
-            "--original-visibility" => opts.original_visibility = true,
-            "--stable-track-variants" => opts.stable_track_variants = true,
-            "--texture-filtering" => opts.texture_filtering = true,
-            "--fog" => opts.fog = true,
-            "--no-fog" => opts.fog = false,
-            "--original-weather" => opts.wide_weather = false,
-            "--original-traffic" => opts.far_traffic = false,
             other => bail!("unknown option {other}\n\n{USAGE}"),
         }
     }
@@ -208,7 +206,7 @@ fn parse_play_args() -> Result<play::PlayOptions> {
 fn parse_app_args() -> Result<app::AppOptions> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     let headless = args.iter().any(|a| a == "--shot");
-    let locale = config::locale(&mut args, headless)?;
+    let (locale, settings) = config::load(&mut args, headless)?;
     identity::take_debug_title_flag(&mut args);
     // Hidden: the first-run language screen even when a language is set (headless checks).
     let forced = args.iter().any(|a| a == "--first-run");
@@ -216,16 +214,12 @@ fn parse_app_args() -> Result<app::AppOptions> {
     let mut opts = app::AppOptions {
         first_run: config::asks_language(&locale, headless, forced),
         size: (1280, 800),
-        uncapped: false,
-        square_pixels: false,
-        original_visibility: false,
-        stable_track_variants: false,
-        texture_filtering: false,
-        fog: locale.fog,
-        wide_weather: true,
-        far_traffic: true,
+        settings,
         mute: false,
-        pad: gamepad::PadOptions::default(),
+        pad: gamepad::PadOptions {
+            keyboard_with_controller: settings.keyboard_with_controller,
+            ..Default::default()
+        },
         inputs: None,
         shot: None,
         locale,
@@ -252,15 +246,6 @@ fn parse_app_args() -> Result<app::AppOptions> {
                 let (w, h) = s.split_once('x').context("--size needs WxH")?;
                 opts.size = (w.parse()?, h.parse()?);
             }
-            "--uncapped" => opts.uncapped = true,
-            "--square-pixels" => opts.square_pixels = true,
-            "--original-visibility" => opts.original_visibility = true,
-            "--stable-track-variants" => opts.stable_track_variants = true,
-            "--texture-filtering" => opts.texture_filtering = true,
-            "--fog" => opts.fog = true,
-            "--no-fog" => opts.fog = false,
-            "--original-weather" => opts.wide_weather = false,
-            "--original-traffic" => opts.far_traffic = false,
             other => bail!("unknown option {other}\n\n{USAGE}"),
         }
     }
@@ -273,7 +258,9 @@ fn parse_args() -> Result<Options> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     // `shot` renders headless: no config file.
     let headless = args.first().map(String::as_str) == Some("shot");
-    let locale = config::locale(&mut args, headless)?;
+    // In `view`, `--fog` is fog everywhere, not the snow fog setting (which it also sets).
+    let view_fog = args.iter().any(|a| a == "--fog");
+    let (locale, settings) = config::load(&mut args, headless)?;
     identity::take_debug_title_flag(&mut args);
     let shot = match args.first().map(String::as_str) {
         Some("view") => false,
@@ -286,12 +273,8 @@ fn parse_args() -> Result<Options> {
         out: None,
         route: args.get(1).context(USAGE)?.clone(),
         speed_kmh: 80.0,
-        uncapped: false,
-        square_pixels: false,
-        original_visibility: false,
-        stable_track_variants: false,
-        texture_filtering: false,
-        fog: false,
+        settings,
+        fog: view_fog,
         hud: false,
         gradient_variant: 0,
         size: (1280, 800),
@@ -301,14 +284,8 @@ fn parse_args() -> Result<Options> {
     while let Some(a) = rest.next() {
         match a.as_str() {
             "--speed" => opts.speed_kmh = rest.next().context("--speed needs km/h")?.parse()?,
-            "--uncapped" => opts.uncapped = true,
             "--at" => opts.at_m = rest.next().context("--at needs metres")?.parse()?,
             "--out" => opts.out = Some(rest.next().context("--out needs a path")?.into()),
-            "--square-pixels" => opts.square_pixels = true,
-            "--original-visibility" => opts.original_visibility = true,
-            "--stable-track-variants" => opts.stable_track_variants = true,
-            "--texture-filtering" => opts.texture_filtering = true,
-            "--fog" => opts.fog = true,
             "--hud" => opts.hud = true,
             "--gradient-variant" => {
                 opts.gradient_variant = rest
@@ -340,12 +317,12 @@ fn track_pos(units: f32) -> TrackPos {
 }
 
 fn configure_renderer(renderer: &mut Renderer, opts: &Options) {
-    renderer.texture_filtering = opts.texture_filtering;
+    renderer.texture_filtering = opts.settings.texture_filtering;
     // The original reads FOGENABLE from the registry; with no key (fresh install, never run
     // DengoSetting) it parses as 0, so fog is off.
     renderer.fog.enabled = opts.fog;
     renderer.projection.fov_tenths = (DRIVING_FOV_Y_DEG * 10.0) as u16;
-    renderer.projection.stretch = if opts.square_pixels {
+    renderer.projection.stretch = if opts.settings.square_pixels {
         1.0
     } else {
         ORIGINAL_STRETCH
@@ -493,7 +470,7 @@ impl App {
             event_loop,
             "ddg-game view",
             self.opts.size,
-            self.opts.uncapped,
+            !self.opts.settings.vsync,
             self.opts.locale.ui_scale,
         )?;
         configure_renderer(&mut gpu.renderer, &self.opts);
@@ -532,9 +509,13 @@ impl App {
             self.accumulator -= TICK;
             self.tick();
         }
-        // Interpolate the distance between the last two ticks, then evaluate the original's
-        // camera on the track at that distance.
-        let alpha = self.accumulator.as_secs_f32() / TICK.as_secs_f32();
+        // Interpolate the distance between the last two ticks (setting `interpolate`; off: the
+        // last tick), then evaluate the original's camera on the track at that distance.
+        let alpha = if self.opts.settings.interpolate {
+            self.accumulator.as_secs_f32() / TICK.as_secs_f32()
+        } else {
+            1.0
+        };
         let pos = track_pos(self.prev + (self.cur - self.prev) * alpha);
         let camera = self.scene.cab_camera(pos);
         let t = Instant::now();
@@ -696,14 +677,14 @@ fn main() -> Result<()> {
     let data = scene::GameData::from_env()?;
 
     // Visibility: the original lists, or widened for the wider of the window and 21:9.
-    let visibility = if opts.original_visibility {
+    let visibility = if !opts.settings.wide_visibility {
         Visibility::Original
     } else {
         let mut p = ddg_render::Projection {
             fov_tenths: (DRIVING_FOV_Y_DEG * 10.0) as u16,
             ..Default::default()
         };
-        if opts.square_pixels {
+        if opts.settings.square_pixels {
             p.stretch = 1.0;
         }
         let aspect = (opts.size.0 as f32 / opts.size.1 as f32).max(MIN_WIDE_ASPECT);
@@ -713,7 +694,7 @@ fn main() -> Result<()> {
     };
     let t = Instant::now();
     let mut scene = RouteScene::load(&data, &opts.route, visibility)?;
-    scene.stable_track_variants = opts.stable_track_variants;
+    scene.stable_track_variants = opts.settings.stable_track_variants;
     scene.gradient_variant = opts.gradient_variant;
     eprintln!(
         "{}: area {}, COM {}, eye height {:.3}, {} placements, visibility {:?}, loaded in {:.2?}",

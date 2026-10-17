@@ -3,9 +3,10 @@
 //! "Settings").
 //!
 //! `eeprom.dat` keeps the original game's options byte for byte; this file holds only what
-//! the port adds: the language, the fonts, the 2D layout and scaling, and the snow fog. Every
-//! key is optional, and a setting is taken from, in order of precedence: the command-line flag,
-//! the `DDG_*` environment variable, this file, the built-in default.
+//! the port adds: the language, the fonts, the 2D layout and scaling, and one on/off switch
+//! per enhancement ([`Settings`], docs/settings.md). Every key is optional, and a setting is
+//! taken from, in order of precedence: the command-line flag, the `DDG_*` environment
+//! variable, this file, the built-in default.
 //!
 //! ```toml
 //! lang = "en"               # en, or ja for the original art
@@ -14,7 +15,7 @@
 //! ui_scale = 2              # fixed 2D canvas multiple 1..=4 (default: follows the window)
 //! font = "/path/a.otf:/path/b.ttf"
 //! display_font = "/path/c.otf"
-//! fog = true              # the snow fog (false = as a fresh install of the original)
+//! fog = true                # and the other switches of docs/settings.md
 //! ```
 //!
 //! Unknown keys are ignored when read and kept when the game writes the file. A file that
@@ -23,6 +24,7 @@
 
 use crate::locale::{Catalogue, IDENTITY_LANG, LocaleConfig};
 use crate::presentation::HudLayout;
+use crate::settings::Settings;
 use anyhow::{Context, Result};
 use ddg_render::overlay::UiScaling;
 use serde::{Deserialize, Serialize};
@@ -32,7 +34,7 @@ pub const FILE_NAME: &str = "config.toml";
 
 /// The comment a new file starts with.
 const HEADER: &str = "\
-# Densha de GO! 2 port settings (docs/localisation.md, \"Settings\").
+# Densha de GO! 2 port settings (docs/settings.md).
 # Command-line flags and DDG_* environment variables override these.
 ";
 
@@ -58,10 +60,8 @@ pub struct PortConfig {
     /// Font list for display text (`--display-font`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_font: Option<PathBuf>,
-    /// The snow fog, default true (`--fog` / `--no-fog`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub fog: Option<bool>,
-    /// Keys this version does not know, kept as they are when the file is written.
+    /// The on/off switches ([`Settings::KEYS`], read by [`PortConfig::apply`]) and the keys
+    /// this version does not know, kept as they are when the file is written.
     #[serde(flatten)]
     pub other: toml::Table,
 }
@@ -93,8 +93,10 @@ impl PortConfig {
         })
     }
 
-    /// Sets the values of the file on `cfg`; a bad value is reported and skipped.
-    pub fn apply(&self, cfg: &mut LocaleConfig) {
+    /// Sets the values of the file on `cfg` and `settings`; a bad value is reported and
+    /// skipped.
+    pub fn apply(&self, cfg: &mut LocaleConfig, settings: &mut Settings) {
+        settings.apply_table(&self.other, FILE_NAME);
         let warn = |k: &str, want: &str| eprintln!("warning: {FILE_NAME}: {k} must be {want}");
         if let Some(l) = self.lang.as_deref().filter(|l| !l.is_empty()) {
             cfg.lang = l.to_owned();
@@ -128,9 +130,6 @@ impl PortConfig {
         if let Some(f) = &self.display_font {
             cfg.display_font = Some(f.clone());
         }
-        if let Some(f) = self.fog {
-            cfg.fog = f;
-        }
     }
 }
 
@@ -146,13 +145,16 @@ pub fn layered(
     file: Option<&PortConfig>,
     env: impl Fn(&str) -> Option<std::ffi::OsString>,
     args: &mut Vec<String>,
-) -> Result<LocaleConfig> {
+) -> Result<(LocaleConfig, Settings)> {
     let mut cfg = LocaleConfig::default();
+    let mut settings = Settings::default();
     if let Some(f) = file {
-        f.apply(&mut cfg);
+        f.apply(&mut cfg, &mut settings);
     }
-    cfg.apply_vars(env);
+    cfg.apply_vars(&env);
+    settings.apply_vars(&env);
     cfg.take_args(args)?;
+    settings.take_args(args);
     let from_file = file.and_then(|f| f.lang.as_deref());
     if from_file == Some(cfg.lang.as_str()) && !lang_known(&cfg) {
         eprintln!(
@@ -162,11 +164,11 @@ pub fn layered(
         cfg.lang = IDENTITY_LANG.to_owned();
         cfg.lang_chosen = false;
     }
-    Ok(cfg)
+    Ok((cfg, settings))
 }
 
 /// [`layered`] with the user's file (unless `headless`) and the process environment.
-pub fn locale(args: &mut Vec<String>, headless: bool) -> Result<LocaleConfig> {
+pub fn load(args: &mut Vec<String>, headless: bool) -> Result<(LocaleConfig, Settings)> {
     let file = if headless {
         None
     } else {
@@ -281,19 +283,19 @@ mod tests {
         )
         .unwrap();
         // Default.
-        let c = layered(None, env(&[]), &mut vec![]).unwrap();
+        let c = layered(None, env(&[]), &mut vec![]).unwrap().0;
         assert_eq!(c.lang, "ja");
         assert!(!c.lang_chosen);
         assert_eq!(c.hud_layout, HudLayout::Original);
         // File.
-        let c = layered(Some(&file), env(&[]), &mut vec![]).unwrap();
+        let c = layered(Some(&file), env(&[]), &mut vec![]).unwrap().0;
         assert_eq!((c.lang.as_str(), c.lang_chosen), ("en", true));
         assert_eq!(c.hud_layout, HudLayout::Enhanced);
         assert_eq!(c.ui_scaling, UiScaling::Integer);
         assert_eq!(c.ui_scale_fixed, Some(2));
         // Environment over the file.
         let e = env(&[("DDG_LANG", "ja"), ("DDG_HUD_LAYOUT", "original")]);
-        let c = layered(Some(&file), e, &mut vec![]).unwrap();
+        let c = layered(Some(&file), e, &mut vec![]).unwrap().0;
         assert_eq!(c.lang, "ja");
         assert_eq!(c.hud_layout, HudLayout::Original);
         assert_eq!(
@@ -304,31 +306,35 @@ mod tests {
         // Flags over both.
         let e = env(&[("DDG_LANG", "ja"), ("DDG_UI_SCALE", "3")]);
         let mut a = args(&["--lang", "en", "--ui-scale", "1", "x"]);
-        let c = layered(Some(&file), e, &mut a).unwrap();
+        let c = layered(Some(&file), e, &mut a).unwrap().0;
         assert_eq!(a, ["x"]);
         assert_eq!((c.lang.as_str(), c.ui_scale_fixed), ("en", Some(1)));
     }
 
     #[test]
     fn first_run_detection() {
-        let none = layered(None, env(&[]), &mut vec![]).unwrap();
+        let none = layered(None, env(&[]), &mut vec![]).unwrap().0;
         assert!(asks_language(&none, false, false));
         assert!(!asks_language(&none, true, false), "headless never asks");
         assert!(asks_language(&none, true, true), "unless forced");
         let ja = PortConfig::parse("lang = \"ja\"").unwrap();
-        let c = layered(Some(&ja), env(&[]), &mut vec![]).unwrap();
+        let c = layered(Some(&ja), env(&[]), &mut vec![]).unwrap().0;
         assert!(!asks_language(&c, false, false), "ja chosen is a choice");
-        let c = layered(None, env(&[("DDG_LANG", "en")]), &mut vec![]).unwrap();
+        let c = layered(None, env(&[("DDG_LANG", "en")]), &mut vec![])
+            .unwrap()
+            .0;
         assert!(!asks_language(&c, false, false));
-        let c = layered(None, env(&[]), &mut args(&["--lang", "ja"])).unwrap();
+        let c = layered(None, env(&[]), &mut args(&["--lang", "ja"]))
+            .unwrap()
+            .0;
         assert!(!asks_language(&c, false, false));
         // Only other settings in the file: still asks.
         let other = PortConfig::parse("hud_layout = \"enhanced\"").unwrap();
-        let c = layered(Some(&other), env(&[]), &mut vec![]).unwrap();
+        let c = layered(Some(&other), env(&[]), &mut vec![]).unwrap().0;
         assert!(asks_language(&c, false, false));
         // A language without a catalogue in the file: dropped, asks again.
         let xx = PortConfig::parse("lang = \"xx\"").unwrap();
-        let c = layered(Some(&xx), env(&[]), &mut vec![]).unwrap();
+        let c = layered(Some(&xx), env(&[]), &mut vec![]).unwrap().0;
         assert_eq!(c.lang, "ja");
         assert!(asks_language(&c, false, false));
     }
@@ -339,11 +345,188 @@ mod tests {
             "lang = \"en\"\nhud_layout = \"wide\"\nui_scaling = \"blurry\"\nui_scale = 9\n",
         )
         .unwrap();
-        let c = layered(Some(&f), env(&[]), &mut vec![]).unwrap();
+        let c = layered(Some(&f), env(&[]), &mut vec![]).unwrap().0;
         assert_eq!(c.lang, "en");
         assert_eq!(c.hud_layout, HudLayout::Original);
         assert_eq!(c.ui_scaling, UiScaling::Smooth);
         assert_eq!(c.ui_scale_fixed, None);
+    }
+
+    /// The user's decided defaults (docs/settings.md), which are the behaviour before the
+    /// switches existed: every enhancement on except the three the original's look keeps.
+    const DECIDED: &[(&str, bool)] = &[
+        ("wide_visibility", true),
+        ("square_pixels", false),
+        ("stable_track_variants", false),
+        ("texture_filtering", false),
+        ("fog", true),
+        ("wide_weather", true),
+        ("far_traffic", true),
+        ("interpolate", true),
+        ("vsync", true),
+        ("wide_menus", true),
+        ("one_line_captions", true),
+        ("landmark_names", true),
+        ("board_names", true),
+        ("save_on_change", true),
+        ("save_timed_out_names", true),
+        ("keyboard_with_controller", true),
+        ("exit_no_to_menu", true),
+    ];
+
+    #[test]
+    fn defaults_are_the_decided_ones() {
+        let keys: Vec<&str> = DECIDED.iter().map(|(k, _)| *k).collect();
+        assert_eq!(Settings::KEYS, keys.as_slice());
+        let (c, s) = layered(None, env(&[]), &mut vec![]).unwrap();
+        assert_eq!(s, Settings::default());
+        for &(k, v) in DECIDED {
+            assert_eq!(s.get(k), Some(v), "{k}");
+        }
+        // The other layers' defaults agree with the switches.
+        assert!(crate::gamepad::PadOptions::default().keyboard_with_controller);
+        assert!(
+            crate::save::Save::new(
+                crate::save::Eeprom::from_bytes([0; crate::save::EEPROM_LEN]),
+                None
+            )
+            .save_on_change
+        );
+        assert_eq!(c.hud_layout, HudLayout::Original);
+        assert_eq!(c.ui_scaling, UiScaling::Smooth);
+        assert_eq!(c.ui_scale_fixed, None);
+    }
+
+    /// Every key of docs/settings.md's table is a setting, and every setting is in it.
+    #[test]
+    fn the_settings_table_lists_every_key() {
+        let doc = include_str!("../../../docs/settings.md");
+        let rows: Vec<&str> = doc
+            .lines()
+            .filter_map(|l| l.strip_prefix("| `")?.split('`').next())
+            .collect();
+        for k in Settings::KEYS.iter().chain(&[
+            "lang",
+            "hud_layout",
+            "ui_scaling",
+            "ui_scale",
+            "font",
+            "display_font",
+        ]) {
+            assert!(rows.contains(k), "{k} is not in docs/settings.md");
+        }
+        for k in Settings::KEYS {
+            assert!(
+                crate::USAGE.contains(&Settings::flag(k)),
+                "{k} is not in USAGE"
+            );
+        }
+        for r in &rows {
+            let known = Settings::KEYS.contains(r)
+                || [
+                    "lang",
+                    "hud_layout",
+                    "ui_scaling",
+                    "ui_scale",
+                    "font",
+                    "display_font",
+                ]
+                .contains(r);
+            assert!(known, "docs/settings.md lists {r}, which is no setting");
+        }
+    }
+
+    #[test]
+    fn every_switch_parses_from_file_env_and_flags() {
+        for &(k, default) in DECIDED {
+            let other = |s: &Settings| {
+                Settings::KEYS
+                    .iter()
+                    .filter(|o| **o != k)
+                    .all(|o| s.get(o) == Settings::default().get(o))
+            };
+            // The file.
+            let f = PortConfig::parse(&format!("{k} = {}", !default)).unwrap();
+            let (_, s) = layered(Some(&f), env(&[]), &mut vec![]).unwrap();
+            assert_eq!(s.get(k), Some(!default), "file {k}");
+            assert!(other(&s), "file {k} changed another key");
+            // The environment.
+            let var = Settings::env_var(k);
+            let v = if default { "0" } else { "1" };
+            let (_, s) = layered(None, env(&[(&var, v)]), &mut vec![]).unwrap();
+            assert_eq!(s.get(k), Some(!default), "{var}");
+            assert!(other(&s));
+            // The flag pair.
+            let flag = Settings::flag(k);
+            let no = flag.replacen("--", "--no-", 1);
+            for (a, want) in [(&flag, true), (&no, false)] {
+                let mut a = args(&[a, "rest"]);
+                let (_, s) = layered(None, env(&[]), &mut a).unwrap();
+                assert_eq!(s.get(k), Some(want), "{flag}");
+                assert_eq!(a, ["rest"]);
+                assert!(other(&s));
+            }
+        }
+        // The older flag names.
+        for (flag, k) in [
+            ("--original-visibility", "wide_visibility"),
+            ("--original-weather", "wide_weather"),
+            ("--original-traffic", "far_traffic"),
+            ("--uncapped", "vsync"),
+        ] {
+            let (_, s) = layered(None, env(&[]), &mut args(&[flag])).unwrap();
+            assert_eq!(s.get(k), Some(false), "{flag}");
+        }
+        let (_, s) = layered(None, env(&[]), &mut args(&["--square-pixels"])).unwrap();
+        assert!(s.square_pixels);
+        // Other values are left for the subcommands.
+        let mut a = args(&["--no-such-thing", "--fogs", "--speed", "80"]);
+        layered(None, env(&[]), &mut a).unwrap();
+        assert_eq!(a, ["--no-such-thing", "--fogs", "--speed", "80"]);
+    }
+
+    #[test]
+    fn switch_precedence_flag_env_file_default() {
+        let file = PortConfig::parse("wide_weather = false\nfog = false\nvsync = false\n").unwrap();
+        let (_, s) = layered(Some(&file), env(&[]), &mut vec![]).unwrap();
+        assert!(!s.wide_weather && !s.fog && !s.vsync);
+        assert!(s.far_traffic, "a key not in the file keeps its default");
+        let e = env(&[("DDG_WIDE_WEATHER", "true"), ("DDG_FOG", "on")]);
+        let (_, s) = layered(Some(&file), e, &mut vec![]).unwrap();
+        assert!(s.wide_weather && s.fog && !s.vsync, "env over file");
+        let e = env(&[("DDG_WIDE_WEATHER", "true"), ("DDG_FOG", "on")]);
+        let mut a = args(&["--original-weather", "--no-fog", "--vsync"]);
+        let (_, s) = layered(Some(&file), e, &mut a).unwrap();
+        assert!(
+            !s.wide_weather && !s.fog && s.vsync,
+            "flags over env and file"
+        );
+        assert!(a.is_empty());
+        // The last of a pair wins, like the other flags.
+        let (_, s) = layered(None, env(&[]), &mut args(&["--no-fog", "--fog"])).unwrap();
+        assert!(s.fog);
+    }
+
+    #[test]
+    fn bad_switch_values_lose_only_that_setting() {
+        let f =
+            PortConfig::parse("lang = \"en\"\nfog = 3\nwide_menus = \"no\"\ninterpolate = false\n")
+                .unwrap();
+        let (c, s) = layered(Some(&f), env(&[]), &mut vec![]).unwrap();
+        assert_eq!(c.lang, "en");
+        assert!(s.fog && s.wide_menus, "bad values: the defaults");
+        assert!(!s.interpolate);
+        let (_, s) = layered(None, env(&[("DDG_FOG", "maybe")]), &mut vec![]).unwrap();
+        assert!(s.fog);
+        // The switches stay in the file when the game writes it.
+        let d = temp_dir("switches");
+        let p = d.join(FILE_NAME);
+        std::fs::create_dir_all(&d).unwrap();
+        std::fs::write(&p, "fog = false\nexit_no_to_menu = false\n").unwrap();
+        store_lang(&p, "en").unwrap();
+        let (_, s) = layered(Some(&PortConfig::read(&p)), env(&[]), &mut vec![]).unwrap();
+        assert!(!s.fog && !s.exit_no_to_menu);
+        std::fs::remove_dir_all(&d).unwrap();
     }
 
     #[test]

@@ -376,6 +376,8 @@ pub struct RankingRequest<'a> {
     /// Power notch at creation (task +0x54).
     pub power: u8,
     pub rankings: &'a [Table],
+    /// Setting `save_timed_out_names`: a timed-out entry is packed like a completed one.
+    pub save_timed_out: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -397,6 +399,8 @@ pub struct NameEntry {
     wheel: Wheel,
     prev_power: u8,
     committed: bool,
+    /// Setting `save_timed_out_names` ([`RankingRequest::save_timed_out`]).
+    save_timed_out: bool,
     slots: SlotSet,
 }
 
@@ -421,6 +425,7 @@ impl NameEntry {
             wheel: Wheel::default(),
             prev_power: req.power,
             committed: false,
+            save_timed_out: req.save_timed_out,
             slots: SlotSet::default(),
         })
     }
@@ -531,10 +536,11 @@ impl NameEntry {
             self.page = Page::Ranking;
             self.counter = 0;
             self.filter();
-            // Decided port behaviour (menus.md §14): a timed-out name is saved like a
-            // completed one. The original skips `Ranking_ToEeprom` here, so the row lives
-            // only in the unpacked table and is lost at exit.
-            self.committed = true;
+            // Setting `save_timed_out_names` (decided port behaviour, menus.md §14.1): a
+            // timed-out name is saved like a completed one. The original skips
+            // `Ranking_ToEeprom` here, so the row lives only in the unpacked table and is lost
+            // at exit (a completed name was committed by `complete`).
+            self.committed |= self.save_timed_out;
         }
     }
 
@@ -871,6 +877,7 @@ pub(crate) mod tests {
             pro: false,
             power: 0,
             rankings,
+            save_timed_out: true,
         }
     }
 
@@ -966,6 +973,24 @@ pub(crate) mod tests {
         // The original leaves it unpacked; the port saves it (menus.md §14).
         assert!(e.committed());
         // The all-blank name is in the exact list: replaced by the route's default name.
+        assert_eq!(e.rows()[0].name, [16, 3, 55, BLANK]);
+    }
+
+    /// Setting `save_timed_out_names` off: the original's time-out, shown on the page (filtered)
+    /// but never packed into the eeprom mirror.
+    #[test]
+    fn timeout_without_the_setting_is_not_committed() {
+        let rankings = vec![[Row::EMPTY; ROWS]; 13];
+        let req = RankingRequest {
+            save_timed_out: false,
+            ..request(&rankings)
+        };
+        let mut e = NameEntry::new(defs(), &req).unwrap();
+        let mut sfx = Vec::new();
+        while !e.on_page() {
+            e.tick(&MenuInput::NONE, &mut sfx);
+        }
+        assert!(!e.committed());
         assert_eq!(e.rows()[0].name, [16, 3, 55, BLANK]);
     }
 

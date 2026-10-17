@@ -226,14 +226,13 @@ impl CabHud {
     }
 
     /// Enhancement `one_line_captions`: captions and banners as one translated line. Returns
-    /// false (and keeps the sprites) when the art has no caption sprites. The same names go
-    /// under the route board's kanji (enhancement `board_names`).
+    /// false (and keeps the sprites) when the art has no caption sprites. The route board's
+    /// names (enhancement `board_names`) use the same station texts: [`CabHud::use_board_names`].
     pub fn use_one_line_captions(
         &mut self,
         bank: &ddg_render::sprites::SpriteBank,
         phrases: &crate::locale::CaptionPhrases,
     ) -> bool {
-        self.use_board_names(bank, &phrases.tbl_texts);
         let defs = self.captions.defs();
         let one = crate::captions::OneLine::new(
             bank,
@@ -253,7 +252,7 @@ impl CabHud {
 
     /// Enhancement `board_names`: romaji under the route board's station names. `tbl_texts`:
     /// translated texts by tilemap id (the station names are their name sprites' texts).
-    fn use_board_names(
+    pub fn use_board_names(
         &mut self,
         bank: &ddg_render::sprites::SpriteBank,
         tbl_texts: &std::collections::HashMap<u16, String>,

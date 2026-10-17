@@ -308,6 +308,9 @@ pub struct Joystick {
     eb_count: u32,
     pub power: u8,
     pub brake: u8,
+    /// Setting `keyboard_with_controller`: the keyboard's Space (horn) and Enter (A button) pass
+    /// too; off, only Esc, Enter as menu confirm and R, as the original.
+    pub keyboard_buttons: bool,
 }
 
 impl Joystick {
@@ -322,6 +325,7 @@ impl Joystick {
             eb_count: 0,
             power: 0,
             brake: EB,
+            keyboard_buttons: true,
         }
     }
 
@@ -384,7 +388,12 @@ impl Joystick {
         if keyboard_held & bits::PAUSE != 0 {
             held |= bits::PAUSE | bits::CANCEL;
         }
-        held |= keyboard_held & (bits::KEY_R | bits::MENU_CONFIRM | bits::HORN | bits::A);
+        let passed = if self.keyboard_buttons {
+            bits::KEY_R | bits::MENU_CONFIRM | bits::HORN | bits::A
+        } else {
+            bits::KEY_R | bits::MENU_CONFIRM
+        };
+        held |= keyboard_held & passed;
         let word = ButtonWord::new(self.prev_word, held);
         self.prev_word = held;
         ButtonState::from_word(word)
@@ -892,12 +901,25 @@ impl PadSource {
 }
 
 /// Options for [`Controls::new`].
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct PadOptions {
     /// `joystick.dat` to load (mode 6 calibration); the exe default when absent or missing.
     pub joystick_dat: Option<PathBuf>,
     /// A learned combination table (`ddg-combo 1` text); selects the combination profile.
     pub combo_table: Option<PathBuf>,
+    /// Setting `keyboard_with_controller` (default on): the keyboard's horn and A button work
+    /// in the controller modes too ([`Joystick::keyboard_buttons`]).
+    pub keyboard_with_controller: bool,
+}
+
+impl Default for PadOptions {
+    fn default() -> Self {
+        Self {
+            joystick_dat: None,
+            combo_table: None,
+            keyboard_with_controller: true,
+        }
+    }
 }
 
 /// Keyboard plus optional joystick, polled once per tick (0x4333d0).
@@ -948,7 +970,13 @@ impl Controls {
         }
         Ok(Self {
             keyboard,
-            joystick: Some((Joystick::new(&tables, joy_mode, cal), pad)),
+            joystick: Some((
+                Joystick {
+                    keyboard_buttons: opts.keyboard_with_controller,
+                    ..Joystick::new(&tables, joy_mode, cal)
+                },
+                pad,
+            )),
         })
     }
 
@@ -1368,6 +1396,24 @@ mod tests {
         );
         assert!(b.pause_pressed && b.cancel_pressed && b.menu_confirm_pressed);
         assert!(b.confirm_pressed && b.horn_pressed && b.horn_held);
+    }
+
+    /// Setting `keyboard_with_controller` off: the original's mask, Esc, Enter as menu confirm
+    /// and R only; Space does not horn and Enter is not the A button (input.md §6).
+    #[test]
+    fn keyboard_buttons_off_is_the_original_mask() {
+        let mut j = Joystick {
+            keyboard_buttons: false,
+            ..joy(JoyMode::Digital)
+        };
+        let b = j.poll(
+            &JoyState::default(),
+            bits::PAUSE | bits::A | bits::MENU_CONFIRM | bits::HORN | bits::KEY_R,
+        );
+        assert!(b.pause_pressed && b.cancel_pressed && b.menu_confirm_pressed);
+        assert!(!b.confirm_pressed && !b.horn_pressed && !b.horn_held);
+        assert_ne!(b.word.held & bits::KEY_R, 0);
+        assert!(PadOptions::default().keyboard_with_controller);
     }
 
     /// Decided port behaviour (input.md §10.3): in mode 4 with a pad, the keyboard's horn and

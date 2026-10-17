@@ -625,6 +625,7 @@ mod tests {
             pro: true,
             power: 0,
             rankings: &rankings,
+            save_timed_out: true,
         };
         f.start_ranking(Some(&req), &mut Vec::new());
         // Time-out after 930 ticks, then the page's 151.
