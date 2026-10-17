@@ -25,6 +25,33 @@ impl Default for Fog {
     }
 }
 
+/// The shading enhancements of the 3D pass (docs/settings.md; renderer.md §14). The default
+/// is the original: none of them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Shading {
+    /// `ground_variation`: soft world-space brightness and tint noise on ground surfaces.
+    pub ground_variation: bool,
+    /// `ground_detiling`: per-region offsets and mirrors of repeating ground textures.
+    pub ground_detiling: bool,
+    /// `msaa`: samples per pixel of the 3D pass, resolved into the target (1 = off). A count
+    /// the device cannot do falls back to the next lower one it can.
+    pub msaa: u32,
+    /// `anisotropic`: the anisotropy clamp (1 = off). Above 1 the pages get mipmaps; without
+    /// `texture_filtering` only minified texels are filtered (renderer.md §14).
+    pub anisotropic: u16,
+}
+
+impl Default for Shading {
+    fn default() -> Self {
+        Self {
+            ground_variation: false,
+            ground_detiling: false,
+            msaa: 1,
+            anisotropic: 1,
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
 struct FrameUniform {
@@ -32,6 +59,24 @@ struct FrameUniform {
     view: [[f32; 4]; 4],
     fog_colour: [f32; 4],
     fog: [f32; 4],
+    /// Sampling mode, alpha to coverage, ground variation, ground de-tiling (shader.wgsl).
+    shade: [f32; 4],
+}
+
+/// The pipelines of the world pass, for one sample count.
+struct Pipelines {
+    samples: u32,
+    world: wgpu::RenderPipeline,
+    line: wgpu::RenderPipeline,
+    bg: wgpu::RenderPipeline,
+    bg_tex: wgpu::RenderPipeline,
+}
+
+/// A multisampled colour or depth target and its size and sample count.
+struct Target {
+    view: wgpu::TextureView,
+    size: (u32, u32),
+    samples: u32,
 }
 
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
@@ -96,12 +141,13 @@ pub struct SubView {
 }
 
 pub struct Renderer {
-    world_pipeline: wgpu::RenderPipeline,
-    line_pipeline: wgpu::RenderPipeline,
-    bg_pipeline: wgpu::RenderPipeline,
-    bg_tex_pipeline: wgpu::RenderPipeline,
+    shader: wgpu::ShaderModule,
+    target_format: wgpu::TextureFormat,
+    pipelines: Pipelines,
     frame_buffer: wgpu::Buffer,
-    frame_bind: wgpu::BindGroup,
+    frame_layout: wgpu::BindGroupLayout,
+    /// The frame bind group and the anisotropy clamp of its filtered sampler.
+    frame_bind: (wgpu::BindGroup, u16),
     page_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     filtered_sampler: wgpu::Sampler,
@@ -112,7 +158,11 @@ pub struct Renderer {
     background_count: u32,
     fx_flat: StreamBuffer,
     fx_flat_count: u32,
-    depth: Option<(wgpu::TextureView, u32, u32)>,
+    depth: Option<Target>,
+    /// The multisampled colour target of the world pass (with `shading.msaa`).
+    msaa_colour: Option<Target>,
+    /// Sample counts found unusable on this device (validation failed once).
+    msaa_unsupported: Vec<u32>,
     pub fog: Fog,
     pub projection: Projection,
     pub show_lines: bool,
@@ -122,6 +172,10 @@ pub struct Renderer {
     /// Enhancement `texture_filtering` (off = the original's nearest sampling, no mipmaps).
     /// Takes effect at the next [`Renderer::upload_pages`].
     pub texture_filtering: bool,
+    /// Enhancements `ground_variation`, `ground_detiling`, `msaa` and `anisotropic`. Take
+    /// effect at the next render, except that `anisotropic` builds mipmaps only at the next
+    /// [`Renderer::upload_pages`].
+    pub shading: Shading,
     /// Screen-space effect quads drawn over the world in the 3D band (weather overlay,
     /// renderer.md §13). Uploaded by [`Renderer::render`]; empty draws nothing.
     pub effects: EffectGeometry,
@@ -137,24 +191,226 @@ fn depth_state(write: bool, compare: wgpu::CompareFunction) -> wgpu::DepthStenci
     }
 }
 
+/// Trilinear, repeat, with the anisotropy clamp `anisotropy` (1 = none).
+fn filtered_sampler(device: &wgpu::Device, anisotropy: u16) -> wgpu::Sampler {
+    device.create_sampler(&wgpu::SamplerDescriptor {
+        label: Some("page sampler (filtered)"),
+        address_mode_u: wgpu::AddressMode::Repeat,
+        address_mode_v: wgpu::AddressMode::Repeat,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        anisotropy_clamp: anisotropy.clamp(1, 16),
+        ..Default::default()
+    })
+}
+
+/// Group 0: the frame uniform, the nearest sampler and a filtered one with `anisotropy`.
+fn frame_bind_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    buffer: &wgpu::Buffer,
+    nearest: &wgpu::Sampler,
+    anisotropy: u16,
+) -> wgpu::BindGroup {
+    let filtered = filtered_sampler(device, anisotropy);
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("frame"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: buffer.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(nearest),
+            },
+            wgpu::BindGroupEntry {
+                binding: 2,
+                resource: wgpu::BindingResource::Sampler(&filtered),
+            },
+        ],
+    })
+}
+
+/// The world pass's pipelines for `samples` per pixel. With more than one, the world
+/// pipeline turns its alpha output into coverage (the shader's sharpened colour-key alpha).
+fn build_pipelines(
+    device: &wgpu::Device,
+    shader: &wgpu::ShaderModule,
+    [frame_layout, page_layout]: [&wgpu::BindGroupLayout; 2],
+    target_format: wgpu::TextureFormat,
+    samples: u32,
+) -> Pipelines {
+    let pipeline = |label: &str,
+                    layouts: &[Option<&wgpu::BindGroupLayout>],
+                    (vs, fs): (&str, &str),
+                    buffer: wgpu::VertexBufferLayout<'_>,
+                    primitive: wgpu::PrimitiveState,
+                    alpha_to_coverage: bool| {
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some(label),
+            bind_group_layouts: layouts,
+            immediate_size: 0,
+        });
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: shader,
+                entry_point: Some(vs),
+                compilation_options: Default::default(),
+                buffers: &[Some(buffer)],
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader,
+                entry_point: Some(fs),
+                compilation_options: Default::default(),
+                targets: &[Some(target_format.into())],
+            }),
+            primitive,
+            // Every pipeline of the pass tests and writes depth (the original's 2D background
+            // quads too, at far depth words; renderer.md §8).
+            depth_stencil: Some(depth_state(true, wgpu::CompareFunction::GreaterEqual)),
+            multisample: wgpu::MultisampleState {
+                count: samples,
+                alpha_to_coverage_enabled: alpha_to_coverage && samples > 1,
+                ..Default::default()
+            },
+            multiview_mask: None,
+            cache: None,
+        })
+    };
+    let world = pipeline(
+        "world",
+        &[Some(frame_layout), Some(page_layout)],
+        ("vs_main", "fs_main"),
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<Vertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![
+                0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x4, 4 => Uint32
+            ],
+        },
+        // With the original's (mirrored) view, visible faces wind counter-clockwise in wgpu's
+        // y-up NDC, matching D3DCULL_CW in D3D's y-down screen space (models.md).
+        wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::TriangleList,
+            front_face: wgpu::FrontFace::Ccw,
+            cull_mode: Some(wgpu::Face::Back),
+            ..Default::default()
+        },
+        true,
+    );
+    let line = pipeline(
+        "lines",
+        &[Some(frame_layout)],
+        ("vs_line", "fs_line"),
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<LineVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4],
+        },
+        wgpu::PrimitiveState {
+            topology: wgpu::PrimitiveTopology::LineList,
+            ..Default::default()
+        },
+        false,
+    );
+    let bg = pipeline(
+        "background",
+        &[],
+        ("vs_bg", "fs_bg"),
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<BgVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4],
+        },
+        wgpu::PrimitiveState::default(),
+        false,
+    );
+    let bg_tex = pipeline(
+        "background textured",
+        &[Some(frame_layout), Some(page_layout)],
+        ("vs_bgtex", "fs_bgtex"),
+        wgpu::VertexBufferLayout {
+            array_stride: std::mem::size_of::<BgTexVertex>() as u64,
+            step_mode: wgpu::VertexStepMode::Vertex,
+            attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2],
+        },
+        wgpu::PrimitiveState::default(),
+        false,
+    );
+    Pipelines {
+        samples,
+        world,
+        line,
+        bg,
+        bg_tex,
+    }
+}
+
+/// Whether `device` can render `format` (and the depth format) with `samples` per pixel:
+/// tries a tiny target inside an error scope. Counts other than 1 and 4 need the adapter's
+/// format features (`TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES`, requested by the game when
+/// the adapter has it).
+fn samples_supported(device: &wgpu::Device, format: wgpu::TextureFormat, samples: u32) -> bool {
+    if samples <= 1 {
+        return true;
+    }
+    let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+    for f in [format, DEPTH_FORMAT] {
+        let _probe = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("msaa probe"),
+            size: wgpu::Extent3d {
+                width: 4,
+                height: 4,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: samples,
+            dimension: wgpu::TextureDimension::D2,
+            format: f,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+    }
+    // Native backends report validation errors at once; a pending result counts as a "no".
+    let mut future = std::pin::pin!(scope.pop());
+    let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+    matches!(future.as_mut().poll(&mut cx), std::task::Poll::Ready(None))
+}
+
 impl Renderer {
     pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("world shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
         });
+        let sampler_entry = |binding| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        };
         let frame_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("frame"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+                // The world's own samplers (nearest; filtered with the anisotropy clamp).
+                sampler_entry(1),
+                sampler_entry(2),
+            ],
         });
         let page_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("page"),
@@ -169,12 +425,7 @@ impl Renderer {
                     },
                     count: None,
                 },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                    count: None,
-                },
+                sampler_entry(1),
             ],
         });
         let frame_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -182,14 +433,6 @@ impl Renderer {
             size: std::mem::size_of::<FrameUniform>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
-        });
-        let frame_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("frame"),
-            layout: &frame_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: frame_buffer.as_entire_binding(),
-            }],
         });
         // Nearest filtering and wrap addressing: the original sets no filter or address states.
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -200,118 +443,28 @@ impl Renderer {
             min_filter: wgpu::FilterMode::Nearest,
             ..Default::default()
         });
-        // Enhancement `texture_filtering`: trilinear + anisotropic over CPU-built mipmaps.
-        let filtered_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("page sampler (filtered)"),
-            address_mode_u: wgpu::AddressMode::Repeat,
-            address_mode_v: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            anisotropy_clamp: 16,
-            ..Default::default()
-        });
-
-        let pipeline = |label: &str,
-                        layouts: &[Option<&wgpu::BindGroupLayout>],
-                        (vs, fs): (&str, &str),
-                        buffer: wgpu::VertexBufferLayout<'_>,
-                        primitive: wgpu::PrimitiveState,
-                        depth: wgpu::DepthStencilState| {
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some(label),
-                bind_group_layouts: layouts,
-                immediate_size: 0,
-            });
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(label),
-                layout: Some(&layout),
-                vertex: wgpu::VertexState {
-                    module: &shader,
-                    entry_point: Some(vs),
-                    compilation_options: Default::default(),
-                    buffers: &[Some(buffer)],
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &shader,
-                    entry_point: Some(fs),
-                    compilation_options: Default::default(),
-                    targets: &[Some(target_format.into())],
-                }),
-                primitive,
-                depth_stencil: Some(depth),
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            })
-        };
-        let world_pipeline = pipeline(
-            "world",
-            &[Some(&frame_layout), Some(&page_layout)],
-            ("vs_main", "fs_main"),
-            wgpu::VertexBufferLayout {
-                array_stride: std::mem::size_of::<Vertex>() as u64,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2],
-            },
-            // With the original's (mirrored) view, visible faces wind counter-clockwise in wgpu's
-            // y-up NDC, matching D3DCULL_CW in D3D's y-down screen space (models.md).
-            wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                front_face: wgpu::FrontFace::Ccw,
-                cull_mode: Some(wgpu::Face::Back),
-                ..Default::default()
-            },
-            depth_state(true, wgpu::CompareFunction::GreaterEqual),
+        // Enhancement `texture_filtering`, for the 2D background and effect quads: trilinear +
+        // anisotropic over CPU-built mipmaps. (The world's filtered sampler follows
+        // `anisotropic`, see `frame_bind_group`.)
+        let filtered_sampler = filtered_sampler(device, 16);
+        let frame_bind = (
+            frame_bind_group(device, &frame_layout, &frame_buffer, &sampler, 1),
+            1,
         );
-        let line_pipeline = pipeline(
-            "lines",
-            &[Some(&frame_layout)],
-            ("vs_line", "fs_line"),
-            wgpu::VertexBufferLayout {
-                array_stride: std::mem::size_of::<LineVertex>() as u64,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4],
-            },
-            wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::LineList,
-                ..Default::default()
-            },
-            depth_state(true, wgpu::CompareFunction::GreaterEqual),
-        );
-        let bg_pipeline = pipeline(
-            "background",
-            &[],
-            ("vs_bg", "fs_bg"),
-            wgpu::VertexBufferLayout {
-                array_stride: std::mem::size_of::<BgVertex>() as u64,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x4],
-            },
-            wgpu::PrimitiveState::default(),
-            // The original draws its 2D background with Z test and write, at far depth words.
-            depth_state(true, wgpu::CompareFunction::GreaterEqual),
-        );
-
-        let bg_tex_pipeline = pipeline(
-            "background textured",
-            &[Some(&frame_layout), Some(&page_layout)],
-            ("vs_bgtex", "fs_bgtex"),
-            wgpu::VertexBufferLayout {
-                array_stride: std::mem::size_of::<BgTexVertex>() as u64,
-                step_mode: wgpu::VertexStepMode::Vertex,
-                attributes: &wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x2],
-            },
-            wgpu::PrimitiveState::default(),
-            depth_state(true, wgpu::CompareFunction::GreaterEqual),
+        let pipelines = build_pipelines(
+            device,
+            &shader,
+            [&frame_layout, &page_layout],
+            target_format,
+            1,
         );
 
         Self {
-            world_pipeline,
-            bg_tex_pipeline,
-            line_pipeline,
-            bg_pipeline,
+            shader,
+            target_format,
+            pipelines,
             frame_buffer,
+            frame_layout,
             frame_bind,
             page_layout,
             sampler,
@@ -324,13 +477,21 @@ impl Renderer {
             fx_flat: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "effects"),
             fx_flat_count: 0,
             depth: None,
+            msaa_colour: None,
+            msaa_unsupported: Vec::new(),
             fog: Fog::default(),
             projection: Projection::default(),
             show_lines: false,
             band_top: 0.0,
             texture_filtering: false,
+            shading: Shading::default(),
             effects: EffectGeometry::default(),
         }
+    }
+
+    /// Whether pages get mipmaps: with `texture_filtering` or `anisotropic`.
+    fn wants_mipmaps(&self) -> bool {
+        self.texture_filtering || self.shading.anisotropic > 1
     }
 
     /// Uploads texture pages (replacing earlier ones). Page `i` here is batch `i` of every
@@ -349,7 +510,7 @@ impl Renderer {
                     height: page.height,
                     depth_or_array_layers: 1,
                 };
-                let levels = if self.texture_filtering {
+                let levels = if self.wants_mipmaps() {
                     crate::mip::chain(page.width, page.height, &page.rgba)
                 } else {
                     vec![(page.width, page.height, page.rgba.clone())]
@@ -445,34 +606,108 @@ impl Renderer {
             .write(device, queue, bytemuck::cast_slice(&frame.background));
     }
 
-    fn depth_view(&mut self, device: &wgpu::Device, width: u32, height: u32) -> wgpu::TextureView {
-        let stale = self
-            .depth
+    /// A render target of `format` with `samples` per pixel, kept in `slot` while the size
+    /// and count stay the same.
+    fn target(
+        slot: &mut Option<Target>,
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+        size: (u32, u32),
+        samples: u32,
+    ) -> wgpu::TextureView {
+        if slot
             .as_ref()
-            .is_none_or(|(_, w, h)| (*w, *h) != (width, height));
-        if stale {
+            .is_none_or(|t| (t.size, t.samples) != (size, samples))
+        {
             let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("depth"),
+                label: Some(if format == DEPTH_FORMAT {
+                    "depth"
+                } else {
+                    "msaa colour"
+                }),
                 size: wgpu::Extent3d {
-                    width,
-                    height,
+                    width: size.0,
+                    height: size.1,
                     depth_or_array_layers: 1,
                 },
                 mip_level_count: 1,
-                sample_count: 1,
+                sample_count: samples,
                 dimension: wgpu::TextureDimension::D2,
-                format: DEPTH_FORMAT,
+                format,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
                 view_formats: &[],
             });
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            self.depth = Some((view, width, height));
+            *slot = Some(Target {
+                view: texture.create_view(&wgpu::TextureViewDescriptor::default()),
+                size,
+                samples,
+            });
         }
-        self.depth
-            .as_ref()
-            .expect("depth view just created")
-            .0
-            .clone()
+        slot.as_ref().expect("target just created").view.clone()
+    }
+
+    /// The sample count to render with: `shading.msaa` (a power of two up to 16), or the next
+    /// lower count this device can do.
+    fn sample_count(&mut self, device: &wgpu::Device) -> u32 {
+        let mut samples = self.shading.msaa.clamp(1, 16).next_power_of_two();
+        while samples > 1 {
+            if !self.msaa_unsupported.contains(&samples) {
+                if samples == self.pipelines.samples
+                    || samples_supported(device, self.target_format, samples)
+                {
+                    break;
+                }
+                eprintln!("warning: msaa {samples} is not supported here; trying fewer samples");
+                self.msaa_unsupported.push(samples);
+            }
+            samples /= 2;
+        }
+        samples
+    }
+
+    /// Brings the pipelines and the frame bind group in line with [`Renderer::shading`].
+    fn prepare_shading(&mut self, device: &wgpu::Device) {
+        let samples = self.sample_count(device);
+        if samples != self.pipelines.samples {
+            self.pipelines = build_pipelines(
+                device,
+                &self.shader,
+                [&self.frame_layout, &self.page_layout],
+                self.target_format,
+                samples,
+            );
+        }
+        let anisotropy = self.shading.anisotropic.clamp(1, 16);
+        if anisotropy != self.frame_bind.1 {
+            self.frame_bind = (
+                frame_bind_group(
+                    device,
+                    &self.frame_layout,
+                    &self.frame_buffer,
+                    &self.sampler,
+                    anisotropy,
+                ),
+                anisotropy,
+            );
+        }
+    }
+
+    /// The `shade` uniform: sampling mode, alpha to coverage, ground variation, de-tiling.
+    fn shade_uniform(&self) -> [f32; 4] {
+        let sampling = if self.texture_filtering {
+            1.0
+        } else if self.shading.anisotropic > 1 {
+            2.0
+        } else {
+            0.0
+        };
+        let on = |b: bool| if b { 1.0 } else { 0.0 };
+        [
+            sampling,
+            on(self.pipelines.samples > 1),
+            on(self.shading.ground_variation),
+            on(self.shading.ground_detiling),
+        ]
     }
 
     /// Draws the current geometry into `target` (`width`×`height` pixels).
@@ -522,10 +757,35 @@ impl Renderer {
                 1.0,
             ],
             fog: [fog.start, fog.end, if fog.enabled { 1.0 } else { 0.0 }, 0.0],
+            shade: [0.0; 4],
+        };
+        self.prepare_shading(device);
+        let uniform = FrameUniform {
+            shade: self.shade_uniform(),
+            ..uniform
         };
         queue.write_buffer(&self.frame_buffer, 0, bytemuck::bytes_of(&uniform));
         self.upload_effects(device, queue);
-        let depth = self.depth_view(device, width, height);
+        let samples = self.pipelines.samples;
+        let depth = Self::target(
+            &mut self.depth,
+            device,
+            DEPTH_FORMAT,
+            (width, height),
+            samples,
+        );
+        // Enhancement `msaa`: the pass draws into a multisampled target that is resolved into
+        // `target`. That target keeps its samples between views, so a view that does not
+        // clear (the station result's second view) loads what the first one left.
+        let msaa = (samples > 1).then(|| {
+            Self::target(
+                &mut self.msaa_colour,
+                device,
+                self.target_format,
+                (width, height),
+                samples,
+            )
+        });
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("frame"),
         });
@@ -533,9 +793,9 @@ impl Renderer {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("world"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target,
+                    view: msaa.as_ref().unwrap_or(target),
                     depth_slice: None,
-                    resolve_target: None,
+                    resolve_target: msaa.as_ref().map(|_| target),
                     ops: wgpu::Operations {
                         // The original clears to black (scene.md §6).
                         load: if sub.clear {
@@ -564,12 +824,12 @@ impl Renderer {
             if self.background_count > 0
                 && let Some(slice) = self.background.slice(bg_bytes)
             {
-                pass.set_pipeline(&self.bg_pipeline);
+                pass.set_pipeline(&self.pipelines.bg);
                 pass.set_vertex_buffer(0, slice);
                 pass.draw(0..self.background_count, 0..1);
             }
-            pass.set_pipeline(&self.bg_tex_pipeline);
-            pass.set_bind_group(0, &self.frame_bind, &[]);
+            pass.set_pipeline(&self.pipelines.bg_tex);
+            pass.set_bind_group(0, &self.frame_bind.0, &[]);
             for page in self.pages.iter().filter(|p| p.bg_tex_count > 0) {
                 let bytes = u64::from(page.bg_tex_count) * size_of::<BgTexVertex>() as u64;
                 if let Some(slice) = page.bg_tex.slice(bytes) {
@@ -578,8 +838,8 @@ impl Renderer {
                     pass.draw(0..page.bg_tex_count, 0..1);
                 }
             }
-            pass.set_pipeline(&self.world_pipeline);
-            pass.set_bind_group(0, &self.frame_bind, &[]);
+            pass.set_pipeline(&self.pipelines.world);
+            pass.set_bind_group(0, &self.frame_bind.0, &[]);
             for page in self.pages.iter().filter(|p| p.index_count > 0) {
                 let (Some(v), Some(i)) = (
                     page.vertices.buffer.as_ref(),
@@ -597,8 +857,8 @@ impl Renderer {
                 && self.line_count > 0
                 && let Some(slice) = self.lines.slice(line_bytes)
             {
-                pass.set_pipeline(&self.line_pipeline);
-                pass.set_bind_group(0, &self.frame_bind, &[]);
+                pass.set_pipeline(&self.pipelines.line);
+                pass.set_bind_group(0, &self.frame_bind.0, &[]);
                 pass.set_vertex_buffer(0, slice);
                 pass.draw(0..self.line_count, 0..1);
             }
@@ -628,15 +888,15 @@ impl Renderer {
         if self.fx_flat_count > 0
             && let Some(slice) = self.fx_flat.slice(flat_bytes)
         {
-            pass.set_pipeline(&self.bg_pipeline);
+            pass.set_pipeline(&self.pipelines.bg);
             pass.set_vertex_buffer(0, slice);
             pass.draw(0..self.fx_flat_count, 0..1);
         }
         if self.pages.iter().all(|p| p.fx_tex_count == 0) {
             return;
         }
-        pass.set_pipeline(&self.bg_tex_pipeline);
-        pass.set_bind_group(0, &self.frame_bind, &[]);
+        pass.set_pipeline(&self.pipelines.bg_tex);
+        pass.set_bind_group(0, &self.frame_bind.0, &[]);
         for page in self.pages.iter().filter(|p| p.fx_tex_count > 0) {
             let bytes = u64::from(page.fx_tex_count) * size_of::<BgTexVertex>() as u64;
             if let Some(slice) = page.fx_tex.slice(bytes) {
