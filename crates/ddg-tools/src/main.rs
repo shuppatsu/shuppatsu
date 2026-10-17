@@ -7,6 +7,8 @@ mod inventory;
 mod pe;
 mod sound;
 mod trace;
+mod upscale;
+mod xbrz;
 
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
@@ -29,7 +31,10 @@ commands:
                                   the logged notches and buttons only) and compare
   play-sound <code> [--wav FILE] [--seconds S] [--pitch P] [--volume V] [--release-after S]
                                   play a sound code (hex 0x31 / 31h or decimal; 0x1000|n =
-                                  sequence n) live, or render it to a WAV (gitignored out/)";
+                                  sequence n) live, or render it to a WAV (gitignored out/)
+  upscale-textures --method <xbrz|esrgan|waifu2x|nearest> [--scale N] [--out DIR] [...]
+                                  build a texture pack from $DDG_DATA_DIR (upscale-textures
+                                  --help for the options; docs/texture-packs.md)";
 
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -52,6 +57,13 @@ fn main() -> Result<()> {
         "pe" => pe::print_report(&path(1)?),
         "play-sound" => sound::play_sound(&args[1..]),
         "export" => run_export(&args[1..]),
+        "upscale-textures" => {
+            if args.iter().any(|a| a == "--help" || a == "-h") {
+                println!("{}", upscale::USAGE);
+                return Ok(());
+            }
+            upscale::run(&args[1..])
+        }
         "trace-replay" => {
             let dirs = export::GameDirs::from_env()?;
             let flag = |f: &str| args.iter().skip(2).any(|a| a == f);
