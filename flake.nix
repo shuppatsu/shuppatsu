@@ -45,8 +45,120 @@
         alsa-lib
         udev
       ];
+
+      # The package: game and tools via nixpkgs' rustPlatform. The source is an explicit
+      # allowlist, so no game data (data/, re/, out/, wine/, disc images) can reach the store.
+      src = pkgs.lib.fileset.toSource {
+        root = ./.;
+        fileset = pkgs.lib.fileset.unions [
+          ./Cargo.toml
+          ./Cargo.lock
+          ./crates
+          ./locales
+          ./assets
+          ./docs/settings.md
+          ./LICENSE
+        ];
+      };
+
+      mkDdg =
+        {
+          pname,
+          extra ? { },
+        }:
+        pkgs.rustPlatform.buildRustPackage (
+          {
+            inherit pname src;
+            version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).workspace.package.version;
+            cargoLock.lockFile = ./Cargo.lock;
+            cargoBuildFlags = [
+              "-p"
+              pname
+            ];
+            cargoTestFlags = [
+              "-p"
+              pname
+            ];
+            nativeBuildInputs = [ pkgs.pkg-config ];
+            # cpal links ALSA and gilrs links libudev at build time.
+            buildInputs = with pkgs; [
+              alsa-lib
+              udev
+            ];
+            # Data tests skip without DDG_DATA_DIR / DDG_TRACE_DIR; never let the sandbox see one.
+            preCheck = ''
+              unset DDG_DATA_DIR DDG_TRACE_DIR
+              export HOME=$TMPDIR XDG_CONFIG_HOME=$TMPDIR/config XDG_DATA_HOME=$TMPDIR/data
+            '';
+            # winit/wgpu/gilrs dlopen these. A RUNPATH rather than a wrapper script, so dlopen
+            # from the binary finds them and current_exe() stays the real program (the Exec= of
+            # `ddg-game install-desktop`). Added after fixupPhase's --shrink-rpath, which would
+            # drop them as unused.
+            postFixup = ''
+              for f in $out/bin/*; do
+                patchelf --add-rpath ${pkgs.lib.makeLibraryPath runtimeLibs} "$f"
+              done
+            '';
+            postInstall = ''
+              install -Dm644 LICENSE -t $out/share/doc/${pname}
+              install -Dm644 assets/fonts/OFL-Mplus.txt -t $out/share/doc/${pname}
+            '';
+            meta = {
+              description = "Native reimplementation of Densha de GO! 2 Kousoku-hen 3000-bandai (bring your own disc)";
+              license = pkgs.lib.licenses.gpl3Plus;
+              platforms = pkgs.lib.platforms.linux;
+              mainProgram = pname;
+            };
+          }
+          // extra
+        );
+
+      ddg-game = mkDdg {
+        pname = "ddg-game";
+        extra = {
+          # The game's check runs every crate's tests (data tests skip in the sandbox).
+          cargoTestFlags = [ "--workspace" ];
+          nativeBuildInputs = [
+            pkgs.pkg-config
+            pkgs.copyDesktopItems
+          ];
+          desktopItems = [
+            (pkgs.makeDesktopItem {
+              name = "ddg-game";
+              desktopName = "Densha de GO! 2 Kōsoku-hen 3000-bandai";
+              comment = "Native reimplementation; plays from your own disc";
+              exec = "ddg-game";
+              # The icon comes from the user's own exe: `ddg-game install-desktop` writes it per
+              # user under this name. The package ships none.
+              icon = "ddg-game";
+              categories = [
+                "Game"
+                "Simulation"
+              ];
+              startupWMClass = "ddg-game";
+            })
+          ];
+        };
+      };
+      ddg-tools = mkDdg { pname = "ddg-tools"; };
     in
     {
+      packages.${system} = {
+        default = ddg-game;
+        inherit ddg-game ddg-tools;
+      };
+
+      apps.${system} = {
+        default = {
+          type = "app";
+          program = "${ddg-game}/bin/ddg-game";
+        };
+        ddg-tools = {
+          type = "app";
+          program = "${ddg-tools}/bin/ddg-tools";
+        };
+      };
+
       devShells.${system}.default = pkgs.mkShell {
         packages =
           [
