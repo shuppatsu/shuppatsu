@@ -21,6 +21,7 @@ mod hints;
 mod hud;
 mod identity;
 mod input;
+mod label_audit;
 mod locale;
 mod navigator;
 mod play;
@@ -67,6 +68,8 @@ usage: ddg-game [options] [--joystick-dat <file>] [--combo <file>] [--mute]
        ddg-game pad <monitor|calibrate|learn> [--mode <4..6>] [--joystick-dat <file>] [--combo <file>]
        ddg-game install-desktop [--exec <path>] [--exe <dengo3k.exe>] [--uninstall]
                      desktop entry + icon under $XDG_DATA_HOME (opt-in; see --help)
+       ddg-game label-audit [--out <dir>] [--catalogue <en.toml>] [--palette <n>]
+                     check the catalogue's regions against the art (report + crops)
 
 options:
   --data <dir>             the extracted disc or installed game (after env DDG_DATA_DIR; else
@@ -729,6 +732,10 @@ fn run_main() -> Result<()> {
     if cli_args().into_iter().nth(1).as_deref() == Some("install-desktop") {
         let args: Vec<String> = cli_args().into_iter().skip(2).collect();
         return desktop::run(&args);
+    }
+    if cli_args().into_iter().nth(1).as_deref() == Some("label-audit") {
+        let args: Vec<String> = cli_args().into_iter().skip(2).collect();
+        return label_audit::run(&args);
     }
     if cli_args().into_iter().nth(1).as_deref() == Some("pad") {
         let data = scene::GameData::from_env()?;

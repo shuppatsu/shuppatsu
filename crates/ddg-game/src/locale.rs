@@ -119,6 +119,22 @@ impl Key {
             Key::Tbl { tbl, .. } | Key::Sheet { tbl, .. } | Key::Rect { tbl, .. } => *tbl,
         }
     }
+
+    /// The tilemap and canonical source rectangle the entry applies to; sheet descriptors are
+    /// looked up in `sheets`.
+    pub fn resolve(&self, sheets: &SheetTables) -> Result<(u16, SubRect)> {
+        Ok(match self {
+            Key::Tbl { tbl, rect } | Key::Rect { tbl, rect, .. } => (*tbl, *rect),
+            Key::Sheet { tbl, index } => {
+                let rect = sheets
+                    .descriptors
+                    .get(tbl)
+                    .and_then(|d| d.get(*index))
+                    .with_context(|| format!("sheet {tbl:#x} descriptor {index} not read"))?;
+                (*tbl, rect.canonical())
+            }
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -575,17 +591,7 @@ impl Locale {
     pub fn from_catalogue(cat: &Catalogue, sheets: &SheetTables) -> Result<Self> {
         let mut map = HashMap::new();
         for e in &cat.entries {
-            let (tbl, rect) = match &e.key {
-                Key::Tbl { tbl, rect } | Key::Rect { tbl, rect, .. } => (*tbl, *rect),
-                Key::Sheet { tbl, index } => {
-                    let rect = sheets
-                        .descriptors
-                        .get(tbl)
-                        .and_then(|d| d.get(*index))
-                        .with_context(|| format!("sheet {tbl:#x} descriptor {index} not read"))?;
-                    (*tbl, rect.canonical())
-                }
-            };
+            let (tbl, rect) = e.key.resolve(sheets)?;
             ensure!(
                 map.insert((tbl, rect), e.text.clone()).is_none(),
                 "two entries for tbl {tbl:#x} {rect:?} ({:?})",
@@ -853,10 +859,15 @@ pub fn install(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Resu
     Ok(n)
 }
 
+/// The bundled body font ([`BUNDLED_FONT`]).
+pub fn bundled_font() -> Result<FontGlyphs> {
+    Ok(FontGlyphs::from_bytes(BUNDLED_FONT)?)
+}
+
 /// Only the bundled font as the label font, no text overrides: the first-run language screen
 /// draws its port-only text with it before any language is installed.
 pub fn install_label_font(bank: &mut SpriteBank) -> Result<()> {
-    let font = FontGlyphs::from_bytes(BUNDLED_FONT)?;
+    let font = bundled_font()?;
     bank.set_label_font(Some(LabelFont::new(Box::new(font))));
     Ok(())
 }

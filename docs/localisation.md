@@ -72,6 +72,42 @@ through a sub-rectangle the catalogue does not name, draws the original art. A c
 does not parse (unknown fields, bad keys, a descriptor index out of range, two entries for one
 sprite) is an error, not a silent fallback.
 
+### Checking the regions
+
+A region must cover the original lettering and nothing else, and the English is sized from the
+lettering inside it (its ink box across the reading direction), so three things go wrong with a
+region that is a pixel off: lettering left outside it stays visible beside the English (the top
+row of 通過駅, the 。 at the end of a navigator hint); a region reaching onto a border, bevel or
+dither edge paints it over with the backdrop; and those border pixels count as lettering, so
+the English comes out at the size of the panel instead of the size of the kanji.
+
+`ddg_render::text_audit` finds these with the renderer's own reading of the art
+(`RegionScan`: the backdrop per 2×2 parity class from the region's edge, lettering = opaque and
+not backdrop). Per part it reports, in sprite pixels:
+
+| Class | Meaning |
+|---|---|
+| `leftover` | lettering strokes cut by the region's edge: the pixels outside stay visible |
+| `nearby` | lettering wholly outside the region, level with it and within 4 px (in a box, also on its panel): probably the next character |
+| `intrudes` | other art mostly outside the region reaching into it (a sign's post, a gauge): erased inside it |
+| `border` | frame pixels inside the region (a run of lettering touching the void, a rule or bevel nearly as long as the panel, a frame round the region, or a thin piece of one) |
+| `off-panel` | more than a third of one side of a box region on the void (the art's end, a dither edge) |
+| `beyond-art` | a box region past the sprite's opaque extent |
+| `backdrop` | the backdrop read from the edge is not the face (the edge lies on a frame), is striped, or is clear (lettering on transparency that `auto` took for a box) |
+| `sizing` | the renderer's ink box differs from the lettering's own (frame pixels or foreign art counted) |
+
+`ddg-game label-audit` runs it over every part of a catalogue (default `locales/en.toml`) and
+writes `out/explain/label_audit/report.md` with a magnified crop per flagged part (the
+original with the region outlined in cyan and the findings dotted: red leftover, orange nearby,
+blue intruding art, yellow frame, magenta off-panel; next to it the English as drawn).
+`--only <key>` restricts the crops, `--all-crops` crops unflagged parts too, `--dump <tbl>`
+prints a tilemap's palette indices as text with rulers (for measuring a region), `--palette <n>`
+picks the crops' palette (default 4; art the palette draws in too few colours gets false
+colours). The data test `english_regions_fit_their_art` keeps the English catalogue at no
+findings outside `ALLOW` (`crates/ddg-game/src/label_audit.rs`), each allowance with its
+reason, and fails when an allowance is no longer needed. Measured bounds go in the catalogue's
+comments, as for the distance plates.
+
 ## Configuration
 
 | Setting | Env | Argument |
@@ -238,6 +274,8 @@ Play, the front end, `view --hud` and the headless `--shot` paths all use the sa
 * `crates/ddg-render/src/sprites.rs`: `SpriteBank::set_text` installs an overlay. While
   composing, a slot whose `(tbl, resolved sub-rect)` has an override skips the art pixels inside
   the replaced regions and draws the text instead. With no overlay, composing is unchanged.
+* `crates/ddg-render/src/text_audit.rs` and `crates/ddg-game/src/label_audit.rs`: the region
+  checker and `ddg-game label-audit` ("Checking the regions" above).
 * `crates/ddg-game/src/locale.rs`: catalogue parsing, sheet descriptors from the exe,
   `Locale::lookup(tbl, sub_rect)`, `LocaleConfig` (env and arguments) and `install`.
 * Free text and widgets: `SpriteLayer::widgets` (`crates/ddg-render/src/sprites.rs`) hold
