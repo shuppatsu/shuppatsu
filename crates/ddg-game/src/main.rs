@@ -9,6 +9,7 @@ mod cab;
 mod captions;
 mod config;
 mod coupling_hud;
+mod data_dir;
 mod departure_hud;
 mod desktop;
 mod front;
@@ -64,6 +65,8 @@ usage: ddg-game [options] [--joystick-dat <file>] [--combo <file>] [--mute]
                      desktop entry + icon under $XDG_DATA_HOME (opt-in; see --help)
 
 options:
+  --data <dir>             the extracted disc or installed game (after env DDG_DATA_DIR; else
+                           data\\ next to the exe, else config.toml data_dir; docs/building.md)
   --speed <km/h>           fly-through speed (default 80)
   --gradient-variant <0|1> sky/ground gradient set (1 = the timed alternate set)
   --fog                    view: linear fog everywhere (off by default); elsewhere the switch
@@ -144,7 +147,7 @@ struct Options {
 }
 
 fn parse_play_args() -> Result<play::PlayOptions> {
-    let mut args: Vec<String> = std::env::args().skip(2).collect();
+    let mut args: Vec<String> = cli_args().into_iter().skip(2).collect();
     let headless = args.iter().any(|a| a == "--shot");
     let (locale, settings) = config::load(&mut args, headless)?;
     identity::take_debug_title_flag(&mut args);
@@ -214,7 +217,7 @@ fn parse_play_args() -> Result<play::PlayOptions> {
 
 /// `ddg-game [options]`: the whole game ([`app`]).
 fn parse_app_args() -> Result<app::AppOptions> {
-    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = cli_args().into_iter().skip(1).collect();
     let headless = args.iter().any(|a| a == "--shot");
     let (locale, settings, locks) = config::load_locked(&mut args, headless)?;
     identity::take_debug_title_flag(&mut args);
@@ -266,7 +269,7 @@ fn parse_app_args() -> Result<app::AppOptions> {
 }
 
 fn parse_args() -> Result<Options> {
-    let mut args: Vec<String> = std::env::args().skip(1).collect();
+    let mut args: Vec<String> = cli_args().into_iter().skip(1).collect();
     // `shot` renders headless: no config file.
     let headless = args.first().map(String::as_str) == Some("shot");
     // In `view`, `--fog` is fog everywhere, not the snow fog setting (which it also sets).
@@ -667,7 +670,7 @@ impl ApplicationHandler for App {
 }
 
 fn main() -> Result<()> {
-    let first = std::env::args().nth(1);
+    let first = cli_args().into_iter().nth(1);
     if matches!(first.as_deref(), Some("-h" | "--help")) {
         println!("{USAGE}");
         return Ok(());
@@ -675,17 +678,17 @@ fn main() -> Result<()> {
     if first.as_deref().is_none_or(|a| a.starts_with("--")) {
         return app::run(parse_app_args()?);
     }
-    if std::env::args().nth(1).as_deref() == Some("play") {
+    if cli_args().into_iter().nth(1).as_deref() == Some("play") {
         return play::run(parse_play_args()?);
     }
-    if std::env::args().nth(1).as_deref() == Some("install-desktop") {
-        let args: Vec<String> = std::env::args().skip(2).collect();
+    if cli_args().into_iter().nth(1).as_deref() == Some("install-desktop") {
+        let args: Vec<String> = cli_args().into_iter().skip(2).collect();
         return desktop::run(&args);
     }
-    if std::env::args().nth(1).as_deref() == Some("pad") {
+    if cli_args().into_iter().nth(1).as_deref() == Some("pad") {
         let data = scene::GameData::from_env()?;
         let exe = data.exe()?;
-        let args: Vec<String> = std::env::args().skip(2).collect();
+        let args: Vec<String> = cli_args().into_iter().skip(2).collect();
         return gamepad::run_tool(&ddg_formats::exe::Exe::parse(&exe)?, &args);
     }
     let opts = parse_args()?;
@@ -790,4 +793,9 @@ fn main() -> Result<()> {
     };
     event_loop.run_app(&mut app)?;
     Ok(())
+}
+
+/// The command line without `--data <dir>` (data_dir.rs).
+fn cli_args() -> Vec<String> {
+    data_dir::args()
 }

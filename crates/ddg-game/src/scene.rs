@@ -20,10 +20,7 @@ pub struct GameData {
 
 impl GameData {
     pub fn from_env() -> Result<Self> {
-        let root = std::env::var_os("DDG_DATA_DIR")
-            .map(PathBuf::from)
-            .context("DDG_DATA_DIR is not set (run inside `nix develop`)")?;
-        let install = root.join("install/Program_Executable_Files");
+        let install = crate::data_dir::locate()?;
         Ok(Self {
             data: install.join("DATA"),
             bin: install.join("BIN"),
