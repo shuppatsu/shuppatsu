@@ -460,7 +460,7 @@ impl SpriteBank {
 
     /// Palette indices of a resolved `(col, row, w, h)` tile rectangle of map `tbl`,
     /// `w·16 × h·16` row-major; empty cells and missing tiles are 0.
-    pub(crate) fn render_rect(&self, tbl: u16, (c0, r0, w, h): (u8, u8, u8, u8)) -> Vec<u8> {
+    pub fn render_rect(&self, tbl: u16, (c0, r0, w, h): (u8, u8, u8, u8)) -> Vec<u8> {
         let cols: Vec<i32> = (0..i32::from(w)).map(|t| i32::from(c0) + t).collect();
         let rows: Vec<i32> = (0..i32::from(h)).map(|t| i32::from(r0) + t).collect();
         match self.tilemaps.get(usize::from(tbl)) {

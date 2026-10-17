@@ -757,6 +757,159 @@ fn render_part(
     render_part_at(part, art, art_w, art_h, glyphs, scale, None).map(|(r, _)| r)
 }
 
+/// How the renderer reads the art under one part's region: the region clipped to the sprite,
+/// its style, its backdrop pattern and the original lettering's ink box. Shared by the
+/// renderer and the catalogue audit ([`crate::text_audit`]), so both agree on what is backdrop
+/// and what is lettering.
+#[derive(Clone, Debug)]
+pub struct RegionScan {
+    /// The region clipped to the sprite, `[x, y, w, h]` in art pixels.
+    pub rect: [usize; 4],
+    /// Painted as a box (the backdrop kept, the lettering painted over) rather than plain.
+    pub boxed: bool,
+    /// The backdrop per 2×2 parity class of region pixels (`(x & 1) | (y & 1) << 1`): the
+    /// commonest value along the region's edge in that class.
+    pub pattern: [u8; 4],
+    /// The original lettering's ink box `[x0, x1, y0, y1]` (exclusive ends) in region pixels;
+    /// `None` when the region has no lettering.
+    pub ink: Option<[usize; 4]>,
+    /// The region's opaque palette indices, commonest first.
+    pub ranked: Vec<u8>,
+}
+
+impl RegionScan {
+    /// Scans `part`'s region of a `art_w × art_h` sprite; `None` when the region is empty after
+    /// clipping to the sprite.
+    pub fn of(part: &TextPart, art: &[u8], art_w: usize, art_h: usize) -> Option<Self> {
+        let [x, y, w, h] = part.region.unwrap_or([0, 0, art_w as u16, art_h as u16]);
+        let (x, y) = (usize::from(x), usize::from(y));
+        if x >= art_w || y >= art_h {
+            return None;
+        }
+        let w = usize::from(w).min(art_w - x);
+        let h = usize::from(h).min(art_h - y);
+        if w == 0 || h == 0 {
+            return None;
+        }
+        let region_art = |px: usize, py: usize| art[(y + py) * art_w + x + px];
+        let mut counts = [0u32; 256];
+        // Edge values per 2×2 parity class (x & 1, y & 1), for the backdrop pattern.
+        let mut class = [[0u32; 256]; 4];
+        let mut edge_n = 0u32;
+        let mut edge_opaque = 0u32;
+        for py in 0..h {
+            for px in 0..w {
+                let v = region_art(px, py);
+                counts[usize::from(v)] += 1;
+                if py == 0 || px == 0 || py == h - 1 || px == w - 1 {
+                    class[parity(px, py)][usize::from(v)] += 1;
+                    edge_n += 1;
+                    edge_opaque += u32::from(v != 0);
+                }
+            }
+        }
+        let mut ranked: Vec<u8> = (1..=255u8)
+            .filter(|&i| counts[usize::from(i)] > 0)
+            .collect();
+        ranked.sort_by_key(|&i| std::cmp::Reverse(counts[usize::from(i)]));
+        let boxed = match part.style {
+            Style::Boxed => true,
+            Style::Plain => false,
+            Style::Auto => edge_opaque as f32 > BOXED_EDGE * edge_n as f32,
+        };
+        // The backdrop is the commonest value along the region's edge per 2×2 parity class
+        // (a plate's face is one colour; a caption band's dither alternates colours or
+        // transparency).
+        let pattern: [u8; 4] = std::array::from_fn(|c| {
+            (0..=255u8)
+                .max_by_key(|&i| class[c][usize::from(i)])
+                .unwrap_or(0)
+        });
+        let mut scan = Self {
+            rect: [x, y, w, h],
+            boxed,
+            pattern,
+            ink: None,
+            ranked,
+        };
+        // Its ink box `[x0, x1) × [y0, y1)` in region pixels.
+        let (mut x0, mut x1, mut y0, mut y1) = (w, 0, h, 0);
+        for py in 0..h {
+            for px in 0..w {
+                if scan.lettering(px, py, region_art(px, py)) {
+                    x0 = x0.min(px);
+                    x1 = x1.max(px + 1);
+                    y0 = y0.min(py);
+                    y1 = y1.max(py + 1);
+                }
+            }
+        }
+        scan.ink = (x0 < x1).then_some([x0, x1, y0, y1]);
+        Some(scan)
+    }
+
+    /// Whether value `v` at region pixel `(px, py)` is original lettering: opaque and, in a
+    /// box, not the backdrop. The coordinates may lie outside the region (the parity classes
+    /// continue), for looking at the art around it.
+    pub fn lettering(&self, px: usize, py: usize, v: u8) -> bool {
+        v != 0 && (!self.boxed || !self.backdrop(px, py, v))
+    }
+
+    /// Whether value `v` at region pixel `(px, py)` matches the backdrop pattern.
+    pub fn backdrop(&self, px: usize, py: usize, v: u8) -> bool {
+        v == self.pattern[parity(px, py)]
+    }
+
+    /// [`RegionScan::lettering`] at sprite pixel `(ax, ay)`, inside the region or not.
+    pub fn lettering_at(&self, ax: usize, ay: usize, v: u8) -> bool {
+        // (a − x) and (a + x) have the same parity, so no signed arithmetic is needed.
+        self.lettering(ax + self.rect[0], ay + self.rect[1], v)
+    }
+
+    /// [`RegionScan::backdrop`] at sprite pixel `(ax, ay)`.
+    pub fn backdrop_at(&self, ax: usize, ay: usize, v: u8) -> bool {
+        self.backdrop(ax + self.rect[0], ay + self.rect[1], v)
+    }
+}
+
+/// The clear pixels of a `w × h` sprite that the art encloses: those whose 4-connected run of
+/// clear pixels does not reach the sprite's edge (the clear half of dithered lettering, a hole
+/// in a glyph). The rest is the void around the art.
+pub fn enclosed_clear(art: &[u8], w: usize, h: usize) -> Vec<bool> {
+    // Flood the void from the clear pixels on the edge; what stays unreached is enclosed.
+    let mut void = vec![false; w * h];
+    let mut stack: Vec<usize> = (0..w * h)
+        .filter(|&i| {
+            let (x, y) = (i % w, i / w);
+            art[i] == 0 && (x == 0 || y == 0 || x + 1 == w || y + 1 == h)
+        })
+        .collect();
+    for &i in &stack {
+        void[i] = true;
+    }
+    while let Some(i) = stack.pop() {
+        let (x, y) = (i % w, i / w);
+        let near = [
+            (x > 0).then(|| i - 1),
+            (x + 1 < w).then(|| i + 1),
+            (y > 0).then(|| i - w),
+            (y + 1 < h).then(|| i + w),
+        ];
+        for j in near.into_iter().flatten() {
+            if art[j] == 0 && !void[j] {
+                void[j] = true;
+                stack.push(j);
+            }
+        }
+    }
+    (0..w * h).map(|i| art[i] == 0 && !void[i]).collect()
+}
+
+/// The 2×2 parity class of a pixel.
+fn parity(px: usize, py: usize) -> usize {
+    (px & 1) | (py & 1) << 1
+}
+
 /// One part, its text at most `max_px` font pixels; also returns the font size used.
 fn render_part_at(
     part: &TextPart,
@@ -767,73 +920,17 @@ fn render_part_at(
     scale: usize,
     max_px: Option<f32>,
 ) -> Option<(RenderedPart, f32)> {
-    let [x, y, w, h] = part.region.unwrap_or([0, 0, art_w as u16, art_h as u16]);
-    // Clip the region to the sprite.
-    let (x, y) = (usize::from(x), usize::from(y));
-    if x >= art_w || y >= art_h {
-        return None;
-    }
-    let w = usize::from(w).min(art_w - x);
-    let h = usize::from(h).min(art_h - y);
-    if w == 0 || h == 0 {
-        return None;
-    }
+    let scan = RegionScan::of(part, art, art_w, art_h)?;
+    let [x, y, w, h] = scan.rect;
     let region_art = |px: usize, py: usize| art[(y + py) * art_w + x + px];
-    let parity = |px: usize, py: usize| (px & 1) | (py & 1) << 1;
-    let mut counts = [0u32; 256];
-    // Edge values per 2×2 parity class (x & 1, y & 1), for the backdrop pattern.
-    let mut class = [[0u32; 256]; 4];
-    let mut edge_n = 0u32;
-    let mut edge_opaque = 0u32;
-    for py in 0..h {
-        for px in 0..w {
-            let v = region_art(px, py);
-            counts[usize::from(v)] += 1;
-            if py == 0 || px == 0 || py == h - 1 || px == w - 1 {
-                class[parity(px, py)][usize::from(v)] += 1;
-                edge_n += 1;
-                edge_opaque += u32::from(v != 0);
-            }
-        }
-    }
-    let mut ranked: Vec<u8> = (1..=255u8)
-        .filter(|&i| counts[usize::from(i)] > 0)
-        .collect();
-    ranked.sort_by_key(|&i| std::cmp::Reverse(counts[usize::from(i)]));
+    let ranked = &scan.ranked;
     let dominant = ranked.first().copied().unwrap_or(0);
     let second = ranked.get(1).copied().unwrap_or(dominant);
-    let boxed = match part.style {
-        Style::Boxed => true,
-        Style::Plain => false,
-        Style::Auto => edge_opaque as f32 > BOXED_EDGE * edge_n as f32,
-    };
-    // The backdrop is the commonest value along the region's edge per 2×2 parity class
-    // (a plate's face is one colour; a caption band's dither alternates colours or
-    // transparency).
-    let pattern: [u8; 4] = std::array::from_fn(|c| {
-        (0..=255u8)
-            .max_by_key(|&i| class[c][usize::from(i)])
-            .unwrap_or(0)
-    });
+    let (boxed, pattern) = (scan.boxed, scan.pattern);
     // The original lettering's extent across the reading direction sets the English size, so
     // labels keep the original's type sizes instead of each filling its own box.
-    let lettering = |px: usize, py: usize| {
-        let v = region_art(px, py);
-        v != 0 && (!boxed || v != pattern[parity(px, py)])
-    };
-    // Its ink box `[x0, x1) × [y0, y1)` in region pixels.
-    let (mut x0, mut x1, mut y0, mut y1) = (w, 0, h, 0);
-    for py in 0..h {
-        for px in 0..w {
-            if lettering(px, py) {
-                x0 = x0.min(px);
-                x1 = x1.max(px + 1);
-                y0 = y0.min(py);
-                y1 = y1.max(py + 1);
-            }
-        }
-    }
-    let inked = x0 < x1;
+    let [x0, x1, y0, y1] = scan.ink.unwrap_or([w, 0, h, 0]);
+    let inked = scan.ink.is_some();
     let (lo, hi) = match (inked, part.vertical) {
         (false, _) => (1, 0),
         (true, false) => (y0, y1 - 1),
@@ -923,7 +1020,7 @@ fn render_part_at(
         let ink_ranked = part.ink.map(|r| ranked_colours(art, art_w, art_h, r));
         ink_ranked
             .as_deref()
-            .unwrap_or(&ranked)
+            .unwrap_or(ranked)
             .iter()
             .copied()
             .find(|i| !pattern.contains(i))
