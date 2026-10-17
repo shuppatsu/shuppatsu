@@ -449,4 +449,5 @@ Smaller open points:
   (ATS, ATC, OK, HK100). Railway terms follow JR English usage (Clear, Caution,
   Restricted, Reduce, Stop; home/starting/repeater signals; "series" for rolling stock).
 * The time-up advice and hint texts paraphrase the Japanese to fit three short lines.
-* Station names use Hepburn with macrons (Ōmagari, Jingūji) except Tokyo, Osaka and Kobe.
+* Station names use Hepburn with macrons everywhere (decided): Ōmagari, Jingūji, Tōkyō, Ōsaka,
+  Kōbe.

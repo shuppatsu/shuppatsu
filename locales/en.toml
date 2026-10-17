@@ -355,12 +355,12 @@ name = "English"
 0x3d8 = { region = [84, 4, 244, 32], text = "Departures" }  # 発車案内 board header, 416×160 (est.)
 
 # Departure-board flaps (menus.md §7: lists 0x466fa0 series, 0x466fd8 type, 0x466ff8 stations).
-0x3c9 = { region = [4, 0, 120, 38], text = "Tokyo" }                      # 東京
+0x3c9 = { region = [4, 0, 120, 38], text = "Tōkyō" }                      # 東京
 0x3ca = { region = [4, 0, 120, 38], text = "Ueno" }                       # 上野
 0x3cb = { region = [4, 0, 120, 38], text = "Yokohama" }                   # 横浜
-0x3cc = { region = [4, 0, 120, 38], text = "Osaka" }                      # 大阪
+0x3cc = { region = [4, 0, 120, 38], text = "Ōsaka" }                      # 大阪
 0x3cd = { region = [4, 0, 120, 38], text = "Shinjuku" }                   # 新宿
-0x3ce = { region = [4, 0, 120, 38], text = "Kobe" }                       # 神戸
+0x3ce = { region = [4, 0, 120, 38], text = "Kōbe" }                       # 神戸
 0x3cf = { region = [4, 0, 120, 38], text = "Rapid" }                      # 快速
 0x3d0 = { region = [4, 0, 120, 38], text = "Local" }                      # 普通
 0x3d1 = { region = [4, 0, 120, 38], text = "223 series" }                 # 223系
@@ -616,8 +616,8 @@ name = "English"
 0xc5 = "Ishiuchi"   # name 46, banner
 0xc6 = "Echigo-Yuzawa"   # name 47, plain
 0xc7 = "Echigo-Yuzawa"   # name 47, banner
-0xc8 = "Tokyo"   # name 48, plain
-0xc9 = "Tokyo"   # name 48, banner
+0xc8 = "Tōkyō"   # name 48, plain
+0xc9 = "Tōkyō"   # name 48, banner
 0xca = "Yūrakuchō"   # name 49, plain
 0xcb = "Yūrakuchō"   # name 49, banner
 0xcc = "Shimbashi"   # name 50, plain
@@ -668,8 +668,8 @@ name = "English"
 0xf9 = "Okachimachi"   # name 72, banner
 0xfa = "Ueno"   # name 73, plain
 0xfb = "Ueno"   # name 73, banner
-0xfc = "Osaka"   # name 74, plain
-0xfd = "Osaka"   # name 74, banner
+0xfc = "Ōsaka"   # name 74, plain
+0xfd = "Ōsaka"   # name 74, banner
 0xfe = "Tsukamoto"   # name 75, plain
 0xff = "Tsukamoto"   # name 75, banner
 0x100 = "Amagasaki"   # name 76, plain
@@ -696,8 +696,8 @@ name = "English"
 0x115 = "Sannomiya"   # name 86, banner
 0x116 = "Motomachi"   # name 87, plain
 0x117 = "Motomachi"   # name 87, banner
-0x118 = "Kobe"   # name 88, plain
-0x119 = "Kobe"   # name 88, banner
+0x118 = "Kōbe"   # name 88, plain
+0x119 = "Kōbe"   # name 88, banner
 0x11a = "Shin-Hanamaki"   # name 89, plain
 0x11b = "Shin-Hanamaki"   # name 89, banner
 
@@ -885,7 +885,7 @@ replay = { rect = [6, 0, 6, 2], region = [13, 4, 72, 23], style = "plain", text 
 0x4d0 = "Matsudai"   # name 38
 0x4d1 = "Tōkamachi"   # name 39
 0x4d2 = "Muikamachi"   # name 43
-0x4d3 = "Tokyo"   # name 48
+0x4d3 = "Tōkyō"   # name 48
 0x4d4 = "Yūrakuchō"   # name 49
 0x4d5 = "Shimbashi"   # name 50
 0x4d6 = "Hamamatsuchō"   # name 51
@@ -909,7 +909,7 @@ replay = { rect = [6, 0, 6, 2], region = [13, 4, 72, 23], style = "plain", text 
 0x4e8 = "Ōimachi"   # name 69
 0x4e9 = "Akihabara"   # name 71
 0x4ea = "Ueno"   # name 73
-0x4eb = "Osaka"   # name 74
+0x4eb = "Ōsaka"   # name 74
 0x4ec = "Tsukamoto"   # name 75
 0x4ed = "Amagasaki"   # name 76
 0x4ee = "Tachibana"   # name 77
@@ -923,7 +923,7 @@ replay = { rect = [6, 0, 6, 2], region = [13, 4, 72, 23], style = "plain", text 
 0x4f6 = "Nada"   # name 85
 0x4f7 = "Sannomiya"   # name 86
 0x4f8 = "Motomachi"   # name 87
-0x4f9 = "Kobe"   # name 88
+0x4f9 = "Kōbe"   # name 88
 0x4ca = "Shin-Hanamaki"   # name 89
 
 # =============================================================================================
