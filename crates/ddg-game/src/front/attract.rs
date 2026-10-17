@@ -40,20 +40,27 @@ const RESTART_ITEM: usize = 2;
 /// The title picture (0x4037f0): tbl 0x410 in res modes 0/1/3 at (x0, y0), palette 0x17.
 pub(super) const TBL_TITLE: i16 = 0x410;
 /// Enhancement `wide_menus` (menus.md §14): the title picture has no tile pattern, so a wide
-/// canvas mirrors the plain paper texture at its edges, over the 8 outermost tile columns on
-/// each side (128 px). Outside the logo band those are clear of the art: "PRESS START
-/// BUTTON" and the copyright lines start at x ≈ 140 and end at x ≈ 500 (measured on a 640×480
-/// shot of tbl 0x410, palette 0x17).
-pub(super) const TITLE_MIRROR_STRIP: u8 = 8;
-/// In the logo band, tile rows 3–15, the logo's glow starts at x ≈ 19 and the shadow of
-/// 番台 / the signal head reaches x ≈ 623, so those rows continue with the mirrored edge of
-/// rows 16–28, plain texture there (same shot).
-pub(super) const TITLE_MIRROR_BORROW: ddg_render::sprites::RowBorrow =
-    ddg_render::sprites::RowBorrow {
-        start: 3,
-        len: 13,
-        from: 16,
-    };
+/// canvas continues it with paper synthesised from its plain edges ([`Paper`]). Measured on a
+/// 640×480 shot of tbl 0x410, palette 0x17:
+/// - the patch: rows 256–479 of the 128 outermost columns at each side, clear of the art
+///   ("PRESS START BUTTON", the TAITO logo and the copyright lines span x ≈ 140–500 there);
+/// - the ramp: the 24 outermost columns. In the logo band (rows 48–255) the glow left of 電
+///   reaches x ≈ 15 and the shadow of 番台 / the signal head x ≈ 631, but the art itself
+///   (outlines, the 高速編 box, the signal) stays inside x = 32–609, so only glow and shadow
+///   fade out;
+/// - the light: 12 columns from each edge, which the glow and shadow barely reach (their
+///   mean in the band is within 2 levels of the rows outside it on the left, 4 on the
+///   right); the outermost column is skipped, the right one is lighter than the paper next
+///   to it (mean grey 194 against 187 outside the band).
+///
+/// [`Paper`]: ddg_render::sprites::Paper
+pub(super) const TITLE_PAPER: ddg_render::sprites::Paper = ddg_render::sprites::Paper {
+    source_rows: (256, 480),
+    source_cols: 128,
+    ramp: 24,
+    edge_skip: 1,
+    edge_cols: 12,
+};
 const SLOT_TITLE: usize = 0xf;
 const PAL_TITLE: u8 = 0x17;
 const TITLE_TICKS: i32 = 300;
