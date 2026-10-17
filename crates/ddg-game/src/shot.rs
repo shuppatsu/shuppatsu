@@ -161,3 +161,97 @@ pub fn clear_black(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::Text
     });
     queue.submit([encoder.finish()]);
 }
+
+/// Whether shots also write the frame without the 2D layer and a text dump of the layer
+/// (debug aid, env `DDG_SHOT_LAYER=1`; read by `ddg-tools upscale-sprites --frame`).
+pub fn layer_dump_requested() -> bool {
+    std::env::var_os("DDG_SHOT_LAYER").is_some_and(|v| v != "0")
+}
+
+/// The sprite layer as text, in draw order: the canvas, every visible slot (layer 3 → 0, slot
+/// high → low, with its anchor shift in canvas pixels), the palettes those slots use (256 hex
+/// words, as stored: B, R, G) and the rect-layer fans. Widgets (translated text) are only
+/// counted.
+pub fn layer_dump(layer: &ddg_render::sprites::SpriteLayer) -> String {
+    use std::fmt::Write;
+    let (w, h) = layer.canvas_size();
+    let mut s = format!(
+        "canvas {w} {h} scale {} wide {} shake {} {}\nwidgets {}\n",
+        layer.scale,
+        layer.wide,
+        layer.shake.0,
+        layer.shake.1,
+        layer.widgets.len()
+    );
+    let mut used = Vec::new();
+    for l in (0..4u8).rev() {
+        for (i, slot) in layer.slots.iter().enumerate().rev() {
+            if slot.layer != l || slot.tilemap < 0 {
+                continue;
+            }
+            let shift = layer.anchor_shift(layer.anchors[i]);
+            let _ = writeln!(
+                s,
+                "slot {i} tbl {} x {} y {} rect {} {} {} {} pal {} layer {l} shift {shift}",
+                slot.tilemap, slot.x, slot.y, slot.col, slot.row, slot.w, slot.h, slot.palette
+            );
+            if !used.contains(&slot.palette) {
+                used.push(slot.palette);
+            }
+        }
+    }
+    used.sort_unstable();
+    for p in used {
+        if let Some(Some(pal)) = layer.palettes.get(usize::from(p)) {
+            let _ = write!(s, "palette {p}");
+            for c in pal.0 {
+                let _ = write!(s, " {c:08x}");
+            }
+            s.push('\n');
+        }
+    }
+    for fan in &layer.fans {
+        let _ = write!(
+            s,
+            "fan {} argb {:08x}",
+            layer.anchor_shift(fan.anchor),
+            fan.argb
+        );
+        for p in &fan.points[..usize::from(fan.count).min(4)] {
+            let _ = write!(s, " {} {}", p[0], p[1]);
+        }
+        s.push('\n');
+    }
+    s
+}
+
+/// Writes [`layer_dump`] to `path`.
+pub fn write_layer_dump(
+    layer: &ddg_render::sprites::SpriteLayer,
+    path: &std::path::Path,
+) -> Result<()> {
+    std::fs::write(path, layer_dump(layer)).with_context(|| format!("writing {}", path.display()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ddg_formats::cg::Palette;
+    use ddg_render::sprites::{Slot, SpriteLayer};
+
+    #[test]
+    fn layer_dump_lists_visible_slots_in_draw_order_with_their_palettes() {
+        let mut layer = SpriteLayer::default();
+        layer.slots[5] = Slot::new(0x54a, 16, 345, 4, 3, true);
+        layer.slots[9] = Slot::new(0x60, 528, 113, 4, 2, true);
+        layer.palettes[4] = Some(Palette([0x0012_3456; 256]));
+        let d = layer_dump(&layer);
+        let lines: Vec<&str> = d.lines().collect();
+        assert_eq!(lines[0], "canvas 640 480 scale 1 wide 0 shake 0 0");
+        // Layer 3 is drawn first.
+        assert!(lines[2].starts_with("slot 5 tbl 1354 x 16 y 345 rect 0 0 0 0 pal 4 layer 3"));
+        assert!(lines[3].starts_with("slot 9 tbl 96 "));
+        assert!(lines[4].starts_with("palette 4 00123456 "));
+        assert_eq!(lines.len(), 5);
+    }
+}

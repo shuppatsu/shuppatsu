@@ -512,22 +512,31 @@ impl Play {
             .compose(&self.scene, &self.drive, band_aspect, 1.0, &mut effects);
         Self::ending_masks(self.ending.as_ref(), &mut effects);
         let fog = fog && self.weather.fog();
-        crate::shot::render_to_ppm(
-            Some((&self.scene, self.drive.pos())),
-            self.opts.size,
-            |r| {
-                r.texture_filtering = texture_filtering;
-                r.shading = self.opts.settings.shading();
-                r.fog.enabled = fog;
-                r.projection.fov_tenths = (DRIVING_FOV_Y_DEG * 10.0) as u16;
-                r.projection.stretch = if square { 1.0 } else { ORIGINAL_STRETCH };
-                self.scene.geometry().configure(r);
-                r.band_top = band;
-                r.effects = effects;
-            },
-            Some((&self.canvas, self.layer.canvas_size())),
-            out,
-        )
+        let render = |hud: Option<crate::shot::Canvas<'_>>, path: &std::path::Path| {
+            crate::shot::render_to_ppm(
+                Some((&self.scene, self.drive.pos())),
+                self.opts.size,
+                |r| {
+                    r.texture_filtering = texture_filtering;
+                    r.shading = self.opts.settings.shading();
+                    r.fog.enabled = fog;
+                    r.projection.fov_tenths = (DRIVING_FOV_Y_DEG * 10.0) as u16;
+                    r.projection.stretch = if square { 1.0 } else { ORIGINAL_STRETCH };
+                    self.scene.geometry().configure(r);
+                    r.band_top = band;
+                    r.effects = effects.clone();
+                },
+                hud,
+                path,
+            )
+        };
+        if crate::shot::layer_dump_requested() {
+            // Debug aid: the frame without the 2D layer and the layer itself, for offline
+            // recomposition (`ddg-tools upscale-sprites --frame`).
+            render(None, &out.with_extension("world.ppm"))?;
+            crate::shot::write_layer_dump(&self.layer, &out.with_extension("layer.txt"))?;
+        }
+        render(Some((&self.canvas, self.layer.canvas_size())), out)
     }
 
     /// Window events other than redraws: keys, focus, resize.
