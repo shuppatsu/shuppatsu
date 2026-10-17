@@ -104,7 +104,14 @@ switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml
   --wide-visibility        scenery for the window's wider view [on] (--original-visibility)
   --square-pixels          no 7.9 % horizontal stretch of the 3D view [off]
   --stable-track-variants  side-track models don't switch every point (no flicker) [off]
-  --texture-filtering      mipmaps + trilinear/anisotropic filtering (no shimmer) [off]
+  --texture-filtering      mipmaps + trilinear filtering (no shimmer; blurs close-ups) [off]
+  --ground-variation       soft brightness/tint variation on the ground [off]
+  --ground-detiling        ground textures without a regular tile grid [off]
+  --anisotropic <1|2|4|8|16>
+                           anisotropic filtering with mipmaps, close-ups stay sharp
+                           (env DDG_ANISOTROPIC; 1 or --no-anisotropic = off) [off]
+  --msaa <1|2|4|8>         multisampled 3D view, smooth cut-out edges (env DDG_MSAA;
+                           1 or --no-msaa = off) [off]
   --fog                    the snow fog of DengoSetting's FOGENABLE [on]
   --wide-weather           raindrops and snow over the whole width [on] (--original-weather)
   --far-traffic            AI trains drawn to the far plane, not 150 m [on] (--original-traffic)
@@ -340,6 +347,7 @@ fn track_pos(units: f32) -> TrackPos {
 
 fn configure_renderer(renderer: &mut Renderer, opts: &Options) {
     renderer.texture_filtering = opts.settings.texture_filtering;
+    renderer.shading = opts.settings.shading();
     // The original reads FOGENABLE from the registry; with no key (fresh install, never run
     // DengoSetting) it parses as 0, so fog is off.
     renderer.fog.enabled = opts.fog;

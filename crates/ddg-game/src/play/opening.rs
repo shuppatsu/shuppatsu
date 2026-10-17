@@ -667,6 +667,7 @@ impl Play {
             |device, queue, view, format| {
                 let mut r = ddg_render::Renderer::new(device, format);
                 r.texture_filtering = filtering;
+                r.shading = self.opts.settings.shading();
                 r.fog.enabled = false;
                 r.upload_pages(device, queue, &self.scene.library.pages);
                 let mut frame = FrameGeometry::default();

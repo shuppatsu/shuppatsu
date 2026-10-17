@@ -10,22 +10,34 @@
 //! a switch off gives the original's behaviour for that one thing.
 
 macro_rules! settings {
-    ($( $(#[$doc:meta])* $name:ident = $default:expr; )*) => {
+    (
+        $( $(#[$doc:meta])* $name:ident = $default:expr; )*
+        @levels {
+            $( $(#[$ldoc:meta])* $lname:ident = [$($lvalue:expr),+]; )*
+        }
+    ) => {
         /// The port's switches for a run, passed down with the options (no globals).
         #[derive(Debug, Clone, Copy, PartialEq, Eq)]
         pub struct Settings {
             $( $(#[$doc])* pub $name: bool, )*
+            $( $(#[$ldoc])* pub $lname: u16, )*
         }
 
         impl Default for Settings {
             fn default() -> Self {
-                Self { $( $name: $default, )* }
+                Self {
+                    $( $name: $default, )*
+                    $( $lname: Self::level_values(stringify!($lname)).expect("a level")[0], )*
+                }
             }
         }
 
         impl Settings {
             /// Every key, in the order of docs/settings.md.
             pub const KEYS: &[&str] = &[$( stringify!($name) ),*];
+
+            /// Every level key ([`Settings::level`]): settings with a few numeric steps.
+            pub const LEVEL_KEYS: &[&str] = &[$( stringify!($lname) ),*];
 
             /// The switch named `key`.
             pub fn get_mut(&mut self, key: &str) -> Option<&mut bool> {
@@ -39,6 +51,30 @@ macro_rules! settings {
             pub fn get(&self, key: &str) -> Option<bool> {
                 match key {
                     $( stringify!($name) => Some(self.$name), )*
+                    _ => None,
+                }
+            }
+
+            /// The steps of the level named `key`; the first (1, off) is the default.
+            pub fn level_values(key: &str) -> Option<&'static [u16]> {
+                match key {
+                    $( stringify!($lname) => Some(&[$($lvalue),+]), )*
+                    _ => None,
+                }
+            }
+
+            /// The level named `key`.
+            pub fn level_mut(&mut self, key: &str) -> Option<&mut u16> {
+                match key {
+                    $( stringify!($lname) => Some(&mut self.$lname), )*
+                    _ => None,
+                }
+            }
+
+            /// The value of the level named `key`.
+            pub fn level(&self, key: &str) -> Option<u16> {
+                match key {
+                    $( stringify!($lname) => Some(self.$lname), )*
                     _ => None,
                 }
             }
@@ -59,6 +95,12 @@ settings! {
     /// Mipmaps and trilinear/anisotropic filtering; off (default) = the original's nearest
     /// sampling.
     texture_filtering = false;
+    /// Soft world-space brightness and tint variation on ground surfaces (renderer.md §14);
+    /// off (default) = the original's plain repeating textures.
+    ground_variation = false;
+    /// Ground textures repeated with per-region offsets and mirrors, so the tiles do not line
+    /// up (renderer.md §14); off (default) = the original's regular tiling.
+    ground_detiling = false;
     /// The snow fog, as with DengoSetting's FOGENABLE (`snow_fog`, renderer.md §13.9); off = a
     /// fresh install of the original.
     fog = true;
@@ -101,6 +143,15 @@ settings! {
     /// The exit dialog's いいえ returns to the title menu on ゲーム終了 (menus.md §14.1); off =
     /// attract from the title picture, as the original.
     exit_no_to_menu = true;
+
+    @levels {
+        /// Samples per pixel of the 3D view, with alpha to coverage for the colour-keyed
+        /// cut-outs (renderer.md §14); 1 (default) = off, the original's aliased edges.
+        msaa = [1, 2, 4, 8];
+        /// Anisotropic filtering with mipmaps (renderer.md §14); 1 (default) = off, the
+        /// original's nearest sampling without mipmaps.
+        anisotropic = [1, 2, 4, 8, 16];
+    }
 }
 
 /// A boolean as written in the environment or on a command line.
@@ -144,19 +195,87 @@ impl Settings {
                 None => eprintln!("warning: {var}: expected 1 or 0 (true or false)"),
             }
         }
+        for key in Self::LEVEL_KEYS {
+            let var = Self::env_var(key);
+            if let Some(v) = get(&var).filter(|v| !v.is_empty()) {
+                self.set_level_reported(key, &v.to_string_lossy(), &var);
+            }
+        }
     }
 
     /// Takes the switches' flags out of `args` (`--x`, `--no-x` and the aliases) and leaves
     /// everything else.
     pub fn take_args(&mut self, args: &mut Vec<String>) {
         let mut rest = Vec::with_capacity(args.len());
-        for a in std::mem::take(args) {
+        let mut it = std::mem::take(args).into_iter();
+        while let Some(a) = it.next() {
+            if let Some((key, value)) = Self::level_flag(&a) {
+                // `--msaa 4`, `--msaa=4` or `--no-msaa`.
+                let value = value.map(str::to_owned).or_else(|| it.next());
+                self.set_level_reported(key, value.as_deref().unwrap_or(""), &a);
+                continue;
+            }
             match Self::flag_value(&a) {
                 Some((key, v)) => *self.get_mut(key).expect("a key") = v,
                 None => rest.push(a),
             }
         }
         *args = rest;
+    }
+
+    /// The renderer's shading enhancements from these settings.
+    pub fn shading(&self) -> ddg_render::Shading {
+        ddg_render::Shading {
+            ground_variation: self.ground_variation,
+            ground_detiling: self.ground_detiling,
+            msaa: u32::from(self.msaa),
+            anisotropic: self.anisotropic,
+        }
+    }
+
+    /// The level a flag sets and the value it carries: `--msaa=4` → ("msaa", Some("4")),
+    /// `--msaa` → ("msaa", None: the next argument), `--no-msaa` → ("msaa", Some("off")).
+    pub(crate) fn level_flag(flag: &str) -> Option<(&'static str, Option<&str>)> {
+        let (name, value) = match flag.split_once('=') {
+            Some((n, v)) => (n, Some(v)),
+            None => (flag, None),
+        };
+        if let Some(rest) = name.strip_prefix("--no-") {
+            let key = Self::LEVEL_KEYS
+                .iter()
+                .find(|k| Self::flag(k) == format!("--{rest}"))?;
+            return value.is_none().then_some((*key, Some("off")));
+        }
+        let key = Self::LEVEL_KEYS.iter().find(|k| Self::flag(k) == name)?;
+        Some((*key, value))
+    }
+
+    /// The level `key` from its text: one of its steps, or `off` / `false` / `0` for 1.
+    pub fn parse_level(key: &str, text: &str) -> Option<u16> {
+        let values = Self::level_values(key)?;
+        if parse_bool(text) == Some(false) {
+            return Some(values[0]);
+        }
+        text.trim().parse().ok().filter(|v| values.contains(v))
+    }
+
+    /// Sets level `key` from `text`; a value that is not one of its steps is reported (as
+    /// coming from `source`) and ignored.
+    fn set_level_reported(&mut self, key: &str, text: &str, source: &str) {
+        match Self::parse_level(key, text) {
+            Some(v) => *self.level_mut(key).expect("a level") = v,
+            None => {
+                let steps: Vec<String> = Self::level_values(key)
+                    .unwrap_or_default()
+                    .iter()
+                    .map(u16::to_string)
+                    .collect();
+                eprintln!(
+                    "warning: {source}: {key} must be off or one of {}",
+                    steps.join(", ")
+                );
+            }
+        }
     }
 
     /// The switch and value a flag sets, if it is one of theirs.
@@ -183,6 +302,16 @@ impl Settings {
                 Some(toml::Value::Boolean(b)) => *self.get_mut(key).expect("a key") = *b,
                 Some(_) => eprintln!("warning: {file}: {key} must be true or false"),
             }
+        }
+        for key in Self::LEVEL_KEYS {
+            let text = match table.get(*key) {
+                None => continue,
+                Some(toml::Value::Integer(n)) => n.to_string(),
+                Some(toml::Value::Boolean(false)) => "off".to_owned(),
+                Some(toml::Value::String(s)) => s.clone(),
+                Some(_) => String::new(),
+            };
+            self.set_level_reported(key, &text, file);
         }
     }
 }

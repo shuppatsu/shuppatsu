@@ -57,8 +57,14 @@ pub fn open(
                 compatible_surface: surface.as_ref(),
                 ..Default::default()
             }))?;
-            let (device, queue) =
-                block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
+            // The adapter's own sample counts (MSAA 2 and 8, enhancement `msaa`), where it has
+            // them; without the feature only 1 and 4 are allowed.
+            let msaa_counts =
+                adapter.features() & wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
+            let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+                required_features: msaa_counts,
+                ..Default::default()
+            }))?;
             if !is_last {
                 probe(&device).with_context(|| {
                     format!(

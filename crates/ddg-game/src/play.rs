@@ -474,6 +474,7 @@ impl Play {
                 |device, queue, view, format| {
                     let mut r = ddg_render::Renderer::new(device, format);
                     r.texture_filtering = texture_filtering;
+                    r.shading = self.opts.settings.shading();
                     r.fog.enabled = false;
                     r.upload_pages(device, queue, &self.scene.library.pages);
                     let mut frame = FrameGeometry::default();
@@ -511,6 +512,7 @@ impl Play {
             self.opts.size,
             |r| {
                 r.texture_filtering = texture_filtering;
+                r.shading = self.opts.settings.shading();
                 r.fog.enabled = fog;
                 r.projection.fov_tenths = (DRIVING_FOV_Y_DEG * 10.0) as u16;
                 r.projection.stretch = if square { 1.0 } else { ORIGINAL_STRETCH };
@@ -1392,6 +1394,7 @@ impl Play {
         self.accumulator = Duration::ZERO;
         let r = &mut gpu.renderer;
         r.texture_filtering = self.opts.settings.texture_filtering;
+        r.shading = self.opts.settings.shading();
         r.fog.enabled = self.opts.settings.fog;
         r.projection.fov_tenths = (DRIVING_FOV_Y_DEG * 10.0) as u16;
         r.projection.stretch = if self.opts.settings.square_pixels {

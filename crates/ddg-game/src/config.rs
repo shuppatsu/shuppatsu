@@ -332,6 +332,7 @@ pub fn all_keys() -> impl Iterator<Item = &'static str> {
         .iter()
         .map(|(_, k)| *k)
         .chain(Settings::KEYS.iter().copied())
+        .chain(Settings::LEVEL_KEYS.iter().copied())
 }
 
 /// The settings `args` and the environment (as looked up by `env`) fix for this run: a flag
@@ -349,7 +350,8 @@ pub fn locks(env: impl Fn(&str) -> Option<std::ffi::OsString>, args: &[String]) 
             .iter()
             .find(|(f, _)| f == a)
             .map(|(_, k)| *k)
-            .or_else(|| Settings::flag_value(a).map(|(k, _)| k));
+            .or_else(|| Settings::flag_value(a).map(|(k, _)| k))
+            .or_else(|| Settings::level_flag(a).map(|(k, _)| k));
         if let Some(k) = key {
             m.insert(k.to_owned(), Lock::Flag(a.clone()));
         }
@@ -474,6 +476,8 @@ mod tests {
         ("square_pixels", false),
         ("stable_track_variants", false),
         ("texture_filtering", false),
+        ("ground_variation", false),
+        ("ground_detiling", false),
         ("fog", true),
         ("wide_weather", true),
         ("far_traffic", true),
@@ -521,7 +525,7 @@ mod tests {
             .lines()
             .filter_map(|l| l.strip_prefix("| `")?.split('`').next())
             .collect();
-        for k in Settings::KEYS.iter().chain(&[
+        for k in Settings::KEYS.iter().chain(Settings::LEVEL_KEYS).chain(&[
             "lang",
             "hud_layout",
             "ui_scaling",
@@ -540,6 +544,7 @@ mod tests {
         }
         for r in &rows {
             let known = Settings::KEYS.contains(r)
+                || Settings::LEVEL_KEYS.contains(r)
                 || [
                     "lang",
                     "hud_layout",
@@ -601,6 +606,47 @@ mod tests {
         let mut a = args(&["--no-such-thing", "--fogs", "--speed", "80"]);
         layered(None, env(&[]), &mut a).unwrap();
         assert_eq!(a, ["--no-such-thing", "--fogs", "--speed", "80"]);
+    }
+
+    #[test]
+    fn levels_parse_from_file_env_and_flags() {
+        let d = Settings::default();
+        assert_eq!((d.msaa, d.anisotropic), (1, 1), "off by default");
+        // The file: a number, false or "off"; a bad step loses only that key.
+        let f = PortConfig::parse("msaa = 4\nanisotropic = 16\n").unwrap();
+        let (_, s) = layered(Some(&f), env(&[]), &mut vec![]).unwrap();
+        assert_eq!((s.msaa, s.anisotropic), (4, 16));
+        let f = PortConfig::parse("msaa = 3\nanisotropic = \"off\"\n").unwrap();
+        let (_, s) = layered(Some(&f), env(&[]), &mut vec![]).unwrap();
+        assert_eq!((s.msaa, s.anisotropic), (1, 1));
+        // The environment over the file, the flags over both, in all three spellings.
+        let f = PortConfig::parse("msaa = 2\nanisotropic = 2\n").unwrap();
+        let e = env(&[("DDG_MSAA", "8"), ("DDG_ANISOTROPIC", "4")]);
+        let (_, s) = layered(Some(&f), e, &mut vec![]).unwrap();
+        assert_eq!((s.msaa, s.anisotropic), (8, 4));
+        for (a, want) in [
+            (&["--msaa", "4", "rest"][..], 4),
+            (&["--msaa=2", "rest"], 2),
+            (&["--no-msaa", "rest"], 1),
+        ] {
+            let mut a = args(a);
+            let e = env(&[("DDG_MSAA", "8")]);
+            let (_, s) = layered(Some(&f), e, &mut a).unwrap();
+            assert_eq!(s.msaa, want);
+            assert_eq!(a, ["rest"]);
+        }
+        // Both lock the setting on the screen.
+        let l = locks(env(&[("DDG_ANISOTROPIC", "8")]), &args(&["--msaa=4"]));
+        assert_eq!(l.get("msaa"), Some(&Lock::Flag("--msaa=4".into())));
+        assert_eq!(
+            l.get("anisotropic"),
+            Some(&Lock::Env("DDG_ANISOTROPIC".into()))
+        );
+        assert_eq!(
+            Settings::default().shading(),
+            ddg_render::Shading::default(),
+            "the renderer's default is the original too"
+        );
     }
 
     #[test]

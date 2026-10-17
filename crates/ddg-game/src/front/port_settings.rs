@@ -68,6 +68,8 @@ pub enum Kind {
     DisplayFont,
     /// `texture_pack`: a directory, shown but changed only in `config.toml`.
     TexturePack,
+    /// `msaa` / `anisotropic`: off or one of the level's steps ([`Settings::level_values`]).
+    Level,
 }
 
 /// When a change takes effect, seen from the menus (the only place the screen is reached).
@@ -126,6 +128,10 @@ pub const ITEMS: &[Item] = {
         switch("square_pixels", Effects, NextStage),
         switch("stable_track_variants", Effects, NextStage),
         switch("texture_filtering", Effects, NextStage),
+        item("anisotropic", Effects, Kind::Level, NextStage),
+        item("msaa", Effects, Kind::Level, NextStage),
+        switch("ground_variation", Effects, NextStage),
+        switch("ground_detiling", Effects, NextStage),
         item("texture_pack", Effects, Kind::TexturePack, NextStage),
         switch("fog", Effects, NextStage),
         switch("wide_weather", Effects, NextStage),
@@ -200,6 +206,15 @@ impl Item {
                 let n = cycle(i, dir, MAX_MULTIPLE + 1);
                 cfg.ui_scale_fixed = (n != 0).then_some(n);
             }
+            Kind::Level => {
+                let steps = Settings::level_values(self.key).unwrap_or_default();
+                if let Some(v) = s.level_mut(self.key)
+                    && !steps.is_empty()
+                {
+                    let i = steps.iter().position(|x| x == v).unwrap_or(0);
+                    *v = steps[cycle(i, dir, steps.len())];
+                }
+            }
             Kind::Font | Kind::DisplayFont | Kind::TexturePack => {}
         }
     }
@@ -221,6 +236,7 @@ impl Item {
             Kind::Font => path(&cfg.font),
             Kind::DisplayFont => path(&cfg.display_font),
             Kind::TexturePack => path(&cfg.texture_pack),
+            Kind::Level => s.level(self.key).map(|v| Value::Integer(i64::from(v))),
         }
     }
 
@@ -275,6 +291,10 @@ impl Item {
                     |n| n.to_string_lossy().into_owned(),
                 ),
                 None => ui.get("texture_pack_none").to_owned(),
+            },
+            Kind::Level => match s.level(self.key) {
+                Some(v) if v > 1 => format!("{v}×"),
+                _ => ui.get("off").to_owned(),
             },
         }
     }
