@@ -252,12 +252,26 @@ name = "English"
 # 通過 (pass) sprite, 0x240 (next to the landmarks in tbl.rom).
 0x240 = "Passing"                    # 通過
 
-# Pre-departure progress strips (hud.md §3.7), 352×48: 発 / 着 at the ends.
-0x31c = { parts = [{ region = [8, 6, 44, 20], text = "Dep" }, { region = [304, 6, 40, 20], text = "Arr" }] }
-0x31d = { parts = [{ region = [8, 6, 44, 20], text = "Dep" }, { region = [304, 6, 40, 20], text = "Arr" }] }
-0x326 = { parts = [{ region = [8, 6, 44, 20], text = "Dep" }, { region = [304, 6, 40, 20], text = "Arr" }] }
-0x327 = { parts = [{ region = [8, 6, 44, 20], text = "Dep" }, { region = [304, 6, 40, 20], text = "Arr" }] }
-0x328 = { parts = [{ region = [8, 6, 44, 20], text = "Dep" }, { region = [304, 6, 40, 20], text = "Arr" }] }
+# Pre-departure progress strips (hud.md §3.7), 352×48: 発 / 着 at the ends (glyphs in rows 9–23).
+# The regions stop at row 24: on some strips the arrows start at row 25, right under the words.
+0x318 = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
+0x31c = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
+0x31d = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
+0x326 = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
+0x327 = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
+0x328 = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
+0x331 = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
+0x33a = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
+0x34b = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
+0x353 = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
+0x362 = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
+0x36b = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
+0x36c = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
+0x37a = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
+0x37b = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
+0x38a = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
+0x38b = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
+0x38d = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
 
 # ---------------------------------------------------------------------------------------------
 # Other popups (hud.md §3.16)
