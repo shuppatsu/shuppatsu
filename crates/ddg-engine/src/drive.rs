@@ -924,6 +924,18 @@ impl Drive {
         if let Some(p) = self.rules.passing_spawn.take() {
             self.traffic.schedule_passing(p);
         }
+        // Course event 12 ran in this tick's rule step, before the camera task moved:
+        // 0x406c50 counts from that tick's engine index `0x8502a4`.
+        if let Some(set) = self.rules.waiting_set.take() {
+            self.traffic
+                .place_waiting_set(&set, self.walker.pos().engine_index, &env);
+        }
+        // `0x857244` is written by the coupling minigame only (success outro, time-up).
+        if self.rules.phase == Phase::Coupling
+            && let Some(c) = &self.rules.coupling
+        {
+            self.traffic.set_coupler_frame(c.coupler_frame != 0);
+        }
     }
 
     /// The car tasks of this tick's `Task_Tick` and their draw-step sounds for the camera

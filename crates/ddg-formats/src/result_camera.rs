@@ -203,14 +203,29 @@ pub struct TrainSet {
     pub shift_m: f32,
 }
 
-/// The coupling-stage flags 0x419730 reads (course event 12, 0x40acd0, sets one of the first
-/// two; the port's engine does not run that event yet).
+/// The coupling flags of `0x855ff8` that 0x419730 reads (and clears). Course event 12 (0x40acd0)
+/// sets one of the first two, which pick the waiting set; a stop that is not perfect at the
+/// coupling station clears both (0x40aa1c), so that result shows no waiting train.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CouplingFlags {
-    /// `0x855ff8 & 0x8000000`.
-    pub waiting_far: bool,
-    /// `0x855ff8 & 0x10000000`.
-    pub waiting_near: bool,
+    /// `0x855ff8 & 0x8000000`: 13 marks or more before the coupling leg; rows 17 / 18.
+    pub many_marks: bool,
+    /// `0x855ff8 & 0x10000000`: fewer marks; rows 20 / 21.
+    pub few_marks: bool,
+    /// `0x855ff8 & 0x40000`: the coupling minigame coupled (0x409d8b). The "after" lists can
+    /// only switch in with it.
+    pub coupled: bool,
+}
+
+impl CouplingFlags {
+    /// `task+0x1cc` at the creation (0x419811): 0 after a coupling, else −9999.
+    pub fn stopped_counter_start(self) -> i32 {
+        if self.coupled {
+            0
+        } else {
+            STOPPED_COUNTER_START
+        }
+    }
 }
 
 /// The exe tables of the replay.
@@ -303,11 +318,11 @@ impl ResultTables {
         set.lead = 12;
         set.lead_after = Some(13);
         set.offset = COUPLING_OFFSET;
-        if flags.waiting_far {
+        if flags.many_marks {
             // Rows 17 / 18 (0x457428 / 0x457434).
             set.waiting = Some((17, 18));
             set.shift_m = COUPLING_SHIFT_M;
-        } else if flags.waiting_near {
+        } else if flags.few_marks {
             // Rows 20 / 21 (0x45744c / 0x457458).
             set.waiting = Some((20, 21));
             set.shift_m = COUPLING_SHIFT_M;
@@ -435,11 +450,17 @@ mod tests {
             15,
             1,
             CouplingFlags {
-                waiting_near: true,
+                few_marks: true,
                 ..Default::default()
             },
         );
         assert_eq!((w.waiting, w.shift_m), (Some((20, 21)), 40.0));
         assert_eq!(t.train_set(1, 24, 14, CouplingFlags::default()).lead, 8);
+        let coupled = CouplingFlags {
+            coupled: true,
+            ..Default::default()
+        };
+        assert_eq!(coupled.stopped_counter_start(), 0);
+        assert_eq!(CouplingFlags::default().stopped_counter_start(), -9999);
     }
 }

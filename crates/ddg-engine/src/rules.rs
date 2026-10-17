@@ -16,11 +16,12 @@
 
 use ddg_formats::FormatError;
 use ddg_formats::exe::Exe;
+use ddg_formats::result_camera::CouplingFlags;
 use ddg_formats::stages::{CourseEvent, DIFFICULTY_COUNT, STAGE_COUNT, Stage, TimetableRow};
 
 use crate::coupling::{Coupling, CouplingEvent, CouplingInput, CouplingResult};
 use crate::stop_replay::{RecordInput, StopRecord};
-use crate::traffic::{PassingSound, PassingTrain, SpawnRequest};
+use crate::traffic::{PassingSound, PassingTrain, SpawnRequest, WaitingSet};
 
 /// Errors raised while preparing the rules for a stage.
 #[derive(Debug, thiserror::Error)]
@@ -1006,6 +1007,9 @@ pub struct Rules {
     /// Set by a red-signal recovery that sends that train past; [`crate::drive::Drive`] takes
     /// it and schedules the spawn.
     pub passing_spawn: Option<PassingTrain>,
+    /// Set by course event 12 (0x40acd0): the coupling minigame's waiting set to place
+    /// (0x406c50); [`crate::drive::Drive`] takes it and places it at the cab's track point.
+    pub waiting_set: Option<WaitingSet>,
     /// Derailment speed, km/h (`0x84c424`).
     pub derail_kmh: f32,
     /// Weather: active (`0x84c3a0`), level (`0x857230`), ticks (`0x856fa8`), wet rails (`0x84c2e0`).
@@ -1185,6 +1189,7 @@ impl Rules {
             obstacle_odo: 0.0,
             passing_train: None,
             passing_spawn: None,
+            waiting_set: None,
             derail_kmh: DERAIL_NONE_KMH,
             jolt_cooldown: COOLDOWN_START,
             departure_counter: 0,
@@ -1263,6 +1268,22 @@ impl Rules {
     /// [`Rules::is_final_next`] with the stage-specific legs of [`Rules::final_override`].
     fn final_leg(&self, at_stop: bool) -> bool {
         self.is_final_next() || self.final_override(at_stop)
+    }
+
+    /// The coupling flags of `0x855ff8` the station result's replay reads (0x419730): the
+    /// waiting set course event 12 chose (cleared again by a stop that is not perfect) and
+    /// bit 0x40000, set when the minigame coupled. The original clears them at each result;
+    /// here they last, which only the coupling station's result can tell apart.
+    pub fn result_coupling_flags(&self) -> CouplingFlags {
+        CouplingFlags {
+            many_marks: self.coupling_partner == 2,
+            few_marks: self.coupling_partner == 1,
+            coupled: self
+                .coupling
+                .as_ref()
+                .and_then(Coupling::result)
+                .is_some_and(|r| r == CouplingResult::Coupled),
+        }
     }
 
     /// Whether a clear plays the full ending (0x4040a0 → 0x404110) rather than the plain one
@@ -2273,12 +2294,13 @@ impl Rules {
                 20 => self.green_hint = a,
                 12 => {
                     // 0x40acd0: the waiting set for the coupling game; 13 or more marks so far
-                    // (0x40e350(0, d78)) pick the 0x8000000 one, else 0x10000000. The set's
-                    // placement (0x406c50) is left to the presentation.
+                    // (0x40e350(0, d78)) pick the 0x8000000 one, else 0x10000000. Drive places the
+                    // set (0x406c50) from the distance to the stop (`0x85708c`).
                     let sum: i32 = (self.marks.iter().take(self.station))
                         .map(|&m| i32::from(m))
                         .sum();
                     self.coupling_partner = if sum < 13 { 1 } else { 2 };
+                    self.waiting_set = Some(WaitingSet::new(self.coupling_partner, self.dist_m));
                     out.events.push(RuleEvent::Script {
                         kind: e.kind,
                         args: e.args,

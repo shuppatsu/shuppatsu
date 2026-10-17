@@ -14,7 +14,7 @@
 //! last two ticks like the cab camera.
 
 use ddg_formats::route::{Route, UNITS_PER_POINT};
-use ddg_formats::scene::{Affine, CabCamera};
+use ddg_formats::scene::{Affine, CabCamera, TrackPos};
 use ddg_formats::stages::TrafficEvent;
 use ddg_formats::traffic::{CarModel, TrainModels};
 
@@ -92,6 +92,21 @@ const SOUND_GATE_START: i32 = 10_000;
 /// Row 0x43's sequence plays once when its first car is −0.4..0 deep (0x458c50).
 const SPECIAL_SEQUENCE_WINDOW: (f64, f64) = (-0.4, 0.0);
 
+/// The coupling minigame's waiting set (course event 12, 0x40acd0 → 0x406c50): its head stands
+/// this many metres past the stop marker, for coupling partner 1 / 2 (f64 294.25 at 0x4594e0,
+/// 239.5 at 0x4594f0). With their car lists (10 × 25.5 m, 8 × 25 m) both leave the last car's
+/// front bogie about 64.6 m past the marker.
+const WAITING_HEAD_M: [f64; 2] = [294.25, 239.5];
+/// Metres → track points of the placement, negated (f64 −0.8 at 0x4594e8).
+const WAITING_POINTS_PER_M: f64 = -0.8;
+/// Rows of the waiting set (0x45735c[row · 3]), partner 1 / 2: the set as it waits and, from
+/// the coupler frame `0x857244 = 1` on, with the coupler closed (only the last car differs).
+const WAITING_ROWS: [(usize, usize); 2] = [(20, 21), (17, 18)];
+/// 0x406c50 walks the rear bogie 12 points back (10 in the spawner) and starts the passing-
+/// sound gate at 9000 (it stands still, so no sound).
+const WAITING_BOGIE_POINTS: usize = 12;
+const WAITING_GATE: i32 = 9000;
+
 /// Bit of the traffic event mask for each state of `0x857216`.
 fn mask_bit(state: u8) -> i16 {
     1 << state
@@ -144,6 +159,30 @@ pub struct PassingTrain {
     pub sound: PassingSound,
 }
 
+/// The waiting set of the coupling minigame, as course event 12 (0x40acd0) asks 0x406c50 to
+/// place it: two car lists and how far ahead of the cab's track point its head stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WaitingSet {
+    /// The set's rows: as it waits, and with the coupler closed (`+0x6c` / `+0x70`).
+    pub rows: (usize, usize),
+    /// Track points from the cab's engine index (`0x8502a4`) to the head car's front bogie.
+    pub ahead_points: i64,
+}
+
+impl WaitingSet {
+    /// The set of coupling partner `partner` (1 or 2, `Rules::coupling_partner`) placed when
+    /// the distance to the stop is `dist_m` (`0x85708c`): the head at
+    /// `0x8502a4 − ftol((dist + head_m) × −0.8)`.
+    pub fn new(partner: u8, dist_m: f32) -> Self {
+        let i = usize::from(partner >= 2);
+        let back = ((f64::from(dist_m) + WAITING_HEAD_M[i]) * WAITING_POINTS_PER_M).trunc();
+        Self {
+            rows: WAITING_ROWS[i],
+            ahead_points: -(back as i64),
+        }
+    }
+}
+
 /// A sound command of this tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrafficSound {
@@ -178,6 +217,9 @@ struct Bogies {
 pub struct Car {
     row: usize,
     model: CarModel,
+    /// The list of the coupler frame `0x857244 = 1` (`+0x70`); the same as `model` except
+    /// for the coupling minigame's waiting set.
+    coupled: CarModel,
     /// Position in its train (`+0x44`).
     index: u32,
     /// `+0x30`: runs towards the end of its segment.
@@ -390,6 +432,9 @@ pub struct Traffic {
     /// Hold-loop index of the recovery sounds (counts from the spawn).
     passing_sound: Option<(PassingSound, u32)>,
     sounds: Vec<TrafficSound>,
+    /// `0x857244`: the cars draw their `+0x70` list. 0 when a waiting set is placed, 1 once
+    /// the coupling minigame couples or runs out of time; never cleared otherwise.
+    coupler_frame: bool,
 }
 
 impl Traffic {
@@ -405,6 +450,7 @@ impl Traffic {
             pending: None,
             passing_sound: None,
             sounds: Vec::new(),
+            coupler_frame: false,
         };
         t.seek(events, station);
         t
@@ -616,6 +662,7 @@ impl Traffic {
             self.cars.push(Car {
                 row,
                 model: *m,
+                coupled: *m,
                 index: index as u32,
                 forward,
                 turned: !special && index == 0 && !forward && TURNED_ROWS.contains(&row),
@@ -634,6 +681,76 @@ impl Traffic {
                 moved: 0.0,
             });
         }
+    }
+
+    /// 0x406c50: the coupling minigame's waiting set, parked (speed 0, mode 0) facing forward
+    /// with its head `ahead_points` past the cab at `engine_index`, each later car walked back
+    /// by its spacing; the coupler frame goes back to 0.
+    pub fn place_waiting_set(&mut self, set: &WaitingSet, engine_index: usize, env: &TrafficEnv) {
+        let route = env.route;
+        let (Some(a), Some(b)) = (env.models.row(set.rows.0), env.models.row(set.rows.1)) else {
+            return;
+        };
+        let Some(head) = (engine_index as i64)
+            .checked_add(set.ahead_points)
+            .and_then(|i| usize::try_from(i).ok())
+            .map(|i| {
+                TrackPos {
+                    engine_index: i,
+                    t: 0.0,
+                }
+                .slot(route)
+            })
+            .filter(|&s| s < route.slots.len())
+        else {
+            return;
+        };
+        let mut pos = head;
+        let mut carry = 0.0f32;
+        for (index, (m, m_coupled)) in a.cars[1].iter().zip(&b.cars[1]).enumerate() {
+            let mut d = -m.spacing - carry;
+            while d > 0.0 {
+                d -= UNITS_PER_POINT;
+                carry = -d;
+                pos = prev_slot(route, pos);
+            }
+            let at = Bogies {
+                front: pos,
+                rear: step_n(route, pos, false, WAITING_BOGIE_POINTS),
+                t: carry,
+            };
+            self.cars.push(Car {
+                row: set.rows.0,
+                model: *m,
+                coupled: *m_coupled,
+                index: index as u32,
+                forward: true,
+                turned: false,
+                mode: 0,
+                waits_for_obstacle: false,
+                at,
+                run: 0.0,
+                stop_at: 0.0,
+                speed: 0.0,
+                speed_k: 0.0,
+                accel: 0.0,
+                delay: 0.0,
+                gate: WAITING_GATE,
+                sequence_done: false,
+                prev: at,
+                moved: 0.0,
+            });
+        }
+        self.coupler_frame = false;
+    }
+
+    /// Sets the coupler frame `0x857244` (the coupling minigame's success outro and time-up).
+    pub fn set_coupler_frame(&mut self, on: bool) {
+        self.coupler_frame = on;
+    }
+
+    pub fn coupler_frame(&self) -> bool {
+        self.coupler_frame
     }
 
     /// The car tasks of one `Task_Tick` (0x405420 / 0x406220). Runs every tick the task lists
@@ -716,7 +833,7 @@ impl Traffic {
                 let mut b = c.prev;
                 b.t += c.moved * alpha.clamp(0.0, 1.0);
                 normalise(route, &mut b);
-                pose(route, c, &b)
+                pose(route, c, &b, self.coupler_frame)
             })
             .collect()
     }
@@ -828,7 +945,7 @@ fn origin(route: &Route, b: &Bogies, forward: bool) -> Option<[f32; 3]> {
 /// The model transform of 0x405640: origin between the bogies, local z along the track
 /// towards higher slots, a half turn where the original turns the car, and a pitch when the
 /// bogie points differ in height.
-fn pose(route: &Route, c: &Car, b: &Bogies) -> Option<CarPose> {
+fn pose(route: &Route, c: &Car, b: &Bogies, coupler_frame: bool) -> Option<CarPose> {
     let f = bogie_point(route, b.front, c.forward, b.t)?;
     let r = bogie_point(route, b.rear, c.forward, b.t)?;
     let origin = [0, 1, 2].map(|i| ((f64::from(f[i]) + f64::from(r[i])) * 0.5) as f32);
@@ -878,7 +995,11 @@ fn pose(route: &Route, c: &Car, b: &Bogies) -> Option<CarPose> {
         (EXTRA_PART, m)
     });
     Some(CarPose {
-        lods: c.model.lods,
+        lods: if coupler_frame {
+            c.coupled.lods
+        } else {
+            c.model.lods
+        },
         transform,
         unturned,
         special: c.special(),
