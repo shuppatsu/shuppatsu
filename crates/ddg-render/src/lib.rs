@@ -12,6 +12,7 @@ pub mod mip;
 pub mod overlay;
 pub mod sprites;
 pub mod text;
+pub mod text_audit;
 pub mod world;
 
 pub use camera::{Camera, Projection};
