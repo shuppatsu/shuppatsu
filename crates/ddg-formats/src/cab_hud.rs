@@ -243,86 +243,13 @@ impl CabTables {
     }
 }
 
-/// Reads the star-mark offset table that 0x4124f0 builds on its stack (`int local_540[336]`).
-///
-/// The prologue is `sub esp, imm32` and register pushes, followed by a run of `mov r32, imm32`
-/// (0xb8 + r) and stores `mov [esp + disp], r32` (0x89) / `mov [esp + disp], imm32` (0xc7),
-/// with 8- or 32-bit displacements (ModRM 0x44 / 0x84 with SIB 0x24). The array starts at
-/// `[esp + 4 · pushes]`. The run ends at the first other instruction; every entry must have
-/// been written by then.
+/// Reads the star-mark offset table that 0x4124f0 builds on its stack (`int local_540[336]`)
+/// from the run of stores after its prologue ([`crate::code::stack_table`]).
 pub fn star_offsets(code: &[u8]) -> Result<[[i32; STAR_SLOTS]; STAR_ROWS]> {
-    let bad = |d: &str| FormatError::invalid("star offsets code", d.to_string());
-    let byte = |i: usize| code.get(i).copied().ok_or_else(|| bad("truncated"));
-    let imm = |i: usize| -> Result<i32> {
-        let b = code.get(i..i + 4).ok_or_else(|| bad("truncated"))?;
-        Ok(i32::from_le_bytes([b[0], b[1], b[2], b[3]]))
-    };
-    // sub esp, imm32
-    if code.get(..2) != Some(&[0x81, 0xec]) {
-        return Err(bad("no sub esp prologue"));
-    }
-    let mut i = 6;
-    let mut pushes = 0;
-    while (0x50..=0x57).contains(&byte(i)?) {
-        pushes += 1;
-        i += 1;
-    }
-    // Arguments for a later call are pushed in the middle of the run (`push ecx`,
-    // `push 0x84c1a4`), moving the array further from esp.
-    let mut base = 4 * pushes;
-    const N: usize = STAR_SLOTS * STAR_ROWS;
-    let mut table: [Option<i32>; N] = [None; N];
-    let mut regs: [Option<i32>; 8] = [None; 8];
-    loop {
-        let op = byte(i)?;
-        match op {
-            0x50..=0x57 => {
-                base += 4;
-                i += 1;
-            }
-            0x68 => {
-                base += 4;
-                i += 5;
-            }
-            0x6a => {
-                base += 4;
-                i += 2;
-            }
-            0xb8..=0xbf => {
-                regs[usize::from(op - 0xb8)] = Some(imm(i + 1)?);
-                i += 5;
-            }
-            0x89 | 0xc7 => {
-                let modrm = byte(i + 1)?;
-                if modrm & 7 != 4 || byte(i + 2)? != 0x24 {
-                    break;
-                }
-                let (disp, len) = match modrm >> 6 {
-                    1 => (i64::from(byte(i + 3)? as i8), 4),
-                    2 => (i64::from(imm(i + 3)?), 7),
-                    _ => break,
-                };
-                let value = if op == 0x89 {
-                    regs[usize::from((modrm >> 3) & 7)].ok_or_else(|| bad("unknown register"))?
-                } else {
-                    if (modrm >> 3) & 7 != 0 {
-                        break;
-                    }
-                    imm(i + len)?
-                };
-                let off = disp - base as i64;
-                if off < 0 || off % 4 != 0 || off as usize / 4 >= N {
-                    return Err(bad("store outside the table"));
-                }
-                table[off as usize / 4] = Some(value);
-                i += len + if op == 0xc7 { 4 } else { 0 };
-            }
-            _ => break,
-        }
-    }
+    let table = crate::code::stack_table(code, STAR_SLOTS * STAR_ROWS)?;
     let mut out = [[0; STAR_SLOTS]; STAR_ROWS];
-    for (k, v) in table.iter().enumerate() {
-        out[k / STAR_SLOTS][k % STAR_SLOTS] = v.ok_or_else(|| bad("entry not written"))?;
+    for (k, v) in table.into_iter().enumerate() {
+        out[k / STAR_SLOTS][k % STAR_SLOTS] = v;
     }
     Ok(out)
 }

@@ -5,6 +5,7 @@
 pub mod audio;
 pub mod cab_hud;
 pub mod cg;
+pub mod code;
 pub mod error;
 pub mod exe;
 pub mod hud;
