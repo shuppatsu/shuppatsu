@@ -1,7 +1,8 @@
 //! Navigator reaction animations (docs/re/hud.md §3.17): `NaviAnim(n)` 0x410cb0 → task
 //! 0x411080, the little conductor who reacts in slot 0x61 at (80, 145) when the driver pulls
 //! the emergency brake, slams the notches or overruns the stop, and the flashing emergency-stop
-//! signal (animation 0) in the signal's slot 0x60 during an obstacle.
+//! signal (animation 0) in the signal's slot 0x60 during an obstacle. [`ReadyAnim`] is the E3
+//! coupling-ready animation (0x411240), which shares the navigator's slot.
 //!
 //! The model is shared: [`crate::cab`] draws the frames and [`crate::sound`] plays the sound
 //! each animation requests. [`calls`] decides from two rule snapshots and the tick's events
@@ -264,6 +265,11 @@ impl Navigator {
         self.current = Some(id);
     }
 
+    /// An animation is current (`0x856c68 ≠ 0`; it stays set while a cancelled one runs out).
+    pub fn busy(&self) -> bool {
+        self.current.is_some()
+    }
+
     /// Every task gone at once, slots hidden.
     pub fn clear(&mut self, out: &mut impl FnMut(Effect)) {
         for t in self.tasks.drain(..) {
@@ -288,6 +294,114 @@ impl Navigator {
                 }
             }
         }
+    }
+}
+
+/// The E3 coupling-ready animation's frames (`{tbl, ticks}` at 0x46622c, ended by −1:
+/// 0x163 E3 併合準備 for 60 updates, 0x164 and 0x165 for 3, 0x166 for 100).
+const READY_FRAMES: u32 = 0x46622c;
+/// Palette-4 entries 0xb0..0xbf are set from the 16 colours at 0x463700 (0x436770, as at boot).
+const READY_PALETTE_ENTRY: usize = 0xb0;
+const READY_COLOURS: u32 = 0x463700;
+const READY_COLOUR_COUNT: usize = 16;
+/// `+0x38 = 6`: the first five updates only count down (0x411240 / 0x411300).
+const READY_DELAY: i32 = 6;
+/// Sequence 0x29 on counter 0x3c, drawn with palette 4 in slot 0x61.
+const READY_SOUND_AT: i32 = 0x3c;
+const READY_SOUND: u16 = 0x1029;
+const READY_PALETTE: u8 = 4;
+
+/// What the coupling-ready animation reads from the exe.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ReadyTables {
+    /// The frames, without the terminator.
+    pub frames: Vec<Frame>,
+    pub colours: Vec<u32>,
+}
+
+impl ReadyTables {
+    pub fn read(exe: &Exe<'_>) -> Result<Self> {
+        let mut frames = Vec::new();
+        for i in 0..FRAMES_MAX as u32 {
+            let tbl = exe.u32_at(READY_FRAMES + 8 * i)? as i32;
+            if tbl == -1 {
+                let colours = (0..READY_COLOUR_COUNT as u32)
+                    .map(|k| exe.u32_at(READY_COLOURS + 4 * k))
+                    .collect::<Result<_, _>>()?;
+                return Ok(Self { frames, colours });
+            }
+            let ticks = exe.u32_at(READY_FRAMES + 8 * i + 4)? as i32;
+            frames.push(Frame { tbl, ticks });
+        }
+        anyhow::bail!("coupling-ready animation at {READY_FRAMES:#x} unterminated")
+    }
+}
+
+/// The E3 coupling-ready animation (course event 23 → 0x411240, task 0x411300 in list 3,
+/// docs/re/hud.md §3.16): "E3 併合準備" in the navigator's slot 0x61, before the coupling
+/// minigame of stages 17–19. It yields the slot to a navigator reaction: it draws, and its
+/// destructor 0x411390 hides the slot, only while no reaction is current. It cannot be
+/// cancelled; it plays once and ends.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReadyAnim {
+    /// `+0x38`: counts down every update; the animation runs from 0.
+    delay: i32,
+    /// `+0x34`: updates since the first frame (1 on the first).
+    count: i32,
+    /// `+0x40` / `+0x44`: frame index and updates into the frame.
+    frame: usize,
+    in_frame: i32,
+}
+
+impl ReadyAnim {
+    /// 0x411240; the caller sets the palette entries (`ReadyTables::colours`).
+    pub fn new() -> Self {
+        Self {
+            delay: READY_DELAY,
+            count: 0,
+            frame: 0,
+            in_frame: 0,
+        }
+    }
+
+    /// 0x411300; false when the task ends (the destructor ran: `Hide` unless `busy`). `busy`:
+    /// a navigator reaction is current.
+    pub fn update(&mut self, t: &ReadyTables, busy: bool, out: &mut impl FnMut(Effect)) -> bool {
+        self.delay -= 1;
+        if self.delay >= 1 {
+            return true;
+        }
+        self.in_frame += 1;
+        self.count += 1;
+        let Some(&f) = t.frames.get(self.frame) else {
+            return false;
+        };
+        if !busy {
+            out(Effect::Draw {
+                slot: SLOT_NAVI,
+                tbl: f.tbl as i16,
+                palette: READY_PALETTE,
+            });
+        }
+        if self.count == READY_SOUND_AT {
+            out(Effect::Sound(READY_SOUND));
+        }
+        if f.ticks == self.in_frame {
+            self.in_frame = 0;
+            self.frame += 1;
+            if self.frame >= t.frames.len() {
+                if !busy {
+                    out(Effect::Hide(SLOT_NAVI));
+                }
+                return false;
+            }
+        }
+        true
+    }
+
+    /// The palette entries 0x411240 sets.
+    pub fn palette(t: &ReadyTables) -> (usize, &[u32]) {
+        (READY_PALETTE_ENTRY, &t.colours)
     }
 }
 
@@ -622,5 +736,76 @@ mod tests {
             ..base
         };
         assert_eq!(tick(base, cleared, &[]), [Call::Cancel]);
+    }
+
+    fn ready_tables() -> ReadyTables {
+        ReadyTables {
+            frames: vec![f(0x163, 60), f(0x164, 3), f(0x165, 3), f(0x166, 100)],
+            colours: vec![0; READY_COLOUR_COUNT],
+        }
+    }
+
+    /// Per update (1 = the creation tick) the drawn tilemap, the sounds and the hides, until
+    /// the task ends; `busy_at` makes a reaction current on those updates.
+    fn run_ready(busy_at: impl Fn(usize) -> bool) -> (Vec<Option<i16>>, Vec<usize>, Vec<usize>) {
+        let t = ready_tables();
+        let mut r = ReadyAnim::new();
+        let (mut drawn, mut sounds, mut hides) = (Vec::new(), Vec::new(), Vec::new());
+        for u in 1.. {
+            let mut d = None;
+            let alive = r.update(&t, busy_at(u), &mut |e| match e {
+                Effect::Draw { slot, tbl, palette } => {
+                    assert_eq!((slot, palette), (SLOT_NAVI, READY_PALETTE));
+                    d = Some(tbl);
+                }
+                Effect::Sound(s) => {
+                    assert_eq!(s, READY_SOUND);
+                    sounds.push(u);
+                }
+                Effect::Hide(_) => hides.push(u),
+            });
+            drawn.push(d);
+            if !alive {
+                break;
+            }
+        }
+        (drawn, sounds, hides)
+    }
+
+    /// Five hidden updates, then 0x163 ×60 (sound 0x1029 on update 65, as the sound module
+    /// has it), 0x164 ×3, 0x165 ×3, 0x166 ×100; the slot is hidden in the last update.
+    #[test]
+    fn coupling_ready_timeline() {
+        let (drawn, sounds, hides) = run_ready(|_| false);
+        assert_eq!(drawn.len(), 171);
+        assert!(drawn[..5].iter().all(Option::is_none));
+        let count = |tbl: i16| drawn.iter().filter(|&&d| d == Some(tbl)).count();
+        assert_eq!(
+            [count(0x163), count(0x164), count(0x165), count(0x166)],
+            [60, 3, 3, 100]
+        );
+        assert_eq!(
+            (drawn[5], drawn[65], drawn[68], drawn[71]),
+            (Some(0x163), Some(0x164), Some(0x165), Some(0x166))
+        );
+        assert_eq!(sounds, [65]);
+        assert_eq!(hides, [171]);
+        // While a reaction is current it neither draws nor hides; it still counts.
+        let (drawn, sounds, hides) = run_ready(|u| u > 100);
+        assert_eq!(drawn.len(), 171);
+        assert!(drawn[100..].iter().all(Option::is_none));
+        assert_eq!((sounds, hides), (vec![65], vec![]));
+    }
+
+    #[test]
+    fn coupling_ready_from_the_exe() {
+        let Ok(data) = crate::scene::GameData::from_env() else {
+            return;
+        };
+        let Ok(bytes) = data.exe() else { return };
+        let exe = Exe::parse(&bytes).unwrap();
+        let t = ReadyTables::read(&exe).unwrap();
+        assert_eq!(t.frames, ready_tables().frames);
+        assert_eq!((t.colours.len(), t.colours[2]), (16, 0xffffff));
     }
 }

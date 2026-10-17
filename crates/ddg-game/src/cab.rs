@@ -13,7 +13,9 @@ use crate::coupling_hud::{CouplingHud, CouplingTables};
 use crate::departure_hud::{DepartureHud, Segment};
 use crate::hints::Hints;
 use crate::hud::{Hud, HudState, SPEED_MODE_ATC};
-use crate::navigator::{Effect, NaviState, NaviTables, NaviTick, Navigator};
+use crate::navigator::{
+    Effect, NaviState, NaviTables, NaviTick, Navigator, ReadyAnim, ReadyTables,
+};
 use crate::popups::{Popups, time_up_advice};
 use anyhow::Result;
 use ddg_engine::coupling::Coupling;
@@ -27,9 +29,11 @@ use ddg_render::sprites::SpriteLayer;
 const CLOCK_FREEZE_TICKS: i32 = 0x5a;
 /// The stage loop runs 20 `Task_Tick`s after a game over before the time-up popup (0x40857b).
 const TIME_UP_AFTER_TICKS: u32 = 0x14;
-/// Course events the HUD acts on (0x40acd0): 7 ATC speed index, 17 landmark.
+/// Course events the HUD acts on (0x40acd0): 7 ATC speed index, 17 landmark, 23 the E3
+/// coupling-ready animation (0x411240).
 const COURSE_ATC: i16 = 7;
 const COURSE_LANDMARK: i16 = 17;
+const COURSE_E3_READY: i16 = 23;
 /// The ATC speed index starts at 2 (0x40f7e0).
 const ATC_INDEX_START: i32 = 2;
 
@@ -163,6 +167,9 @@ pub struct CabHud {
     /// Navigator reactions and the emergency-stop signal (`NaviAnim` 0x410cb0).
     navigator: Navigator,
     navi_tables: NaviTables,
+    /// The E3 coupling-ready animation (0x411240), sharing the navigator's slot.
+    ready: Option<ReadyAnim>,
+    ready_tables: ReadyTables,
     captions: Captions,
     departure: DepartureHud,
     stage: usize,
@@ -210,6 +217,8 @@ impl CabHud {
             hints: Hints::new(horn_on_button),
             navigator: Navigator::default(),
             navi_tables: NaviTables::read(exe, stage)?,
+            ready: None,
+            ready_tables: ReadyTables::read(exe)?,
             captions,
             departure: DepartureHud::new(&cab),
             speed_mode,
@@ -294,6 +303,7 @@ impl CabHud {
         self.hud.create(layer);
         self.departure.stage_start(layer);
         self.navigator = Navigator::default();
+        self.ready = None;
         self.prev = None;
         self.clock_freeze = 0;
         self.panel_active = false;
@@ -356,6 +366,11 @@ impl CabHud {
                 RuleEvent::Script { kind, args } if kind == COURSE_LANDMARK => {
                     let (id, metres) = (i32::from(args[0]), i32::from(args[1]));
                     self.captions.landmark(layer, id, metres, rules_odometer);
+                }
+                RuleEvent::Script { kind, .. } if kind == COURSE_E3_READY => {
+                    let (first, colours) = ReadyAnim::palette(&self.ready_tables);
+                    crate::slots::palette4(layer, first, colours);
+                    self.ready = Some(ReadyAnim::new());
                 }
                 RuleEvent::StationPassed { .. } => {
                     station_passed = true;
@@ -498,6 +513,13 @@ impl CabHud {
             lamp_lit: self.lamp_lit,
         };
         self.hud.update(&state, layer);
+        // Created by a course event, after the HUD task in list 3.
+        if let Some(r) = self.ready.as_mut() {
+            let busy = self.navigator.busy();
+            if !r.update(&self.ready_tables, busy, &mut |e| navi_draw(layer, e)) {
+                self.ready = None;
+            }
+        }
         self.coupling.update(s.coupling.as_ref(), events, layer);
 
         // The time-up popup is created after the 20th `Task_Tick` past the game over; its first
@@ -536,6 +558,10 @@ impl CabHud {
     fn segment_setup(&mut self, s: &Snap, layer: &mut SpriteLayer) {
         self.popups.clear();
         self.hints.clear(layer);
+        // List 3 is rebuilt: the coupling-ready task's destructor hides its slot.
+        if self.ready.take().is_some() && !self.navigator.busy() {
+            crate::slots::image(layer, crate::navigator::SLOT_NAVI, -1);
+        }
         self.captions.reset_approach();
         self.clocks_visible = true;
         self.lamp_lit = false;
