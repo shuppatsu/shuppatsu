@@ -124,6 +124,7 @@ switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml
   --max-lod                track and trains in their most detailed models at any distance [on]
   --early-activation       scenery and side tracks activated at the far plane [on]
   --distance-fade          the far edge dissolves into the background [on]
+  --fine-depth             depth steps that stay fine with distance (16-bit Z: off) [on]
   --interpolate            camera, trains, wiper, snow, needle between ticks [on]
   --vsync                  present with vsync [on] (--uncapped)
   --fullscreen             borderless full screen; Alt+Enter or F11 switch it [off]

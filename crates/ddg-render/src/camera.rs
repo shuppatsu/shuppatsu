@@ -111,11 +111,76 @@ impl Projection {
         ])
     }
 
+    /// The terms of the reversed depth `r = k / w − c` of eye depth `w` ([`Projection::matrix`]):
+    /// `(k, c)` = (n·f / (f − n), n / (f − n)).
+    pub fn depth_terms(&self) -> (f32, f32) {
+        let c = NEAR / (self.far - NEAR);
+        (self.far * c, c)
+    }
+
     /// Horizontal half-angle tangent for a viewport, for culling/visibility decisions.
     pub fn tan_half_horizontal(&self, viewport_aspect: f32) -> f32 {
         quantised_tan_half(self.fov_tenths) * viewport_aspect / self.stretch
     }
 }
+
+/// How the world pass stores depth (renderer.md §6.1). Both store whole steps, so two coplanar
+/// surfaces (the ballast of two tracks at a crossover, grass over the edge of the ballast)
+/// land on the same step despite rounding and the later one drawn wins, as in the original.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DepthSteps {
+    /// The original's 16-bit Z buffer: D3D depth `z = 1 − r` in steps of 1/65535, which grow
+    /// with the square of the distance (3 m at 320 m).
+    D16,
+    /// Enhancement `fine_depth`: eye depth in steps of a constant 1/[`FINE_DEPTH_STEPS`] of an
+    /// octave (0.068 %: 22 cm at 320 m, 87 cm at 1280 m).
+    Fine,
+}
+
+/// Steps per doubling of the eye depth with [`DepthSteps::Fine`].
+pub const FINE_DEPTH_STEPS: f32 = 1024.0;
+
+impl DepthSteps {
+    /// The bounds (far, near) in reversed depth of the step that holds reversed depth `r`
+    /// (`terms` = [`Projection::depth_terms`]).
+    pub fn step(self, r: f32, (k, c): (f32, f32)) -> (f32, f32) {
+        match self {
+            Self::D16 => {
+                let z = ((1.0 - r) * 65535.0).round();
+                (1.0 - (z + 0.5) / 65535.0, 1.0 - (z - 0.5) / 65535.0)
+            }
+            Self::Fine => {
+                let w = k / (r + c).max(1e-30);
+                let s = (w.log2() * FINE_DEPTH_STEPS).floor();
+                let far = ((s + 1.0) / FINE_DEPTH_STEPS).exp2();
+                let near = (s / FINE_DEPTH_STEPS).exp2();
+                (k / far - c, k / near - c)
+            }
+        }
+    }
+
+    /// The depth stored for reversed depth `r`, as the shader's `stepped_depth`: inside r's
+    /// step, the nearer the later the instance (`order` = its place among the frame's, 0..=1),
+    /// so within a step the later one drawn wins and a nearer step always beats a further one.
+    /// [`DepthSteps::Fine`] picks the step with the later instance counted up to
+    /// [`FINE_ORDER_BIAS`] nearer, so rounding cannot put it a step behind an earlier
+    /// coplanar one either; the original's [`DepthSteps::D16`] has no such bias.
+    pub fn depth(self, r: f32, terms: (f32, f32), order: f32) -> f32 {
+        let r = match self {
+            Self::D16 => r,
+            Self::Fine => r + (r + terms.1) * FINE_ORDER_BIAS * order,
+        };
+        let (far, near) = self.step(r, terms);
+        (far + (near - far) * (0.25 + 0.5 * order)).clamp(0.0, 1.0)
+    }
+}
+
+/// How much nearer (fraction of the eye depth) [`DepthSteps::Fine`] counts the frame's last
+/// instance when it picks the step, the first not at all: 0.01 %, well above the rounding
+/// between coplanar surfaces and well below a step (at the Keihin crossover of
+/// renderer.md §6.1, 1e-5 still left a few one-pixel slivers, 1e-4 none). Mirrored in
+/// shader.wgsl.
+pub const FINE_ORDER_BIAS: f32 = 1e-4;
 
 /// A look-at camera in game space.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -178,6 +243,100 @@ mod tests {
         let f = far * Vec4::new(0.0, 0.0, 96.0, 1.0);
         let n = far * Vec4::new(0.0, 0.0, NEAR, 1.0);
         assert!((f.z / f.w).abs() < 1e-6 && (n.z / n.w - 1.0).abs() < 1e-6);
+    }
+
+    /// Reversed depth of eye depth `w`.
+    fn reversed(w: f32, (k, c): (f32, f32)) -> f32 {
+        k / w - c
+    }
+
+    #[test]
+    fn depth_steps_merge_coplanar_and_keep_layers() {
+        for far in [FAR, 64.0, 128.0] {
+            let terms = Projection {
+                far,
+                ..Projection::default()
+            }
+            .depth_terms();
+            for steps in [DepthSteps::D16, DepthSteps::Fine] {
+                let d = |w: f32, order: f32| steps.depth(reversed(w, terms), terms, order);
+                let step = |r: f32| steps.step(r, terms);
+                // Monotonic: further is never nearer, at any one order.
+                for order in [0.0, 0.5, 1.0] {
+                    let mut last = f32::INFINITY;
+                    for i in 0..20_000 {
+                        let w = NEAR + i as f32 * (far - NEAR) / 20_000.0;
+                        let x = d(w, order);
+                        assert!(x <= last && (0.0..=1.0).contains(&x), "{steps:?} {far} {w}");
+                        last = x;
+                    }
+                }
+                // Coplanar surfaces, a rounding error apart, share a step almost everywhere.
+                let (mut same, mut n) = (0, 0);
+                for i in 0..10_000 {
+                    let r = reversed(0.3 + i as f32 * 0.003, terms);
+                    same += usize::from(step(r) == step(r * (1.0 + 2e-6)));
+                    n += 1;
+                }
+                assert!(same * 100 >= n * 97, "{steps:?} {far}: {same} of {n}");
+                // Inside a step the order tells instances apart (later = nearer) from the
+                // ground under the cab's eye (0.26) out, and never leaves the step.
+                for i in 0..1000 {
+                    let w = 0.26 + i as f32 * (far - 0.26) / 1000.0;
+                    let r = reversed(w, terms);
+                    let (lo, _) = step(r);
+                    if lo <= 0.0 {
+                        // The last step, cut in half by the far plane.
+                        continue;
+                    }
+                    assert!(lo < d(w, 0.0) && d(w, 0.0) < d(w, 0.002), "{steps:?} {w}");
+                    // (Fine picks the last instance's step as if FINE_ORDER_BIAS nearer.)
+                    let biased = match steps {
+                        DepthSteps::D16 => r,
+                        DepthSteps::Fine => r + (r + terms.1) * FINE_ORDER_BIAS,
+                    };
+                    assert!(d(w, 1.0) < step(biased).1, "{steps:?} {w}");
+                }
+            }
+            // Fine: two walls 1 % of the distance apart stay apart at any distance, whichever
+            // is drawn later (the ground seen from the cab's 0.26 at a glancing angle keeps a
+            // layer 1/256 unit above it ~1.5 % of the distance nearer).
+            let d = |w: f32, order| DepthSteps::Fine.depth(reversed(w, terms), terms, order);
+            for i in 1..200 {
+                let w = far * i as f32 / 200.0;
+                assert!(d(w * 1.01, 1.0) < d(w, 0.0), "{far} {w}");
+            }
+        }
+    }
+
+    #[test]
+    fn fine_depth_lets_the_later_coplanar_instance_win() {
+        let terms = Projection {
+            far: 64.0,
+            ..Projection::default()
+        }
+        .depth_terms();
+        let steps = DepthSteps::Fine;
+        for i in 0..20_000 {
+            let w = 0.26 + i as f32 * 0.003;
+            let r = reversed(w, terms);
+            // The later one rounded a little further away: it still shows.
+            for (early, late) in [(0.1, 0.3), (0.5, 0.6), (0.0, 1.0)] {
+                let later = steps.depth(r * (1.0 - 2e-6), terms, late);
+                assert!(later > steps.depth(r, terms, early), "{w} {early} {late}");
+            }
+        }
+    }
+
+    #[test]
+    fn d16_steps_are_the_originals() {
+        // At 320 m (the original's far plane) one 16-bit step is about 0.3 units.
+        let terms = Projection::default().depth_terms();
+        let step = |w: f32| DepthSteps::D16.step(reversed(w, terms), terms);
+        let mut steps: Vec<_> = (0..100).map(|i| step(31.0 + i as f32 / 100.0)).collect();
+        steps.dedup();
+        assert!(steps.len() <= 5, "{}", steps.len());
+        assert!(step(1.0).0 >= step(1.001).1);
     }
 
     #[test]

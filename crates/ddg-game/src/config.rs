@@ -494,6 +494,7 @@ mod tests {
         ("max_lod", true),
         ("early_activation", true),
         ("distance_fade", true),
+        ("fine_depth", true),
         ("interpolate", true),
         ("vsync", true),
         ("fullscreen", false),
@@ -659,8 +660,13 @@ mod tests {
             l.get("anisotropic"),
             Some(&Lock::Env("DDG_ANISOTROPIC".into()))
         );
+        // fine_depth is the one shading switch decided on (renderer.md §6.1).
         assert_eq!(
-            Settings::default().shading(),
+            Settings {
+                fine_depth: false,
+                ..Settings::default()
+            }
+            .shading(),
             ddg_render::Shading::default(),
             "the renderer's default is the original too"
         );

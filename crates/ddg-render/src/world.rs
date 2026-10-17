@@ -19,6 +19,12 @@ pub struct Vertex {
     pub rect: [f32; 4],
     /// [`crate::ground`] surface bits (0 for everything that is not ground).
     pub surface: u32,
+    /// Which instance of the frame the vertex belongs to, counting from 0 in the order they
+    /// were added ([`FrameGeometry::instances`]). The original draws part by part
+    /// (`Model_Draw` 0x431f70) under a LESSEQUAL Z test, so of two coplanar surfaces the later
+    /// one shows; the shader orders surfaces inside one depth step by this, so the batches can
+    /// be drawn by texture page and still resolve like the original (renderer.md §6.1).
+    pub order: u32,
 }
 
 #[repr(C)]
@@ -143,6 +149,8 @@ impl PartLibrary {
 pub struct FrameGeometry {
     /// Batch per page index (length = number of pages in the library).
     pub batches: Vec<Batch>,
+    /// Instances added so far ([`Vertex::order`] of the next one).
+    pub instances: u32,
     /// Background triangles (screen space), drawn first without depth.
     pub background: Vec<BgVertex>,
     /// Textured background triangles per page (screen space), drawn after `background`,
@@ -154,6 +162,10 @@ pub struct FrameGeometry {
     /// The far plane the background's depth words are placed for (enhancement
     /// `draw_distance`, [`crate::camera::background_depth`]); `None` = the original's.
     pub far: Option<f32>,
+    /// World point the vertex positions are stored relative to: set it near the camera before
+    /// adding instances, for depth precision far from the world origin (the renderer adds it
+    /// back). Kept by [`FrameGeometry::clear`].
+    pub origin: Vec3,
 }
 
 impl FrameGeometry {
@@ -165,6 +177,7 @@ impl FrameGeometry {
             b.vertices.clear();
             b.indices.clear();
         }
+        self.instances = 0;
         self.background.clear();
         self.background_tex
             .resize_with(library.pages.len(), Vec::new);
@@ -204,6 +217,10 @@ impl FrameGeometry {
             return false;
         };
         let shape = terrain.then(|| crate::ground::PartShape::of(part, transform));
+        // In f64 and relative to the origin: coplanar parts placed with different transforms
+        // then differ only by the GPU's rounding of small numbers (renderer.md §6.1).
+        let to_world = transform.as_dmat4();
+        let origin = self.origin.as_dvec3();
         for g in &part.groups {
             let Some((page, rect)) = library.rect(g.rect_id) else {
                 continue;
@@ -214,19 +231,22 @@ impl FrameGeometry {
             let [u1, v1] = rect.map_uv([256, 256]);
             let rect_uv = [u0, v0, u1 - u0, v1 - v0];
             batch.vertices.extend(g.vertices.iter().map(|v| {
+                let world = to_world.transform_point3(Vec3::from(v.position()).as_dvec3());
                 Vertex {
-                    pos: transform
-                        .transform_point3(Vec3::from(v.position()))
-                        .to_array(),
+                    pos: (world - origin).as_vec3().to_array(),
                     uv: rect.map_uv(v.uv),
                     tile: v.uv.map(|c| f32::from(c) / 256.0),
                     rect: rect_uv,
                     surface: 0,
+                    order: self.instances,
                 }
             }));
             if let Some(shape) = &shape {
                 let added = &mut batch.vertices[base as usize..];
-                let points: Vec<Vec3> = added.iter().map(|v| Vec3::from(v.pos)).collect();
+                let points: Vec<Vec3> = added
+                    .iter()
+                    .map(|v| Vec3::from(v.pos) + self.origin)
+                    .collect();
                 let bits = crate::ground::surface_bits(
                     &points,
                     g.triangles(),
@@ -242,6 +262,7 @@ impl FrameGeometry {
                 .indices
                 .extend(g.triangles().flatten().map(|i| base + u32::from(i)));
         }
+        self.instances += 1;
         true
     }
 
@@ -281,7 +302,7 @@ impl FrameGeometry {
         for w in points.windows(2) {
             for p in w {
                 self.lines.push(LineVertex {
-                    pos: p.to_array(),
+                    pos: (*p - self.origin).to_array(),
                     colour,
                 });
             }
@@ -322,14 +343,24 @@ mod tests {
     fn library() -> PartLibrary {
         let mut lib = PartLibrary::default();
         lib.add_textures(&TexFile {
-            rects: vec![TexRect {
-                id: 9,
-                page: 1,
-                u: 0,
-                v: 0,
-                w: 255,
-                h: 255,
-            }],
+            rects: vec![
+                TexRect {
+                    id: 9,
+                    page: 1,
+                    u: 0,
+                    v: 0,
+                    w: 255,
+                    h: 255,
+                },
+                TexRect {
+                    id: 8,
+                    page: 0,
+                    u: 0,
+                    v: 0,
+                    w: 255,
+                    h: 255,
+                },
+            ],
             pages: vec![
                 TexPage {
                     width: 1,
@@ -347,16 +378,28 @@ mod tests {
             pos: [x, 0, z],
             uv: [0, 0],
         };
-        lib.add_parts([(
-            5,
-            Part {
-                groups: vec![Group {
-                    rect_id: 9,
-                    vertices: vec![v(0, 0), v(256, 0), v(512, 768)],
-                    indices: vec![0, 1, 2],
-                }],
-            },
-        )]);
+        lib.add_parts([
+            (
+                5,
+                Part {
+                    groups: vec![Group {
+                        rect_id: 9,
+                        vertices: vec![v(0, 0), v(256, 0), v(512, 768)],
+                        indices: vec![0, 1, 2],
+                    }],
+                },
+            ),
+            (
+                7,
+                Part {
+                    groups: vec![Group {
+                        rect_id: 8,
+                        vertices: vec![v(0, 0), v(256, 0), v(512, 768)],
+                        indices: vec![0, 1, 2],
+                    }],
+                },
+            ),
+        ]);
         lib
     }
 
@@ -377,6 +420,40 @@ mod tests {
         assert_eq!(f.missing_parts, 1);
         f.clear(&lib);
         assert_eq!(f.triangle_count(), 0);
+    }
+
+    #[test]
+    fn positions_are_relative_to_the_origin() {
+        let lib = library();
+        let mut f = FrameGeometry {
+            origin: Vec3::new(1000.0, 2.0, -500.0),
+            ..FrameGeometry::default()
+        };
+        f.clear(&lib);
+        let at = placement_transform(Vec3::new(1000.5, 2.0, -500.0), 0.0);
+        f.add_instance(&lib, 5, &at);
+        assert_eq!(f.batches[1].vertices[1].pos, [1.5, 0.0, 0.0]);
+        f.add_line_strip(&[Vec3::new(1000.0, 3.0, -500.0), Vec3::ZERO], [1.0; 4]);
+        assert_eq!(f.lines[0].pos, [0.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn vertices_carry_their_instance_order() {
+        let lib = library();
+        let mut f = FrameGeometry::default();
+        f.clear(&lib);
+        for id in [5, 7, 6, 5] {
+            f.add_instance(&lib, id, &Mat4::IDENTITY);
+        }
+        // The unknown part 6 takes no number.
+        assert_eq!(f.instances, 3);
+        let orders = |page: usize| -> Vec<u32> {
+            f.batches[page].vertices.iter().map(|v| v.order).collect()
+        };
+        assert_eq!(orders(1), [0, 0, 0, 2, 2, 2]);
+        assert_eq!(orders(0), [1, 1, 1]);
+        f.clear(&lib);
+        assert_eq!(f.instances, 0);
     }
 
     #[test]

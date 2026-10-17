@@ -119,6 +119,10 @@ settings! {
     /// The world dissolves into the background before the far edge (scene.md §5.3); off = the
     /// original's hard edge.
     distance_fade = true;
+    /// Depth in steps of a constant 0.07 % of the distance (renderer.md §6.1); off = the
+    /// original's 16-bit Z buffer, whose steps grow with distance (3 m at 320 m, 12 m at
+    /// 640 m with `draw_distance`). Coplanar track and ground layers resolve alike either way.
+    fine_depth = true;
     /// Camera, AI trains, wiper, snow and speedometer needle between the last two ticks at the
     /// display's rate (renderer.md §13.9); off = every frame shows the last tick.
     interpolate = true;
@@ -247,6 +251,7 @@ impl Settings {
             ground_detiling: self.ground_detiling,
             msaa: u32::from(self.msaa),
             anisotropic: self.anisotropic,
+            fine_depth: self.fine_depth,
         }
     }
 

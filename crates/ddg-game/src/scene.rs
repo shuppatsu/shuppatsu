@@ -342,6 +342,8 @@ impl RouteScene {
         let cam = scene::cab_camera(&self.route, pos, self.eye_height, 0.0);
 
         self.background(frame, pos, ScreenMap { aspect });
+        // Positions relative to the eye keep coplanar layers coplanar (renderer.md §6.1).
+        frame.origin = Vec3::from(cam.eye);
 
         let options = scene::TrackOptions {
             anchor_side_variants: self.stable_track_variants,

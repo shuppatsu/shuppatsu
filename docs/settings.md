@@ -1,3 +1,4 @@
+| `fine_depth` | on | `--[no-]fine-depth` | the 16-bit Z buffer: depth steps grow with the square of the distance (3 m at 320 m, 12 m at 640 m with `draw_distance`), so distant surfaces close together flicker | depth in steps of a constant 0.07 % of the distance (22 cm at 320 m, 87 cm at 1280 m). Either way the steps are whole and ties go to the later part in the original's draw order, so coplanar track and ground layers (crossovers, grass over the ballast's edge) show the later one drawn without z-fighting (renderer.md §6.1) |
 # Port settings
 
 Every enhancement and every decided deviation from the original has one named setting
@@ -65,8 +66,8 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
   `wide_menus`, `hud_upscale`, `interpolate`, `vsync`, `fullscreen`); 3D & effects (`wide_visibility`, `square_pixels`,
   `stable_track_variants`, `texture_filtering`, `anisotropic`, `msaa`, `ground_variation`,
   `ground_detiling`, `texture_pack`, `fog`, `wide_weather`, `far_traffic`, `max_lod`,
-  `early_activation`, `draw_distance`, `distance_fade`); Saves & controls (`save_on_change`,
-  `save_timed_out_names`, `keyboard_with_controller`, `exit_no_to_menu`). All 35 keys of
+  `early_activation`, `draw_distance`, `distance_fade`, `fine_depth`); Saves & controls (`save_on_change`,
+  `save_timed_out_names`, `keyboard_with_controller`, `exit_no_to_menu`). All 36 keys of
   the table below.
 * **Keys**: up/down move (no wrap, repeat on hold), left/right step the value (switches flip,
   `ui_scale` runs Auto, 1×…4×, the others wrap), Enter (confirm) steps it on, Esc (cancel)

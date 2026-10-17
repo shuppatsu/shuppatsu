@@ -19,6 +19,12 @@ struct Frame {
     shade: vec4<f32>,
     // Enhancement distance_fade: x = start, y = end (eye-space depth), z = 1 to enable
     fade: vec4<f32>,
+    // Depth steps (`stepped_depth`): x = 1 fine (`fine_depth`), else the original's 16 bits;
+    // y, z = k, c of the reversed depth r = k / w - c; w = fine steps per octave
+    depth: vec4<f32>,
+    // xyz: the world point vertex positions are relative to (FrameGeometry::origin);
+    // w = 1 / the frame's instance count (scales `order`)
+    origin: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -39,6 +45,7 @@ struct VsIn {
     @location(2) tile: vec2<f32>,
     @location(3) rect: vec4<f32>,
     @location(4) surface: u32,
+    @location(5) order: u32,
 };
 
 struct VsOut {
@@ -49,6 +56,8 @@ struct VsOut {
     @location(3) tile: vec2<f32>,
     @location(4) @interpolate(flat) rect: vec4<f32>,
     @location(5) @interpolate(flat) surface: u32,
+    // The instance's place in the frame's draw order, 0..1 (Vertex::order)
+    @location(6) @interpolate(flat) order: f32,
 };
 
 @vertex
@@ -58,10 +67,11 @@ fn vs_main(v: VsIn) -> VsOut {
     out.clip = frame.view_proj * world;
     out.eye_depth = (frame.view * world).z;
     out.uv = v.uv;
-    out.world = v.pos;
+    out.world = v.pos + frame.origin.xyz;
     out.tile = v.tile;
     out.rect = v.rect;
     out.surface = v.surface;
+    out.order = f32(v.order) * frame.origin.w;
     return out;
 }
 
@@ -204,8 +214,51 @@ fn faded_out(depth: f32, pixel: vec2<f32>) -> bool {
     return t > (bayer[p.y * 4u + p.x] + 0.5) / 16.0;
 }
 
+// The depth the world pass stores for reversed depth `r`: in whole steps, so that coplanar
+// surfaces of different parts (two tracks' ballast at a crossover, grass over the ballast's
+// edge) share a step despite rounding, and inside the step by draw order, so the later
+// instance wins like under the original's LESSEQUAL test on its 16-bit Z buffer, although
+// the batches are drawn by texture page (renderer.md §6.1). Mirrors `DepthSteps::depth`.
+// With `fine_depth` the later instance also counts as up to this much nearer (fraction of
+// the distance) when its step is chosen: more than the rounding between coplanar surfaces,
+// so it never lands a step behind an earlier one. FINE_ORDER_BIAS in camera.rs.
+const FINE_ORDER_BIAS: f32 = 1e-4;
+
+fn stepped_depth(r: f32, order: f32) -> f32 {
+    var far: f32;
+    var near: f32;
+    if (frame.depth.x < 0.5) {
+        // D3D depth z = 1 - r stored in 16 bits.
+        let z = round((1.0 - r) * 65535.0);
+        far = 1.0 - (z + 0.5) / 65535.0;
+        near = 1.0 - (z - 0.5) / 65535.0;
+    } else {
+        let k = frame.depth.y;
+        let c = frame.depth.z;
+        let n = frame.depth.w;
+        // Eye depth w = k / (r + c), counted nearer by the order bias.
+        let rb = r + (r + c) * FINE_ORDER_BIAS * order;
+        let s = floor(log2(k / max(rb + c, 1e-30)) * n);
+        far = k / exp2((s + 1.0) / n) - c;
+        near = k / exp2(s / n) - c;
+    }
+    return clamp(far + (near - far) * (0.25 + 0.5 * order), 0.0, 1.0);
+}
+
+struct WorldOut {
+    @location(0) colour: vec4<f32>,
+    @builtin(frag_depth) depth: f32,
+};
+
 @fragment
-fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
+fn fs_main(in: VsOut) -> WorldOut {
+    var out: WorldOut;
+    out.colour = world_colour(in);
+    out.depth = stepped_depth(in.clip.z, in.order);
+    return out;
+}
+
+fn world_colour(in: VsOut) -> vec4<f32> {
     // Derivatives first, in uniform control flow.
     let gx = dpdx(in.uv);
     let gy = dpdy(in.uv);

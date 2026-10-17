@@ -1,6 +1,6 @@
 //! wgpu renderer: texture pages are uploaded once; geometry is streamed every frame.
 
-use crate::camera::{Camera, Projection};
+use crate::camera::{Camera, FINE_DEPTH_STEPS, Projection};
 use crate::effects::EffectGeometry;
 use crate::world::{BgTexVertex, BgVertex, FrameGeometry, LineVertex, PageImage, Vertex};
 use glam::Mat4;
@@ -39,6 +39,10 @@ pub struct Shading {
     /// `anisotropic`: the anisotropy clamp (1 = off). Above 1 the pages get mipmaps; without
     /// `texture_filtering` only minified texels are filtered (renderer.md §14).
     pub anisotropic: u16,
+    /// `fine_depth`: depth in constant relative steps
+    /// ([`crate::camera::DepthSteps::Fine`]); off = the original's 16-bit Z buffer
+    /// ([`crate::camera::DepthSteps::D16`]).
+    pub fine_depth: bool,
 }
 
 impl Default for Shading {
@@ -48,6 +52,7 @@ impl Default for Shading {
             ground_detiling: false,
             msaa: 1,
             anisotropic: 1,
+            fine_depth: false,
         }
     }
 }
@@ -63,6 +68,13 @@ struct FrameUniform {
     shade: [f32; 4],
     /// Enhancement `distance_fade`: x = start, y = end (eye depth), z = 1 to enable.
     fade: [f32; 4],
+    /// Depth steps (shader.wgsl `stepped_depth`): x = 1 for
+    /// [`crate::camera::DepthSteps::Fine`] (else D16),
+    /// y, z = [`Projection::depth_terms`], w = [`FINE_DEPTH_STEPS`].
+    depth: [f32; 4],
+    /// xyz = [`FrameGeometry::origin`] (vertex positions are relative to it), w = 1 /
+    /// [`FrameGeometry::instances`] (scales `Vertex::order` into its depth step).
+    origin: [f32; 4],
 }
 
 /// The pipelines of the world pass, for one sample count.
@@ -154,6 +166,10 @@ pub struct Renderer {
     sampler: wgpu::Sampler,
     filtered_sampler: wgpu::Sampler,
     pages: Vec<PageGpu>,
+    /// This frame's [`FrameGeometry::origin`].
+    origin: glam::Vec3,
+    /// This frame's [`FrameGeometry::instances`].
+    instances: u32,
     lines: StreamBuffer,
     line_count: u32,
     background: StreamBuffer,
@@ -295,7 +311,8 @@ fn build_pipelines(
             array_stride: std::mem::size_of::<Vertex>() as u64,
             step_mode: wgpu::VertexStepMode::Vertex,
             attributes: &wgpu::vertex_attr_array![
-                0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x4, 4 => Uint32
+                0 => Float32x3, 1 => Float32x2, 2 => Float32x2, 3 => Float32x4, 4 => Uint32,
+                5 => Uint32
             ],
         },
         // With the original's (mirrored) view, visible faces wind counter-clockwise in wgpu's
@@ -475,6 +492,8 @@ impl Renderer {
             sampler,
             filtered_sampler,
             pages: Vec::new(),
+            origin: glam::Vec3::ZERO,
+            instances: 0,
             lines: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "lines"),
             line_count: 0,
             background: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "background"),
@@ -604,6 +623,8 @@ impl Renderer {
             page.indices
                 .write(device, queue, bytemuck::cast_slice(&batch.indices));
         }
+        self.origin = frame.origin;
+        self.instances = frame.instances;
         self.line_count = frame.lines.len() as u32;
         self.lines
             .write(device, queue, bytemuck::cast_slice(&frame.lines));
@@ -749,7 +770,12 @@ impl Renderer {
     ) {
         let [vx, vy, vw, vh] = sub.rect;
         let (vw, vh) = (vw.max(1.0), vh.max(1.0));
-        let view = camera.view();
+        // The geometry is stored relative to its origin; so is the camera.
+        let view = Camera {
+            eye: camera.eye - self.origin,
+            target: camera.target - self.origin,
+        }
+        .view();
         let view_proj: Mat4 = sub.projection.matrix(vw / vh) * view;
         let fog = self.fog;
         let linear = |c: f32| c.powf(2.2);
@@ -768,6 +794,15 @@ impl Renderer {
                 Some((start, end)) => [start, end, 1.0, 0.0],
                 None => [0.0; 4],
             },
+            depth: {
+                let (k, c) = sub.projection.depth_terms();
+                let fine = if self.shading.fine_depth { 1.0 } else { 0.0 };
+                [fine, k, c, FINE_DEPTH_STEPS]
+            },
+            origin: self
+                .origin
+                .extend(1.0 / self.instances.max(1) as f32)
+                .to_array(),
         };
         self.prepare_shading(device);
         let uniform = FrameUniform {

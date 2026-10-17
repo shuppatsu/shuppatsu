@@ -145,6 +145,7 @@ pub const ITEMS: &[Item] = {
         switch("early_activation", Effects, NextStage),
         item("draw_distance", Effects, Kind::DrawDistance, NextStage),
         switch("distance_fade", Effects, NextStage),
+        switch("fine_depth", Effects, NextStage),
         switch("save_on_change", Saves, Now),
         switch("save_timed_out_names", Saves, NextStage),
         switch("keyboard_with_controller", Saves, Now),
