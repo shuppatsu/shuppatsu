@@ -1,0 +1,138 @@
+# Building
+
+Everything comes from the flake's dev shell (`nix develop`); nothing is installed imperatively.
+The shell has a stable Rust with the `x86_64-unknown-linux-gnu`, `x86_64-pc-windows-gnu` and
+`i686-pc-windows-gnu` targets, the mingw-w64 cross compilers for both Windows targets, and
+Wine.
+
+## Linux
+
+```sh
+nix develop
+cargo build --release -p ddg-game -p ddg-tools   # target/release/ddg-game, ddg-tools
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace                            # data tests need DDG_DATA_DIR (see below)
+```
+
+`nix build` (the flake's `packages`) builds the same binaries as a Nix package (see README.md).
+Running from the dev shell works because it puts the Vulkan loader, Wayland and X11 libraries on
+`LD_LIBRARY_PATH`. A bare `target/release/ddg-game` outside the shell can't find them on NixOS.
+
+## Windows (cross-compiled from Linux)
+
+The game and tools build for **x86_64-pc-windows-gnu** with nixpkgs' mingw-w64 GCC as the
+linker (`pkgsCross.mingwW64`). This was chosen over `x86_64-pc-windows-msvc` with cargo-xwin for
+three reasons. The GNU target is already in rust-overlay, and nixpkgs has the toolchain, so the
+flake needs no new inputs. cargo-xwin would download the MSVC CRT and Windows SDK at build time,
+and that is neither in nixpkgs nor reproducible. The hook DLL (`i686-pc-windows-gnu`) already
+uses the same setup.
+
+```sh
+nix develop
+cargo build --release --target x86_64-pc-windows-gnu -p ddg-game -p ddg-tools
+# target/x86_64-pc-windows-gnu/release/{ddg-game,ddg-tools}.exe
+scripts/package-windows.sh                        # out/dist/ddg-windows.zip
+```
+
+Linker settings live in the flake as `CARGO_TARGET_X86_64_PC_WINDOWS_GNU_*`. mcfgthread is linked
+statically, so the exes import only system DLLs. Check with
+`x86_64-w64-mingw32-objdump -p ddg-game.exe | grep 'DLL Name'`; no MinGW runtime DLL has to ship.
+
+`scripts/package-windows.sh` builds the release exes, strips them and zips them with
+`LICENSE.txt` (GPL-3.0-or-later), `OFL-Mplus.txt` (the licence of the font compiled into the
+exe), `settings.md` and a `README-windows.txt`. It includes no game data. The window icon is
+read at runtime from the user's `dengo3k.exe`, so the exe has no icon resource of its own.
+
+### Platform behaviour
+
+| Area | Windows | Linux |
+|---|---|---|
+| Graphics | wgpu, **DX12 first**, then Vulkan, then GL (`gpu_backend.rs`). A backend is skipped when a probe pipeline does not compile. `WGPU_BACKEND=vulkan`/`dx12` forces one | wgpu defaults (Vulkan) |
+| Audio | cpal, WASAPI | cpal, ALSA (PipeWire/Pulse through their ALSA plugins) |
+| Gamepads | gilrs, Windows.Gaming.Input | gilrs, evdev |
+| Config, saves, log | `%APPDATA%\ddg\` (`config.toml`, `eeprom.dat`, `joystick.dat`, `ddg-game.log`) | `$XDG_CONFIG_HOME/ddg/` (`~/.config/ddg`) |
+| Console | release: GUI subsystem, no console window (see below); debug: console | terminal |
+| File names | case-insensitive file system | data files are matched case-insensitively (`GameData::read`) |
+| Font lists (`--font a;b`) | `;`-separated (`std::env::split_paths`) | `:`-separated |
+| `install-desktop` | not available (make a shortcut) | desktop entry + icon |
+
+**Logs on Windows** (`win_console.rs`): a release `ddg-game.exe` started without a usable stderr
+(from Explorer or a shortcut) writes stdout and stderr to `%APPDATA%\ddg\ddg-game.log`, which is
+overwritten on each start. If it fails to start, it also shows the error in a message box.
+`--console` attaches to the console of the command prompt that started it, or opens a new one.
+A redirected stderr (`ddg-game.exe 2> log.txt`) is used as it is. `ddg-tools.exe` is a normal
+console program.
+
+## Where the game data is found
+
+The program needs the files of the user's own disc: a directory holding the game's `DATA` and
+`BIN`. Two layouts are accepted (`data_dir.rs`):
+
+- an extracted disc as `scripts/extract-disc.sh` writes it: `<dir>/install/Program_Executable_Files/{DATA,BIN}`;
+- an installed copy of the original game: `<dir>/{DATA,BIN}`, by default
+  `C:\Program Files\TAITO\DENGO3K` (docs/recon.md §6).
+
+The first source that is set wins:
+
+1. the environment variable `DDG_DATA_DIR`;
+2. `--data <dir>` (or `--data=<dir>`) on the `ddg-game` command line, before or after a
+   subcommand;
+3. `data/extracted` or `data` next to the executable;
+4. `data_dir = '<dir>'` in `config.toml`; a relative path is relative to the config directory.
+
+If a source from 1, 2 or 4 is set but its directory doesn't fit either layout, that is an error;
+the game does not fall through to the next source. If nothing is found, the error names every
+option. `ddg-tools` reads only `DDG_DATA_DIR` because it is a developer tool.
+
+The dev shell sets `DDG_DATA_DIR=./data/extracted` when that directory exists.
+
+## Testing the Windows build under Wine
+
+The dev shell sets `CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER` to `scripts/wine-run.sh`. The script
+runs the exe under Wine in a **separate prefix**, `./wine/test-prefix`, and never touches the
+original game's `./wine/prefix`; `DDG_WINE_PREFIX` overrides it. It also maps Unix paths in
+`DDG_DATA_DIR`, `DDG_TRACE_DIR`, `DDG_FONT` and `DDG_DISPLAY_FONT` to `Z:\…`.
+
+```sh
+nix develop
+cargo test --target x86_64-pc-windows-gnu --workspace --exclude ddg-hook
+scripts/wine-run.sh target/x86_64-pc-windows-gnu/release/ddg-game.exe \
+    play 0 --shot "300:Z:$PWD/out/play0.ppm"
+scripts/wine-run.sh target/x86_64-pc-windows-gnu/release/ddg-game.exe --shot "300:Z:$PWD/out/app.ppm"
+```
+
+To exercise the log file and message box the way Explorer would start the game (no inherited
+stdio), use `wine start /wait /unix "$PWD/ddg-game.exe" …` with `WINEPREFIX=$PWD/wine/test-prefix`.
+
+### Verified under Wine 11.19 (wineWow64Packages.unstable), 2026-10
+
+- The full test suite passes for `x86_64-pc-windows-gnu` without ddg-hook: 476 passed, 2 ignored, as on
+  Linux; this includes the data tests.
+- The headless `play 0 --shot 300:…` and the app's `--shot 300:…` produce PPMs **byte-identical**
+  to the Linux build. Data was found through `DDG_DATA_DIR` (Z: path), `--data`, and a `data`
+  folder next to the unzipped release exe.
+- The windowed game opens and presents on the **Vulkan** backend (winevulkan → RADV, FIFO,
+  `Bgra8UnormSrgb`). The window and taskbar icon come from the user's exe. WASAPI audio
+  reaches PipeWire (`application.name = ddg-game.exe`). gilrs starts without errors.
+- **DX12 under Wine does not work, and the fallback handles it.** wgpu's DX12 backend
+  compiles HLSL with FXC, and naga's sampler heap is a shader-model 5.1 resource array.
+  Microsoft's FXC supports that, but Wine's vkd3d-shader replacement for `d3dcompiler_47`
+  returns `E5017: not yet implemented`. The probe in `gpu_backend.rs` catches the error and
+  the game continues on Vulkan.
+- The release exe is a GUI-subsystem exe. Started via `wine start`, it logged to
+  `%APPDATA%\ddg\ddg-game.log`. A bad `--data` path wrote the error there and blocked in the
+  message box.
+- `ddg-tools.exe check` reports the same result as on Linux (399 files, 0 failed, 0 unknown).
+
+### Needs a real Windows machine
+
+- The **DX12** path itself: rendering, presentation and the HLSL shaders compiled by
+  Microsoft's FXC (or DXC, if `dxcompiler.dll` is present).
+- The Vulkan path on Windows drivers, and the GL fallback.
+- Audio on real WASAPI devices: device changes and exclusive-mode drivers.
+- Gamepads and Densha de GO! controllers through Windows.Gaming.Input. Note that WGI only
+  delivers input while the window has focus.
+- `--console` (AttachConsole/AllocConsole), which Wine's terminal handling doesn't represent
+  faithfully.
+- High-DPI scaling, 120 Hz presentation and fullscreen/borderless behaviour on Windows.
