@@ -874,6 +874,8 @@ mode 6 only), the options list and both value pages with `Options_Get` / `Option
 clear stars, rank badges, the 雫石 tags, R toggle), the lever check, the departure board, the
 calibration screen (writes `joystick.dat` next to `eeprom.dat`), the tick gaps between screens
 listed above, BGM 0x19e on the title / options / route select, and the attract title picture.
+The stage intro (both kinds, `play/intro.rs`) is compared frame by frame with Wine recordings
+of stages 0, 1, 9 and 13 (scene.md §9.3).
 
 Approximated or left out:
 

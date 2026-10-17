@@ -636,7 +636,7 @@ more after the wait ends (`0x829d18`), else slot 0x81 is cleared.
 | 非常ブレーキ使え | course event 8 (obstacle) | 0x33, (192, 168), 0x24b | delay 10, 90 ticks, bell 0xb | confirmed |
 | 時間切れ (time up) | `TimeUp` 0x4158b0 / 0x4159c0 | 0x39, placed at (640, 244) at creation, then at `origin + (0x40 + p, 0xcc)` with `p` = 0x200 − 10 per update while `p > 0xa8`, i.e. x 566 → **226** (correction: not 232) at y 204, 0x252; at update 56 (counter 0x37) an advice sprite 0x3f2..0x3fe at (304, 344) (0x466ee8 / 0x466ef8) chosen by the failure cause `0x856d84` (0x40ddb0) with voice 0xea..0xfc | 151 updates (counter > 0x95 ends); sound 0x11 at tick 35; created after the 20 `Task_Tick`s that follow the game over; 0x4080d0 then loops `Task_Tick` until it ends (`0x855ff8 & 0x400`) before the continue screen | confirmed (cause meanings: guess) |
 | Coupling minigame captions | 0x4093c0 | 0x33, 0x2d8 ボーナスゲーム / 0x2d9 時間内に衝撃なく列車を連結せよ, positions 0x459190 / 0x4591b0 tables | 70 / 80 ticks | confirmed |
-| E3 coupling-ready animation | course event 23, 0x411240 | 0x61, 0x163..0x166 (E3 併合準備), palette 4 entries 0xb0.. from 0x463700 | anim table 0x46622c, sound 0x1029 at frame 60 | confirmed |
+| E3 coupling-ready animation | course event 23, 0x411240 | 0x61, 0x163..0x166 (E3 併合準備), palette 4 entries 0xb0.. from 0x463700 | anim table 0x46622c (60, 3, 3, 100 updates after 5 hidden), sound 0x1029 at counter 0x3c; yields to navigator reactions (§3.17) | confirmed |
 | Navigator reactions | 0x410cb0(n), n from `0x45addc/0x45ade0` per stage | 0x61 at (80, 145), animation tables 0x465e04.. `{tbl, ticks}` | EB, notch slam, overrun, obstacle (§3.17) | confirmed |
 | 自動運転 | replay playback (`0x816974`) | 0x86 at (403, 40), sub-rect col 6, 6×2 tiles of 0x50b | while replaying | confirmed |
 
@@ -744,6 +744,29 @@ port, and for set C in the original:
 | `NaviAnim(slam)` | train task 0x422c20 | statistic 11 += 2 (the notch-slam test of 0x422c20, audio-text.md); not while `0x855ff8 & 0x410` |
 
 The time-up (0x4158b0) does **not** cancel a running reaction.
+
+**E3 coupling-ready animation (course event 23 → 0x411240; confirmed, code).** Stages 17–19
+fire course event 23 shortly before the coupling partner is placed (event 12); in the port's
+stage 17 run from station 15 (`out/explain/coupling/stage17_station15_inputs.txt`) at drive tick
+2258, 19 ticks before event 12, about 210 m from the stop. 0x411240 sets palette 4 entries
+0xb0..0xbf from the 16 colours at 0x463700 (a grey ramp; GAME_INIT 0x40e910 sets the same at
+boot) and creates task 0x411300 (destructor 0x411390) at the end of list 3, so it first updates
+in the tick of the event, after the HUD task. Fields: `+0x38 = 6`, counter `+0x34`, frame
+`+0x40`, frame tick `+0x44`, list `+0x4c = 0x46622c`. Each update decrements `+0x38` and does
+nothing while it is still ≥ 1 (five updates); every later update increments `+0x44` and `+0x34`,
+draws the current frame with `0x431920(0x61, tbl, 4)` **only while `0x856c68 == 0`** (no
+navigator reaction current), requests sequence 0x1029 when `+0x34 == 0x3c`, and moves to the
+next frame when `+0x44` reaches its ticks; at the −1 terminator the task ends and the destructor
+hides slot 0x61, again only while `0x856c68 == 0`. Frames (`{tbl, ticks}` at 0x46622c): 0x163
+"E3 併合準備" with the closed nose ×60, 0x164 ×3, 0x165 ×3 (the nose cover opening), 0x166 with
+the coupler out ×100. Visible updates 6..170 after the event (frame 3 is drawn in update 171 and
+hidden in the same update), the sound on update 65. It has no `+0x3c` flag: `NaviAnim(−1)` and
+the time-up do not stop it; only a list-3 rebuild (segment start) does. The slot keeps the
+`Hud_Create` placement (80, 145). Port: `navigator::ReadyAnim`, run by `cab.rs` after the HUD
+task; shots `out/explain/coupling/ready_anim_*.png` (ticks 2262 hidden, 2263 first frame, 2323
+and 2326 the opening frames, 2340 and 2427 the last frame, 2428 gone; `ready_anim_sheet.png`
+crops the slot). Not yet compared with the running original (it needs a full stage 17 drive in
+Wine); the position, palette and timing come from the code.
 
 **Hints and balloons.** The reaction is independent of the navigator hint (portrait slot 0x34,
 balloon 0x35, §3.12) and of the time message. They are separate slots and tasks, and neither
@@ -923,7 +946,8 @@ sprite or a rect-layer fan; it is the first thing the drive task draws:
 5. Resolved (§3.17): the 20 navigator animations and the per-stage sets. Still open: animations
    7, 9 and 12–19 (tilemaps 0x2af/0x2b1/0x2b6/0x2b7 and 0x185..0x197) have no caller in the
    3000-bandai exe. They may belong to the original Kōsoku-hen or be unused art. The E3
-   coupling animation 0x411240 (also slot 0x61, §3.16) is not drawn by the port yet.
+   coupling animation 0x411240 (also slot 0x61, §3.16) is drawn by the port (§3.17); no Wine
+   capture of it yet.
 6. Failure-cause codes `0x856d84` for the time-up advice (§3.16).
 7. Resolved: the float is `0x84c40c` itself; the +2.5 m bump when it reads 50 or 51 makes the
    late/early advice fire once per leg (`Train::leg_marker`, `Rules::advice_hints`).
