@@ -413,9 +413,17 @@ Not catalogued, on purpose:
 Regions marked `(est.)` in `en.toml` were measured by eye and should be checked in the running
 game.
 
-## Open decision: redrawn art or a font
+## Decided: a font, M+ 2 Medium
 
-The user has not decided how English should look. The two options:
+The user chose a font (option 1 below) after comparing 13 candidates on the enhanced HUD at
+2560×1600 (M PLUS 1p, M+ 2, PixelMplus, Archivo Black, Unifont, Michroma, Noto Sans JP, Zen
+Kaku Gothic New, BIZ UDPGothic, Inter, Source Sans 3; heavy and regular weights; a Michroma
+display hybrid). **M+ 2 Medium** (OFL) is the body font: a humanist sans in the spirit of the
+Sony handheld system fonts, compact enough for long station names, with its own Japanese, and
+Medium holds up next to the bold 1999 lettering where Regular looked faint. No display font is
+set (the display role falls back to the body font); `--display-font` stays available.
+
+The options that were considered:
 
 1. **A font** (what this infrastructure does): any TTF the user supplies, fitted into the
    original rectangles, coloured from the original palettes. Cheap, covers every language,
