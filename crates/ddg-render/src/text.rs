@@ -189,6 +189,10 @@ pub struct TextPart {
     /// Lines this many font sizes apart instead of the font's line height (two lines in a
     /// tight caption band).
     pub line_height: Option<f32>,
+    /// Boxed style only: take the lettering colour from this rectangle of the sprite (`[x, y,
+    /// w, h]`) instead of the part's own region, for a region whose lettering is mostly
+    /// antialiasing (small half-width glyphs) and would otherwise pick a grey.
+    pub ink: Option<[u16; 4]>,
     /// Parts of one override with the same group are drawn at one size: the smallest any of
     /// them fits at (the words of one callout cell).
     pub group: Option<String>,
@@ -907,8 +911,12 @@ fn render_part_at(
                 }
             }
         }
-        // The text takes the original lettering's colour: the commonest non-backdrop one.
-        ranked
+        // The text takes the original lettering's colour: the commonest non-backdrop one, in
+        // the region or in the part's `ink` rectangle.
+        let ink_ranked = part.ink.map(|r| ranked_colours(art, art_w, art_h, r));
+        ink_ranked
+            .as_deref()
+            .unwrap_or(&ranked)
             .iter()
             .copied()
             .find(|i| !pattern.contains(i))
@@ -928,6 +936,22 @@ fn render_part_at(
         fg,
     };
     Some((rendered, px))
+}
+
+/// The opaque palette indices of `rect` (clipped to the `art_w × art_h` art), commonest first.
+fn ranked_colours(art: &[u8], art_w: usize, art_h: usize, rect: [u16; 4]) -> Vec<u8> {
+    let [x, y, w, h] = rect.map(usize::from);
+    let mut counts = [0u32; 256];
+    for row in art.chunks(art_w).take(art_h.min(y + h)).skip(y) {
+        for &v in row.iter().take(art_w.min(x + w)).skip(x) {
+            counts[usize::from(v)] += 1;
+        }
+    }
+    let mut ranked: Vec<u8> = (1..=255u8)
+        .filter(|&i| counts[usize::from(i)] > 0)
+        .collect();
+    ranked.sort_by_key(|&i| std::cmp::Reverse(counts[usize::from(i)]));
+    ranked
 }
 
 /// The fill and outline colours of plain lettering in a `w × h` region: the fill is the
@@ -1197,6 +1221,35 @@ pub(crate) mod tests {
             dither.base.iter().filter(|&&b| b == 0).count(),
             4 * w * h / 2
         );
+    }
+
+    #[test]
+    fn ink_rectangle_sets_the_box_lettering_colour() {
+        // A 32×8 black box (1): white lettering 9 on the left; on the right, lettering that is
+        // mostly grey 5 (antialiasing) with a little 9.
+        let (w, h) = (32, 8);
+        let art: Vec<u8> = (0..w * h)
+            .map(|i| {
+                let (x, y) = (i % w, i / w);
+                match (x, (2..6).contains(&y)) {
+                    (2..10, true) => 9,
+                    (18..20, true) => 9,
+                    (20..30, true) => 5,
+                    _ => 1,
+                }
+            })
+            .collect();
+        let part = |ink| TextPart {
+            region: Some([16, 0, 16, 8]),
+            text: "Go".into(),
+            style: Style::Boxed,
+            ink,
+            ..TextPart::default()
+        };
+        let own = render_part(&part(None), &art, w, h, &BoxGlyphs, 1).unwrap();
+        assert_eq!(own.fg, 5);
+        let borrowed = render_part(&part(Some([0, 0, 16, 8])), &art, w, h, &BoxGlyphs, 1).unwrap();
+        assert_eq!(borrowed.fg, 9);
     }
 
     #[test]

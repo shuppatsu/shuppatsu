@@ -464,20 +464,27 @@ fn parse_role(v: &toml::Value) -> Result<FontRole> {
         .context("font must be body or display")
 }
 
+/// A `[x, y, w, h]` pixel rectangle option (`region`, `ink`).
+fn pixel_rect(v: &toml::Value, name: &str) -> Result<[u16; 4]> {
+    let a = v
+        .as_array()
+        .with_context(|| format!("{name} must be [x, y, w, h] in pixels"))?;
+    ensure!(a.len() == 4, "{name} must have 4 numbers");
+    let mut r = [0u16; 4];
+    for (o, x) in r.iter_mut().zip(a) {
+        let n = x
+            .as_integer()
+            .with_context(|| format!("{name} values must be integers"))?;
+        *o = u16::try_from(n)?;
+    }
+    ensure!(r[2] > 0 && r[3] > 0, "empty {name}");
+    Ok(r)
+}
+
 fn apply_option(p: &mut TextPart, k: &str, v: &toml::Value) -> Result<()> {
     match k {
-        "region" => {
-            let a = v
-                .as_array()
-                .context("region must be [x, y, w, h] in pixels")?;
-            ensure!(a.len() == 4, "region must have 4 numbers");
-            let mut r = [0u16; 4];
-            for (o, x) in r.iter_mut().zip(a) {
-                *o = u16::try_from(x.as_integer().context("region values must be integers")?)?;
-            }
-            ensure!(r[2] > 0 && r[3] > 0, "empty region");
-            p.region = Some(r);
-        }
+        "region" => p.region = Some(pixel_rect(v, "region")?),
+        "ink" => p.ink = Some(pixel_rect(v, "ink")?),
         "align" => {
             p.align = match v.as_str() {
                 Some("left") => Align::Left,
@@ -1100,11 +1107,11 @@ mod tests {
                 .unwrap_or_else(|| panic!("tbl {tbl:#x}: {rect:?} outside the map"));
             let (pw, ph) = (u16::from(w) * 16, u16::from(h) * 16);
             for p in &o.parts {
-                if let Some([x, y, rw, rh]) = p.region {
+                for r in [p.region, p.ink].into_iter().flatten() {
+                    let [x, y, rw, rh] = r;
                     assert!(
                         x + rw <= pw && y + rh <= ph,
-                        "tbl {tbl:#x}: region {:?} outside {pw}×{ph}",
-                        p.region
+                        "tbl {tbl:#x}: rectangle {r:?} outside {pw}×{ph}"
                     );
                 }
             }
