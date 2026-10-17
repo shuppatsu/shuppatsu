@@ -9,11 +9,15 @@
 #   group   route-select line group 0..4 (docs/re/menus.md §6.1; 0 = 北陸 = stages 5, 6, 8, 9, 7)
 #   row     train row within the group (e.g. group 0 row 3 = stage 9, 485 series from 直江津)
 #   inputs  oracle input script (`tick notch brake`, hook driving ticks; crates/ddg-hook)
-#   tick    driving ticks at which to grab the screen (comma-separated)
+#   tick    driving ticks at which to grab the screen (comma-separated; "-" for none)
 # Env:  DDG_CAP_DISPLAY  X display for Xvfb (default :77)
 #       DDG_CAP_SCHEMA   trace schema (default oracle/full.schema)
 #       DDG_CAP_STAGE    expected stage (0x8570a4); the run aborts if the trace shows another
 #       DDG_CAP_BOOT     seconds to wait before the first key (default 25)
+#       DDG_CAP_RECORD   seconds to record the screen right after the train is chosen (ffmpeg
+#                        x11grab at 60 fps, out/captures/<name>.mkv plus PNG frames in
+#                        out/captures/<name>_rec/), for what comes before driving (stage intro,
+#                        departure board). Frames carry no tick; align them on content.
 #
 # How it works: Xvfb at 640x480x16 (the game's own mode, so wined3d keeps its Z-buffer and
 # clears; see run-original.sh), the game in a Wine virtual desktop of the same size, started
@@ -33,6 +37,7 @@ name=${1:?usage: see header}
 group=${2:?group}
 row=${3:?row}
 inputs=${4:?inputs}
+record=${DDG_CAP_RECORD:-}
 ticks=${5:?ticks}
 disp=${DDG_CAP_DISPLAY:-:77}
 schema=${DDG_CAP_SCHEMA:-oracle/full.schema}
@@ -75,7 +80,25 @@ key Return; sleep 3 # -> train select
 for _ in $(seq "$row"); do key Down; done
 sleep 1
 grab "out/captures/${name}_select.png"
+if [[ -n $record ]]; then
+  # Started before the key, so the first frames after it are not lost to ffmpeg's start-up.
+  # The dev shell's LD_LIBRARY_PATH (alsa-lib) breaks ffmpeg; it runs without it.
+  rm -rf "out/captures/${name}_rec" "out/captures/$name.mkv"
+  env -u LD_LIBRARY_PATH nix shell nixpkgs#ffmpeg-full -c ffmpeg -loglevel error -f x11grab -framerate 60 \
+    -video_size 640x480 -i "$disp" -t "$record" -c:v ffv1 "out/captures/$name.mkv" &
+  rec=$!
+  sleep 3
+fi
 key Return
+
+if [[ -n $record ]]; then
+  wait "$rec"
+  mkdir -p "out/captures/${name}_rec"
+  env -u LD_LIBRARY_PATH nix shell nixpkgs#ffmpeg-full -c ffmpeg -loglevel error -i "out/captures/$name.mkv" \
+    "out/captures/${name}_rec/%04d.png"
+  echo "recorded $record s: out/captures/$name.mkv, frames in out/captures/${name}_rec/"
+fi
+[[ $ticks == - ]] && exit 0
 
 # hook_tick (column 1) is -1 outside driving; stage is a column of the full/base schemas.
 col=$(head -1 "$trace" | tr , '\n' | grep -nx stage | cut -d: -f1 || true)
