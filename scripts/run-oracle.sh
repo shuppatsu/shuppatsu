@@ -2,7 +2,8 @@
 # Run the original game under Wine with the ddg-hook oracle DLL. Run inside `nix develop`.
 #
 # Usage: scripts/run-oracle.sh <name> [schema] [inputs]
-#   name    trace name; writes out/traces/<name>.csv and out/traces/<name>.log
+#   name    trace name; writes <dir>/<name>.csv and <dir>/<name>.log
+#           (dir = $DDG_ORACLE_DIR, default out/traces; the replay tests read every csv there)
 #   schema  trace schema (default oracle/base.schema)
 #   inputs  optional input script (`tick notch brake` lines, driving ticks)
 # Other env (e.g. DDG_WINE_DISPLAY) is passed to scripts/run-original.sh.
@@ -11,8 +12,9 @@ set -euo pipefail
 name=${1:?usage: scripts/run-oracle.sh <name> [schema] [inputs]}
 schema=$(realpath "${2:-oracle/base.schema}")
 inputs=${3:+$(realpath "$3")}
-mkdir -p out/traces
-out=$(realpath out/traces)
+dir=${DDG_ORACLE_DIR:-out/traces}
+mkdir -p "$dir"
+out=$(realpath "$dir")
 
 cargo build -q --release -p ddg-hook --target i686-pc-windows-gnu
 bin="$WINEPREFIX/drive_c/Program Files (x86)/TAITO/DENGO3K/BIN"

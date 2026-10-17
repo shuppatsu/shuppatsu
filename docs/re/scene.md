@@ -434,7 +434,7 @@ width it returns exactly the 3 original tiles.
   does not move with the camera, which makes the "reflections" look like something under the
   water. No z-fight is possible (depth 0x7ffe, behind every 3D polygon). The original does the
   same: 0x41dfc0 case 3 draws 0x469ca0 with the part's UVs (0x432da0), whatever is in front.
-- **Gap at the horizon — likely (code + data; not yet compared with Wine).** The sky gradient
+- **Gap at the horizon — confirmed (code + data + Wine capture).** The sky gradient
   ends at y 235 (0x469c68) and the area-3 textured ground starts at y 251 (0x469ca0), so the
   band 235..251 is covered only by the panorama, the 3D terrain and extra quad 1 (which the
   per-point table turns on together with ground 2, e.g. hokuho2a.com from engine index 3325,
@@ -442,6 +442,9 @@ width it returns exactly the 3 original tiles.
   strip under the hills, at 4:3 too (Hokuhoku 485 after Naoetsu, engine index ≈ 3350: x
   0..≈ 25 % of the view; ≈ 3460: the full width, the extra quad
   not being drawn there). The port keeps it; widescreen only extends it to the new edges.
+  Wine check (scripts/capture-original.sh, stage 9 stopped at engine index 3346, 640×480): the
+  original shows the same black band, rows 290–301 from x 0 to ≈ 160, and the port at the same
+  index draws rows 289–300 to x ≈ 160 (1 px vertical offset, otherwise pixel-for-pixel the same).
 - Widescreen: the flat and textured quads span x 0..496. `Quad2d::widened` and `ground_quad`
   move the left/right corners to the viewport edges and extrapolate the UVs linearly along each
   horizontal edge (v = x/16 for the tiled ground, whose page repeats anyway). The area-3 water
