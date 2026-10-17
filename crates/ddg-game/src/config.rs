@@ -191,13 +191,21 @@ pub fn asks_language(cfg: &LocaleConfig, headless: bool, forced: bool) -> bool {
 /// Writes `lang` into the file at `path`, keeping everything else in it (comments too). A
 /// file that does not parse is moved to `config.toml.bad` and a new one is started.
 pub fn store_lang(path: &Path, lang: &str) -> Result<()> {
+    store(path, "lang", Some(toml::Value::String(lang.to_owned())))
+}
+
+/// Writes the top-level `key` into the file at `path` (`None` removes it, so the default
+/// applies again), keeping everything else in it: comments, the other keys and the keys this
+/// version does not know. Atomic: a temporary file renamed over the old one. A file that does
+/// not parse is moved to `config.toml.bad` and a new one is started.
+pub fn store(path: &Path, key: &str, value: Option<toml::Value>) -> Result<()> {
     let old = match std::fs::read_to_string(path) {
         Ok(t) => Some(t),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
         Err(e) => return Err(e).with_context(|| path.display().to_string()),
     };
     let text = match old {
-        Some(t) if PortConfig::parse(&t).is_ok() => with_key(&t, "lang", lang),
+        Some(t) if PortConfig::parse(&t).is_ok() => with_key(&t, key, value.as_ref()),
         Some(_) => {
             let bad = path.with_extension("toml.bad");
             std::fs::rename(path, &bad).with_context(|| bad.display().to_string())?;
@@ -206,9 +214,9 @@ pub fn store_lang(path: &Path, lang: &str) -> Result<()> {
                 path.display(),
                 bad.display()
             );
-            with_key(HEADER, "lang", lang)
+            with_key(HEADER, key, value.as_ref())
         }
-        None => with_key(HEADER, "lang", lang),
+        None => with_key(HEADER, key, value.as_ref()),
     };
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).with_context(|| dir.display().to_string())?;
@@ -219,37 +227,132 @@ pub fn store_lang(path: &Path, lang: &str) -> Result<()> {
     Ok(())
 }
 
-/// `text` (valid TOML) with the top-level string `key` set to `value`: its line replaced, or a
-/// new line before the first table. Falls back to writing the parsed file out again (without
-/// comments) if the edit does not read back as intended.
-fn with_key(text: &str, key: &str, value: &str) -> String {
-    let line = format!("{key} = {}", toml::Value::String(value.to_owned()));
+/// `text` (valid TOML) with the top-level `key` set to `value` (`None`: its line removed): its
+/// line replaced (a comment after the value is kept), or a new line before the first table.
+/// Falls back to writing the parsed file out again (without comments) if the edit does not
+/// read back as intended.
+fn with_key(text: &str, key: &str, value: Option<&toml::Value>) -> String {
+    let line = value.map(|v| format!("{key} = {v}"));
     let is_key = |l: &str| {
         l.trim_start()
             .strip_prefix(key)
             .is_some_and(|rest| rest.trim_start().starts_with('='))
     };
-    let mut lines: Vec<&str> = text.lines().collect();
+    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
     let first_table = lines
         .iter()
         .position(|l| l.trim_start().starts_with('['))
         .unwrap_or(lines.len());
-    match lines[..first_table].iter().position(|l| is_key(l)) {
-        Some(i) => lines[i] = &line,
-        None => lines.insert(first_table, &line),
+    match (lines[..first_table].iter().position(|l| is_key(l)), &line) {
+        (Some(i), Some(new)) => {
+            let comment = trailing_comment(&lines[i]).map(str::to_owned);
+            lines[i] = match comment {
+                Some(c) => format!("{new} {c}"),
+                None => new.clone(),
+            };
+        }
+        (Some(i), None) => {
+            lines.remove(i);
+        }
+        (None, Some(new)) => lines.insert(first_table, new.clone()),
+        (None, None) => {}
     }
     let mut out = lines.join("\n");
     out.push('\n');
     let reads_back = toml::from_str::<toml::Table>(&out)
         .ok()
-        .and_then(|t| t.get(key)?.as_str().map(|v| v == value))
-        .unwrap_or(false);
+        .is_some_and(|t| t.get(key) == value);
     if reads_back {
         return out;
     }
     let mut table: toml::Table = toml::from_str(text).unwrap_or_default();
-    table.insert(key.to_owned(), toml::Value::String(value.to_owned()));
-    toml::to_string(&table).unwrap_or(line + "\n")
+    match value {
+        Some(v) => table.insert(key.to_owned(), v.clone()),
+        None => table.remove(key),
+    };
+    toml::to_string(&table).unwrap_or_else(|_| line.map(|l| l + "\n").unwrap_or_default())
+}
+
+/// The `# comment` after a `key = value` line's value, when the value holds no `#` itself
+/// (the values the game writes never do).
+fn trailing_comment(line: &str) -> Option<&str> {
+    let (_, value) = line.split_once('=')?;
+    let hash = value.find('#')?;
+    let before = &value[..hash];
+    // A `#` inside a string is not a comment.
+    (before.matches('"').count() % 2 == 0 && before.matches('\'').count() % 2 == 0)
+        .then(|| &value[hash..])
+}
+
+/// Where a setting fixed for the run comes from: a command-line flag or an environment
+/// variable (they override `config.toml`, so the settings screen cannot change it).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Lock {
+    /// The flag as given (`--no-fog`, `--lang`).
+    Flag(String),
+    /// The variable (`DDG_FOG`).
+    Env(String),
+}
+
+/// The locked settings of a run, by key ([`locks`]).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Locks(std::collections::BTreeMap<String, Lock>);
+
+impl Locks {
+    pub fn get(&self, key: &str) -> Option<&Lock> {
+        self.0.get(key)
+    }
+}
+
+/// The value flags of [`LocaleConfig::take_args`] that are settings, with their keys.
+const VALUE_FLAGS: &[(&str, &str)] = &[
+    ("--lang", "lang"),
+    ("--font", "font"),
+    ("--display-font", "display_font"),
+    ("--ui-scale", "ui_scale"),
+    ("--hud-layout", "hud_layout"),
+    ("--ui-scaling", "ui_scaling"),
+];
+
+/// Every key of docs/settings.md: the values, then the switches.
+pub fn all_keys() -> impl Iterator<Item = &'static str> {
+    VALUE_FLAGS
+        .iter()
+        .map(|(_, k)| *k)
+        .chain(Settings::KEYS.iter().copied())
+}
+
+/// The settings `args` and the environment (as looked up by `env`) fix for this run: a flag
+/// over a variable, as in [`layered`]. Call before the flags are taken out of `args`.
+pub fn locks(env: impl Fn(&str) -> Option<std::ffi::OsString>, args: &[String]) -> Locks {
+    let mut m = std::collections::BTreeMap::new();
+    for key in all_keys() {
+        let var = Settings::env_var(key);
+        if env(&var).is_some_and(|v| !v.is_empty()) {
+            m.insert(key.to_owned(), Lock::Env(var));
+        }
+    }
+    for a in args {
+        let key = VALUE_FLAGS
+            .iter()
+            .find(|(f, _)| f == a)
+            .map(|(_, k)| *k)
+            .or_else(|| Settings::flag_value(a).map(|(k, _)| k));
+        if let Some(k) = key {
+            m.insert(k.to_owned(), Lock::Flag(a.clone()));
+        }
+    }
+    Locks(m)
+}
+
+/// [`load`] and the settings its flags and environment lock ([`locks`]).
+pub fn load_locked(
+    args: &mut Vec<String>,
+    headless: bool,
+) -> Result<(LocaleConfig, Settings, Locks)> {
+    let locks = locks(|k| std::env::var_os(k), args);
+    let (cfg, settings) = load(args, headless)?;
+    Ok((cfg, settings, locks))
 }
 
 #[cfg(test)]

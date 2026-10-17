@@ -36,7 +36,6 @@ macro_rules! settings {
             }
 
             /// The value of the switch named `key`.
-            #[cfg(test)]
             pub fn get(&self, key: &str) -> Option<bool> {
                 match key {
                     $( stringify!($name) => Some(self.$name), )*
@@ -161,7 +160,7 @@ impl Settings {
     }
 
     /// The switch and value a flag sets, if it is one of theirs.
-    fn flag_value(flag: &str) -> Option<(&'static str, bool)> {
+    pub(crate) fn flag_value(flag: &str) -> Option<(&'static str, bool)> {
         if let Some(&(_, key, v)) = ALIASES.iter().find(|(f, _, _)| *f == flag) {
             return Some((key, v));
         }
