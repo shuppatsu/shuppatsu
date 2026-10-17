@@ -77,7 +77,7 @@ shake offset (signed bytes `0x856358`/`0x856359`) is added unless `0x855ffc & 0x
 | `StationCaption` 0x410450 → 0x410620 | 3 | approach HUD 0x40c4e0 | small "name 駅 通過/停車", slots 0x36–0x38 | confirmed |
 | `StationBanner` 0x410720 → 0x410970 | 3 | 0x40c4e0, 0x413370 | big centred banner, slots 0x39–0x3b | confirmed |
 | `Landmark_Show` 0x410a70 → 0x410bd0 | 3 | course event 17 | landmark caption (bridges, rivers, signal stations), slot 0x3c | confirmed |
-| `NaviAnim` 0x410cb0 → 0x411080 | 3 | EB, approach, train task, obstacle | navigator reaction animations (slot 0x61) or the emergency-stop signal (slot 0x60) | confirmed (structure) |
+| `NaviAnim` 0x410cb0 → 0x411080 | 3 | EB, approach, train task, obstacle | navigator reaction animations (slot 0x61) or the emergency-stop signal (slot 0x60) | confirmed (§3.17) |
 | `Popup` 0x417de0 → 0x417e80 | 3 | various | generic timed sprite: `(slot, tbl, x, y, pal, duration, delay, blink)` | confirmed |
 | `AtsLamp` task 0x417d10 | 3 | 0x40f7e0 via 0x417cc0 | "ATS作動" / "ATS確認", slot 0x32 | confirmed |
 | `Cab_Overlay` 0x434fd0 | — | `Frame_End` every drawn frame | speedometer (slot 0x81 + needle) and cab-signal lamp (slot 0x82) | confirmed |
@@ -637,7 +637,7 @@ more after the wait ends (`0x829d18`), else slot 0x81 is cleared.
 | 時間切れ (time up) | `TimeUp` 0x4158b0 / 0x4159c0 | 0x39, placed at (640, 244) at creation, then at `origin + (0x40 + p, 0xcc)` with `p` = 0x200 − 10 per update while `p > 0xa8`, i.e. x 566 → **226** (correction: not 232) at y 204, 0x252; at update 56 (counter 0x37) an advice sprite 0x3f2..0x3fe at (304, 344) (0x466ee8 / 0x466ef8) chosen by the failure cause `0x856d84` (0x40ddb0) with voice 0xea..0xfc | 151 updates (counter > 0x95 ends); sound 0x11 at tick 35; created after the 20 `Task_Tick`s that follow the game over; 0x4080d0 then loops `Task_Tick` until it ends (`0x855ff8 & 0x400`) before the continue screen | confirmed (cause meanings: guess) |
 | Coupling minigame captions | 0x4093c0 | 0x33, 0x2d8 ボーナスゲーム / 0x2d9 時間内に衝撃なく列車を連結せよ, positions 0x459190 / 0x4591b0 tables | 70 / 80 ticks | confirmed |
 | E3 coupling-ready animation | course event 23, 0x411240 | 0x61, 0x163..0x166 (E3 併合準備), palette 4 entries 0xb0.. from 0x463700 | anim table 0x46622c, sound 0x1029 at frame 60 | confirmed |
-| Navigator reactions | 0x410cb0(n), n from `0x45addc/0x45ade0` per stage | 0x61 at (80, 145), animation tables 0x465e04.. `{tbl, frames}` | EB, approach, comfort events | likely |
+| Navigator reactions | 0x410cb0(n), n from `0x45addc/0x45ade0` per stage | 0x61 at (80, 145), animation tables 0x465e04.. `{tbl, ticks}` | EB, notch slam, overrun, obstacle (§3.17) | confirmed |
 | 自動運転 | replay playback (`0x816974`) | 0x86 at (403, 40), sub-rect col 6, 6×2 tiles of 0x50b | while replaying | confirmed |
 
 Details (**confirmed**):
@@ -656,6 +656,109 @@ Details (**confirmed**):
 
 The station-result screen after a stop (停止位置 / m×1秒 / 合格! etc.) and the
 continue/game-over screens are in menus.md.
+
+### 3.17 Navigator reactions — confirmed
+
+`NaviAnim(n)` 0x410cb0 creates task 0x411080 (destructor 0x4111f0) in list 3. The "navigator"
+here is a passenger in a seat, drawn in slot 0x61 at (80, 145) (`Hud_Create` placement, layer 2),
+who reacts to rough driving. Animation 0 is the emergency-stop signal (特殊信号発光機) and draws
+in the signal's slot 0x60 instead. Port: `crates/ddg-game/src/navigator.rs` (model and
+triggers), drawn by `cab.rs`, sounds by `sound/stage.rs`. Both use the same model.
+
+**Creation (0x410cb0, confirmed, code).** Nothing happens while `0x84c0f8 == 1` (open
+question 9). With a current animation (`0x856c68 ≠ 0`):
+* `n < 0` clears its `+0x3c` (enabled). `0x856c68` stays set until the task ends, so a
+  cancelled animation still blocks new ones.
+* `n > 0` is ignored. Reactions never interrupt each other.
+* `n == 0` replaces it (clears its `+0x3c`), unless it is animation 0 itself.
+
+Without one, `n < 0` returns. The new task gets the following fields:
+* `+0x38 = 5` (delay), `+0x3c = 1`, `+0x48 = −1` (repeats);
+* `+0x4c` = the frame list, `+0x50/+0x54` = the sound counter and code;
+* `+0x6c` = the palette, `+0x70` = the slot (0x60 for `n == 0`, which also calls
+  `Signal_Show(−1)`; else 0x61).
+
+The per-animation `{counter, sound, palette}` triples are stack immediates (`local_f0`).
+
+**Update (0x411080, confirmed, code).**
+* **Delay.** The first 5 updates only count down.
+* **First visible update** (delay 0). The task ends at once if it is disabled. Otherwise it
+  draws frame 0 with `0x431920(slot, tbl, palette)`.
+* **Later updates.** Each one increments the frame tick `+0x44` and the counter `+0x34`.
+  * When the counter equals `+0x50` and the sound ≠ 0, the sound is requested (0x41fda0).
+  * When the frame tick reaches the frame's ticks, the next frame starts.
+  * At the `{−1, r}` terminator, `r` is loaded into `+0x48` the first time. With 0 left the
+    task ends without drawing. Otherwise it restarts at frame 0 with `+0x48 − 1`. So a list
+    plays `1 + r` times.
+  * At each frame boundary the next frame's image is preloaded (0x425dc0) and the enabled flag
+    checked. The one exception is a final frame (next entry is the terminator) when no repeat
+    follows (`+0x48 == 0` or `r == 0`): there is no check, so a cancelled one-shot animation
+    plays its last frame to the end. A cancel therefore ends an animation at its next frame
+    boundary, not at once.
+* **Drawing.** Every visible update redraws the current frame. While `0x855ff8 & 0x40` (the
+  station result) the slot is hidden. The destructor hides the slot, frees the frame images and
+  clears `0x856c68` if it is this task.
+
+Each frame is therefore visible for exactly its tick count of updates. Total visible updates are
+`Σticks · (1 + r)`, after 5 hidden ones. The sound plays on update `5 + counter` after the call.
+
+**Animations** (`{tbl, ticks}` lists at 0x465e04.., read at runtime; confirmed, exe data):
+
+| n | Frames (tbl:ticks) | Repeats | Visible | Sound @counter | Pal | Used by |
+|---|---|---|---|---|---|---|
+| 0 | 0x44b..0x44f, 4 each | 999 | until cancelled | — | 4 | obstacle (all stages), slot 0x60 |
+| 1 | 0x219:20 0x21a:15 0x21f:50 | 0 | 85 | 0x1025 @20 | 8 | slam, set A |
+| 2 | 0x219:20 0x21b:4 0x21c:15 0x21b:4 (0x21d:6 0x21e:6)×3 0x21f:30 | 0 | 109 | 0xdc @20 | 8 | EB, set A |
+| 3 | 0x219:20 0x220:20 0x21f:20 | 0 | 60 | 0xe2 @20 | 8 | overrun, set A |
+| 4 | 0x212:20 0x213:12 0x214:15 (0x215:6 0x216:6)×3 | 0 | 83 | 0x1012 @20 | 8 | overrun, set C |
+| 5 | 0x212:20 0x217:4 0x218:4 | 0 | 28 | 0xe5 @20 | 8 | EB, set C |
+| 6 | 0x212:20 (0x217:6 0x214:6)×3 | 0 | 56 | 0x1011 @20 | 8 | slam, set C |
+| 7 | 0x2af:5 0x2b0:5 0x2af:5 0x2b1:5 | 5 | 120 | — | 0x10 | unused |
+| 8 | 0x2b0:5 0x2b2:5 0x2b3:6 (0x2b4:5 0x2b5:5)×3 | 0 | 46 | 0xd8 @10 | 0x10 | overrun, set B |
+| 9 | 0x2b6:7 0x2b7:8 | 7 | 120 | 0xd7 @0 | 0x10 | unused |
+| 10 | 0x2b0:6 0x2b8:10 (0x2b9:6 0x2ba:6)×4 | 0 | 64 | 0xd6 @0 | 0x10 | slam, set B |
+| 11 | 0x2b0:6 0x2bb:4 0x2bc:4 0x2bd:10 0x2be:30 | 0 | 54 | 0xd6 @0 | 0x10 | EB, set B |
+| 12–19 | tilemaps 0x185..0x197 | 0 or 7 | 6–96 per pass | see `navigator.rs` | 8 | unused (no caller passes them) |
+
+**Per-stage set** (`0x45addc + 8·stage`: EB, slam, overrun ×2 by the clock's low bit; both
+overrun entries are equal on every stage; confirmed, exe data). Seen in headless shots of the
+port, and for set C in the original:
+
+| Set | Stages | EB, slam, overrun | Passenger |
+|---|---|---|---|
+| A | 0–2, 7–9, 17–19 | 2, 1, 3 | woman in a pink suit (0x219..0x220) |
+| B | 3, 4, 10–16 | 11, 10, 8 | salaryman with a newspaper on a red seat (0x2b0..0x2be) |
+| C | 5, 6 | 5, 6, 4 | schoolgirl standing (0x212..0x218); the EB makes her fall over |
+
+**Triggers** (confirmed, code; port `navigator::calls`, in this order within a tick):
+
+| Call | Where | Condition |
+|---|---|---|
+| `NaviAnim(0)` | 0x40c4e0 | obstacle start (`0x856d80 & 0xf == 1`, after course event 8) |
+| `NaviAnim(EB)` | 0x40c4e0 | EB held 0x28 ticks (`0x856d64 == 0x28`, approach EB < 0x14, ATS 0, no obstacle, speed ≥ threshold, the penalty branch with `0x8571e0 & 3 ≠ 0`); the every-4th-application penalty does not react |
+| `NaviAnim(EB)` | 0x40c4e0 | EB 0x14 ticks inside the approach (`0x856da8 == 0x14`, `0x856d64 < 0x28`, ATS 0, no obstacle) |
+| `NaviAnim(overrun[clock & 1])` | 0x40c4e0 | approach state `0x856d9a` turns 4 (`0x85708c` below the overrun threshold, `0x8570ae ≠ 1`) |
+| `NaviAnim(−1)` | 0x40a0a0 | obstacle cleared (first branch) |
+| `NaviAnim(−1)` | 0x4113e0 | the 乗務完了 chibi (final station) |
+| `NaviAnim(−1)` | 0x40a0a0 end, 0x4080d0 | after the arrival hold, the stage-loop exit (arrival or 20 ticks after a game over) |
+| `NaviAnim(slam)` | train task 0x422c20 | statistic 11 += 2 (the notch-slam test of 0x422c20, audio-text.md); not while `0x855ff8 & 0x410` |
+
+The time-up (0x4158b0) does **not** cancel a running reaction.
+
+**Hints and balloons.** The reaction is independent of the navigator hint (portrait slot 0x34,
+balloon 0x35, §3.12) and of the time message. They are separate slots and tasks, and neither
+hides the other. In the original recording (below) the EB reaction plays while the hint
+"速度標識と制限信号が…" and the 急制動 message are up.
+
+**Verification** (`out/explain/navigator/`, gitignored):
+* `compare_orig_left_port_right.png`: the original (Wine capture, stage 5 = set C,
+  `scripts/capture-original.sh navi5 0 0 hook_inputs.txt -` with `DDG_CAP_RECORD=60`) next to
+  the port (`ddg-game play 5 --inputs port_inputs.txt --size 640x480 --shot …`).
+* EB: 0x212 for 20 ticks, then 0x217 and 0x218 (falling) for 4 each. The same frames sit at the
+  same position with the same palette, at the same in-game clock second (05:56:24–25).
+* Notch slam: animation 6's alternating 0x217/0x214 gestures.
+* The port's stage 0 (set A, EB and slam) and stage 3 (set B, overrun at full power) shots are
+  in the same folder.
 
 ## 4. Text drawing
 
@@ -817,8 +920,10 @@ sprite or a rect-layer fan; it is the first thing the drive task draws:
    trace of the task fields.
 4. Resolution mode 3 (1024×768) uses a different HUD arrangement (e.g. distance digits at
    y 143, signal at (900, 252)) that has not been viewed.
-5. Exact navigator animation tables (0x465e04 … 0x466214, 20 sequences) and the
-   `0x45addc/0x45ade0` per-stage choices: structure known, per-entry meaning not catalogued.
+5. Resolved (§3.17): the 20 navigator animations and the per-stage sets. Still open: animations
+   7, 9 and 12–19 (tilemaps 0x2af/0x2b1/0x2b6/0x2b7 and 0x185..0x197) have no caller in the
+   3000-bandai exe. They may belong to the original Kōsoku-hen or be unused art. The E3
+   coupling animation 0x411240 (also slot 0x61, §3.16) is not drawn by the port yet.
 6. Failure-cause codes `0x856d84` for the time-up advice (§3.16).
 7. Resolved: the float is `0x84c40c` itself; the +2.5 m bump when it reads 50 or 51 makes the
    late/early advice fire once per leg (`Train::leg_marker`, `Rules::advice_hints`).
@@ -840,5 +945,7 @@ sprite or a rect-layer fan; it is the first thing the drive task draws:
     coupling minigame's screen (slots 0x3f–0x4b, captions, timer) is `coupling_hud.rs`.
 14. The handling-error hint (slots 0x2e/0x2f) counts ticks only in the train task's driving
     branch and resets when `0x855ff8 & 0x200000` is set; that flag is not identified.
-15. Navigator reaction animations (slot 0x61, `NaviAnim` 0x410cb0) are not drawn yet; the sound
-    module models their timing for the sounds only.
+15. Resolved: navigator reactions are drawn (§3.17, `navigator.rs`) and checked against the
+    original for set C. Not yet compared with the original: set A and set B, the overrun
+    trigger tick, and the emergency-stop signal (obstacle). The EB-held and slam conditions
+    come from the rules engine models, whose own thresholds are documented in rules.md.
