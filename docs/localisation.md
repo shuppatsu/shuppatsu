@@ -451,3 +451,12 @@ Smaller open points:
 * The time-up advice and hint texts paraphrase the Japanese to fit three short lines.
 * Station names use Hepburn with macrons everywhere (decided): Ōmagari, Jingūji, Tōkyō, Ōsaka,
   Kōbe.
+
+## Decided: subtitles for Japanese voice lines
+
+Spoken Japanese (station announcements, signal call-outs, navigator voices) gets subtitles in
+English mode, **on by default** (user decision). Not built yet. The plan: derive each clip's
+meaning from the game's own sequence tables (station-name samples + fixed suffixes, call-outs
+by signal aspect, navigator reactions by event; audio-text.md §5, §10) rather than by
+transcription, list any clip that cannot be identified that way for review, and draw the line
+with the text widgets near the bottom of the 3D band.
