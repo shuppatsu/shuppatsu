@@ -111,14 +111,14 @@ settings! {
     /// (`--original-traffic`).
     far_traffic = true;
     /// The most detailed model of every track piece and AI-train car at every distance
-    /// (scene.md §5.3); off (default) = the original's distance bands (LOD pop).
-    max_lod = false;
+    /// (scene.md §5.3); off = the original's distance bands (LOD pop).
+    max_lod = true;
     /// Scenery and side tracks activated as soon as they come within the far plane (scene.md
-    /// §5.3); off (default) = the original's activation points, 40–200 m ahead.
-    early_activation = false;
-    /// The world dissolves into the background before the far edge (scene.md §5.3); off
-    /// (default) = the original's hard edge.
-    distance_fade = false;
+    /// §5.3); off = the original's activation points, 40–200 m ahead.
+    early_activation = true;
+    /// The world dissolves into the background before the far edge (scene.md §5.3); off = the
+    /// original's hard edge.
+    distance_fade = true;
     /// Camera, AI trains, wiper, snow and speedometer needle between the last two ticks at the
     /// display's rate (renderer.md §13.9); off = every frame shows the last tick.
     interpolate = true;

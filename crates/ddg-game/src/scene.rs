@@ -92,8 +92,9 @@ const WIDE_EXTRA_BUCKETS: usize = 16;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DrawDistance {
     /// 32 units, the original's far plane.
-    #[default]
     Original,
+    /// 64 units: the decided default (docs/settings.md).
+    #[default]
     Double,
     Triple,
     /// 4×, 128 units: as far as the panorama's anchor (scene.md §6.4), behind which the

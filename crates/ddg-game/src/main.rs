@@ -100,7 +100,7 @@ options:
                            follows the window height (smooth: ceil(h/480), integer: floor(h/480))
   --draw-distance <original|2x|3x|max>
                            the 3D view's far plane (env DDG_DRAW_DISTANCE): original 320 m,
-                           2x, 3x, max 1280 m; scenery and track are built out to it
+                           2x (default), 3x, max 1280 m; scenery and track are built out to it
 
 switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml key <name> with
   _ for -, env DDG_<NAME> = 1/0. Off is the original's behaviour. [default]
@@ -118,9 +118,9 @@ switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml
   --fog                    the snow fog of DengoSetting's FOGENABLE [on]
   --wide-weather           raindrops and snow over the whole width [on] (--original-weather)
   --far-traffic            AI trains drawn to the far plane, not 150 m [on] (--original-traffic)
-  --max-lod                track and trains in their most detailed models at any distance [off]
-  --early-activation       scenery and side tracks activated at the far plane [off]
-  --distance-fade          the far edge dissolves into the background [off]
+  --max-lod                track and trains in their most detailed models at any distance [on]
+  --early-activation       scenery and side tracks activated at the far plane [on]
+  --distance-fade          the far edge dissolves into the background [on]
   --interpolate            camera, trains, wiper, snow, needle between ticks [on]
   --vsync                  present with vsync [on] (--uncapped)
   --fullscreen             borderless full screen; Alt+Enter or F11 switch it [off]
