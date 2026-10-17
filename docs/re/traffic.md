@@ -48,10 +48,15 @@ mask 0 and are dead data. **confirmed** (code bytes)
 ### 1.2 Other callers of the spawner
 
 - **Scripted red-signal recovery** (0x40a0a0), §6.
-- **Stage intro** (0x4091a0, called by 0x408ec0 before stages 1, 5–8, 11–15 and 18 start): a
-  140-tick pre-run fly-by on the stage's route with spawn `0x458c90[stage·9]`, mode 5, the stage
-  title (slot 0x1d) and sound 0x197, skipped by the horn or A. Not part of attract or the
-  ending; not ported (the port has no stage intro). **confirmed** (code)
+- **Stage intro** (0x4091a0, called by 0x408ec0 before stages 1, 5–8, 11–15 and 18 start; scene.md
+  §9): a 144-tick pre-run fly-by on the stage's route, `0x404f10(0x458c80[stage].spawn, 5,
+  km/h, param, −1)` towards the camera, which runs back; the caption card (slot 0x1d) and BGM
+  0x197; skipped by the horn or A. Ported (`play/intro.rs`, the normal spawner); matches Wine
+  captures of stages 1 and 13. **confirmed** (code, trace, captures)
+- **0x406960** (the other stages' intro 0x408f40, scene.md §9.2): the player's own train placed
+  at an explicit track point ahead of the camera (mode 1, 100 km/h, model `0x4596e0[stage] |
+  0x1000`, 12-point bogies; the cars apparently stepped along the track by their offsets, not
+  traced in detail). Not ported. **confirmed** (call and arguments) / **likely** (placement)
 - **0x4042b0** (the full ending's task, menus.md §12.2; table 0x4587dc, 0x24 bytes per stage):
   the final shot spawns with `flags | 5`; on stage 2 with `0x84c3fc == 0xe` the model is forced
   to 8. Ported (`Drive::ending_spawn`). **confirmed**
@@ -270,5 +275,6 @@ the first tick under `f5 − 10` (the original needs one tick per earlier state)
   put 25+ cars in the list at once, plus the animated scenery that shares it).
 - State 2 after stage 6's bonus game with four marks or more is modelled
   (`Traffic::set_state`, menus.md §12.1); the event of stage 6 station 12 (mask 4) depends on it.
-- The stage intro fly-by (0x4091a0) is not ported; 0x4042b0's and the opening's spawns are.
+- The stage intro chase (0x408f40 → 0x406960) is not ported; the fly-by (0x4091a0), 0x4042b0's
+  and the opening's spawns are.
 - Row 0x43's sequence codes (0x196, 0x12): which sounds these are.

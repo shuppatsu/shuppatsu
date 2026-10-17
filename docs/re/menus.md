@@ -36,6 +36,7 @@ English gloss is given where it helps; no screen text exists as character string
 | 0x4122d0 / 0x4123c0 / 0x412490 | `PressStart_*` | Arcade "press START" screen; a no-op on PC | confirmed |
 | 0x435490 / 0x435510 / 0x436210 / 0x436640 | `RouteSelect_Create` / `_Update` / `_DrawHeader` / `_Destroy` | Line select → train select | confirmed |
 | 0x4137e0 / 0x413900 / 0x413940 | `LeverCheck_*` | "仕業検査" lever-position prompt, analog-lever modes only | confirmed |
+| 0x408ec0 / 0x4091a0 / 0x408f40 | `StageIntro_Run` / `_FlyBy` / `_Chase` | Pre-run stage intro (scene.md §9): fly-by with an AI train, or a chase of the player's train | confirmed |
 | 0x4139c0 / 0x413b10 / 0x413d30 | `DepartureBoard_*` | Intro: departure-board roulette | confirmed |
 | 0x42b7f0 | `PauseMenu_Run` | Pause dialog sequence | confirmed |
 | 0x42b930 | `Dialog_Run` | Generic blocking list dialog (pause, confirmations, exit) | confirmed |
@@ -68,6 +69,7 @@ screen 0x434a00 call `Task_Tick` themselves.
 |---|---|
 | `0x855ff8 & 0x100000` | route select |
 | `0x855ff8 & 0x4000000` | lever check |
+| `0x855ff8 & 0x20000` | stage intro (set and cleared inside 0x408f40 / 0x4091a0, no wait) |
 | `0x855ff8 & 0x1000` | departure board |
 | `0x855ff8 & 0x40` | station result, report card |
 | `0x855ff8 & 0x10` | continue |
@@ -467,8 +469,13 @@ Order in `Stage_Run` 0x4080d0 after the route select (main-loop.md §5):
    arrows tbl 0x3b/0x3c (only preloaded by 0x4317e0(0x465abc); 0x4137e0 images slots 10, 11 and
    0x11 only and merely places 13, 14, 18, 19, so who draws the arrows is open). Ends when the brake has been ≥ 9 with power 0 on **50 ticks** (not
    necessarily consecutive) or after **400 ticks**. **confirmed**
-2. BGM 0x19e stopped, route data load `0x40ed90`, 15 ticks, setup calls (main-loop.md §5).
-3. **Departure board** 0x4139c0 (skipped on retry): board tbl 0x3d8 "発車案内" (slot 58 at
+2. BGM 0x19e stopped, route data load `0x40ed90`, 15 ticks and one more.
+3. **Stage intro** 0x408ec0 (scene.md §9; skipped on retry): the fly-by 0x4091a0 (stages 1, 5–8,
+   11–15, 18; 144 ticks) or the chase 0x408f40 (the others; 145 ticks), the train's caption
+   card (slot 0x1d at (24, 408)), BGM 0x197; horn or A skips. Then two ticks and the setup
+   calls 0x40d040, 0x407900, 0x40f7e0 with a tick after each of the last two (main-loop.md §5).
+   **confirmed** (code; oracle trace of stages 0, 1, 13: 16 ticks before, 4 after)
+4. **Departure board** 0x4139c0 (skipped on retry): board tbl 0x3d8 "発車案内" (slot 58 at
    (112,206)) with four flaps: slot 54 series (128,256), 55 train type (376,256), 56 from (136,320),
    57 to (328,320). From tick 10 (sound 0x18) flap k starts at tick 10+8k, spins 32 ticks
    (tick s of the spin: s % 3 = 0 → tbl 0x3d6, 1 → 0x3d7, 2 → entry `(s / 3) % len` of its list;
@@ -478,7 +485,7 @@ Order in `Stage_Run` 0x4080d0 after the route select (main-loop.md §5):
    version said the train type). Every tick after the fourth landing stops 0x18 again; the screen
    lasts 136 ticks in all. When all four have landed sound 0x18 stops; the
    screen ends after **70 more ticks**. **confirmed**
-4. Route load, then the per-station loop. At the first segment the HUD and the departure task
+5. Route load, then the per-station loop. At the first segment the HUD and the departure task
    take over (hud.md, rules.md §8).
 
 ## 8. Pause (0x42b7f0, dialogs 0x42b930)
@@ -787,8 +794,8 @@ destroy releases 0x1a2 instead of 0x19f (a game bug; Stage_Run's stop-all ends i
 **Skip.** Enter or Esc ends either from its 11th update (`t > −190` / `t > −150`).
 
 **Not the ending:** 0x4240d0 is the bonus game's physics task (§12.1), not an ending train
-(physics.md corrected). The stage intro 0x4091a0 (called by 0x408ec0 before stages 1, 5–8,
-11–15, 18) is a pre-run fly-by, not part of the ending.
+(physics.md corrected). The stage intro (0x408ec0 → 0x4091a0 / 0x408f40, §7, scene.md §9)
+runs before a run, not after it.
 
 ## 13. Save data
 
@@ -853,8 +860,9 @@ are unpacked to `0x84fca0 + 0x50·table + 8·row` (4 name bytes + 4 decimal digi
 ## 14. The port's front end
 
 `ddg-game` with no subcommand (`crates/ddg-game/src/app.rs`) sequences `Game_MainFlow`: attract →
-title menu → route select → lever check (modes 5/6) → departure board → the run
-(`crates/ddg-game/src/play.rs`, built from the app's shared window, sprite bank, layer, save,
+title menu → route select → lever check (modes 5/6) → stage intro (the fly-by stages;
+`play/intro.rs`, its own run) → departure board → the run (`crates/ddg-game/src/play.rs`,
+built from the app's shared window, sprite bank, layer, save,
 input and sound device) → attract again. The screens are `crates/ddg-game/src/front/`, one state
 machine per task, with the exe tables read at runtime (`front/tables.rs`). Headless checks:
 `ddg-game --inputs <script> --shot <ticks>:<file.ppm>` (script keys as for `play`, plus `r`).

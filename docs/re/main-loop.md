@@ -202,8 +202,9 @@ loop forever:
   (quit from stage), 0x100, 0x400 = in title menu, 0x800, 0x1000, 0x2000 = attract ranking display.
 * `DAT_00855ff8` "phase flags": 2 = stage active, 4 = attract item running, 0x10 = run cleared/continue,
   0x20 = results screen active, 0x40 = waiting on a results/info task, 0x200 = driving, 0x400,
-  0x800 = pre-departure (doors/countdown), 0x1000 = stage intro task, 0x2000 = score tally,
-  0x4000 = ending, 0x80000 = mode select, 0x100000 = route select, 0x4000000 = loading screen,
+  0x800 = pre-departure (doors/countdown), 0x1000 = departure board (0x4139c0), 0x2000 = score tally,
+  0x4000 = ending, 0x20000 = stage intro running (0x408f40 / 0x4091a0, scene.md §9),
+  0x80000 = mode select, 0x100000 = route select, 0x4000000 = lever check (0x4137e0),
   0x40000 = "special" input combo seen at the title (enables a hidden option if
   `notch==3 && brake==9`, 0x4080d0).
   Waits always take the form `while (flag) Task_Tick();` (confirmed pattern).
@@ -244,9 +245,11 @@ traced in this pass. They are probably used by the leftover arcade test mode and
 ### Stage (`Stage_Run` @ 004080d0) — confirmed sequence
 1. Route select (`FUN_00435490`, wait on `0x100000`). The route index goes to `DAT_008570a4`, where −1 means back.
    Route data pointer: `DAT_00856fd0 = table[0x485610 + 4*route]`.
-2. Loading (`FUN_004137e0`, wait on `0x4000000`). `FUN_0040ed90(route)`, `FUN_00408ec0`, `FUN_0040d040`,
-   `FUN_00407900`, `FUN_0040f7e0`, intro (`FUN_004139c0`, wait on `0x1000`), and route load
-   `FUN_004229c0(route, 0)`.
+2. Lever check (`FUN_004137e0`, analog modes, wait on `0x4000000`). `FUN_0040ed90(route)`,
+   `0x425490(15)`, one tick, the stage intro `FUN_00408ec0` (scene.md §9: 144 or 145 ticks),
+   two ticks, `FUN_0040d040`, `FUN_00407900`, tick, `FUN_0040f7e0`, tick, the departure board
+   (`FUN_004139c0`, wait on `0x1000`), and route load `FUN_004229c0(route, 0)`. A retry from the
+   pause (始発駅に戻る) re-enters at `FUN_0040d040` without the intro and the board.
 3. **Per station segment** loop (`DAT_00856d78` = current station/segment index):
    * Setup: BGM/ambient sounds, `FUN_00408010`, `FUN_0040b970`, `FUN_004124f0(station)` (HUD/station task),
      set 0x800, then one priming call each of `FUN_0040dad0` and `FUN_0040b710`. Then `Replay_BeginSegment(0)`.

@@ -599,7 +599,104 @@ Faithful: everything above except the items below. **Approximated / differs:**
 - After a time-out at a station (continue screen) the port shows the cab view again; the
   original's 3D layer stays empty until a segment starts (not traced further).
 
-## 9. Open questions
+## 9. Stage intro (0x408ec0 → 0x4091a0 / 0x408f40)
+
+`Stage_Run` 0x4080d0 calls 0x408ec0 once per run, after the loading wait and `0x425490(15)` and
+before 0x40d040 and the departure board (menus.md §7). It is skipped on a retry (始発駅に戻る
+jumps past it) and when the debug byte `0x816840 & 0x18` is set. 0x408ec0 picks by a stack table
+of 20 flags (code immediates): **1 → 0x4091a0** (stages 1, 5, 6, 7, 8, 11, 12, 13, 14, 15, 18),
+**0 → 0x408f40** (stages 0, 2, 3, 4, 9, 10, 16, 17, 19). So every stage has an intro; only the
+first kind is ported. **confirmed** (code; oracle traces of stages 0, 1 and 13)
+
+### 9.1 The fly-by 0x4091a0 — confirmed (code, oracle trace, Wine captures)
+
+Per stage, 9 × i32 at **0x458c80 + 0x24·stage**: caption tbl, station, jump (m), camera km/h,
+spawn, train km/h, spawn parameter, deceleration (km/h per tick), sound count. The passing sound
+is the i16 **0x459e88[stage]**; the caption position the i32 pairs **0x458c60 / 0x458c70**
+[resolution mode] = (24, 408) at 640×480.
+
+| stage | caption | station | jump m | camera km/h | spawn | train km/h | param | decel | sound @ count |
+|---|---|---|---|---|---|---|---|---|---|
+| 1, 18 | 0x3a6 E3系 | 24 / 16 | 1915 | 260 | 2 | 270 | 0 | 6 | 8 @ 110 |
+| 5 | 0x3a7 | 0 | 1515 | 120 | 51 | 130 | 70 | 3 | 4 + 1 @ 110 |
+| 6 | 0x3a7 | 1 | 375 | 99 | 25 | 100 | 750 | 3 | 4 + 1 @ 110 |
+| 7 | 0x3a3 | 1 | 987 | 130 | 22 | 130 | 145 | 4 | 0x1a3 @ 70 |
+| 8 | 0x3a1 | 0 | 1300 | 130 | 21 | 130 | 161 | 3 | 4 + 1 @ 70 |
+| 11 | 0x39e | 0 | 395 | 100 | 7 | 100 | 540 | 3 | 6 @ 110 |
+| 12 | 0x39b | 3 | 713 | 75 | 8 | 80 | 230 | 3 | 4 + 1 @ 110 |
+| 13 | 0x39d 207系1000番代 | 9 | 903 | 80 | 30 | 80 | 0 | 3 | 4 + 1 @ 110 |
+| 14 | 0x39f | 5 | 782 | 80 | 13 | 80 | 461 | 3 | 4 + 1 @ 110 |
+| 15 | 0x3a0 | 9 | 770 | 80 | 28 | 80 | 0 | 3 | 4 + 1 @ 110 |
+
+Sequence, one line per `Task_Tick` (tick numbers from the intro's first):
+
+1. 0x40eed0(area, 0): the area palette, and its own `Task_Tick` (it ticks when area < 7). Black.
+2. 0x4317d0 (VRAM preload, a no-op on PC), `0x855ff8 |= 0x20000`, `Task_Tick`. Black.
+3. 0x408010(stage, station) → 0x41cb00: the camera task of that station's segment, at its stop
+   (§3). `0x850208 = jump × 0.1` (f64 0x44e8e0), `Task_Tick`: the camera walks to the stop and
+   on by `jump` metres in this one tick. The route is drawn from here.
+4. `0x850208 = camera km/h × −0.000925` (f64 0x459438): the camera runs **backwards**, still
+   looking down the line. `0x404f10(spawn, 5, train km/h, param, −1)` (traffic.md §2; mode 5,
+   model from the spawn's type), BGM **0x197** (0x42ff20, ungated), the caption card
+   `0x4316e0(0x1d, tbl, 24, 408, palette 4, layer 3)`. Then the loop, count i = 1, 2, …:
+   - i > 0x6d: `0x850208 += decel × 0.000925` (f64 0x458af0), so the run back slows from
+     count 110 (stage 1: −260 km/h + 6 a tick to −80 at the end);
+   - i = sound count: `0x41fda0(sound)` (gated by the sound option), and sound 1 with sound 4;
+   - i = 0x8c: leave the loop (no tick);
+   - the pressed-edge word `0x48c42c` (active low) has the horn 0x100 or A 0x100000: release
+     0x197 (0x420630) and leave the loop — **skip**;
+   - `Task_Tick`.
+5. Close: slot 0x1d hidden, 0x431eb0 (no-op), the passing sound released (0x420650; and 1 with
+   4; around 0x1a3 the code sets and clears `0x855ffc & 0x80`, purpose unknown, **guess**: a
+   release mode of the BGM voice), `0x855ff8 &= ~0x20000`, `0x84c0f8 = 0`, list 5 killed
+   (camera and train), two `Task_Tick`s (black).
+
+Unskipped that is 2 + 1 + 139 + 2 = **144 ticks**; the oracle trace (`0x855ff8`, `0x850208`
+logged per tick; stages 1 and 13) shows 16 ticks with `0x855ff8 == 2` before the intro's first,
+141 with the 0x20000 bit, `0x850208` = 0, 191.5, then −0.2405 until −0.19055 at the ninth
+decelerated tick, and then 6 ticks of 2 (the two closing ticks and four of `Stage_Run`) before the board (`0x855ff8 = 0x1002`). A skip seen at
+count i ends the intro after 3 + (i − 1) + 2 ticks. BGM 0x197 (bgm.rom entry 0, 5.50 s) is not
+released at the natural end, so it runs on into the departure board.
+
+**What it looks like** (Wine captures, stages 1 and 13): the driving view (the drive task's top
+panel 0..94 virtual over a 3D band from y 52, 45°; no HUD exists yet), the line ahead with the
+train coming towards the camera on the other track and passing it as the camera slows; the card
+at the bottom left is a black box with the series name and two lines about the train.
+
+### 9.2 The chase 0x408f40 — confirmed (code, oracle trace, one capture); not ported
+
+The same frame (0x40eed0, `|= 0x20000`, caption, sound 0x197, closing) with: 0x408010(stage, 1),
+`Task_Tick` (the camera moves by whatever `0x850208` held), then the player's own train
+`0x406960(engine index + 6 + k[stage], mode 1, 100 km/h, 0, 0x4596e0[stage] | 0x1000, 1)`
+(k = stack table, 0x55 / 0x20 / 0x10 / 0x90 / 0x86 / 0x96 / 0x9a / 0x6e / 0x6b / 0x7b / 0xa7 by
+stage; the model row is the stage's train, 0x1000 picks the direction list). The camera follows
+at `0x850208 = 0.0925` (100 km/h) for counts < 0x6f, then loses 0.002775 a tick (f64 0x459430)
+and the train pulls away; the sound plays at count 0x78; the loop ticks through count 0x8c, so
+145 ticks in all (trace of stage 0: 142 with the 0x20000 bit). 0x406960 places the cars at an
+explicit track point instead of a `.COM` spawn (12-point bogies; the per-car placement by the
+car offsets is **likely**, not traced in detail); it needs its own port in `ddg_engine::traffic`.
+The capture of stage 0 shows the E3 set just ahead of the camera at the station, running away,
+and drawing off as the camera slows.
+
+### 9.3 Port (`crates/ddg-game/src/play/intro.rs`)
+
+The front end runs 0x4091a0 as its own `Play` (like the attract opening) between the 16 loading
+ticks and the 4 before the board; `ddg-game play <stage> --intro` plays it alone. The rows come
+from the exe; the camera is `Drive::ending_place` / `ending_tick` / `ending_kill`, the train the
+normal spawner. Compared frame by frame with the original (stages 1 and 13, ticks 3–142,
+`out/explain/stage_intro/`): camera, train and card match. Decisions:
+
+- **Widescreen**: Hor+ with the drive's top panel widened to the full width (as while driving,
+  `Play::cab_mask`); no other masks exist to extend. The card stays in the centred 4:3 design in
+  the original HUD layout and keeps to the left edge in the enhanced one (`wide_hud`), like the
+  driving HUD's bottom-left group.
+- **High refresh rates**: camera and train interpolate between ticks, except across the jump.
+- The intro's BGM runs on over the board (`Sound::leave_stage` instead of the stop-all a run
+  ends with).
+- **Not ported**: 0x408f40 (§9.2); those stages keep the 20-tick gap without their 145 ticks.
+  The caption cards are not translated (Japanese art with `--lang en`).
+
+## 10. Open questions
 
 - The winding/handedness conflict with models.md §6: verify in the viewer (one quad of a
   known part, front face CCW with `look_at_rh`).

@@ -623,7 +623,7 @@ There is **no music while driving**. BGM-slot codes (0x197–0x1a8) used around 
 | Code | When | Site |
 |---|---|---|
 | 0x19e (loops) | title / menus / stage select; released when a stage starts (0x420630, then 0x420650 after the fade) | 0x42a1c0, 0x42a460, 0x435490, 0x4080d0 |
-| 0x197 | stage intro fly-by, released when skipped / done | 0x408f40, 0x4091a0 |
+| 0x197 | stage intro (5.5 s), started with the caption card; released only on a skip, else it plays out over the departure board (scene.md §9) | 0x408f40, 0x4091a0 |
 | 0x1a5 / 0x1a8 / 0xc | departure jingle (0xc is an effect) | 0x413370 |
 | 0x1a6 | extra departure jingle, stages 13–15 | 0x413370 |
 | 0x1a3 | melody horn (stage 7) | 0x422c20 |
