@@ -15,6 +15,7 @@
 //! ui_scale = 2              # fixed 2D canvas multiple 1..=4 (default: follows the window)
 //! font = "/path/a.otf:/path/b.ttf"
 //! display_font = "/path/c.otf"
+//! texture_pack = "/path/pack"   # replacement 3D texture pages (docs/texture-packs.md)
 //! fog = true                # and the other switches of docs/settings.md
 //! ```
 //!
@@ -60,6 +61,9 @@ pub struct PortConfig {
     /// Font list for display text (`--display-font`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_font: Option<PathBuf>,
+    /// A texture pack directory (`--texture-pack`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub texture_pack: Option<PathBuf>,
     /// The on/off switches ([`Settings::KEYS`], read by [`PortConfig::apply`]) and the keys
     /// this version does not know, kept as they are when the file is written.
     #[serde(flatten)]
@@ -129,6 +133,13 @@ impl PortConfig {
         }
         if let Some(f) = &self.display_font {
             cfg.display_font = Some(f.clone());
+        }
+        if let Some(d) = self
+            .texture_pack
+            .as_ref()
+            .filter(|d| !d.as_os_str().is_empty())
+        {
+            cfg.texture_pack = Some(d.clone());
         }
     }
 }
@@ -312,6 +323,7 @@ const VALUE_FLAGS: &[(&str, &str)] = &[
     ("--ui-scale", "ui_scale"),
     ("--hud-layout", "hud_layout"),
     ("--ui-scaling", "ui_scaling"),
+    ("--texture-pack", "texture_pack"),
 ];
 
 /// Every key of docs/settings.md: the values, then the switches.
@@ -516,6 +528,7 @@ mod tests {
             "ui_scale",
             "font",
             "display_font",
+            "texture_pack",
         ]) {
             assert!(rows.contains(k), "{k} is not in docs/settings.md");
         }
@@ -534,6 +547,7 @@ mod tests {
                     "ui_scale",
                     "font",
                     "display_font",
+                    "texture_pack",
                 ]
                 .contains(r);
             assert!(known, "docs/settings.md lists {r}, which is no setting");

@@ -651,6 +651,9 @@ pub struct LocaleConfig {
     pub hud_layout: crate::presentation::HudLayout,
     /// `--ui-scaling` / `DDG_UI_SCALING`: how the canvas reaches the window.
     pub ui_scaling: ddg_render::overlay::UiScaling,
+    /// `--texture-pack` / `DDG_TEXTURE_PACK` (enhancement `texture_pack`, docs/texture-packs.md):
+    /// a directory of replacement 3D texture pages; `None` = the original textures.
+    pub texture_pack: Option<PathBuf>,
 }
 
 impl Default for LocaleConfig {
@@ -665,6 +668,7 @@ impl Default for LocaleConfig {
             ui_scale_fixed: None,
             hud_layout: Default::default(),
             ui_scaling: Default::default(),
+            texture_pack: None,
         }
     }
 }
@@ -688,9 +692,9 @@ impl LocaleConfig {
         self.hud_layout == crate::presentation::HudLayout::Enhanced
     }
 
-    /// `DDG_LANG`, `DDG_FONT`, `DDG_DISPLAY_FONT`, `DDG_LOCALE_DIR`, `DDG_UI_SCALE`,
-    /// `DDG_HUD_LAYOUT`, `DDG_UI_SCALING` over what is set (the defaults or `config.toml`;
-    /// unknown values are ignored with a warning).
+    /// `DDG_LANG`, `DDG_FONT`, `DDG_DISPLAY_FONT`, `DDG_LOCALE_DIR`, `DDG_TEXTURE_PACK`,
+    /// `DDG_UI_SCALE`, `DDG_HUD_LAYOUT`, `DDG_UI_SCALING` over what is set (the defaults or
+    /// `config.toml`; unknown values are ignored with a warning).
     pub fn apply_env(&mut self) {
         self.apply_vars(|k| std::env::var_os(k));
     }
@@ -708,6 +712,9 @@ impl LocaleConfig {
         }
         if let Some(f) = var("DDG_DISPLAY_FONT") {
             c.display_font = Some(f.into());
+        }
+        if let Some(d) = var("DDG_TEXTURE_PACK") {
+            c.texture_pack = Some(d.into());
         }
         if let Some(d) = var("DDG_LOCALE_DIR") {
             c.dir = Some(d.into());
@@ -731,7 +738,7 @@ impl LocaleConfig {
     }
 
     /// Takes `--lang <code>`, `--font <files>`, `--display-font <files>`, `--locale-dir <dir>`,
-    /// `--ui-scale <n>`, `--hud-layout <original|enhanced>` and
+    /// `--texture-pack <dir>`, `--ui-scale <n>`, `--hud-layout <original|enhanced>` and
     /// `--ui-scaling <smooth|integer|nearest>` out of `args` (they override the environment)
     /// and leaves everything else.
     pub fn take_args(&mut self, args: &mut Vec<String>) -> Result<()> {
@@ -747,6 +754,10 @@ impl LocaleConfig {
                 "--display-font" => {
                     let v = it.next().context("--display-font needs a file")?;
                     self.display_font = Some(v.into());
+                }
+                "--texture-pack" => {
+                    let v = it.next().context("--texture-pack needs a dir")?;
+                    self.texture_pack = Some(v.into());
                 }
                 "--locale-dir" => {
                     self.dir = Some(it.next().context("--locale-dir needs a dir")?.into())

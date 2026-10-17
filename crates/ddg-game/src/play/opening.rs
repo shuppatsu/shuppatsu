@@ -21,7 +21,7 @@ use crate::slots;
 use anyhow::{Context, Result};
 use ddg_engine::traffic::SpawnRequest;
 use ddg_formats::exe::Exe;
-use ddg_formats::{part::Part, rom2::Rom2, tex::TexFile};
+use ddg_formats::{part::Part, rom2::Rom2};
 use ddg_render::effects::EffectGeometry;
 use ddg_render::sprites::Fan;
 use ddg_render::world::{BgVertex, bg_depth};
@@ -226,9 +226,7 @@ impl Play {
 
     fn load_set(&mut self, k: usize) -> Result<()> {
         let tex = format!("texTR{}.rom", k + 1);
-        self.scene
-            .library
-            .add_textures(&TexFile::parse(&self.data.read(&tex)?).with_context(|| tex.clone())?);
+        self.data.add_textures(&mut self.scene.library, &tex)?;
         let parts = format!("partsTR{}.rom", k + 1);
         let bytes = self.data.read(&parts)?;
         let entries = Rom2::parse(&bytes)?

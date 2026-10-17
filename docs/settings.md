@@ -61,9 +61,9 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
 * **Groups**: Language & text (`lang`, `one_line_captions`, `landmark_names`, `board_names`,
   `subtitles`, `font`, `display_font`); Display (`hud_layout`, `ui_scaling`, `ui_scale`,
   `wide_menus`, `interpolate`, `vsync`); 3D & effects (`wide_visibility`, `square_pixels`,
-  `stable_track_variants`, `texture_filtering`, `fog`, `wide_weather`, `far_traffic`); Saves &
-  controls (`save_on_change`, `save_timed_out_names`, `keyboard_with_controller`,
-  `exit_no_to_menu`). All 24 keys of the table below.
+  `stable_track_variants`, `texture_filtering`, `texture_pack`, `fog`, `wide_weather`,
+  `far_traffic`); Saves & controls (`save_on_change`, `save_timed_out_names`,
+  `keyboard_with_controller`, `exit_no_to_menu`). All 25 keys of the table below.
 * **Keys**: up/down move (no wrap, repeat on hold), left/right step the value (switches flip,
   `ui_scale` runs Auto, 1×…4×, the others wrap), Enter (confirm) steps it on, Esc (cancel)
   goes back to the options list on the new row. Pad: the same through its menu bindings.
@@ -82,7 +82,7 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
 * **Locked**: a setting given by a flag or a `DDG_*` variable (they override the file) shows
   its value dimmed, without the ◀ ▶, and *Locked: set by --no-fog on the command line* /
   *Locked: set by the environment variable DDG_FOG*; changing it only plays the cancel sound.
-  `font` and `display_font` are file lists: shown, changed only in `config.toml`.
+  `font`, `display_font` and `texture_pack` are paths: shown, changed only in `config.toml`.
 * Tests: `front::port_settings::tests` (navigation, scrolling, levers, value cycling, locks,
   the `config.toml` round trip of every key, both catalogues complete, drawing),
   `front::options::tests::port_settings_row`, `app::tests::port_settings_apply_live`
@@ -102,6 +102,7 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
 | `square_pixels` | off | `--[no-]square-pixels` | the 3D view stretched 7.9 % horizontally (renderer.md §5) | square pixels (narrower field of view at the same height) |
 | `stable_track_variants` | off | `--[no-]stable-track-variants` | side-track single pieces swap model each time the camera passes a point (flicker) (scene.md §2.6) | the single-piece phase anchored to the run's slot (`run.slots.start & 3`): about half the change across a point, no swap with the camera |
 | `texture_filtering` | off | `--[no-]texture-filtering` | nearest sampling, no mipmaps (shimmer) | CPU-built mipmaps, trilinear and anisotropic filtering |
+| `texture_pack` | unset | `--texture-pack <dir>` | the textures of `tex*.rom` | replacement 3D texture pages (area and train `tex*.rom`) from a pack directory, any whole multiple of the original size; a page the pack lacks keeps the original; sampling stays nearest unless `texture_filtering` (docs/texture-packs.md; packs made with `ddg-tools upscale-textures`) |
 | `fog` | on | `--[no-]fog` | the snow fog only with DengoSetting's FOGENABLE, which a fresh install lacks: no fog | the snow fog while it snows (`snow_fog`, renderer.md §13.9). `view --fog` is fog everywhere, a separate viewer option (off) |
 | `wide_weather` | on | `--[no-]wide-weather`, `--original-weather` | raindrops and snow in the 4:3 area only (x 0..496) | over the whole visible width; at 4:3 identical to the original (renderer.md §13.9). Test `weather::tests::wide_weather_off_is_the_original_area` |
 | `far_traffic` | on | `--[no-]far-traffic`, `--original-traffic` | AI trains drawn up to 150 m ahead | up to the far plane (320 m), the farthest LOD beyond 150 m; spawning and sounds unchanged (traffic.md §4, renderer.md §13.9) |

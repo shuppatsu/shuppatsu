@@ -225,7 +225,7 @@ impl Play {
     pub fn new(shared: Shared, opts: PlayOptions) -> Result<Self> {
         let mut opts = opts;
         let Shared {
-            data,
+            mut data,
             mut bank,
             mut layer,
             save,
@@ -233,6 +233,8 @@ impl Play {
             mut sound,
             gpu,
         } = shared;
+        // Enhancement `texture_pack` (docs/texture-packs.md): read when the stage loads.
+        data.texture_pack = opts.locale.texture_pack.clone();
         let exe_bytes = data.exe()?;
         let exe = Exe::parse(&exe_bytes)?;
         let tables = Tables {

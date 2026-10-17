@@ -36,6 +36,7 @@ mod slots;
 mod smooth;
 mod sound;
 mod subtitles;
+mod texpack;
 mod traffic;
 mod weather;
 mod win_console;
@@ -85,6 +86,8 @@ options:
   --display-font <files>   the same for display text: headers, menu titles, banners
                            (env DDG_DISPLAY_FONT; default the --font list)
   --locale-dir <dir>       extra catalogue directory, <dir>/<lang>.toml (env DDG_LOCALE_DIR)
+  --texture-pack <dir>     replacement 3D texture pages (env DDG_TEXTURE_PACK; default: the
+                           original textures; docs/texture-packs.md, ddg-tools upscale-textures)
   --hud-layout <original|enhanced>
                            2D layout (env DDG_HUD_LAYOUT; default original = the 4:3 design);
                            enhanced: driving HUD at the window's edges, wider station plates
@@ -119,9 +122,9 @@ switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml
   --exit-no-to-menu        exit dialog No returns to the title menu, not attract [on]
 
 settings file: $XDG_CONFIG_HOME/ddg/config.toml (~/.config/ddg; %APPDATA%\\ddg on Windows),
-  keys lang, hud_layout, ui_scaling, ui_scale, font, display_font and the switches above
-  (docs/settings.md, docs/localisation.md). Flags override the environment, which overrides
-  the file. Headless --shot runs never read it.
+  keys lang, hud_layout, ui_scaling, ui_scale, font, display_font, texture_pack and the
+  switches above (docs/settings.md, docs/localisation.md). Flags override the environment,
+  which overrides the file. Headless --shot runs never read it.
 
 play keys (mode 0): Down/Up power +/-, Right/Left brake +/- (one more press past B8 = EB),
   Space horn, Enter ATS confirm / panel / menu confirm, Esc pause / cancel, Up/Down menu cursor
@@ -697,7 +700,8 @@ fn run_main() -> Result<()> {
         return gamepad::run_tool(&ddg_formats::exe::Exe::parse(&exe)?, &args);
     }
     let opts = parse_args()?;
-    let data = scene::GameData::from_env()?;
+    let mut data = scene::GameData::from_env()?;
+    data.texture_pack = opts.locale.texture_pack.clone();
 
     // Visibility: the original lists, or widened for the wider of the window and 21:9.
     let visibility = if !opts.settings.wide_visibility {

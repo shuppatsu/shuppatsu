@@ -7,7 +7,7 @@ use ddg_engine::traffic::{CarPose, LOD_DEPTHS, lod_for_view, view_xz};
 use ddg_formats::exe::Exe;
 use ddg_formats::scene::{self, TrackPos};
 use ddg_formats::stages::StageTables;
-use ddg_formats::{part::Part, rom2::Rom2, tex::TexFile};
+use ddg_formats::{part::Part, rom2::Rom2};
 use ddg_render::FrameGeometry;
 use glam::Mat4;
 
@@ -21,9 +21,7 @@ pub fn load_stage_trains(scene: &mut RouteScene, data: &GameData, stage: usize) 
     };
     for &k in &st.train_sets {
         let tex = format!("texTR{}.rom", k + 1);
-        scene
-            .library
-            .add_textures(&TexFile::parse(&data.read(&tex)?).with_context(|| tex.clone())?);
+        data.add_textures(&mut scene.library, &tex)?;
         let parts = format!("partsTR{}.rom", k + 1);
         let bytes = data.read(&parts)?;
         let entries = Rom2::parse(&bytes)?

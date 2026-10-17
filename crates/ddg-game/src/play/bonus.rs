@@ -12,7 +12,7 @@ use ddg_engine::bonus::{BonusGame, PAIR_SPACING, PAIR_X};
 use ddg_engine::drive::Drive;
 use ddg_formats::exe::Exe;
 use ddg_formats::hud::{MODE_640, RES_MODES};
-use ddg_formats::{part::Part, rom2::Rom2, tex::TexFile};
+use ddg_formats::{part::Part, rom2::Rom2};
 use ddg_render::effects::EffectGeometry;
 use ddg_render::{Camera, FrameGeometry, PartLibrary};
 use glam::{Mat4, Vec3};
@@ -222,9 +222,7 @@ impl Play {
 
     fn load_train_set(&mut self, k: usize) -> Result<()> {
         let tex = format!("texTR{}.rom", k + 1);
-        self.scene
-            .library
-            .add_textures(&TexFile::parse(&self.data.read(&tex)?).with_context(|| tex.clone())?);
+        self.data.add_textures(&mut self.scene.library, &tex)?;
         let parts = format!("partsTR{}.rom", k + 1);
         let bytes = self.data.read(&parts)?;
         let entries = Rom2::parse(&bytes)?

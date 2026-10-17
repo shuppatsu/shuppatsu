@@ -66,6 +66,8 @@ pub enum Kind {
     /// `font` / `display_font`: file lists, shown but changed only in `config.toml`.
     Font,
     DisplayFont,
+    /// `texture_pack`: a directory, shown but changed only in `config.toml`.
+    TexturePack,
 }
 
 /// When a change takes effect, seen from the menus (the only place the screen is reached).
@@ -124,6 +126,7 @@ pub const ITEMS: &[Item] = {
         switch("square_pixels", Effects, NextStage),
         switch("stable_track_variants", Effects, NextStage),
         switch("texture_filtering", Effects, NextStage),
+        item("texture_pack", Effects, Kind::TexturePack, NextStage),
         switch("fog", Effects, NextStage),
         switch("wide_weather", Effects, NextStage),
         switch("far_traffic", Effects, NextStage),
@@ -162,7 +165,10 @@ fn cycle(i: usize, dir: i32, n: usize) -> usize {
 impl Item {
     /// Whether the screen can change it (the font lists are paths: `config.toml` only).
     pub fn editable(&self) -> bool {
-        !matches!(self.kind, Kind::Font | Kind::DisplayFont)
+        !matches!(
+            self.kind,
+            Kind::Font | Kind::DisplayFont | Kind::TexturePack
+        )
     }
 
     /// Steps the value by `dir` (±1), wrapping; a switch flips either way.
@@ -194,7 +200,7 @@ impl Item {
                 let n = cycle(i, dir, MAX_MULTIPLE + 1);
                 cfg.ui_scale_fixed = (n != 0).then_some(n);
             }
-            Kind::Font | Kind::DisplayFont => {}
+            Kind::Font | Kind::DisplayFont | Kind::TexturePack => {}
         }
     }
 
@@ -214,6 +220,7 @@ impl Item {
             Kind::UiScale => cfg.ui_scale_fixed.map(|n| Value::Integer(n as i64)),
             Kind::Font => path(&cfg.font),
             Kind::DisplayFont => path(&cfg.display_font),
+            Kind::TexturePack => path(&cfg.texture_pack),
         }
     }
 
@@ -262,6 +269,13 @@ impl Item {
                 Some(p) => file_name(p),
                 None => ui.get("display_font_same").to_owned(),
             },
+            Kind::TexturePack => match &cfg.texture_pack {
+                Some(p) => p.file_name().map_or_else(
+                    || p.display().to_string(),
+                    |n| n.to_string_lossy().into_owned(),
+                ),
+                None => ui.get("texture_pack_none").to_owned(),
+            },
         }
     }
 }
@@ -284,6 +298,7 @@ const UI_IDS: &[&str] = &[
     "scale_auto",
     "font_bundled",
     "display_font_same",
+    "texture_pack_none",
     "status_now",
     "status_stage",
     "status_restart",

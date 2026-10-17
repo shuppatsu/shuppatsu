@@ -16,6 +16,9 @@ use std::path::PathBuf;
 pub struct GameData {
     data: PathBuf,
     bin: PathBuf,
+    /// Enhancement `texture_pack`: a directory of replacement texture pages
+    /// (docs/texture-packs.md); `None` = the original textures.
+    pub texture_pack: Option<PathBuf>,
 }
 
 impl GameData {
@@ -24,6 +27,7 @@ impl GameData {
         Ok(Self {
             data: install.join("DATA"),
             bin: install.join("BIN"),
+            texture_pack: None,
         })
     }
 
@@ -39,6 +43,18 @@ impl GameData {
             })
             .with_context(|| format!("{name} not found in {}", self.data.display()))?;
         Ok(std::fs::read(path)?)
+    }
+
+    /// Adds the texture file `name` (`texR1.rom`, `texTR2.rom`, …) to `library`, with the
+    /// pages the texture pack replaces.
+    pub fn add_textures(&self, library: &mut PartLibrary, name: &str) -> Result<()> {
+        let tex = TexFile::parse(&self.read(name)?).with_context(|| name.to_owned())?;
+        let base = library.pages.len();
+        library.add_textures(&tex);
+        if let Some(dir) = &self.texture_pack {
+            crate::texpack::apply(dir, name, &mut library.pages[base..]);
+        }
+        Ok(())
     }
 
     /// The installed `DATA` directory.
@@ -130,7 +146,7 @@ impl RouteScene {
         let mut library = PartLibrary::default();
         // Common set first, then the area: later rects win, earlier parts win (as the game).
         for tex in ["texRC.rom".to_owned(), format!("texR{r_index}.rom")] {
-            library.add_textures(&TexFile::parse(&data.read(&tex)?).with_context(|| tex.clone())?);
+            data.add_textures(&mut library, &tex)?;
         }
         for parts in ["partsRC.rom".to_owned(), format!("partsR{r_index}.rom")] {
             let bytes = data.read(&parts)?;
