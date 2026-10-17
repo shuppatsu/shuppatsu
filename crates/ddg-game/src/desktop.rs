@@ -21,6 +21,9 @@ nearest-upscaled). XDG_DATA_HOME defaults to ~/.local/share.
 const UPSCALED: [u32; 2] = [128, 256];
 
 pub fn run(args: &[String]) -> Result<()> {
+    if cfg!(windows) {
+        bail!("install-desktop is for Linux desktops; on Windows make a shortcut to ddg-game.exe");
+    }
     let mut exec: Option<PathBuf> = None;
     let mut exe: Option<PathBuf> = None;
     let mut uninstall = false;

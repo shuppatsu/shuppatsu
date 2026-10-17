@@ -83,7 +83,14 @@ fn window_icon() -> Option<winit::window::Icon> {
 
 /// Adds the icon (X11, Windows; Wayland ignores it) and the app id / `WM_CLASS`.
 pub fn apply(attrs: WindowAttributes) -> WindowAttributes {
-    let attrs = attrs.with_window_icon(window_icon());
+    let icon = window_icon();
+    // Windows: the title bar uses the window icon, Alt-Tab and the taskbar the big one.
+    #[cfg(windows)]
+    let attrs = winit::platform::windows::WindowAttributesExtWindows::with_taskbar_icon(
+        attrs,
+        icon.clone(),
+    );
+    let attrs = attrs.with_window_icon(icon);
     #[cfg(all(
         unix,
         not(any(target_os = "macos", target_os = "ios", target_os = "android"))
