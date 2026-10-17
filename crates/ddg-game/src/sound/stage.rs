@@ -12,6 +12,7 @@
 //! Everything here is pure: it reads [`Snap`]shots and posts through a [`SoundSystem`], so it
 //! is unit-tested with a recording sound system.
 
+use crate::navigator::{Effect, NaviState, NaviTables, NaviTick, Navigator};
 use anyhow::{Context, Result};
 use ddg_audio::{AmbientSound, SoundSystem, TrainSound, TurnoutClatter};
 use ddg_engine::drive::{Drive, DrivePhase};
@@ -121,10 +122,6 @@ const DEPART_EXTRA_END_AT: i32 = 0x82;
 const DEPART_DOORS_AT: i32 = 200;
 const DEPART_DONE_AT: i32 = 0xc9;
 const DEPART_FIRST_CALL_AT: i32 = 0x30;
-/// EB penalty after 40 ticks held (0x856d64 == 0x28) and the 20-tick EB-in-approach reaction
-/// (0x856da8 == 0x14), 0x40c4e0.
-const EB_HELD_TICKS: i32 = 0x28;
-const EB_APPROACH_TICKS: i32 = 0x14;
 /// The stage loop runs 20 `Task_Tick`s after a game over before 0x4158b0 / 0x4085e0.
 const GAME_OVER_TICKS: u32 = 0x14;
 /// Time-up popup task 0x4159c0: buzzer on update 0x24 (counter 0x23), advice voice on update
@@ -139,44 +136,6 @@ const OBSTACLE_ANIM_AT: u32 = 35;
 const OBSTACLE_RAIN_AT: u32 = 33;
 const OBSTACLE_RESTART_AT: u32 = 32;
 
-/// Navigator animations (`NaviAnim` 0x410cb0): per animation the counter value at which it
-/// requests a sound and the sound (0 = none), from the stack immediates of 0x410cb0.
-const NAVI_SOUNDS: [(i32, u16); NAVI_ANIMS] = [
-    (-2, 0),
-    (0x14, 0x1025),
-    (0x14, 0xdc),
-    (0x14, 0xe2),
-    (0x14, 0x1012),
-    (0x14, 0xe5),
-    (0x14, 0x1011),
-    (10, 0),
-    (10, 0xd8),
-    (0, 0xd7),
-    (0, 0xd6),
-    (0, 0xd6),
-    (0x10, 0xda),
-    (4, 0xe0),
-    (0x1e, 0xdd),
-    (0x24, 0xdc),
-    (3, 0xe2),
-    (0, 0),
-    (0x41, 0xd8),
-    (3, 0xd7),
-];
-const NAVI_ANIMS: usize = 20;
-/// The 20 animation frame lists `{i32 tilemap, i32 ticks}`, ended by `{−1, loops}` (stack
-/// pointers in 0x410cb0).
-const NAVI_FRAME_TABLES: [u32; NAVI_ANIMS] = [
-    0x465e04, 0x465e34, 0x465e54, 0x465eb4, 0x465ed4, 0x465f24, 0x465f44, 0x465f84, 0x465fac,
-    0x465ffc, 0x466014, 0x46606c, 0x46609c, 0x4660cc, 0x466104, 0x466134, 0x466184, 0x46619c,
-    0x4661d4, 0x466214,
-];
-const NAVI_FRAMES_MAX: usize = 64;
-/// A navigator animation waits this many updates before its first frame (0x410cb0: +0x38 = 5).
-const NAVI_DELAY: i32 = 5;
-/// Per stage, four i16 animation numbers: EB (0x45addc), notch slam (0x45adde) and two
-/// overrun reactions picked by the clock's low bit (0x45ade0).
-const NAVI_STAGE_TABLE: u32 = 0x45addc;
 /// Departure jingle per stage, i16 (0x466be0, copied to the departure task by 0x4124f0).
 const DEPART_JINGLE_TABLE: u32 = 0x466be0;
 const STAGES: usize = 20;
@@ -214,11 +173,8 @@ pub struct StageTables {
     pub station_names: Vec<u16>,
     /// Departure jingle (0x466be0[stage]).
     pub jingle: u16,
-    /// Navigator animation numbers: EB, notch slam, overrun ×2 (0x45addc + 8·stage).
-    pub navi: [i16; 4],
-    /// Frame lists of the 20 navigator animations, `(tilemap, ticks)` up to and including the
-    /// `(−1, loops)` terminator.
-    pub navi_frames: Vec<Vec<(i32, i32)>>,
+    /// The navigator animations and the stage's choice of them (navigator.rs).
+    pub navi: NaviTables,
 }
 
 impl StageTables {
@@ -235,33 +191,11 @@ impl StageTables {
             .cloned()
             .unwrap_or_default();
         let jingle = i16_at(DEPART_JINGLE_TABLE + 2 * stage as u32)? as u16;
-        let mut navi = [0i16; 4];
-        for (i, n) in navi.iter_mut().enumerate() {
-            *n = i16_at(NAVI_STAGE_TABLE + 8 * stage as u32 + 2 * i as u32)?;
-        }
-        let mut navi_frames = Vec::with_capacity(NAVI_ANIMS);
-        for &va in &NAVI_FRAME_TABLES {
-            let mut frames = Vec::new();
-            for i in 0..NAVI_FRAMES_MAX {
-                let tbl = exe.u32_at(va + 8 * i as u32)? as i32;
-                let ticks = exe.u32_at(va + 8 * i as u32 + 4)? as i32;
-                frames.push((tbl, ticks));
-                if tbl == -1 {
-                    break;
-                }
-            }
-            anyhow::ensure!(
-                frames.last().is_some_and(|f| f.0 == -1),
-                "navigator animation at {va:#x} unterminated"
-            );
-            navi_frames.push(frames);
-        }
         Ok(Self {
             stage,
             station_names,
             jingle,
-            navi,
-            navi_frames,
+            navi: NaviTables::read(exe, stage)?,
         })
     }
 
@@ -410,6 +344,23 @@ impl Snap {
         }
     }
 
+    /// What the navigator triggers read.
+    fn navi(&self) -> NaviState {
+        NaviState {
+            phase: self.phase,
+            loading: self.loading,
+            departure_done: self.departure_done,
+            clock: self.clock,
+            ats: self.ats,
+            approach: self.approach,
+            eb_ticks: self.eb_ticks,
+            eb_approach_ticks: self.eb_approach_ticks,
+            obstacle: self.obstacle,
+            slams: self.stats[11],
+            final_station: self.final_station,
+        }
+    }
+
     /// The tick starting from this state runs the driving-loop body (0x4084f5): driving, or
     /// leaving the pre-departure wait.
     fn runs_loop_body(&self) -> bool {
@@ -460,131 +411,6 @@ struct Timer {
     action: Timed,
 }
 
-/// One navigator animation task (0x411080).
-#[derive(Debug, Clone, PartialEq)]
-struct NaviTask {
-    id: u32,
-    anim: usize,
-    /// +0x38: updates before the first frame; −1 once running.
-    delay: i32,
-    /// +0x3c: cleared by `NaviAnim(-1)` or a replacement; the task ends at its next frame
-    /// boundary.
-    enabled: bool,
-    /// +0x34: updates since the first frame.
-    count: i32,
-    /// +0x40 / +0x44: frame index and ticks into the frame.
-    frame: usize,
-    in_frame: i32,
-    /// +0x48: loops left, −1 until the terminator is first reached.
-    loops: i32,
-}
-
-/// `NaviAnim` 0x410cb0 and its tasks: only the sound timing and the "one current animation"
-/// rule (`0x856c68`) matter here; the sprites are the HUD's.
-#[derive(Debug, Clone, Default, PartialEq)]
-struct Navi {
-    tasks: Vec<NaviTask>,
-    current: Option<u32>,
-    next_id: u32,
-}
-
-impl Navi {
-    /// `NaviAnim(n)`: −1 cancels the current animation; with one running only `n == 0`
-    /// replaces it (unless it is animation 0 itself).
-    fn show(&mut self, n: i32, frames: &[Vec<(i32, i32)>]) {
-        let current = self
-            .current
-            .and_then(|id| self.tasks.iter_mut().find(|t| t.id == id));
-        if let Some(cur) = current {
-            if n < 0 {
-                cur.enabled = false;
-                return;
-            }
-            if n != 0 || cur.anim == 0 {
-                return;
-            }
-            cur.enabled = false;
-        } else if n < 0 {
-            return;
-        }
-        let Some(anim) = usize::try_from(n).ok().filter(|&a| a < frames.len()) else {
-            return;
-        };
-        let id = self.next_id;
-        self.next_id = self.next_id.wrapping_add(1);
-        self.tasks.push(NaviTask {
-            id,
-            anim,
-            delay: NAVI_DELAY,
-            enabled: true,
-            count: 0,
-            frame: 0,
-            in_frame: 0,
-            loops: -1,
-        });
-        self.current = Some(id);
-    }
-
-    fn cancel(&mut self) {
-        self.show(-1, &[]);
-    }
-
-    /// One update of every animation task.
-    fn tick(&mut self, frames: &[Vec<(i32, i32)>], snd: &mut SoundSystem) {
-        let mut ended = Vec::new();
-        for t in &mut self.tasks {
-            if !Self::update(t, &frames[t.anim], snd) {
-                ended.push(t.id);
-            }
-        }
-        for id in ended {
-            self.tasks.retain(|t| t.id != id);
-            if self.current == Some(id) {
-                self.current = None;
-            }
-        }
-    }
-
-    /// 0x411080; false when the task ends.
-    fn update(t: &mut NaviTask, frames: &[(i32, i32)], snd: &mut SoundSystem) -> bool {
-        if t.delay > 0 {
-            t.delay -= 1;
-            return true;
-        }
-        if t.delay == 0 {
-            t.delay = -1;
-            if !t.enabled {
-                return false;
-            }
-        } else {
-            t.in_frame += 1;
-            t.count += 1;
-        }
-        let (at, code) = NAVI_SOUNDS[t.anim];
-        if t.count == at && code != 0 {
-            snd.request(code);
-        }
-        if frames.get(t.frame).is_some_and(|f| f.1 == t.in_frame) {
-            t.in_frame = 0;
-            t.frame += 1;
-            if frames.get(t.frame).is_none_or(|f| f.0 == -1) {
-                if t.loops == -1 {
-                    t.loops = frames.get(t.frame).map_or(0, |f| f.1);
-                }
-                if t.loops == 0 {
-                    return false;
-                }
-                t.frame = 0;
-                t.loops -= 1;
-            }
-            if !t.enabled {
-                return false;
-            }
-        }
-        true
-    }
-}
-
 // ---------------------------------------------------------------------------------------------
 // The stage sounds
 // ---------------------------------------------------------------------------------------------
@@ -606,7 +432,7 @@ pub struct StageSound {
     arrival: Option<(Option<u16>, bool, u32)>,
     timers: Vec<Timer>,
     turnouts: Vec<TurnoutClatter>,
-    navi: Navi,
+    navi: Navigator,
     /// Ticks since the game over (the game-over tick is 1).
     game_over_ticks: Option<u32>,
     /// Category of the last statistic added (`0x856d84`, −1 after a reset).
@@ -627,7 +453,7 @@ impl StageSound {
             arrival: None,
             timers: Vec::new(),
             turnouts: Vec::new(),
-            navi: Navi::default(),
+            navi: Navigator::default(),
             game_over_ticks: None,
             last_stat: -1,
             sequences_off: false,
@@ -644,10 +470,6 @@ impl StageSound {
 
     fn after(&mut self, ticks: u32, action: Timed) {
         self.timers.push(Timer { ticks, action });
-    }
-
-    fn navi_show(&mut self, n: i32) {
-        self.navi.show(n, &self.tables.navi_frames);
     }
 
     /// The driving-loop body and the stopped-train handler of one tick, plus the segment setup
@@ -697,7 +519,7 @@ impl StageSound {
                     self.approach_hud = 0;
                     self.clock_freeze = CLOCK_FREEZE_TICKS;
                 }
-                RuleEvent::Time { reason, .. } => self.time_message(snd, reason, b),
+                RuleEvent::Time { reason, .. } => self.time_message(snd, reason),
                 RuleEvent::Script { kind, args } => self.course_event(snd, train, a, kind, args),
                 RuleEvent::SpeedLimit { kmh, .. } => {
                     // 0x40acd0 / 0x40b4a0: kind 4 applies with no limit in force, kind 5 with
@@ -739,9 +561,8 @@ impl StageSound {
                 RuleEvent::AtsAcknowledged => snd.release(ATS_BELL),
                 RuleEvent::SignalsReset => snd.release(ATS_BELL),
                 RuleEvent::ObstacleStop => {
-                    // 0x40acd0 kind 8, then NaviAnim(0) in 0x40c4e0 of the same tick.
+                    // 0x40acd0 kind 8 (`NaviAnim(0)` follows in 0x40c4e0: navigator.rs).
                     snd.request(ATS_BELL);
-                    self.navi_show(0);
                 }
                 RuleEvent::GameOver => {
                     // 0x40857b: stop all, then 20 `Task_Tick`s.
@@ -781,13 +602,9 @@ impl StageSound {
     /// The rest of `Task_Tick` after the train task.
     pub fn task_part(&mut self, snd: &mut SoundSystem, train: &TrainSound, t: &TickInfo<'_>) {
         let (b, a) = (&t.before, &t.after);
-        // Train task 0x422c20: turnout clatter (moving branch), notch-slam navigator.
+        // Train task 0x422c20: turnout clatter (moving branch).
         if t.turnout_entered && a.speed > 0.0 {
             self.turnouts.push(TurnoutClatter::new(a.speed));
-        }
-        let slam = a.stats[11] > b.stats[11] && a.phase != Phase::GameOver;
-        if slam && self.game_over_ticks.is_none() {
-            self.navi_show(i32::from(self.tables.navi[1]));
         }
         // List 0x84c180: turnout clatter (0x4204d0) and timed releases (0x420440).
         let joint = train.stage_sounds().joint;
@@ -805,8 +622,25 @@ impl StageSound {
                 i += 1;
             }
         }
-        // List 3: navigator animations, the departure task, the HUD.
-        self.navi.tick(&self.tables.navi_frames, snd);
+        // The tick's `NaviAnim` calls (navigator.rs), then list 3: navigator animations, the
+        // departure task, the HUD.
+        let navi_tick = NaviTick {
+            before: b.navi(),
+            after: a.navi(),
+            events: t.events,
+            segment_started: t.segment_started,
+            game_over: self.game_over_ticks.is_some(),
+            loop_exit: self.game_over_ticks == Some(GAME_OVER_TICKS),
+        };
+        let mut navi_sound = |e: Effect| {
+            if let Effect::Sound(code) = e {
+                snd.request(code);
+            }
+        };
+        for call in crate::navigator::calls(&navi_tick, &self.tables.navi) {
+            self.navi.apply(call, &self.tables.navi, &mut navi_sound);
+        }
+        self.navi.update(&self.tables.navi, &mut navi_sound);
         self.departure_task(snd, t);
         self.hud(snd, b, a);
         if let Some((jingle, all_clear, hold)) = self.arrival {
@@ -858,19 +692,12 @@ impl StageSound {
     }
 
     /// Sounds raised with a time message (0x415080 callers).
-    fn time_message(&mut self, snd: &mut SoundSystem, reason: TimeReason, b: &Snap) {
+    fn time_message(&mut self, snd: &mut SoundSystem, reason: TimeReason) {
         match reason {
             // 0x40d620 after message 13.
             TimeReason::OnTimePass => snd.request(ON_TIME_PASS),
             // 0x40b780 (before the message) and the pre-departure loop of 0x4080d0 (after).
             TimeReason::Overspeed | TimeReason::FalseStart => snd.request(BUZZER),
-            TimeReason::EmergencyBrake => {
-                // 0x40c4e0: the 40-tick branch shows the EB reaction; the every-4th-application
-                // branch (first tick) does not.
-                if b.eb_ticks == EB_HELD_TICKS {
-                    self.navi_show(i32::from(self.tables.navi[0]));
-                }
-            }
             TimeReason::ForcedStop | TimeReason::ForcedStopFinal => {
                 // 0x40a0a0: crash, then the voices of the 80-tick hold.
                 snd.request(BUFFER_STOP_CRASH);
@@ -1016,28 +843,6 @@ impl StageSound {
             3 if a.dist_m <= (f5 + APPROACH_DONE_M) as f32 => self.approach_hud = 4,
             _ => {}
         }
-        // EB-in-approach reaction: 20 approach ticks with the EB, not yet penalised. The ATS
-        // and obstacle states are those after 0x40b780 / 0x40acd0 of this tick.
-        let ats_now = b.ats != 0
-            || t.events
-                .iter()
-                .any(|e| matches!(e, RuleEvent::AtsBell | RuleEvent::AtsEmergency));
-        let obstacle_now = b.obstacle != 0
-            || t.events
-                .iter()
-                .any(|e| matches!(e, RuleEvent::ObstacleStop));
-        if b.eb_approach_ticks == EB_APPROACH_TICKS
-            && b.eb_ticks < EB_HELD_TICKS
-            && !ats_now
-            && !obstacle_now
-        {
-            self.navi_show(i32::from(self.tables.navi[0]));
-        }
-        // Overrun reaction when the approach state turns 4 (0x45ade0[clock & 1]).
-        if a.approach == 4 && b.approach != 4 {
-            let n = self.tables.navi[2 + (b.clock & 1) as usize];
-            self.navi_show(i32::from(n));
-        }
         // ATS chime every 32 ticks from the acknowledgement (clock before this tick's ++).
         if a.ats_chime_from != -1 && (b.clock - a.ats_chime_from) % ATS_CHIME_PERIOD == 0 {
             snd.request(ATS_CHIME);
@@ -1087,14 +892,11 @@ impl StageSound {
             }
             | Phase::Draining
             | Phase::Evaluating(_) => snd.stop_all(),
-            // Obstacle cleared: stop all, cancel the navigator.
+            // Obstacle cleared: stop all (and `NaviAnim(-1)`, navigator.rs).
             Phase::Holding {
                 then: AfterHold::ObstacleCleared,
                 ..
-            } => {
-                snd.stop_all();
-                self.navi.cancel();
-            }
+            } => snd.stop_all(),
             _ => {}
         }
     }
@@ -1122,10 +924,6 @@ impl StageSound {
             if recovery && ticks <= 1 {
                 // After the hold's last `Task_Tick`s, before the loop's own.
                 snd.request(RECOVERY_CALL);
-            }
-            if then == AfterHold::Arrived && ticks <= 1 {
-                // End of 0x40a0a0's arrival branch.
-                self.navi.cancel();
             }
         }
         if b.phase == Phase::Evaluating(1) {
@@ -1160,7 +958,6 @@ impl StageSound {
         if b.ats_chime_from != -1 {
             snd.release(ATS_CHIME);
         }
-        self.navi.cancel();
         // 0x84faf8 = 0 drops running sequences at the next sequencer tick.
         snd.set_sequences_enabled(false);
         self.sequences_off = true;

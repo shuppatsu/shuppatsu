@@ -15,10 +15,16 @@ fn stage_tables(stage: usize) -> StageTables {
         stage,
         station_names: vec![10, 11, 12, 13],
         jingle: 0xc,
-        navi: [2, 1, 3, 4],
-        navi_frames: (0..NAVI_ANIMS)
-            .map(|_| vec![(537, 20), (538, 15), (543, 50), (-1, 0)])
-            .collect(),
+        navi: NaviTables {
+            reactions: [2, 1, 3, 4],
+            frames: (0..crate::navigator::ANIMS)
+                .map(|_| {
+                    [(537, 20), (538, 15), (543, 50), (-1, 0)]
+                        .map(|(tbl, ticks)| crate::navigator::Frame { tbl, ticks })
+                        .to_vec()
+                })
+                .collect(),
+        },
     }
 }
 
@@ -553,7 +559,7 @@ fn navigator_reactions() {
     // EB held 40 ticks: animation 2, whose sound comes 5 + 0x14 updates after the show.
     let mut r = Rig::new(5);
     let b = Snap {
-        eb_ticks: EB_HELD_TICKS,
+        eb_ticks: 0x28,
         ..Snap::default()
     };
     let eb = RuleEvent::Time {
@@ -679,8 +685,8 @@ fn stage_run_with_game_data() {
     let stage = 0;
     let tables = StageTables::read(&exe, stage).unwrap();
     assert_eq!(tables.jingle, 0xc);
-    assert_eq!(tables.navi, [2, 1, 3, 3]);
-    assert_eq!(tables.navi_frames.len(), NAVI_ANIMS);
+    assert_eq!(tables.navi.reactions, [2, 1, 3, 3]);
+    assert_eq!(tables.navi.frames.len(), crate::navigator::ANIMS);
     let mut st = StageSound::new(tables);
 
     let train = TrainTables::read(&exe).unwrap();

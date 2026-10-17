@@ -18,6 +18,7 @@ mod hud;
 mod identity;
 mod input;
 mod locale;
+mod navigator;
 mod play;
 mod popups;
 mod presentation;

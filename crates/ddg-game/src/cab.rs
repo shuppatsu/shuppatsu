@@ -13,6 +13,7 @@ use crate::coupling_hud::{CouplingHud, CouplingTables};
 use crate::departure_hud::{DepartureHud, Segment};
 use crate::hints::Hints;
 use crate::hud::{Hud, HudState, SPEED_MODE_ATC};
+use crate::navigator::{Effect, NaviState, NaviTables, NaviTick, Navigator};
 use crate::popups::{Popups, time_up_advice};
 use anyhow::Result;
 use ddg_engine::coupling::Coupling;
@@ -77,6 +78,8 @@ pub struct Snap {
     /// The bonus game runs (remaining time and distance panel off: `0x856d1c = 0`,
     /// `0x856d0c = 0`).
     pub bonus: bool,
+    /// What the navigator reactions read (navigator.rs).
+    pub navi: NaviState,
 }
 
 impl Snap {
@@ -121,6 +124,7 @@ impl Snap {
             coupling: r.coupling.clone().filter(|_| r.phase == Phase::Coupling),
             vehicle_code: r.vehicle_code,
             bonus: drive.bonus().is_some(),
+            navi: NaviState::of(drive),
         }
     }
 
@@ -156,6 +160,9 @@ pub struct CabHud {
     pub hud: Hud,
     popups: Popups,
     hints: Hints,
+    /// Navigator reactions and the emergency-stop signal (`NaviAnim` 0x410cb0).
+    navigator: Navigator,
+    navi_tables: NaviTables,
     captions: Captions,
     departure: DepartureHud,
     stage: usize,
@@ -201,6 +208,8 @@ impl CabHud {
         Ok(Self {
             popups: Popups::new(exe, stage, cab.origin, cab.time_up_advice_pos)?,
             hints: Hints::new(horn_on_button),
+            navigator: Navigator::default(),
+            navi_tables: NaviTables::read(exe, stage)?,
             captions,
             departure: DepartureHud::new(&cab),
             speed_mode,
@@ -284,6 +293,7 @@ impl CabHud {
     pub fn create(&mut self, layer: &mut SpriteLayer) {
         self.hud.create(layer);
         self.departure.stage_start(layer);
+        self.navigator = Navigator::default();
         self.prev = None;
         self.clock_freeze = 0;
         self.panel_active = false;
@@ -403,6 +413,22 @@ impl CabHud {
             self.clocks_visible = false;
         }
 
+        // The `NaviAnim` calls of this tick (rules, 0x40c4e0, 0x40a0a0, the train task).
+        let navi_tick = NaviTick {
+            before: b.navi,
+            after: s.navi,
+            events,
+            segment_started: input.segment_started,
+            game_over: self.game_over_ticks.is_some(),
+            loop_exit: self
+                .game_over_ticks
+                .is_some_and(|n| n + 1 == TIME_UP_AFTER_TICKS),
+        };
+        for call in crate::navigator::calls(&navi_tick, &self.navi_tables) {
+            self.navigator
+                .apply(call, &self.navi_tables, &mut |e| navi_draw(layer, e));
+        }
+
         // List 3 in creation order: departure task, signal/sign/message/lamp/popup tasks, hints,
         // captions, then the HUD task.
         if b.runs_departure_task() && !input.segment_started && !self.popups.time_up_running() {
@@ -419,6 +445,9 @@ impl CabHud {
         }
         self.popups
             .update(layer, s.odometer, s.clock, input.horn_held);
+        // After the signal task, so the emergency-stop signal wins slot 0x60.
+        self.navigator
+            .update(&self.navi_tables, &mut |e| navi_draw(layer, e));
         self.hints.update(layer, s.odometer);
         self.hints
             .handling_error(layer, s.train_driving, b.power, b.brake);
@@ -549,5 +578,17 @@ impl CabHud {
         self.captions.stop_all();
         self.popups
             .time_up(layer, time_up_advice(cause, s.early_ticks >= 1));
+    }
+}
+
+/// A navigator animation's slot change (0x431920 / 0x4318c0); its sounds are the sound
+/// module's.
+fn navi_draw(layer: &mut SpriteLayer, e: Effect) {
+    match e {
+        Effect::Draw { slot, tbl, palette } => {
+            crate::slots::image_palette(layer, slot, tbl, palette);
+        }
+        Effect::Hide(slot) => crate::slots::image(layer, slot, -1),
+        Effect::Sound(_) => {}
     }
 }
