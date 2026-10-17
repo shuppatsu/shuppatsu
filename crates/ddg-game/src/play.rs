@@ -358,6 +358,7 @@ impl Play {
             accumulator: Duration::ZERO,
             last_frame: now,
             title_at: now,
+            title_frames: (0, Duration::ZERO),
             error: None,
             sound,
             script,
@@ -740,6 +741,8 @@ pub struct Play {
     accumulator: Duration,
     last_frame: Instant,
     title_at: Instant,
+    /// Frames since `title_at` and the slowest of them (`--debug-title`).
+    title_frames: (u32, Duration),
     error: Option<anyhow::Error>,
     sound: Option<crate::sound::Sound>,
     script: Script,
@@ -1221,6 +1224,7 @@ impl Play {
         let now = Instant::now();
         let dt = now - self.last_frame;
         self.last_frame = now;
+        self.title_frames = (self.title_frames.0 + 1, self.title_frames.1.max(dt));
         self.accumulator += dt.min(Duration::from_millis(250));
         while self.accumulator >= TICK && !self.leave {
             self.accumulator -= TICK;
@@ -1371,17 +1375,24 @@ impl Play {
         gpu.queue.present(frame);
 
         if now - self.title_at >= Duration::from_millis(500) {
+            let (frames, worst) = std::mem::take(&mut self.title_frames);
+            let fps = frames as f32 / (now - self.title_at).as_secs_f32();
             self.title_at = now;
             let (station, _) = self.drive.next_station();
+            // World draw calls: one per texture page with triangles (gpu.rs).
+            let draws = self.frame.batches.iter().filter(|b| !b.indices.is_empty());
             crate::identity::set_debug_title(
                 &gpu.window,
                 &format!(
-                    "ddg-game play | {:?}{} | {:.1} km/h | next {} | {} m",
+                    "ddg-game play | {:?}{} | {:.1} km/h | next {} | {} m | {fps:.0} fps, worst {:.1} ms | {} tris, {} draws",
                     self.drive.phase(),
                     if self.flow.paused() { " (paused)" } else { "" },
                     self.drive.speed_kmh(),
                     self.drive.station_name(station).unwrap_or("?"),
                     self.drive.rules().dist_round_m,
+                    worst.as_secs_f32() * 1000.0,
+                    self.frame.triangle_count(),
+                    draws.count(),
                 ),
             );
         }
