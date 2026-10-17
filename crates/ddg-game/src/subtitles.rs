@@ -1,15 +1,17 @@
 //! Subtitles for the Japanese voice lines (setting `subtitles`; docs/localisation.md,
 //! "Subtitles"). A port addition: the original has none.
 //!
-//! The meaning of a line is taken from how the game builds it, not from listening: the sound
+//! The words of every clip were transcribed locally (Whisper, out/stt, not in the repo) and
+//! cross-checked with where the game plays it. To show them, the sound
 //! system records every voice line it starts together with the call that built it
 //! ([`ddg_audio::Origin`]), and this module maps that call to a `[subtitle]` template of the
 //! catalogue. A station call says the name of station-name id `n` (the pair table holds one
 //! recording per id), so the subtitle uses the name the HUD's name sprite has in the
 //! translation; a signal call is "kind + aspect" by its arguments; a speed call is "limit +
-//! number" by its speed; single sounds and table sequences have a line of their own when the
-//! event that plays them establishes what they say. Lines the game plays but that are not
-//! identified this way have no key and show nothing (the list is in docs/localisation.md).
+//! number" by its speed; a single sound has a line of its own (`0x97`), a table sequence a line per
+//! sentence: a run of phrases that make one sentence has a key naming its first and last code
+//! (`0x14e_0x150`), an in-train "next is <station>" is built like the announcer's call. Clips
+//! without a key show nothing (the few left are listed in docs/localisation.md).
 //!
 //! Timing: a line is shown when its first spoken phrase starts (sequencer timing,
 //! [`ddg_audio::voice::step_offsets`]) for the length of its phrases (sample lengths from
@@ -42,11 +44,13 @@ const READ_TICKS_PER_CHAR: u32 = 2;
 /// approach call (0x40c4e0 passes 2 or 3 as `first`).
 const PAIR_PASS: usize = 2;
 const PAIR_STOP: usize = 3;
-/// Table sequences of the numbered block-signal calls: sequence `FIRST_BLOCK_SEQUENCE + k`
-/// is block `k + 1`'s number phrase followed by an aspect phrase (0x486190 entries 5..=0x10;
-/// 0x40c010 starts 5..=0xb for blocks 3..=9 counted down to the station).
+/// Table sequences of the numbered signal calls (0x486190): sequence `FIRST_BLOCK_SEQUENCE + k`
+/// is "第k+1閉塞" (0x9b + k) + an aspect phrase for k 0..=6, sequence `FIRST_HOME_SEQUENCE + k`
+/// "第k+1場内" (0xa2 + k) + an aspect phrase for k 0..=4. 0x40c010 starts 5..=0xb for blocks
+/// 3..=9 counted down to the station; 0xc..=0x10 are not started in a stage.
 const FIRST_BLOCK_SEQUENCE: usize = 5;
-const LAST_BLOCK_SEQUENCE: usize = 0x10;
+const FIRST_HOME_SEQUENCE: usize = 0xc;
+const LAST_HOME_SEQUENCE: usize = 0x10;
 
 /// Port-only palette slot of the subtitle colours (the plates use 0x7f).
 pub const PAL_SUBTITLE: u8 = 0x7e;
@@ -76,8 +80,8 @@ const ASPECT_KEYS: [&str; 7] = [
     "aspect_limit",
 ];
 
-/// Every key `[subtitle]` may have besides the per-code (`0x97`) and per-sequence (`seq_0x11`)
-/// lines.
+/// Every key `[subtitle]` may have besides the per-code (`0x97`), per-run (`0x14e_0x150`) and
+/// per-sequence (`seq_0x11`) lines.
 pub const TEMPLATE_KEYS: &[&str] = &[
     "approach_pass",
     "approach_stop",
@@ -85,11 +89,14 @@ pub const TEMPLATE_KEYS: &[&str] = &[
     "arriving",
     "signal",
     "block_signal",
+    "home_signal",
     "signal_home",
     "signal_starting",
     "repeater",
     "repeater_home",
     "repeater_starting",
+    "main_home",
+    "main_starting",
     "aspect_clear",
     "aspect_reduce",
     "aspect_caution",
@@ -106,6 +113,7 @@ pub const TEMPLATE_KEYS: &[&str] = &[
 pub fn known_key(key: &str) -> bool {
     TEMPLATE_KEYS.contains(&key)
         || code_key(key).is_some()
+        || run_key(key).is_some()
         || key
             .strip_prefix("seq_0x")
             .is_some_and(|h| usize::from_str_radix(h, 16).is_ok())
@@ -114,6 +122,12 @@ pub fn known_key(key: &str) -> bool {
 /// `0x97` → 0x97.
 fn code_key(key: &str) -> Option<u16> {
     u16::from_str_radix(key.strip_prefix("0x")?, 16).ok()
+}
+
+/// `0x14e_0x150` → (0x14e, 0x150): a run of phrases from the first code to the last.
+fn run_key(key: &str) -> Option<(u16, u16)> {
+    let (a, b) = key.split_once('_')?;
+    Some((code_key(a)?, code_key(b)?))
 }
 
 /// The length of every `effect.rom` sound in seconds, by code (index = code − 1).
@@ -241,10 +255,13 @@ impl SubtitleBook {
     }
 
     /// 0x420320: kind `mode` 1 home, 2 starting, 0 repeater (only the repeater call 0x40c010
-    /// passes 0), after an optional prefix 1 home / 2 starting (the repeater's own signal); a
-    /// prefix 3 (phrase 0xd4, not identified) is left out.
+    /// passes 0), after an optional prefix 1 home / 2 starting (the repeater's own signal); prefix 3
+    /// (0xd4 本線, from 0x40c010 on passing-station routes when the train does not stop) makes
+    /// it the main-line signal.
     fn signal_line(&self, prefix: i32, mode: i32, aspect: i32) -> Option<String> {
         let kind = match (mode, prefix) {
+            (1, 3) => "main_home",
+            (2, 3) => "main_starting",
             (1, _) => "signal_home",
             (2, _) => "signal_starting",
             (0, 1) => "repeater_home",
@@ -283,15 +300,19 @@ impl SubtitleBook {
                 .into_iter()
                 .collect();
         }
-        // The numbered block-signal calls: number phrase, aspect phrase.
-        if (FIRST_BLOCK_SEQUENCE..=LAST_BLOCK_SEQUENCE).contains(&id) {
-            let n = id - FIRST_BLOCK_SEQUENCE + 1;
+        // The numbered block / home signal calls: number phrase, aspect phrase.
+        if (FIRST_BLOCK_SEQUENCE..=LAST_HOME_SEQUENCE).contains(&id) {
+            let (key, n) = if id < FIRST_HOME_SEQUENCE {
+                ("block_signal", id - FIRST_BLOCK_SEQUENCE + 1)
+            } else {
+                ("home_signal", id - FIRST_HOME_SEQUENCE + 1)
+            };
             let word = steps
                 .get(1)
                 .and_then(|s| SIGNAL_ASPECTS.iter().position(|&w| w == s.code));
             let text = word.and_then(|w| {
                 Some(
-                    self.template("block_signal")?
+                    self.template(key)?
                         .replace("{n}", &n.to_string())
                         .replace("{aspect}", self.aspect(w as i32)?),
                 )
@@ -301,30 +322,48 @@ impl SubtitleBook {
                 .into_iter()
                 .collect();
         }
-        // In-train announcements: the identified part is "next" + a station name of the
-        // announcer block (+ the closing phrase), as 0x420040 builds it.
+        self.phrase_cues(steps)
+    }
+
+    /// A line per sentence of a phrase list (announcements, the navigator's sequences, the
+    /// result voices): "next" + a station name of the announcer block (+ the closing
+    /// phrase) as 0x420040 builds it, else the longest run `first_last` with a key, else the
+    /// phrase's own key. Phrases without one (chimes, fragments) show nothing.
+    fn phrase_cues(&self, steps: &[Step]) -> Vec<Cue> {
         let mut out = Vec::new();
-        for (i, w) in steps.windows(2).enumerate() {
-            let Some(&(_, suffix)) = STATION_INTROS.iter().find(|(intro, _)| *intro == w[0].code)
-            else {
-                continue;
-            };
-            let Some(&name) = self.announcer_names.get(&w[1].code) else {
-                continue;
-            };
+        let mut i = 0;
+        while i < steps.len() {
+            let (end, text) = self.sentence_at(steps, i);
+            if let Some(c) = text.and_then(|t| self.cue(steps, i, end, t)) {
+                out.push(c);
+            }
+            i = end + 1;
+        }
+        out
+    }
+
+    /// The sentence starting at step `i`: its last step and its line.
+    fn sentence_at(&self, steps: &[Step], i: usize) -> (usize, Option<String>) {
+        let code = steps[i].code;
+        if let Some(&(_, suffix)) = STATION_INTROS.iter().find(|(intro, _)| *intro == code)
+            && let Some(&name) = steps
+                .get(i + 1)
+                .and_then(|s| self.announcer_names.get(&s.code))
+        {
             let end = if steps.get(i + 2).is_some_and(|s| s.code == suffix) {
                 i + 2
             } else {
                 i + 1
             };
-            if let Some(c) = self
-                .with_station("next_station", name)
-                .and_then(|t| self.cue(steps, i, end, t))
-            {
-                out.push(c);
+            return (end, self.with_station("next_station", name));
+        }
+        for j in (i + 1..steps.len()).rev() {
+            let key = format!("{:#x}_{:#x}", code, steps[j].code);
+            if let Some(t) = self.template(&key) {
+                return (j, Some(t.to_owned()));
             }
         }
-        out
+        (i, self.template(&format!("{code:#x}")).map(str::to_owned))
     }
 
     /// The cue for steps `from..=to` of a line: from the start of step `from` to the end of

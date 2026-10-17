@@ -16,7 +16,7 @@ fn tables() -> SoundTables {
             pairs.push(Step::new(code, 40));
         }
     }
-    let mut sequences = vec![Vec::new(); 0x2b];
+    let mut sequences = vec![Vec::new(); 0x2e];
     sequences[5] = vec![Step::new(0x9b, 72), Step::new(0xa7, 0)];
     sequences[0x11] = vec![Step::new(0xe7, 10), Step::new(0xe7, 10), Step::new(0xe7, 0)];
     // An in-train announcement ending "next is <name 39> <closing>".
@@ -26,8 +26,22 @@ fn tables() -> SoundTables {
         Step::new(0x100 + 39, 40),
         Step::new(0x112, 0),
     ];
-    // Unidentified.
-    sequences[0x18] = vec![Step::new(0x16a, 122), Step::new(0x16d, 0)];
+    sequences[0xc] = vec![Step::new(0xa2, 72), Step::new(0xa7, 0)];
+    sequences[0x12] = vec![Step::new(0xe4, 10), Step::new(0xe6, 10), Step::new(0xe8, 0)];
+    // The Komachi platform call: a run of three phrases, then one of its own.
+    sequences[0x18] = vec![
+        Step::new(0x16a, 40),
+        Step::new(0x16b, 40),
+        Step::new(0x16c, 40),
+        Step::new(0x16d, 0),
+    ];
+    // Chime (no line), "soon" + "Morioka" run, then a phrase without a key.
+    sequences[0x21] = vec![
+        Step::new(0x1a7, 20),
+        Step::new(0x173, 30),
+        Step::new(0x189, 30),
+        Step::new(0x112, 0),
+    ];
     SoundTables {
         call_pairs: pairs,
         sequences,
@@ -111,8 +125,15 @@ fn signal_and_limit_calls() {
         texts(|s| s.call_signal(0, 2, 0)),
         ["Starting signal: Clear."]
     );
-    // Prefix 3 (0xd4, not identified) is left out.
-    assert_eq!(texts(|s| s.call_signal(3, 1, 4)), ["Home signal: Stop."]);
+    // Prefix 3 (0xd4 本線): the main-line signal.
+    assert_eq!(
+        texts(|s| s.call_signal(3, 1, 4)),
+        ["Main-line home signal: Stop."]
+    );
+    assert_eq!(
+        texts(|s| s.call_signal(3, 2, 0)),
+        ["Main-line starting signal: Clear."]
+    );
     // Repeater calls: kind 0, with the repeated signal as the prefix.
     assert_eq!(texts(|s| s.call_signal(1, 0, 6)), ["Home repeater: Limit."]);
     assert_eq!(
@@ -132,8 +153,9 @@ fn signal_and_limit_calls() {
         ["Speed limit lifted."]
     );
     assert_eq!(texts(|s| s.call_prefix_speed(0, 7)), ["Speed limit."]);
-    // Numbered block call, sequence 5 = block 1.
+    // Numbered calls: sequence 5 = block 1, sequence 0xc = home signal 1.
     assert_eq!(texts(|s| s.request(0x1005)), ["Block signal 1: Clear."]);
+    assert_eq!(texts(|s| s.request(0x100c)), ["Home signal 1: Clear."]);
 }
 
 #[test]
@@ -141,16 +163,39 @@ fn single_clips_and_sequences() {
     assert_eq!(texts(|s| s.request(0x97)), ["Starting signal: Clear."]);
     assert_eq!(texts(|s| s.request(0xbc)), ["On-time pass."]);
     assert_eq!(
+        texts(|s| s.request(0xd5)),
+        ["The doors are closing. Please be careful."]
+    );
+    // A cue per phrase (on screen a repeated line is only kept up longer).
+    assert_eq!(
         texts(|s| s.request(0x1011)),
-        ["[The navigator reacts to the rough handling]"]
+        ["Hey, what do you think you're doing?"; 3]
     );
     assert_eq!(
-        texts(|s| s.request(0x1013)),
-        ["The next station is Tōkamachi."]
+        texts(|s| s.request(0x1012)),
+        ["Huh?", "No way!", "You're really bad at this."]
     );
-    // Not identified: no subtitle. Sound effects have none either.
-    assert!(texts(|s| s.request(0xd5)).is_empty());
-    assert!(texts(|s| s.request(0x1018)).is_empty());
+    // The opening phrase, then "next is" + station + closing phrase.
+    assert_eq!(
+        texts(|s| s.request(0x1013)),
+        [
+            "Thank you for riding with us.",
+            "The next station is Tōkamachi."
+        ]
+    );
+    // Runs of phrases make one sentence.
+    assert_eq!(
+        texts(|s| s.request(0x1018)),
+        [
+            "The Akita Shinkansen Komachi for Tōkyō will soon depart from track 12.",
+            "Please mind the closing doors."
+        ]
+    );
+    assert_eq!(
+        texts(|s| s.request(0x1021)),
+        ["We will soon be arriving at Morioka."]
+    );
+    // Sound effects have no line.
     assert!(texts(|s| s.request(0x11)).is_empty());
 }
 
@@ -176,7 +221,7 @@ fn cue_timing_follows_the_phrases() {
     let Some(VoiceEvent::Started(st)) = s.take_voice_events().pop() else {
         panic!("logged");
     };
-    let c = &b.cues(&st)[0];
+    let c = &b.cues(&st)[1];
     assert_eq!(c.at, (101 - 1) / 2);
     // A short line is kept up for its reading time.
     let short = b.cue(&[Step::new(0x10, 0)], 0, 0, "Hi.".into()).unwrap();
@@ -311,18 +356,46 @@ fn book_from_the_data() {
     // Hokuhoku and Kōbe line announcements name their next stop (audio-text.md §10.4).
     for (id, name) in [(0x13, 39), (0x16, 43), (0x2a, 76), (0x2b, 76), (0x2d, 88)] {
         let cues = b.cues(&seq(id));
-        assert_eq!(cues.len(), 1, "sequence {id:#x}");
         let want = format!("The next station is {}.", b.station(name).unwrap());
-        assert_eq!(cues[0].text, want);
-        assert!(cues[0].at > 0, "after the opening phrases");
+        let next = cues.iter().find(|c| c.text == want);
+        assert!(next.is_some_and(|c| c.at > 0), "sequence {id:#x}: {cues:?}");
     }
-    for id in 5..=0x10 {
+    for id in 5..=0xb {
         let cues = b.cues(&seq(id));
         assert_eq!(cues[0].text, format!("Block signal {}: Clear.", id - 4));
     }
+    for id in 0xc..=0x10 {
+        let cues = b.cues(&seq(id));
+        assert_eq!(cues[0].text, format!("Home signal {}: Clear.", id - 0xb));
+    }
+    // Every phrase of the announcements, the navigator and the result sequences is in a
+    // sentence with a line; only the chime 0x1a7 is not.
+    for id in (0..5)
+        .chain(0x11..=0x23)
+        .chain(0x25..=0x27)
+        .chain(0x2a..=0x2e)
+    {
+        let steps = &tables.sequences[id];
+        let mut i = 0;
+        while i < steps.len() {
+            let (end, text) = b.sentence_at(steps, i);
+            let chime = steps[i].code == 0x1a7;
+            assert!(
+                chime || text.is_some(),
+                "sequence {id:#x} step {i} ({:#x})",
+                steps[i].code
+            );
+            i = end + 1;
+        }
+    }
     for (k, _) in &cat.subtitles {
-        if let Some(code) = code_key(k) {
-            assert!(b.lengths.seconds(code as i16) > 0.2, "{k}: no voice");
+        let codes = match (code_key(k), run_key(k)) {
+            (Some(c), _) => vec![c],
+            (_, Some((a, z))) => vec![a, z],
+            _ => continue,
+        };
+        for c in codes {
+            assert!(b.lengths.seconds(c as i16) > 0.15, "{k}: no voice");
         }
     }
 }

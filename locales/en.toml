@@ -978,70 +978,145 @@ name = "{name}"
 
 # =============================================================================================
 # Subtitles for the Japanese voice lines (setting `subtitles`; docs/localisation.md,
-# "Subtitles"). Each line's meaning comes from how the game builds or triggers it, not from
-# listening; the per-code list with the evidence and the clips left out is in
+# "Subtitles"). The words were transcribed locally with Whisper (out/stt, not in the repo) and
+# checked against where each clip plays; the per-code list with the evidence is in
 # docs/localisation.md. {station} = the station name as on the HUD's name sprite above.
+# Keys: a template, a sound code (0x97), a run of phrases of a sequence from its first to its
+# last code (0x14e_0x150), or a whole table sequence (seq_0x11).
 [subtitle]
-# The driver's approach call at the station banner (0x41ffe0: name + 通過 / 停車, the word the
-# banner shows with it).
+# The driver's approach call at the station banner (0x41ffe0: name + 通過 / 停車).
 approach_pass = "{station}: passing through."
 approach_stop = "{station}: stopping."
-# The announcer (course event 2, 0x420040): "next" + name (+ closing phrase), or the name twice
-# on arrival. Also the "next" part of the in-train announcements that name a station.
+# The announcer (course event 2, 0x420040): "次は" + name (+ "に止まります"), or the name
+# twice on arrival. Also the "next" sentence of the in-train announcements.
 next_station = "The next station is {station}."
 arriving = "{station}. {station}."
-# Signal calls (0x420320, 0x40c010): kind + aspect; the numbered block calls (sequences 5–0x10).
+# Signal calls (0x420320, 0x40c010): kind + aspect; the numbered calls (sequences 5–0x10).
 signal = "{signal}: {aspect}."
-block_signal = "Block signal {n}: {aspect}."
-signal_home = "Home signal"
-signal_starting = "Starting signal"
-repeater = "Repeater"
+block_signal = "Block signal {n}: {aspect}."    # 第n閉塞
+home_signal = "Home signal {n}: {aspect}."      # 第n場内
+signal_home = "Home signal"                     # 場内
+signal_starting = "Starting signal"             # 出発
+repeater = "Repeater"                           # 中継
 repeater_home = "Home repeater"
 repeater_starting = "Starting repeater"
-aspect_clear = "Clear"
-aspect_reduce = "Reduce"
-aspect_caution = "Caution"
-aspect_restricted = "Restricted"
-aspect_stop = "Stop"
-aspect_high_speed = "High-speed clear"
-aspect_limit = "Limit"
+main_home = "Main-line home signal"             # 本線 場内
+main_starting = "Main-line starting signal"     # 本線 出発
+aspect_clear = "Clear"                          # 進行
+aspect_reduce = "Reduce"                        # 減速
+aspect_caution = "Caution"                      # 注意
+aspect_restricted = "Restricted"                # 警戒
+aspect_stop = "Stop"                            # 停止
+aspect_high_speed = "High-speed clear"          # 高速進行
+aspect_limit = "Limit"                          # 制限
 # Speed-limit calls (0x420180): 制限 + the number phrase (kmh / 5), or 解除 for "lifted".
 limit = "Speed limit."
 limit_speed = "Speed limit {kmh} km/h."
 limit_lifted = "Speed limit lifted."
-# Single clips, by sound code.
+# Signal calls as single clips.
 0x97 = "Starting signal: Clear."      # 出発進行: departure (aspect 0), block 0 green, recoveries
-0x98 = "Block signal: Clear."         # green beyond the numbered blocks
-0x99 = "Home signal: Clear."          # green at the home signal
+0x98 = "Block signal: Clear."         # 閉塞進行: green beyond the numbered blocks
+0x99 = "Home signal: Clear."          # 場内進行
+0x9a = "Repeater: Clear."             # 中継進行
 0xa8 = "Signal: Reduce."              # a block signal's aspect word alone
 0xa9 = "Signal: Caution."
 0xaa = "Signal: Restricted."
 0xd2 = "Signal: Stop."
-0xbe = "Signal: High-speed clear."    # green with the high-speed signal variant
-0xce = "Starting signal: Reduce."     # departure by aspect 1–3 (captions 出発減速/注意/警戒)
-0xcf = "Starting signal: Caution."
-0xd0 = "Starting signal: Restricted."
-0xbc = "On-time pass."                # 定通, with time message 13
-0xc2 = "Speed limit."
-# The navigator's reactions (NaviAnim; a description, the words are not identified).
-0xd6 = "[The navigator reacts]"
-0xdc = "[The navigator reacts]"
-0xe2 = "[The navigator reacts]"
-0xe6 = "[The navigator reacts]"
-0xe5 = "[The navigator reacts to the emergency brake]"
-0xd8 = "[The navigator reacts to the overrun]"
-seq_0x11 = "[The navigator reacts to the rough handling]"
-seq_0x12 = "[The navigator reacts to the overrun]"
-seq_0x25 = "[The navigator reacts to the rough handling]"
-# Time-up advice (0x4159c0): the gist of the advice balloon shown with each voice.
-0xef = "Make use of coasting."
-0xf0 = "Make use of coasting."
-0xf6 = "Aim for precise driving!"
-0xf1 = "Never release the brake before the door lamp lights up."
-0xea = "Brake gently and smoothly."
-0xfb = "Brake gently and smoothly."
-0xfc = "Your braking is too hard."
-0xeb = "Don't skip your stops."
-0xf3 = "Don't skip your stops."
-0xec = "Obey the signals."
-0xf5 = "Never force a level crossing. Stop and look first!"
+0xbe = "Signal: High-speed clear."    # 高速進行
+0xce = "Starting signal: Reduce."     # 出発減速
+0xcf = "Starting signal: Caution."    # 出発注意
+0xd0 = "Starting signal: Restricted." # 出発警戒
+0xbc = "On-time pass."                # 定通
+0xc2 = "Speed limit."                 # 制限
+# Departure.
+0xd5 = "The doors are closing. Please be careful."   # ドアが閉まります
+# The navigator.
+0xd6 = "Waaah!"
+0xd7 = "Somebody stop it!"
+0xd8 = "Open up!"
+0xd9 = "Let me off!"
+0xda = "You're slow, aren't you."
+0xdb = "Eek!"
+0xdc = "Aaah!"
+0xdd = "That was close. W-what happened?"
+0xde = "Do it properly, OK?"
+0xdf = "You're clumsy."
+0xe0 = "We'll be late!"
+0xe1 = "Yay!"
+0xe2 = "What's with this train?!"
+0xe3 = "Hm?"
+0xe4 = "Huh?"
+0xe5 = "Why?"
+0xe6 = "No way!"
+0xe7 = "Hey, what do you think you're doing?"
+0xe8 = "You're really bad at this."
+# Advice (time-up popup 0x4159c0) and the result voices.
+0xe9 = "Please press the Start button."
+0xea = "Your braking is too hard."
+0xeb = "Please stop at your stations."
+0xec = "Please obey the signals."
+0xed = "Watch your speed entering stations, OK?"
+0xee = "Make good use of coasting, OK?"
+0xef = "You're going too fast."
+0xf0 = "Accelerate quickly, then coast."
+0xf1 = "Save electricity, OK?"
+0xf2 = "Please obey the speed limits."
+0xf3 = "No reckless driving."
+0xf4 = "Use full notch when starting off, OK?"
+0xf5 = "Trains can't stop suddenly."
+0xf6 = "Keep to the timetable."
+0xf7 = "You passed the beginner class."
+0xf8 = "You passed the intermediate class."
+0xf9 = "Aim for a high score."
+0xfa = "Congratulations!"
+0xfb = "Your braking is rough."
+0xfc = "Please don't use the emergency brake."
+0xfd = "Shift complete."
+0xfe = "Good work."
+# Coupling (the minigame and the E3 coupling, sequence 0x29).
+0x40 = "Prepare for coupling. Over."      # 併合準備…どうぞ
+0x3e = "Oh, good."
+# Hokuhoku line: Limited Express Hakutaka.
+0x149 = "Thank you for riding with us."
+0x14a = "This is the Limited Express Hakutaka, bound for Echigo-Yuzawa."
+0x14b = "The next station is Echigo-Yuzawa, the last stop."
+0x14c = "Thank you for riding with us."
+0x14d = "This is Echigo-Yuzawa, the last stop."
+0x14e_0x150 = "At Echigo-Yuzawa, change to the Shinkansen for Tōkyō on track 13."
+0x151_0x152 = "Thank you for taking the Limited Express Hakutaka today."
+# Kōbe line: rapid service.
+0x153 = "Thank you for riding with us."
+0x156 = "This is the rapid service for Aboshi."
+0x154_0x155 = "It runs rapid to Akashi, then stops at every station."
+0x157_0x158 = "Transfer here for the JR Tōzai and JR Takarazuka lines."
+# Akita Shinkansen Komachi: the platform at the first station.
+0x16a_0x16c = "The Akita Shinkansen Komachi for Tōkyō will soon depart from track 12."
+0x16d = "Please mind the closing doors."
+# Akita Shinkansen Komachi: in the train.
+0x16e = "Thank you for traveling with JR East today."
+0x16f = "This is the Akita Shinkansen Komachi, bound for Tōkyō."
+0x170 = "At Morioka, this train will be coupled to the Yamabiko."
+0x171 = "From Ōmagari, the next station, the train will run in the opposite direction."
+0x172 = "The next station is Ōmagari."
+0x173_0x174 = "We will soon be arriving at Ōmagari."
+0x175 = "Transfer here for the Ōu Line."
+0x176 = "After Ōmagari, we will stop at Kakunodate."
+0x173_0x177 = "We will soon be arriving at Kakunodate."
+0x178 = "Transfer here for the Akita Nairiku Jūkan Railway."
+0x179 = "After Kakunodate, we will stop at Tazawako."
+0x173_0x17a = "We will soon be arriving at Tazawako."
+0x17b = "After Tazawako, we will stop at Shizukuishi."
+0x173_0x17c = "We will soon be arriving at Shizukuishi."
+0x17d = "After Shizukuishi, we will stop at Morioka."
+0x17e = "We will soon be arriving at Morioka."
+0x17f = "Transfer here for the Yamada and Hanawa lines."
+0x180 = "After Morioka, we will stop at Shin-Hanamaki."
+0x181_0x182 = "At Morioka, this train will be coupled to the Yamabiko."
+0x183_0x186 = "We will stop three times: 40 m short, 3 m short, then to couple."
+0x187 = "The doors will open after coupling."
+0x188 = "Please wait until the doors open."
+0x173_0x189 = "We will soon be arriving at Morioka."
+0x18a = "Thank you for traveling with us."
+0x18b_0x18d = "This is the Yamabiko and Komachi, bound for Tōkyō."
+0x18e = "The next station is Shin-Hanamaki."
+0x173_0x18f = "We will soon be arriving at Shin-Hanamaki."
