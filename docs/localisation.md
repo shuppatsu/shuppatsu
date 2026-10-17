@@ -51,7 +51,8 @@ Values are a string, or a table with `text` and options:
 | `line_height` | Lines this many font sizes apart instead of the font's own line height (e.g. `1.1` for two lines in the signals' caption band). |
 
 `\n` breaks lines; the font size is fitted to the rectangle. Comments in `en.toml` give each
-sprite's role, a short Japanese label for identification and the pixel size.
+sprite's role, a short Japanese label for identification and the pixel size (decided: these
+labels stay, as a translator's reference, the same practice as docs/re).
 
 Colours always come from the slot's palette: a part stores palette *indices* picked from the
 original art (the dominant colour for plain text and the second for its outline; for boxes the
