@@ -273,6 +273,14 @@ name = "English"
 0x38b = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
 0x38d = { parts = [{ region = [8, 6, 44, 19], text = "Dep" }, { region = [304, 6, 40, 19], text = "Arr" }] }
 
+# Ending clock panel (menus.md §12.2, 0x417410), 240×32 / 176×32: 定刻 over 到着時刻 or
+# 通過時刻 at x 6–73, then the clock separators and (240 wide) the stop error. The orange and
+# yellow pairs are the same words (the second row turns yellow on the yellow variants).
+0x20a = { group = "clock", align = "left", parts = [{ region = [2, 0, 76, 16], text = "Scheduled" }, { region = [2, 16, 76, 16], text = "Arrived" }] }  # 定刻 / 到着時刻
+0x20b = { group = "clock", align = "left", parts = [{ region = [2, 0, 76, 16], text = "Scheduled" }, { region = [2, 16, 76, 16], text = "Passed" }] }   # 定刻 / 通過時刻
+0x20c = { group = "clock", align = "left", parts = [{ region = [2, 0, 76, 16], text = "Scheduled" }, { region = [2, 16, 76, 16], text = "Arrived" }] }  # 定刻 / 到着時刻
+0x20d = { group = "clock", align = "left", parts = [{ region = [2, 0, 76, 16], text = "Scheduled" }, { region = [2, 16, 76, 16], text = "Passed" }] }   # 定刻 / 通過時刻
+
 # ---------------------------------------------------------------------------------------------
 # Other popups (hud.md §3.16)
 
