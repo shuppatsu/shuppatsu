@@ -224,11 +224,15 @@ Play, the front end, `view --hud` and the headless `--shot` paths all use the sa
   `Locale::lookup(tbl, sub_rect)`, `LocaleConfig` (env and arguments) and `install`.
 * Free text and widgets: `SpriteLayer::widgets` (`crates/ddg-render/src/sprites.rs`) hold
   port-only elements of enhancements: a fill, a down arrow, a tilemap clipped to a rectangle
-  at a whole number of canvas pixels per art pixel, and text. `SpriteLayer::add_text(layer,
-  rect, text, Paint { palette, index }, cap)` draws a string into a rectangle (original
-  pixels; drawn at the canvas resolution of `ui_scale`) in a palette colour, with capitals
-  `cap` pixels high or as large as fits, uniformly scaled. Widgets are drawn after the slots of
-  their layer, are cleared with the rect layer every tick, and are empty in the arcade default.
+  at any uniform scale (original pixels per art pixel; at a fractional number of canvas
+  pixels per art pixel each canvas pixel is the area average of the art under it, the art
+  enlarged with nearest neighbour and box-filtered, so only edge pixels blend, like the
+  `smooth` presentation; at a whole number it is the plain pixel blit), and text.
+  `SpriteLayer::add_text(layer, rect, text, Paint { palette, index }, cap)` draws a string
+  into a rectangle (original pixels; drawn at the canvas resolution of `ui_scale`) in a
+  palette colour, with capitals `cap` pixels high or as large as fits, uniformly scaled.
+  Widgets are drawn after the slots of their layer, are cleared with the rect layer every
+  tick, and are empty in the arcade default.
   The text uses `crates/ddg-render/src/label.rs` (`LabelFont`: the language's font, installed
   by `install` with `SpriteBank::set_label_font`, masks cached per string and size).
   `SpriteLayer::add_styled_text` takes a `TextStyle` with an alignment, an outline colour
@@ -271,20 +275,38 @@ Decided by the user (enhancement):
   (`SpriteLayer::side_room`). The vehicle picture (slot 0x1e, same group) moves left by the
   same amount, so nothing overlaps the centred remaining-time readout. At 16:10 the side room
   is 64 px, so the boxes are 150 px wide (1.6×); at 21:9 also 150. **At 4:3 there is no room**:
-  the boxes stay 94 px wide (the layout compromise; the vehicle picture already touches the
-  remaining time's 秒 there).
+  the boxes stay 94 px wide.
+* **Gap to the remaining time** (decided by the user): the vehicle picture keeps at least
+  `MIN_GAP` = 4 px (640×480) clear of the remaining-time panel at every aspect from 4:3 up
+  (`plates_en::RightGroup::fit`). Both edges are measured in the art at load: the leftmost ink
+  of every vehicle picture of the cab table at the picture's 4:3 place, and the rightmost ink
+  of 秒 (tilemaps 0x40d and 0x40e at the 秒 slot's x). Relative to the right group the panel is
+  `side room` px further left, so the widening is capped at `floor(picture − panel − 4 + side
+  room)`; when even the unwidened layout would come closer, the group (picture and plates
+  together) is made uniformly smaller about the backdrop's top right corner (588, 7), just
+  enough, the picture then drawn as a resampled sprite widget (its slot parked off screen like
+  the plates'). Never stretched. With the data this never triggers: the pictures' ink starts
+  at x 411 and 秒's ends at 405 (exclusive; the visible border at 403), 6 px at 4:3, and the
+  gap only grows with the side room (exactly 6 + the fraction of the side room up to 16:10,
+  14 at 16:10, more beyond), so every layout is unchanged. (An earlier version of this note
+  said the picture touches 秒 at 4:3; measured, it does not.) A test checks the numbers
+  against the data (`hud::tests::right_group_gap_from_the_data`).
 * The kanji are the original horizontal station-name sprites (`HudTables::station_names`,
   `plain`, the captions' art), not a font. Their lettering index (0x1c, green in palette 4) is
   recoloured to the plates' yellow (palette 4 index 0xa) in a port-only palette, slot 0x7f,
   rebuilt every tick from palette 4; the box grey goes into an index the name sprites do not
   use. All indices are found in the art at load (the plates' commonest index is the backdrop,
   the second their lettering; the name sprites' commonest other than the backdrop is theirs).
-* The sprite is drawn at a whole number of canvas pixels per art pixel, never resampled:
-  1 at `ui_scale` 2 (half the original height, 14 px of 640×480, like the other HUD
-  lettering), 2 at 3 and 4. A name wider than the box is centred and clipped at both ends. At
-  `ui_scale` 2 every name fits even the 94-px box (the widest, Hokuhoku-Ōshima, is 164 of 188
-  canvas px). At `ui_scale` 3 in a 94-px box only Hokuhoku-Ōshima is clipped (none in a
-  150-px box); at 4 none.
+* The sprite has a fixed size relative to the boxes at every canvas multiple (decided by the
+  user): `KANJI_SCALE` = 0.5 original px per art pixel (half the original height, 14 px of
+  640×480 for the common ink rows, a third of the 42-px box, like the other HUD lettering),
+  the size it had at multiple 2. That is 1 canvas pixel per art pixel at multiple 2 and 2 at
+  4 (plain pixel blits, unchanged), 1.5 at 3 and 0.5 at 1, drawn with the widget's area
+  filter (previously 2 at multiple 3, a third larger, and 1 at multiple 1, twice as large).
+  The palette recolouring is unchanged (the filter averages the recoloured palette colours).
+  A name wider than the box is centred and clipped at both ends; since the size is relative,
+  one list holds at every multiple: **no name is clipped**, even in a 94-px box (the widest,
+  Hokuhoku-Ōshima, plate 0x4cf, is 164 art px = 82 of 94 px).
 * The English name is `[station_plate]` text under the kanji, capitals 5 px high in a 94-px
   box and up to 7 px in a 150-px one (smaller if a long name needs it), centred, in the
   plates' yellow.

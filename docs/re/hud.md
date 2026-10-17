@@ -768,7 +768,8 @@ renderer.md §13, confirmed). None of the HUD elements in §3 use them, but the 
     centred.
   * The wider station plates of `wide_plates` (docs/localisation.md; a translation in
     the enhanced HUD layout) take part of the right group's extra room; the vehicle picture moves
-    left with them, and only then.
+    left with them, and only then, never closer than 4 px to the remaining time (the group
+    shrinks uniformly if it would; with the data it never does).
 * Palette animation (speedometer digits, route strip) means palettes are per-frame state, not
   constant textures.
 * Sprite ids are per slot, and the slot table can be mirrored directly as engine state; the
