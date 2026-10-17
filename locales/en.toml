@@ -371,6 +371,11 @@ name = "English"
 # ---------------------------------------------------------------------------------------------
 # Title and pre-run screens (menus.md §2, §7)
 
+# Attract demo overlay (menus.md §2, 0x4023b0), blinking over the free-play demo: the Japanese
+# lines above the original's own English (PUSH ENTER KEY, FREE PLAY), which stays.
+0x25a = { region = [0, 0, 208, 50], text = "Press START\nto drive" }   # スタートボタンで運転開始, 208×80
+0x25b = { region = [0, 0, 192, 34], text = "One-Day Pass" }            # 一日乗車券, 192×64
+
 0x246 = "Press the START button."    # スタートボタンを押して下さい press-START screen, 432×32
 0x247 = "Thank you for riding with us."  # ご乗車ありがとうございます, 400×32
 0x249 = "Inspection"                 # 仕業検査 lever check, 176×48
