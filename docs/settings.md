@@ -21,7 +21,9 @@ settings live only in the port's `config.toml`.
   the flags.
 * A file that does not parse is reported and ignored; a bad value (`fog = 3`,
   `hud_layout = "wide"`) is reported and loses only that setting. Unknown keys are kept when
-  the game writes the file (it writes only `lang`, from the first-run language screen).
+  the game writes the file (the first-run language screen writes `lang`, the settings screen
+  any key it changes; comments, the other keys and a comment after the changed value stay;
+  the file is replaced atomically).
 
 ```toml
 lang = "en"
@@ -37,6 +39,54 @@ and passes them down in the options (`AppOptions`, `PlayOptions`, the viewer's `
 keyboard switch in `PadOptions`, the save switch on `Save`); there are no globals. Tests:
 `config::tests` (every key from the file, the environment and both flags; the precedence; the
 defaults; this table lists every key) and one test per switch below where it is marked.
+
+## In the game: ポート設定 / Port settings
+
+Title menu → ゲーム設定 (Game Settings) → **ポート設定 / Port settings**, a seventh row under
+the original six. Decided as the least intrusive place: the title menu, its cursor positions
+and the six options rows (positions, values, value pages, `Options_Set`) stay exactly the
+original's; only moving the cursor below 距離メーター reaches the new row. With the analog
+levers (control modes 5/6) the options cursor follows the power notch P0–P5 and cannot reach
+a seventh row, so there the horn opens it (the original reads no horn on that page).
+Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
+`App::apply_port_setting` in `app.rs`, `config::store` / `config::locks`.
+
+* **Look**: the options page's header bar, menu backdrop and button legend (0x42a820 page 8)
+  with the title replaced; rows of label and value in the label font (bundled M+ 2 Medium, or
+  `font`), a blue cursor bar, gold group headings and ▲/▼ when rows are hidden; a panel under
+  the list with the setting's one-line description, its status and the change legend for the
+  control mode (keys, pad, levers). Strings: `[ui]` in `locales/en.toml` and `locales/ja.toml`
+  (localisation.md); in Japanese the bundled font is installed for these rows only while the
+  options screens are open.
+* **Groups**: Language & text (`lang`, `one_line_captions`, `landmark_names`, `board_names`,
+  `subtitles`, `font`, `display_font`); Display (`hud_layout`, `ui_scaling`, `ui_scale`,
+  `wide_menus`, `interpolate`, `vsync`); 3D & effects (`wide_visibility`, `square_pixels`,
+  `stable_track_variants`, `texture_filtering`, `fog`, `wide_weather`, `far_traffic`); Saves &
+  controls (`save_on_change`, `save_timed_out_names`, `keyboard_with_controller`,
+  `exit_no_to_menu`). All 24 keys of the table below.
+* **Keys**: up/down move (no wrap, repeat on hold), left/right step the value (switches flip,
+  `ui_scale` runs Auto, 1×…4×, the others wrap), Enter (confirm) steps it on, Esc (cancel)
+  goes back to the options list on the new row. Pad: the same through its menu bindings.
+  Levers: each notch the power handle is pushed on moves the cursor down, each notch the
+  brake handle is pulled on moves it up; confirm changes the value.
+* **Written at once**: every change goes to `config.toml` (`config::store`, atomic, keeping
+  comments and unknown keys; `ui_scale` back to Auto removes its line). Headless runs
+  (`--shot`) never write it, as they never read it.
+* **When it applies** (the status line): *Applies now*: `lang` (the locale is installed again:
+  sprite text, header art and these strings switch at once), `ui_scaling`, `ui_scale`,
+  `wide_menus` (the canvas is refitted), `save_on_change`, `keyboard_with_controller` (the
+  input is rebuilt), `exit_no_to_menu`. *Applies from the next stage*: everything a run reads
+  when it starts (the HUD layout, interpolation, the 3D and caption switches,
+  `save_timed_out_names`). *Applies after a restart*: `vsync` (the surface's present mode is
+  chosen when the window opens).
+* **Locked**: a setting given by a flag or a `DDG_*` variable (they override the file) shows
+  its value dimmed, without the ◀ ▶, and *Locked: set by --no-fog on the command line* /
+  *Locked: set by the environment variable DDG_FOG*; changing it only plays the cancel sound.
+  `font` and `display_font` are file lists: shown, changed only in `config.toml`.
+* Tests: `front::port_settings::tests` (navigation, scrolling, levers, value cycling, locks,
+  the `config.toml` round trip of every key, both catalogues complete, drawing),
+  `front::options::tests::port_settings_row`, `app::tests::port_settings_apply_live`
+  (needs `DDG_DATA_DIR`).
 
 ## Settings
 

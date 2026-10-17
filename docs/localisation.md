@@ -33,6 +33,12 @@ Keyed by the sprite's identity in the original:
 * `[landmark]`: the English name of each landmark caption, keyed by the landmark sprite's
   tilemap id (`0x235 = "Yodo River"`). Not sprite overrides either: the kanji stay and the
   name goes on a line under them ("Landmark captions" below).
+* `[ui]`: the port's own screens, which have no original art (the settings screen,
+  settings.md "In the game"): string ID → text (`lang = "Language"`, `lang_desc = "…"`). The
+  IDs are listed by `known_ui_key` in `crates/ddg-game/src/front/port_settings.rs`; an
+  unknown one is an error. `locales/ja.toml` holds only `[meta]` and `[ui]`: the Japanese of
+  these strings, written for the port (`ja` stays the identity for every sprite). A string
+  missing in a language falls back to English.
 
 Values are a string, or a table with `text` and options:
 
