@@ -498,6 +498,7 @@ mod tests {
         ("vsync", true),
         ("fullscreen", false),
         ("wide_menus", true),
+        ("hud_upscale", false),
         ("one_line_captions", true),
         ("landmark_names", true),
         ("board_names", true),

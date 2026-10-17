@@ -125,6 +125,7 @@ switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml
   --vsync                  present with vsync [on] (--uncapped)
   --fullscreen             borderless full screen; Alt+Enter or F11 switch it [off]
   --wide-menus             menu backdrops to the edges of a wide window [on]
+  --hud-upscale            HUD and menu art enlarged with xBRZ edges, not pixel blocks [off]
   --one-line-captions      translation: captions and banners as one line [on]
   --landmark-names         translation: names under the landmark plates [on]
   --board-names            translation: romaji under the route board's kanji [on]

@@ -62,11 +62,11 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
   options screens are open.
 * **Groups**: Language & text (`lang`, `one_line_captions`, `landmark_names`, `board_names`,
   `subtitles`, `font`, `display_font`); Display (`hud_layout`, `ui_scaling`, `ui_scale`,
-  `wide_menus`, `interpolate`, `vsync`, `fullscreen`); 3D & effects (`wide_visibility`, `square_pixels`,
+  `wide_menus`, `hud_upscale`, `interpolate`, `vsync`, `fullscreen`); 3D & effects (`wide_visibility`, `square_pixels`,
   `stable_track_variants`, `texture_filtering`, `anisotropic`, `msaa`, `ground_variation`,
   `ground_detiling`, `texture_pack`, `fog`, `wide_weather`, `far_traffic`, `max_lod`,
   `early_activation`, `draw_distance`, `distance_fade`); Saves & controls (`save_on_change`,
-  `save_timed_out_names`, `keyboard_with_controller`, `exit_no_to_menu`). All 34 keys of
+  `save_timed_out_names`, `keyboard_with_controller`, `exit_no_to_menu`). All 35 keys of
   the table below.
 * **Keys**: up/down move (no wrap, repeat on hold), left/right step the value (switches flip,
   `ui_scale` runs Auto, 1×…4×, the others wrap), Enter (confirm) steps it on, Esc (cancel)
@@ -78,7 +78,7 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
   (`--shot`) never write it, as they never read it.
 * **When it applies** (the status line): *Applies now*: `lang` (the locale is installed again:
   sprite text, header art and these strings switch at once), `ui_scaling`, `ui_scale`,
-  `wide_menus` (the canvas is refitted), `fullscreen`, `save_on_change`, `keyboard_with_controller` (the
+  `wide_menus` (the canvas is refitted), `hud_upscale` (the canvas is composed every frame), `fullscreen`, `save_on_change`, `keyboard_with_controller` (the
   input is rebuilt), `exit_no_to_menu`. *Applies from the next stage*: everything a run reads
   when it starts (the HUD layout, interpolation, the 3D and caption switches,
   `save_timed_out_names`). *Applies after a restart*: `vsync` (the surface's present mode is
@@ -122,6 +122,7 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
 | `vsync` | on | `--[no-]vsync`, `--uncapped` | — (DirectDraw flip) | presents with vsync (FIFO); off: uncapped |
 | `fullscreen` | off | `--[no-]fullscreen`; Alt+Enter / F11 at any time | full screen at 640×480 (DirectDraw exclusive; windowed only with `-debug`, renderer.md §3) | borderless full screen on the window's monitor at its own resolution; off: a window. Alt+Enter and F11 switch it in every window (menus, play, view) and write the new state to `config.toml`, unless a flag or `DDG_FULLSCREEN` fixed it for the run |
 | `wide_menus` | on | `--[no-]wide-menus` | the 640×480 menus and attract title picture centred over black | on a wide window the menu backdrops continue to the edges (their tile pattern repeated) and so does the attract title picture tbl 0x410 (paper synthesised from its plain edges, blended in at the seams), never stretched; at 4:3 pixel-identical (menus.md §14) |
+| `hud_upscale` | off | `--[no-]hud-upscale` | blocks of whole pixels: each art pixel of the HUD and menu sprites an N×N square at the canvas multiple | xBRZ-shaped edges: at canvas multiples 2–4 each tilemap is enlarged as one image with index-preserving xBRZ (no new colours, no seams at tile borders), still drawn through the palette, so palette swaps, the animated speed readout, the route strip and fades are intact; other multiples, the rect layer, paper fills and translated text unchanged (docs/texture-packs.md, "HUD sprites") |
 | `one_line_captions` | on | `--[no-]one-line-captions` | — (Japanese sprites) | with a translation: station captions and banners as one line of text instead of three sprites translated one by one (localisation.md) |
 | `landmark_names` | on | `--[no-]landmark-names` | — | with a translation: the landmark's English name under its kanji plate (localisation.md) |
 | `board_names` | on | `--[no-]board-names` | — | with a translation: romaji under the route board's kanji (localisation.md) |

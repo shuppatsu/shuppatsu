@@ -220,6 +220,7 @@ impl App {
         pad.joystick_dat = joystick_dat(&opts.pad);
         let controls = Controls::new(&exe, usize::from(save.eeprom.options().control_mode), &pad)?;
         let mut bank = play::load_bank(&data, &exe, &opts.locale)?;
+        bank.set_upscale(opts.settings.hud_upscale);
         if opts.first_run {
             // The language screen's labels, before any language is installed.
             crate::locale::install_label_font(&mut bank)?;
@@ -890,6 +891,8 @@ impl App {
                     g.set_fullscreen(s.fullscreen);
                 }
             }
+            // The canvas is composed again every frame.
+            "hud_upscale" => self.res().bank.set_upscale(s.hud_upscale),
             "save_on_change" => self.res().save.save_on_change = s.save_on_change,
             "keyboard_with_controller" => {
                 self.opts.pad.keyboard_with_controller = s.keyboard_with_controller;

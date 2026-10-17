@@ -131,6 +131,10 @@ settings! {
     /// Menu backdrops continued to the edges of a wide window (menus.md §14); off = the 4:3
     /// menus centred over black.
     wide_menus = true;
+    /// The 2D sprite art (HUD and menus) enlarged with index-preserving xBRZ at canvas
+    /// multiples 2–4, palette effects intact (docs/texture-packs.md); off (default) = the
+    /// original's blocks of whole pixels.
+    hud_upscale = false;
     /// With a translation: captions and banners as one line of text (localisation.md); off =
     /// the sprites translated one by one.
     one_line_captions = true;

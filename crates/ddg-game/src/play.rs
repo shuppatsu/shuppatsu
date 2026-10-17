@@ -235,6 +235,7 @@ impl Play {
         } = shared;
         // Enhancement `texture_pack` (docs/texture-packs.md): read when the stage loads.
         data.texture_pack = opts.locale.texture_pack.clone();
+        bank.set_upscale(opts.settings.hud_upscale);
         let exe_bytes = data.exe()?;
         let exe = Exe::parse(&exe_bytes)?;
         let tables = Tables {

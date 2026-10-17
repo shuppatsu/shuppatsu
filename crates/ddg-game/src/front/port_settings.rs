@@ -125,6 +125,7 @@ pub const ITEMS: &[Item] = {
         item("ui_scaling", Display, Kind::UiScaling, Now),
         item("ui_scale", Display, Kind::UiScale, Now),
         switch("wide_menus", Display, Now),
+        switch("hud_upscale", Display, Now),
         switch("interpolate", Display, NextStage),
         switch("vsync", Display, Restart),
         switch("fullscreen", Display, Now),
