@@ -221,6 +221,7 @@ pub fn sub_view(
         projection: Projection {
             fov_tenths: vp.fov_tenths,
             stretch,
+            ..Default::default()
         },
         clear,
     }

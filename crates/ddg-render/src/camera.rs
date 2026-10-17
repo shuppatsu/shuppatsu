@@ -9,6 +9,34 @@ use glam::{Mat4, Vec3};
 pub const NEAR: f32 = 0.05;
 pub const FAR: f32 = 32.0;
 
+/// Clip-space depth (D3D convention, 0 = near … 1 = far) of eye depth `d` under a far plane.
+fn d3d_depth(d: f32, far: f32) -> f32 {
+    far * (d - NEAR) / ((far - NEAR) * d)
+}
+
+/// Eye depth of D3D clip-space depth `z` under a far plane (the inverse of [`d3d_depth`]).
+fn eye_depth(z: f32, far: f32) -> f32 {
+    NEAR * far / (far - z * (far - NEAR))
+}
+
+/// The eye depth (world units) at which the original's 2D depth word `depth` (z = depth /
+/// 32768, renderer.md §8) sits once the far plane is moved to `far`: the same distance in
+/// front of the far plane as under the original's 32 (enhancement `draw_distance`). The
+/// background layers so keep occluding only the last few units: the sky (0x7ffe) the last
+/// 1.2, the panorama (0x7ff0) the last 7.6.
+pub fn background_eye_depth(depth: u16, far: f32) -> f32 {
+    eye_depth(f32::from(depth) / 32768.0, FAR) + (far - FAR)
+}
+
+/// The renderer's (reversed) depth of a 2D depth word with the far plane at `far`; at the
+/// original's 32 it is `1 − depth / 32768`.
+pub fn background_depth(depth: u16, far: f32) -> f32 {
+    if far == FAR {
+        return 1.0 - f32::from(depth) / 32768.0;
+    }
+    1.0 - d3d_depth(background_eye_depth(depth, far), far)
+}
+
 /// Default vertical FOV in tenths of a degree (int at 0x47c3e0).
 pub const DEFAULT_FOV_TENTHS: u16 = 300;
 
@@ -36,6 +64,8 @@ pub struct Projection {
     /// Horizontal stretch applied on top of Hor+ widening; [`ORIGINAL_STRETCH`] reproduces the
     /// original's look, 1.0 gives square pixels.
     pub stretch: f32,
+    /// Far plane (world units): [`FAR`], or further with enhancement `draw_distance`.
+    pub far: f32,
 }
 
 impl Default for Projection {
@@ -43,6 +73,7 @@ impl Default for Projection {
         Self {
             fov_tenths: DEFAULT_FOV_TENTHS,
             stretch: ORIGINAL_STRETCH,
+            far: FAR,
         }
     }
 }
@@ -58,7 +89,8 @@ impl Projection {
         let aspect = viewport_aspect / self.stretch;
         // The original's PerspectiveLH (0x4261e0) has m00 = 1/(t·a), m11 = 1/t, m23 = 1 and
         // depth m22 = f/(f−n), m32 = −n·f/(f−n). Reversed: m22 = −n/(f−n), m32 = n·f/(f−n).
-        let r = NEAR / (FAR - NEAR);
+        let far = self.far;
+        let r = NEAR / (far - NEAR);
         Mat4::from_cols_array(&[
             1.0 / (tan_half * aspect),
             0.0,
@@ -74,7 +106,7 @@ impl Projection {
             1.0,
             0.0,
             0.0,
-            FAR * r,
+            far * r,
             0.0,
         ])
     }
@@ -141,6 +173,29 @@ mod tests {
         let m43 = p.matrix(4.0 / 3.0);
         assert_eq!(m.y_axis.y, m43.y_axis.y);
         assert!(m.x_axis.x < m43.x_axis.x);
+        // A further far plane maps there to 0 and keeps the near plane at 1.
+        let far = Projection { far: 96.0, ..p }.matrix(1.6);
+        let f = far * Vec4::new(0.0, 0.0, 96.0, 1.0);
+        let n = far * Vec4::new(0.0, 0.0, NEAR, 1.0);
+        assert!((f.z / f.w).abs() < 1e-6 && (n.z / n.w - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn background_keeps_its_distance_from_the_far_plane() {
+        for w in [0x7fe0u16, 0x7ff0, 0x7ffe] {
+            assert_eq!(background_depth(w, FAR), 1.0 - f32::from(w) / 32768.0);
+            let d = background_eye_depth(w, FAR);
+            assert!((d3d_depth(d, FAR) - f32::from(w) / 32768.0).abs() < 1e-6);
+            for far in [64.0, 96.0, 128.0] {
+                let gap = FAR - d;
+                assert!((far - background_eye_depth(w, far) - gap).abs() < 1e-3);
+            }
+        }
+        // The panorama sits 7.6 units in front of the far plane, the sky 1.2.
+        assert!((FAR - background_eye_depth(0x7ff0, FAR) - 7.6).abs() < 0.1);
+        assert!((FAR - background_eye_depth(0x7ffe, FAR) - 1.2).abs() < 0.1);
+        // The order of the layers stays.
+        assert!(background_depth(0x7ff0, 96.0) > background_depth(0x7ffe, 96.0));
     }
 }
 

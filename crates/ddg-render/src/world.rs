@@ -151,6 +151,9 @@ pub struct FrameGeometry {
     /// Line list, for debug overlays such as track centre lines.
     pub lines: Vec<LineVertex>,
     pub missing_parts: usize,
+    /// The far plane the background's depth words are placed for (enhancement
+    /// `draw_distance`, [`crate::camera::background_depth`]); `None` = the original's.
+    pub far: Option<f32>,
 }
 
 impl FrameGeometry {
@@ -245,7 +248,7 @@ impl FrameGeometry {
     /// Adds a screen-space quad (corners in fan order) with per-corner colours at the
     /// original's 2D depth word `depth` (z = depth / 32768).
     pub fn add_bg_quad(&mut self, corners: [[f32; 2]; 4], colours: [[f32; 4]; 4], depth: u16) {
-        let z = bg_depth(depth);
+        let z = self.bg_z(depth);
         for i in [0, 1, 2, 0, 2, 3] {
             self.background.push(BgVertex {
                 pos: [corners[i][0], corners[i][1], z],
@@ -263,7 +266,7 @@ impl FrameGeometry {
         uvs: [[f32; 2]; 4],
         depth: u16,
     ) {
-        let z = bg_depth(depth);
+        let z = self.bg_z(depth);
         if let Some(list) = self.background_tex.get_mut(page) {
             for i in [0, 1, 2, 0, 2, 3] {
                 list.push(BgTexVertex {
@@ -282,6 +285,14 @@ impl FrameGeometry {
                     colour,
                 });
             }
+        }
+    }
+
+    /// The renderer's depth of a 2D depth word for this frame's far plane.
+    fn bg_z(&self, depth: u16) -> f32 {
+        match self.far {
+            Some(far) => crate::camera::background_depth(depth, far),
+            None => bg_depth(depth),
         }
     }
 

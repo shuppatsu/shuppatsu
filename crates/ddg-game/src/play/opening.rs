@@ -582,6 +582,7 @@ pub(super) fn window_view(
         projection: Projection {
             fov_tenths,
             stretch,
+            ..Default::default()
         },
         clear: true,
     }

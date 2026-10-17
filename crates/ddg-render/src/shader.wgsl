@@ -17,6 +17,8 @@ struct Frame {
     //     where magnified and filtered where minified (`anisotropic` alone);
     // y = 1: alpha to coverage (`msaa`); z = 1: `ground_variation`; w = 1: `ground_detiling`
     shade: vec4<f32>,
+    // Enhancement distance_fade: x = start, y = end (eye-space depth), z = 1 to enable
+    fade: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -189,6 +191,19 @@ fn ground_variation(xz: vec2<f32>) -> vec3<f32> {
     return tint * (1.0 + 0.3 * n);
 }
 
+// Enhancement distance_fade: a screen-door (4x4 ordered dither) fade over the last stretch
+// before the far plane, so the background shows through instead of a hard edge.
+fn faded_out(depth: f32, pixel: vec2<f32>) -> bool {
+    if (frame.fade.z == 0.0) {
+        return false;
+    }
+    let t = clamp((depth - frame.fade.x) / (frame.fade.y - frame.fade.x), 0.0, 1.0);
+    var bayer = array<f32, 16>(0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0,
+                               3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0);
+    let p = vec2<u32>(pixel) & vec2<u32>(3u);
+    return t > (bayer[p.y * 4u + p.x] + 0.5) / 16.0;
+}
+
 @fragment
 fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Derivatives first, in uniform control flow.
@@ -217,6 +232,9 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
         }
     } else if (texel.a < 0.5) {
         // Colour key: RGB565 0x0000 was uploaded with alpha 0.
+        discard;
+    }
+    if (faded_out(in.eye_depth, in.clip.xy)) {
         discard;
     }
     var colour = texel.rgb;

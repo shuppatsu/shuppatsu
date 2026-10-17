@@ -61,6 +61,8 @@ struct FrameUniform {
     fog: [f32; 4],
     /// Sampling mode, alpha to coverage, ground variation, ground de-tiling (shader.wgsl).
     shade: [f32; 4],
+    /// Enhancement `distance_fade`: x = start, y = end (eye depth), z = 1 to enable.
+    fade: [f32; 4],
 }
 
 /// The pipelines of the world pass, for one sample count.
@@ -164,6 +166,9 @@ pub struct Renderer {
     /// Sample counts found unusable on this device (validation failed once).
     msaa_unsupported: Vec<u32>,
     pub fog: Fog,
+    /// Enhancement `distance_fade`: the world dissolves (ordered dither) into what is behind
+    /// it between these eye depths (start, end); `None` = the original's hard far plane.
+    pub distance_fade: Option<(f32, f32)>,
     pub projection: Projection,
     pub show_lines: bool,
     /// Fraction of the target height above the 3D view. The original's 3D viewport is virtual
@@ -480,6 +485,7 @@ impl Renderer {
             msaa_colour: None,
             msaa_unsupported: Vec::new(),
             fog: Fog::default(),
+            distance_fade: None,
             projection: Projection::default(),
             show_lines: false,
             band_top: 0.0,
@@ -758,6 +764,10 @@ impl Renderer {
             ],
             fog: [fog.start, fog.end, if fog.enabled { 1.0 } else { 0.0 }, 0.0],
             shade: [0.0; 4],
+            fade: match self.distance_fade {
+                Some((start, end)) => [start, end, 1.0, 0.0],
+                None => [0.0; 4],
+            },
         };
         self.prepare_shading(device);
         let uniform = FrameUniform {
