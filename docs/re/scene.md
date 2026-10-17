@@ -282,6 +282,77 @@ Keep everything the original draws, unchanged, and only add things outside its v
 `tan_half_fov_x` for Hor+ is `ORIGINAL_TAN_HALF_FOV_X × (screen aspect)/(4/3)`. This assumes
 the 4:3 screen's 3D band. Use the port's actual 3D viewport if it differs.
 
+### 5.3 Pop-in, LOD and draw distance (port enhancements, each its own setting, off by default)
+
+**What the original swaps or limits by distance** — confirmed (code and data; the reports are
+the ignored data tests `activation_distance_report`, `lod_part_report`, `traffic_lod_report`,
+`activation_swap_report` and `main_line_runs_report` in `data_scene.rs`):
+
+| mechanism | distance rule | models |
+|---|---|---|
+| main line (§2.5) | 22 single pieces, then bands of 2/4/8/16/32 points, re-cut every point; ends **130 points (≈ 16 units, 160 m) ahead** although the far plane is 32 | singles: 10 triangles each (3 ballast variants); bands 1–2: 4, bands 3–5: 2 (flat strips) |
+| side-track rail runs (§2.6) | the band counts are baked per bucket into the run record (+4..+7): the nearer the bucket's camera point, the more single pieces | as the main line |
+| other kinds (§2.7) | bands 0–3: P2 / P0 / P3 (2 points) / P4 (4 points), then P0 | P2 has 8× the triangles of P0 (e.g. 32 vs 4); P3/P4 are P0 stretched |
+| side tracks at all | a run is listed by a bucket only once it is near: the farthest slot of a newly listed run is ≤ 20 units for 95 % of runs | — |
+| scenery (§4) | activation lists: an object enters at **4–20 units (40–200 m)** for 99 % of activations (0–4: 21, 4–8: 7489, 8–12: 19 856, 12–16: 11 861, 16–20: 18 955, 20–24: 250, beyond: 962 of 59 397) | no scenery LOD: the +0x18 slots are cleared (§4), and only 3 activations swap one placement for another at the same spot (data) |
+| AI trains (traffic.md §4) | 5 bands of 3 units from 15 units ahead, plus 1–3 bands by lateral distance | e.g. 292 / 164 / 101 / 36 / 10 triangles; the farthest is a box, no flat sprite |
+| result replay trains (§8.1) | the same bands on the car's z | as AI trains |
+
+So in the original, buildings and trees appear 40–200 m ahead inside a view that reaches 320 m,
+the main line's rails stop at 160 m, and the ballast changes model at band boundaries that move
+with the camera. None of the far models is a deliberately different look (no impostor sprite):
+each coarser model is the same surface with fewer triangles (flat ballast strips, boxes for far
+cars), so `max_lod` uses the nearest model everywhere without judgement calls.
+
+**`max_lod`** (`TrackOptions::max_lod`; the game's `traffic::add_cars`, `ResultView::max_lod`):
+- Rail runs (main line and side tracks): single-point pieces over every slot the bands would
+  cover, with the same single-piece variant pattern (`(phase + k) & 3`).
+- Other kinds: P2 at one point per piece over the bands' and the remainder's slots; the buffer
+  stop keeps the original's test (it reads the run's byte 6).
+- AI trains and result-replay cars: LOD 0 wherever the original's bands draw them (the bands
+  still decide *whether* a car is drawn: 25 m behind, the lateral cut-off, `far_traffic`).
+- Scenery: nothing to change.
+- Cost: 3–5× the track triangles (stage 10 Yokohama: 4 000 → 18 000 per frame).
+
+**`early_activation`** (`scene::activate_early`, applied by `RouteScene::set_geometry` after
+`wide_visibility`'s `widen_intervals`):
+- Each live interval's start is moved back to the first point of the stretch before it from
+  which the object's bounding circle is in front of the eye, inside the horizontal view (the
+  wide view's tan when `wide_visibility` is on, else the original's 0.634) and within the far
+  plane, evaluated with the cab camera at every point; at most 2 × far / 0.125 points earlier and
+  never before the same placement's previous removal (no double drawing). Removals are not
+  touched, so deactivation behind the camera stays the original's (or `wide_visibility`'s).
+- Track: the main line runs on in 32-point pieces to the far plane, and side-track runs of
+  the buckets up to `far / 0.5` ahead are drawn at slots the camera's bucket does not list
+  (`TrackOptions::reach`, nearest bucket first, as `track_instances_wide` does behind).
+- The engine is untouched (activation in the original is display-only; the replays are still
+  0 mismatches).
+- No fade-in of its own: with early activation objects appear at the far plane, where
+  `distance_fade` dissolves them in.
+
+**`draw_distance`** (`original` 32 units / `2x` / `3x` / `max` = 4×, 128 units = the panorama's
+anchor distance, §6.4):
+- `Projection::far`; activation and track building as `early_activation`, out to the new far
+  plane (a further far plane with the original activation would show nothing new); AI trains
+  with `far_traffic` to the new far plane.
+- The 2D background keeps the same distance in front of the far plane as in the original
+  (`camera::background_depth`): the original's depth words put the sky (0x7ffe) 1.2 units and the
+  panorama (0x7ff0) 7.6 units in front of the far plane, so world geometry from 24.4 units on is
+  hidden wherever a panorama sprite covers it (in the original too). Mapping the words
+  proportionally would hide everything beyond 76 % of any far plane behind the mountains;
+  keeping the gap keeps that strip as thin as the original's.
+- The snow fog (its own start/end), the screen-space sky, ground, panorama and extra quads are
+  unchanged; the station-result replay keeps its own projection (far 32).
+
+**`distance_fade`** (`Renderer::distance_fade`, shader `faded_out`): a 4×4 ordered-dither
+screen-door fade of the world from `end − far/4` to `end`, `end` = where the panorama starts
+to hide the world (far − 7.6 units). Dither rather than blending to a colour: what lies behind a
+distant object is the sky gradient, the flat or textured ground or a panorama sprite, so a
+single fade colour would draw sky-coloured ghosts in front of the mountains; the dither shows
+whatever is really behind and needs no sorting. With the original draw distance it fades
+16.4–24.4 units, which removes objects the original shows between 24 and 30 units where no
+panorama covers them; it is meant for the longer draw distances.
+
 ## 6. Background (0x41dfc0) — confirmed (code) unless noted
 
 `mode` = area (0 Yamanote, 1 Akita, 2 Tōkaidō, 3 Hokuhoku, 4 Keihin). Everything is 2D, in
@@ -468,7 +539,8 @@ width it returns exactly the 3 original tiles.
 - `track_instances(route, tables, ctx, pos, &camera) -> Vec<TrackInstance { part_id,
   transform: Affine, slot, source }>`, and `track_instances_wide(.., extra_buckets)`.
 - `scenery(route, tables, ctx, &walker) -> Vec<SceneryInstance>`.
-- `live_intervals`, `widen_intervals`, `live_at`, `ORIGINAL_TAN_HALF_FOV_X` (§5).
+- `live_intervals`, `widen_intervals`, `live_at`, `ORIGINAL_TAN_HALF_FOV_X` (§5);
+  `activate_early` / `EarlyView` and `TrackOptions { max_lod, reach }` (§5.3).
 - `tunnel_probe`, `background`, `sky_sprite_slots`, `GradientColours::palette`.
 - Background drawing (§6.3–§6.5): `ViewBasis::{look_at, from_cab}` (camera axes as 0x856c20
   holds them), `Viewport2d::{original(tan½fov_y, aspect), hor_plus(half_width), x_range}`,

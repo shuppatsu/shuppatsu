@@ -64,9 +64,10 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
   `subtitles`, `font`, `display_font`); Display (`hud_layout`, `ui_scaling`, `ui_scale`,
   `wide_menus`, `interpolate`, `vsync`, `fullscreen`); 3D & effects (`wide_visibility`, `square_pixels`,
   `stable_track_variants`, `texture_filtering`, `anisotropic`, `msaa`, `ground_variation`,
-  `ground_detiling`, `texture_pack`, `fog`, `wide_weather`, `far_traffic`); Saves & controls
-  (`save_on_change`, `save_timed_out_names`, `keyboard_with_controller`, `exit_no_to_menu`).
-  All 30 keys of the table below.
+  `ground_detiling`, `texture_pack`, `fog`, `wide_weather`, `far_traffic`, `max_lod`,
+  `early_activation`, `draw_distance`, `distance_fade`); Saves & controls (`save_on_change`,
+  `save_timed_out_names`, `keyboard_with_controller`, `exit_no_to_menu`). All 34 keys of
+  the table below.
 * **Keys**: up/down move (no wrap, repeat on hold), left/right step the value (switches flip,
   `ui_scale` runs Auto, 1×…4×, the others wrap), Enter (confirm) steps it on, Esc (cancel)
   goes back to the options list on the new row. Pad: the same through its menu bindings.
@@ -112,7 +113,11 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
 | `texture_pack` | unset | `--texture-pack <dir>` | the textures of `tex*.rom` | replacement 3D texture pages (area and train `tex*.rom`) from a pack directory, any whole multiple of the original size; a page the pack lacks keeps the original; sampling stays nearest unless `texture_filtering` (docs/texture-packs.md; packs made with `ddg-tools upscale-textures`) |
 | `fog` | on | `--[no-]fog` | the snow fog only with DengoSetting's FOGENABLE, which a fresh install lacks: no fog | the snow fog while it snows (`snow_fog`, renderer.md §13.9). `view --fog` is fog everywhere, a separate viewer option (off) |
 | `wide_weather` | on | `--[no-]wide-weather`, `--original-weather` | raindrops and snow in the 4:3 area only (x 0..496) | over the whole visible width; at 4:3 identical to the original (renderer.md §13.9). Test `weather::tests::wide_weather_off_is_the_original_area` |
-| `far_traffic` | on | `--[no-]far-traffic`, `--original-traffic` | AI trains drawn up to 150 m ahead | up to the far plane (320 m), the farthest LOD beyond 150 m; spawning and sounds unchanged (traffic.md §4, renderer.md §13.9) |
+| `far_traffic` | on | `--[no-]far-traffic`, `--original-traffic` | AI trains drawn up to 150 m ahead | up to the far plane (320 m, or `draw_distance`'s), the farthest LOD beyond 150 m; spawning and sounds unchanged (traffic.md §4, renderer.md §13.9) |
+| `max_lod` | off | `--[no-]max-lod` | track pieces, AI trains and result-replay cars change to coarser models with distance (rails in 2–32-point bands re-cut every point, ballast and track-side kinds P0/P3/P4, cars LOD 1–4): visible LOD pop | the nearest band's model at every distance; whether something is drawn is unchanged (scene.md §5.3) |
+| `early_activation` | off | `--[no-]early-activation` | scenery appears 40–200 m ahead (activation lists), side tracks when their bucket lists them, the main line ends 160 m ahead: pop-in inside the 320 m view | each object activated from where its bounding circle comes inside the view and the far plane; main line and side-track runs built out to the far plane; removals unchanged (scene.md §5.3) |
+| `draw_distance` | `original` | `--draw-distance <original\|2x\|3x\|max>` | far plane 32 units (320 m) | 640 m, 960 m or 1280 m (the panorama's distance); scenery, track and `far_traffic` out to it; the 2D background stays as far in front of the far plane as in the original (scene.md §5.3) |
+| `distance_fade` | off | `--[no-]distance-fade` | the world ends at a hard edge (the far plane, or the panorama's depth 7.6 units before it) | the last quarter before that edge dissolves into the background (ordered dither) (scene.md §5.3) |
 | `interpolate` | on | `--[no-]interpolate` | everything moves at the 30 Hz tick | the camera along the track, AI trains, wiper, snow scroll and speedometer needle placed between the last two ticks at the display's rate (renderer.md §13.9); off: every frame shows the last tick |
 | `vsync` | on | `--[no-]vsync`, `--uncapped` | — (DirectDraw flip) | presents with vsync (FIFO); off: uncapped |
 | `fullscreen` | off | `--[no-]fullscreen`; Alt+Enter / F11 at any time | full screen at 640×480 (DirectDraw exclusive; windowed only with `-debug`, renderer.md §3) | borderless full screen on the window's monitor at its own resolution; off: a window. Alt+Enter and F11 switch it in every window (menus, play, view) and write the new state to `config.toml`, unless a flag or `DDG_FULLSCREEN` fixed it for the run |
