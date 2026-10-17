@@ -353,6 +353,24 @@ whatever is really behind and needs no sorting. With the original draw distance 
 16.4–24.4 units, which removes objects the original shows between 24 and 30 units where no
 panorama covers them; it is meant for the longer draw distances.
 
+**Cost** (2560×1440, RDNA 3.5 iGPU, headless: compose + upload + draw + GPU wait, mean of 200–300
+frames, the views of `out/explain/gfx/geometry/`; triangles / world draw calls / ms per frame):
+
+| setting | stage 10 Yokohama | stage 9 Hokuhoku | stage 1 Akita |
+|---|---|---|---|
+| original | 3 988 / 85 / 0.59 | 4 192 / 49 / 0.52 | 4 024 / 25 / 0.51 |
+| `max_lod` | 17 993 / 77 / 0.83 | 10 332 / 43 / 0.58 | 21 972 / 21 / 0.79 |
+| `early_activation` | 4 446 / 105 / 0.97 | 5 542 / 53 / 1.02 | 4 661 / 56 / 0.84 |
+| `draw_distance 2x` | 6 328 / 117 / 1.42 | 7 590 / 62 / 1.00 | 7 540 / 77 / 1.26 |
+| `draw_distance 3x` | 7 643 / 125 / 1.81 | 9 160 / 73 / 1.15 | 9 107 / 86 / 1.86 |
+| `draw_distance max` + fade | 9 404 / 136 / 2.39 | 9 232 / 75 / 1.44 | 10 680 / 89 / 1.64 |
+| all four, max | 76 561 / 127 / 5.14 | 36 855 / 66 / 1.84 | 56 794 / 82 / 3.29 |
+
+`distance_fade` itself costs nothing measurable. The time is mostly the CPU building the frame
+(the buckets ahead: one bit per slot and run records deduplicated took the worst case from
+13.5 to 3.6 ms); the GPU part stays under 1.5 ms. In the windowed game (stage 9 driven,
+`--no-vsync`) every setting ran at the compositor's 55–60 fps, as the original does.
+
 ## 6. Background (0x41dfc0) — confirmed (code) unless noted
 
 `mode` = area (0 Yamanote, 1 Akita, 2 Tōkaidō, 3 Hokuhoku, 4 Keihin). Everything is 2D, in
