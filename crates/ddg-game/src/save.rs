@@ -299,9 +299,14 @@ impl Save {
     }
 }
 
-/// `eeprom.dat` in the user's config dir: `%APPDATA%\ddg` on Windows, else
-/// `$XDG_CONFIG_HOME/ddg` or `~/.config/ddg`.
+/// `eeprom.dat` in the user's config dir ([`config_dir`]).
 pub fn default_path() -> Option<PathBuf> {
+    Some(config_dir()?.join("eeprom.dat"))
+}
+
+/// The port's directory for `eeprom.dat`, `joystick.dat` and `config.toml`: `%APPDATA%\ddg`
+/// on Windows, else `$XDG_CONFIG_HOME/ddg` or `~/.config/ddg` (relative values are ignored).
+pub fn config_dir() -> Option<PathBuf> {
     let absolute = |v: std::ffi::OsString| Some(PathBuf::from(v)).filter(|p| p.is_absolute());
     let dir = if cfg!(windows) {
         std::env::var_os("APPDATA").and_then(absolute)?
@@ -314,7 +319,7 @@ pub fn default_path() -> Option<PathBuf> {
                     .map(|h| h.join(".config"))
             })?
     };
-    Some(dir.join("ddg").join("eeprom.dat"))
+    Some(dir.join("ddg"))
 }
 
 #[cfg(test)]
