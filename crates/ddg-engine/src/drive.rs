@@ -36,7 +36,7 @@ use crate::rules::{
     Buttons, Phase, RuleEvent, RuleTables, Rules, RulesError, StationOutcome, StationResult,
     TickInput, TickOutput, TrainReadout,
 };
-use crate::traffic::{CarPose, SpawnRequest, Traffic, TrafficEnv, TrafficSound};
+use crate::traffic::{CarPose, PlacedTrain, SpawnRequest, Traffic, TrafficEnv, TrafficSound};
 use ddg_formats::FormatError;
 use ddg_formats::route::{Route, UNITS_PER_POINT};
 use ddg_formats::scene::{CabWalker, TrackPos, cab_camera};
@@ -607,6 +607,20 @@ impl Drive {
             tick: u64::from(self.global_tick),
         };
         self.traffic.spawn(req, &env);
+    }
+
+    /// 0x406960 on the current route: a train placed relative to the camera's engine index
+    /// `0x8502a4` (the stage intro's chase, 0x408f40).
+    pub fn ending_place_train(&mut self, train: &PlacedTrain) {
+        let env = TrafficEnv {
+            route: &self.route,
+            models: &self.train_models,
+            obstacle_armed: false,
+            dist_round_m: self.rules.dist_round_m,
+            tick: u64::from(self.global_tick),
+        };
+        self.traffic
+            .place_train(train, self.walker.pos().engine_index, &env);
     }
 
     /// Kills list 5: the camera task and the AI trains.

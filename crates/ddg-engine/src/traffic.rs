@@ -107,6 +107,11 @@ const WAITING_ROWS: [(usize, usize); 2] = [(20, 21), (17, 18)];
 const WAITING_BOGIE_POINTS: usize = 12;
 const WAITING_GATE: i32 = 9000;
 
+/// 0x406960 (the stage intro's chase): 12-point bogies like 0x406c50, and the same passing-
+/// sound gate.
+const PLACED_BOGIE_POINTS: usize = 12;
+const PLACED_GATE: i32 = 9000;
+
 /// Bit of the traffic event mask for each state of `0x857216`.
 fn mask_bit(state: u8) -> i16 {
     1 << state
@@ -181,6 +186,27 @@ impl WaitingSet {
             ahead_points: -(back as i64),
         }
     }
+}
+
+/// A train that 0x406960 places at an explicit track point instead of a `.COM` spawn (the
+/// stage intro's chase, 0x408f40: the player's own train just ahead of the camera).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlacedTrain {
+    /// Model row of 0x457358 (`param_5 & 0xfff`).
+    pub row: usize,
+    /// `param_5 & 0x1000`: runs towards the end of its segment (`+0x30`) with the row's
+    /// second car list.
+    pub forward: bool,
+    /// Track points from the cab's engine index (`0x8502a4`) to the head car's front bogie.
+    pub ahead_points: i64,
+    /// Speed mode (`param_2`).
+    pub mode: i32,
+    pub speed_kmh: i32,
+    /// Mode parameter (`param_4`): braking distance for mode 2, acceleration otherwise.
+    pub param: i32,
+    /// `param_6 == 1`: every car placed at once, walked back by its spacing; otherwise the
+    /// cars stand on the head's point and leave it one after another (`+0x60` = offset).
+    pub spaced: bool,
 }
 
 /// A sound command of this tick.
@@ -742,6 +768,87 @@ impl Traffic {
             });
         }
         self.coupler_frame = false;
+    }
+
+    /// 0x406960: a train of `t.row` placed with its head `t.ahead_points` past the cab at
+    /// `engine_index`. Unlike the spawner the bogies are 12 points apart and the gate starts
+    /// at 9000; the car list is picked as by the spawner (reversed for kinds 3, 7 and 8).
+    pub fn place_train(&mut self, t: &PlacedTrain, engine_index: usize, env: &TrafficEnv) {
+        let route = env.route;
+        let Some(model) = env.models.row(t.row) else {
+            return;
+        };
+        let Some(head) = (engine_index as i64)
+            .checked_add(t.ahead_points)
+            .and_then(|i| usize::try_from(i).ok())
+            .map(|i| {
+                TrackPos {
+                    engine_index: i,
+                    t: 0.0,
+                }
+                .slot(route)
+            })
+            .filter(|&s| s < route.slots.len())
+        else {
+            return;
+        };
+        let dir = usize::from(t.forward);
+        let cars = if matches!(model.kind, 3 | 7 | 8) {
+            reversed(&model.cars[dir ^ 1])
+        } else {
+            model.cars[dir].clone()
+        };
+        let speed_k = t.speed_kmh as f32 * KMH_TO_SPEED_K as f32;
+        let accel = if t.mode == 2 {
+            speed_k * speed_k / (t.param as f32 + t.param as f32)
+        } else {
+            t.param as f32 * KMH_TO_UNITS as f32 * ACCEL_PER_PARAM as f32
+        };
+        let mut pos = head;
+        let mut carry = 0.0f32;
+        for (index, m) in cars.iter().enumerate() {
+            let delay = if t.spaced {
+                let mut d = -m.spacing - carry.abs();
+                while d > 0.0 {
+                    d -= UNITS_PER_POINT;
+                    pos = step(route, pos, !t.forward);
+                    // The fraction is only taken over while it is not zero: a spacing of
+                    // whole points keeps the one of the walk's last but one step.
+                    if d.abs() > 0.0 {
+                        carry = if t.forward { -d } else { d };
+                    }
+                }
+                0.0
+            } else {
+                -m.offset
+            };
+            let at = Bogies {
+                front: pos,
+                rear: step_n(route, pos, !t.forward, PLACED_BOGIE_POINTS),
+                t: carry,
+            };
+            self.cars.push(Car {
+                row: t.row,
+                model: *m,
+                coupled: *m,
+                index: index as u32,
+                forward: t.forward,
+                turned: false,
+                mode: t.mode,
+                waits_for_obstacle: false,
+                at,
+                run: 0.0,
+                stop_at: 0.0,
+                speed: t.speed_kmh as f32 * KMH_TO_UNITS as f32,
+                speed_k,
+                accel,
+                delay,
+                gate: PLACED_GATE,
+                sequence_done: false,
+                prev: at,
+                moved: 0.0,
+            });
+        }
     }
 
     /// Sets the coupler frame `0x857244` (the coupling minigame's success outro and time-up).
