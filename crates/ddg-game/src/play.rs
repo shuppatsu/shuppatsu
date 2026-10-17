@@ -87,7 +87,7 @@ pub struct PlayOptions {
     pub variant: bool,
     /// Check aid: start with the ending (`full` or `plain`) instead of driving.
     pub ending: Option<bool>,
-    /// Check aid: play the stage intro (0x4091a0) and leave.
+    /// Check aid: play the stage intro (0x4091a0 or 0x408f40) and leave.
     pub intro: bool,
     /// Language and font of the text sprites (docs/localisation.md).
     pub locale: crate::locale::LocaleConfig,
@@ -193,7 +193,7 @@ pub fn run(opts: PlayOptions) -> Result<()> {
         app.start_ending(Some(full))?;
     }
     if app.opts.intro && !app.start_stage_intro()? {
-        eprintln!("stage {} has no fly-by intro", app.opts.stage);
+        eprintln!("stage {} has no stage intro", app.opts.stage);
     }
     if let Some((ticks, out)) = app.opts.shot.clone() {
         while app.ticks < ticks && !app.leave {
@@ -379,7 +379,7 @@ impl Play {
         let mut sound = self.sound.filter(crate::sound::Sound::has_device);
         if let Some(s) = sound.as_mut() {
             s.set_voice_log(false);
-            // The intro's music runs on into the departure board (0x4091a0 leaves it).
+            // The intro's music runs on into the departure board (both kinds leave it).
             if self.intro.is_some() {
                 s.leave_stage();
             } else {

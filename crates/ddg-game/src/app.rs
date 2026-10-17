@@ -381,7 +381,7 @@ impl App {
                 self.intro_chosen = Some(chosen);
                 Screen::Play(Box::new(play))
             }
-            // 0x408f40, the intro of the other stages, is not ported: its ticks are left out.
+            // 0x408ec0 has a flag for each of the 20 stages; nothing else reaches here.
             Next::Intro(chosen) => Screen::Wait(TO_BOARD_TICKS, Next::Board(chosen)),
             Next::Play(chosen) => Screen::Play(Box::new(self.start_play(chosen)?)),
         };

@@ -139,8 +139,8 @@ impl Sound {
         self.flush();
     }
 
-    /// The stage half dropped with the voices left playing: the stage intro (0x4091a0) leaves
-    /// its music to run out over the departure board.
+    /// The stage half dropped with the voices left playing: the stage intro (0x4091a0, 0x408f40)
+    /// leaves its music to run out over the departure board.
     pub fn leave_stage(&mut self) {
         self.stage = None;
         self.snd.set_paused(false);
