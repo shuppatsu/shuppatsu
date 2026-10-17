@@ -588,6 +588,9 @@ impl Locale {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocaleConfig {
     pub lang: String,
+    /// `lang` came from a flag, the environment or `config.toml` (else the first-run
+    /// language screen asks, `crate::config`).
+    pub lang_chosen: bool,
     /// TTF/OTF font files, `:`-separated like `PATH`: the primary font, then fallbacks for
     /// characters it lacks. No font ships with the project.
     pub font: Option<PathBuf>,
@@ -612,6 +615,7 @@ impl Default for LocaleConfig {
     fn default() -> Self {
         Self {
             lang: IDENTITY_LANG.to_owned(),
+            lang_chosen: false,
             font: None,
             display_font: None,
             dir: None,
@@ -643,16 +647,29 @@ impl LocaleConfig {
     }
 
     /// `DDG_LANG`, `DDG_FONT`, `DDG_DISPLAY_FONT`, `DDG_LOCALE_DIR`, `DDG_UI_SCALE`,
-    /// `DDG_HUD_LAYOUT`, `DDG_UI_SCALING` (unknown values are ignored with a warning).
-    pub fn from_env() -> Self {
-        let var = |k: &str| std::env::var_os(k).filter(|v| !v.is_empty());
-        let mut c = Self::default();
+    /// `DDG_HUD_LAYOUT`, `DDG_UI_SCALING` over what is set (the defaults or `config.toml`;
+    /// unknown values are ignored with a warning).
+    pub fn apply_env(&mut self) {
+        self.apply_vars(|k| std::env::var_os(k));
+    }
+
+    /// [`LocaleConfig::apply_env`] with the variables looked up by `get` (tests).
+    pub fn apply_vars(&mut self, get: impl Fn(&str) -> Option<std::ffi::OsString>) {
+        let var = |k: &str| get(k).filter(|v| !v.is_empty());
+        let c = self;
         if let Some(l) = var("DDG_LANG") {
             c.lang = l.to_string_lossy().into_owned();
+            c.lang_chosen = true;
         }
-        c.font = var("DDG_FONT").map(PathBuf::from);
-        c.display_font = var("DDG_DISPLAY_FONT").map(PathBuf::from);
-        c.dir = var("DDG_LOCALE_DIR").map(PathBuf::from);
+        if let Some(f) = var("DDG_FONT") {
+            c.font = Some(f.into());
+        }
+        if let Some(f) = var("DDG_DISPLAY_FONT") {
+            c.display_font = Some(f.into());
+        }
+        if let Some(d) = var("DDG_LOCALE_DIR") {
+            c.dir = Some(d.into());
+        }
         if let Some(s) = var("DDG_UI_SCALE").and_then(|v| v.to_str()?.parse().ok()) {
             c.ui_scale_fixed = Some(clamp_scale(s));
         }
@@ -669,7 +686,6 @@ impl LocaleConfig {
             }
         }
         c.ui_scale = c.ui_scale_fixed.unwrap_or(1);
-        c
     }
 
     /// Takes `--lang <code>`, `--font <files>`, `--display-font <files>`, `--locale-dir <dir>`,
@@ -681,7 +697,10 @@ impl LocaleConfig {
         let mut it = std::mem::take(args).into_iter();
         while let Some(a) = it.next() {
             match a.as_str() {
-                "--lang" => self.lang = it.next().context("--lang needs a code")?,
+                "--lang" => {
+                    self.lang = it.next().context("--lang needs a code")?;
+                    self.lang_chosen = true;
+                }
                 "--font" => self.font = Some(it.next().context("--font needs a file")?.into()),
                 "--display-font" => {
                     let v = it.next().context("--display-font needs a file")?;
@@ -764,6 +783,14 @@ pub fn install(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Resu
     bank.set_label_font(Some(LabelFont::new(Box::new(font))));
     bank.set_display_label_font(display.map(|d| LabelFont::new(Box::new(d))));
     Ok(n)
+}
+
+/// Only the bundled font as the label font, no text overrides: the first-run language screen
+/// draws its port-only text with it before any language is installed.
+pub fn install_label_font(bank: &mut SpriteBank) -> Result<()> {
+    let font = FontGlyphs::from_bytes(BUNDLED_FONT)?;
+    bank.set_label_font(Some(LabelFont::new(Box::new(font))));
+    Ok(())
 }
 
 /// The translated station names of the vertical plates (`[station_plate]`), by plate tilemap

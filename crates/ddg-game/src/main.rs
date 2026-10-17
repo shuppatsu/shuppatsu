@@ -7,6 +7,7 @@ mod app;
 mod board_en;
 mod cab;
 mod captions;
+mod config;
 mod coupling_hud;
 mod departure_hud;
 mod desktop;
@@ -69,7 +70,8 @@ options:
   --hud                    the driving HUD over the view (test values)
   --debug-title            live debug text in the window title (env DDG_DEBUG_TITLE=1)
   --size <WxH>             window/frame size (default 1280x800, 16:10)
-  --lang <code>            text-sprite language (default ja = the original art; env DDG_LANG)
+  --lang <en|ja>           language (ja = the original art; env DDG_LANG; remembered in
+                           config.toml: on the first start the game asks once)
   --font <files>           TTF/OTF fonts for translated text, primary first, :-separated
                            fallbacks (env DDG_FONT; default: bundled M+ 2 Medium)
   --display-font <files>   the same for display text: headers, menu titles, banners
@@ -85,6 +87,10 @@ options:
                            nearest = plain nearest neighbour (uneven pixels)
   --ui-scale <1..4>        fixed 2D canvas multiple (640x480 x n; env DDG_UI_SCALE); default:
                            follows the window height (smooth: ceil(h/480), integer: floor(h/480))
+
+settings file: $XDG_CONFIG_HOME/ddg/config.toml (~/.config/ddg; %APPDATA%\\ddg on Windows),
+  keys lang, hud_layout, ui_scaling, ui_scale, font, display_font. Flags override the
+  environment, which overrides the file. Headless --shot runs never read it.
 
 play keys (mode 0): Down/Up power +/-, Right/Left brake +/- (one more press past B8 = EB),
   Space horn, Enter ATS confirm / panel / menu confirm, Esc pause / cancel, Up/Down menu cursor
@@ -119,8 +125,8 @@ struct Options {
 
 fn parse_play_args() -> Result<play::PlayOptions> {
     let mut args: Vec<String> = std::env::args().skip(2).collect();
-    let mut locale = locale::LocaleConfig::from_env();
-    locale.take_args(&mut args)?;
+    let headless = args.iter().any(|a| a == "--shot");
+    let locale = config::locale(&mut args, headless)?;
     identity::take_debug_title_flag(&mut args);
     let mut opts = play::PlayOptions {
         stage: args
@@ -191,10 +197,14 @@ fn parse_play_args() -> Result<play::PlayOptions> {
 /// `ddg-game [options]`: the whole game ([`app`]).
 fn parse_app_args() -> Result<app::AppOptions> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
-    let mut locale = locale::LocaleConfig::from_env();
-    locale.take_args(&mut args)?;
+    let headless = args.iter().any(|a| a == "--shot");
+    let locale = config::locale(&mut args, headless)?;
     identity::take_debug_title_flag(&mut args);
+    // Hidden: the first-run language screen even when a language is set (headless checks).
+    let forced = args.iter().any(|a| a == "--first-run");
+    args.retain(|a| a != "--first-run");
     let mut opts = app::AppOptions {
+        first_run: config::asks_language(&locale, headless, forced),
         size: (1280, 800),
         uncapped: false,
         square_pixels: false,
@@ -246,8 +256,9 @@ fn parse_app_args() -> Result<app::AppOptions> {
 
 fn parse_args() -> Result<Options> {
     let mut args: Vec<String> = std::env::args().skip(1).collect();
-    let mut locale = locale::LocaleConfig::from_env();
-    locale.take_args(&mut args)?;
+    // `shot` renders headless: no config file.
+    let headless = args.first().map(String::as_str) == Some("shot");
+    let locale = config::locale(&mut args, headless)?;
     identity::take_debug_title_flag(&mut args);
     let shot = match args.first().map(String::as_str) {
         Some("view") => false,

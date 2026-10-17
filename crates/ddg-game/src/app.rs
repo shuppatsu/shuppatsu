@@ -16,6 +16,7 @@ use crate::front::attract::{
 };
 use crate::front::calibrate::CalibrationScreen;
 use crate::front::dialog::ExitConfirm;
+use crate::front::language::{Language, LanguageScreen, Look};
 use crate::front::options::{self, ControlPage, ListResult, OptionsList, SetEffect, ValuePage};
 use crate::front::prerun::{DepartureBoard, LeverCheck};
 use crate::front::records::{Records, RecordsStep};
@@ -82,6 +83,8 @@ pub struct AppOptions {
     /// Headless: run this many app ticks, render one frame to a PPM and exit.
     pub shot: Option<(u64, PathBuf)>,
     pub locale: crate::locale::LocaleConfig,
+    /// Show the first-run language screen before attract (`crate::config::asks_language`).
+    pub first_run: bool,
 }
 
 /// What comes after a tick gap.
@@ -96,6 +99,8 @@ enum Next {
 }
 
 enum Screen {
+    /// The first-run language screen (port only).
+    Language(LanguageScreen),
     Attract(Attract),
     Title(TitleMenu),
     Options(OptionsList),
@@ -120,6 +125,7 @@ struct Defs {
     attract: AttractTables,
     cursor_x: i16,
     exit_frame: (i16, i16),
+    language: Look,
 }
 
 pub struct App {
@@ -184,6 +190,10 @@ impl App {
         pad.joystick_dat = joystick_dat(&opts.pad);
         let controls = Controls::new(&exe, usize::from(save.eeprom.options().control_mode), &pad)?;
         let mut bank = play::load_bank(&data, &exe, &opts.locale)?;
+        if opts.first_run {
+            // The language screen's labels, before any language is installed.
+            crate::locale::install_label_font(&mut bank)?;
+        }
         let mut sound = if headless || opts.mute {
             None
         } else {
@@ -201,8 +211,11 @@ impl App {
         let front = FrontTables::read(&exe)?;
         crate::front::mark_backdrops(&mut bank, &front);
         let screens = ScreenTables::read(&exe)?;
+        let cursor_x = crate::front::cursor_x(&front, map_size(&bank, TBL_CURSOR).0);
+        let menu_palette = layer.palettes[usize::from(crate::front::PAL_MENU)].as_ref();
         let defs = Defs {
-            cursor_x: crate::front::cursor_x(&front, map_size(&bank, TBL_CURSOR).0),
+            cursor_x,
+            language: Look::new(cursor_x, map_size(&bank, TBL_CURSOR), menu_palette),
             exit_frame: map_size(&bank, usize::try_from(front.exit_dialog.frame)?),
             front,
             screens,
@@ -227,7 +240,11 @@ impl App {
                 gpu: None,
             }),
             // Boot: `Game_MainFlow` starts with attract (`0x855ffc & 0x40` clear).
-            screen: Screen::Attract(Attract::new(false, AttractCounters::default())),
+            screen: if opts.first_run {
+                Screen::Language(LanguageScreen::new())
+            } else {
+                Screen::Attract(Attract::new(false, AttractCounters::default()))
+            },
             joystick,
             replay: false,
             attract_counters: AttractCounters::default(),
@@ -412,6 +429,7 @@ impl App {
         let mut demo: Option<(Option<AttractDemo>, usize)> = None;
         let mut set_option: Option<(usize, u8)> = None;
         let mut calibrated = None;
+        let mut language = None;
         let joy = if matches!(self.screen, Screen::Calibrate(_)) {
             self.joy_state()
         } else {
@@ -425,6 +443,22 @@ impl App {
         r.layer.fans.clear();
         r.layer.widgets.clear();
         self.screen = match screen {
+            Screen::Language(mut s) => match s.tick(&input, env.analog, &mut sfx) {
+                None => {
+                    s.draw(&self.defs.language, &mut r.layer);
+                    Screen::Language(s)
+                }
+                Some(lang) => {
+                    language = Some(lang);
+                    crate::front::clear_all(&mut r.layer);
+                    Screen::Wait(
+                        TO_ATTRACT_TICKS,
+                        Next::Attract {
+                            skip_opening: false,
+                        },
+                    )
+                }
+            },
             Screen::Attract(mut a) => {
                 let marks = |route| r.save.eeprom.clear_mark(route);
                 let aenv = AttractEnv {
@@ -633,6 +667,9 @@ impl App {
         if let Some((item, v)) = set_option {
             self.apply(item, v, &mut sfx)?;
         }
+        if let Some(lang) = language {
+            self.choose_language(lang)?;
+        }
         if let Some(cal) = calibrated {
             self.save_calibration(cal)?;
         }
@@ -698,6 +735,30 @@ impl App {
         }
         let mode = self.res().save.eeprom.options().control_mode;
         self.rebuild_controls(mode)
+    }
+
+    /// The first-run choice: installed on the sprite bank at once (the runs get it through
+    /// `opts.locale`) and written to `config.toml`, except in headless runs.
+    fn choose_language(&mut self, lang: Language) -> Result<()> {
+        let code = lang.code();
+        self.opts.locale.lang = code.to_owned();
+        self.opts.locale.lang_chosen = true;
+        let r = self.res.as_mut().expect("resources");
+        let exe_bytes = r.data.exe()?;
+        let exe = Exe::parse(&exe_bytes)?;
+        crate::locale::install(&self.opts.locale, &exe, &mut r.bank)?;
+        if self.opts.shot.is_some() {
+            return Ok(());
+        }
+        let Some(path) = crate::config::path() else {
+            eprintln!("warning: no config dir; the language is not remembered");
+            return Ok(());
+        };
+        match crate::config::store_lang(&path, code) {
+            Ok(()) => eprintln!("language {code} written to {}", path.display()),
+            Err(e) => eprintln!("warning: the language is not remembered: {e:#}"),
+        }
+        Ok(())
     }
 
     fn compose(&mut self) {

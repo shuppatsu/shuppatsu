@@ -10,6 +10,7 @@
 pub mod attract;
 pub mod calibrate;
 pub mod dialog;
+pub mod language;
 pub mod options;
 pub mod prerun;
 pub mod records;

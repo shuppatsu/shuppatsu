@@ -484,6 +484,7 @@ dependencies = [
  "ddg-render",
  "gilrs",
  "glam",
+ "serde",
  "toml",
  "wgpu",
  "winit",
