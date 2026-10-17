@@ -90,6 +90,7 @@ ui_scaling = "smooth"     # smooth, integer or nearest
 ui_scale = 2              # fixed canvas multiple 1..4 (omit: follows the window)
 font = "/path/a.otf:/path/b.ttf"
 display_font = "/path/c.otf"
+fog = true                # the snow fog (renderer.md §13.9); false = as a fresh install
 ```
 
 * Precedence: command-line flag > `DDG_*` environment variable > `config.toml` > built-in
@@ -113,6 +114,9 @@ display_font = "/path/c.otf"
   (`ddg-game --first-run --size 1280x800 --shot 12:out.ppm`); headless runs never write the file.
 * Code: `crates/ddg-game/src/config.rs` (`PortConfig`, `layered`, `store_lang`),
   `crates/ddg-game/src/front/language.rs` (the screen, a pure state machine), `App::choose_language`.
+* `fog` (decided enhancement `snow_fog`, on by default): the fog that the original draws only
+  while it snows and only with DengoSetting's FOGENABLE. `--no-fog` / `--fog` override it for
+  one run; headless runs use the default (on).
 
 No font is shipped in the repo. Any TTF/OTF with Latin glyphs works; DejaVu Sans Bold or Noto
 Sans Bold are good starting points (on NixOS: `fc-list | grep -i dejavu`). The catalogue uses a

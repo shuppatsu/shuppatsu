@@ -156,8 +156,10 @@ leg vanishes at the station stop and parked trains are re-spawned by the next le
   forward = −z; world units of 10 m): z < −15 or z ≥ 2.5 not drawn; −15.. → LOD 4, −12.. → 3,
   −9.. → 2, −6.. → 1, −3..2.5 → 0; |x| > 16 / 24 / 32 adds 1 / 2 / 3, |x| > 64 or a sum above 4
   hides it (doubles 0x458c30..0x458bf8). **Cars are drawn from 150 m ahead to 25 m behind
-  only**, with no frustum test, so the widescreen view needs no extra culling work. Drawing
-  farther would be an enhancement (not implemented).
+  only**, with no frustum test, so the widescreen view needs no extra culling work. The port
+  draws them up to the far plane by default (decided enhancement `far_traffic`, renderer.md
+  §13.9), in LOD 4 beyond 150 m; `--original-traffic` keeps the original bands. Only drawing
+  changes: the engine's sound windows still use these bands.
 - Rows 0x47/0x4b (road vehicles) also draw part 0x24 at local (0, 0.05, −0.02) and make no
   sound.
 

@@ -230,6 +230,8 @@ Set once after device creation (pair table built on the stack at 0x42884a), and 
 - Because the projection is w-friendly, D3D6 HALs that support w-fog (`D3DPRASTERCAPS_WFOG`)
   interpret start/end as eye-space depth (**1..10 world units**). Others use device z, where
   start/end 1.0/10.0 would mean no visible fog (guess). The port should use eye-space linear fog.
+- Port: FOGENABLE defaults to on (decided enhancement `snow_fog`, §13.9); `--no-fog` or
+  `fog = false` in `config.toml` gives the fresh-install behaviour (no fog).
 
 ## 8. Draw calls and vertex formats — confirmed
 
@@ -461,17 +463,16 @@ render task's border quads (0x425680), the viewer camera preset (0x41c3c0) and t
 
 - `Weather` mirrors the tasks from the rules' state each tick: created on the rules' weather-on
   edge or at a segment start with level > 0; cleared at the station result; wiper flag =
-  `Rules::wet_rails` while the overlay lives. Drops and the wiper draw the latest tick's state
-  (no interpolation, like the original).
+  `Rules::wet_rails` while the overlay lives. Headless shots draw the latest tick's state; the
+  window interpolates the wiper and the snow scroll (§13.9).
 - **Approximations.** The RNG starts at seed 1 (§13.3). The jolt's parity uses the drive tick
   count, not 0x84c494. The jolt is applied to the window's camera but not to headless shots or
   the 2D panorama placement. A fade already running when a segment restarts keeps running
   (as in the original), but its frame count starts at 0 on the tick it is created (the exact
   first frame of 0x436ad0 is not checked).
-- **4:3 placement (default, faithful).** Everything is in virtual x 0..496, the 4:3 area: at
-  16:10 the snow ends at the 4:3 edges and shape 2's arm stops at x = 496. Widening the snow
-  layers (and spawning drops) over the visible Hor+ range, and interpolating the wiper angle at
-  high refresh rates, would be enhancements (not implemented).
+- **4:3 placement (the original).** Everything is in virtual x 0..496, the 4:3 area: at 16:10
+  the snow would end at the 4:3 edges. The port widens it by default (§13.9); shape 2's arm
+  still stops at x = 496, as it is part of the cab.
 - **Station-based starts.** Besides the stage start and course event 0x15, the rules start the
   weather in 0x40d620 (passing a station; global tick counter `0x84c494 % 3 == 0`, dry rails if
   the track class ahead is a tunnel) and 0x40d340 (next segment; `% 4 == 0`), at or past
@@ -479,6 +480,38 @@ render task's border quads (0x425680), the viewer camera preset (0x41c3c0) and t
   from the app's tick count at the stage start, +1 per tick; exact against all three traces).
   **confirmed** (code); not yet seen in a trace (the traces are of stage 0, whose first weather
   station is 99).
+
+### 13.9 Port enhancements (decided, on by default)
+
+Presentation only: the weather state, its RNG for the original area, the rules and every trace
+are unchanged (the three drive replays stay at 0 mismatches).
+
+- **`wide_weather`** (off: `--original-weather`). The drops and the snow layers cover the
+  whole visible Hor+ width. The snow band is repeated in 496-unit tiles to both sides, tile *k*
+  moved by *k*·496 in x with its v moved by *k*·0x570, so the layers continue seamlessly
+  (corners 2 and 3 share the part's u, §13.4, so the mapping is affine in x). Drops get two
+  extra tiles per side, each with ten drops of the same law, life and visibility as §13.3,
+  drawn from their own CRT generators (seeds 2–5) so the original area keeps seed 1's
+  sequence. Only tiles that overlap the visible range are drawn, so at 4:3 the output is the
+  original's pixel for pixel (checked by a headless pixel compare). The wiper shapes stay
+  where they are: they belong to the cab.
+- **Interpolation at high refresh rates** (with the camera's interpolation; `crate::smooth`).
+  The wiper angle, the snow counter (the three offsets are taken from the interpolated counter,
+  modulo 256 = one texture repeat) and the analog speedometer needle are placed between the
+  last two ticks with the render alpha. At alpha 0 and 1 they are exactly the ticks' values
+  (unit tests `wiper_and_snow_interpolate_between_ticks`, `needle_interpolates_between_the_ticks`);
+  headless shots, pauses and position jumps use alpha 1. The needle stays a rect-layer fan in
+  whole 640×480 pixels (hud.md §3.5): the HUD draws it once per tick, and the window moves that
+  fan and composes the canvas again only on frames where a needle pixel changes.
+- **`far_traffic`** (off: `--original-traffic`). AI trains are drawn up to the far plane (32
+  units, 320 m, §10), as far as the scenery reaches, instead of 150 m; beyond 150 m they use
+  the farthest distance band, LOD 4 (traffic.md §4). The lateral bands and the 25 m behind are
+  unchanged, and spawning, movement and the passing sounds (which use the original bands in
+  the engine) are untouched.
+- **`snow_fog`**: the fog of §13.4 is on by default, as with DengoSetting's FOGENABLE checked.
+  A fresh install of the original never ran DengoSetting, so FOGENABLE parses as 0 and it
+  never fogs (§7). Off: `--no-fog` or `fog = false` in `config.toml` (localisation.md,
+  "Settings"); `--fog` forces it on. It still only exists while it snows.
 
 ## Implications for the port (Hor+)
 
