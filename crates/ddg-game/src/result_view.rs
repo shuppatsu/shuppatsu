@@ -6,7 +6,7 @@
 use ddg_engine::stop_replay::StopRecord;
 use ddg_formats::result_camera::{
     self, CouplingFlags, MONITOR_VIEWPORT, ORBIT_VIEWPORT, PlatformSet, ResultCamera, ResultTables,
-    ResultViewport, STOPPED_BELOW_M, STOPPED_COUNTER_START, TrainSet,
+    ResultViewport, STOPPED_BELOW_M, TrainSet,
 };
 use ddg_formats::traffic::{CarModel, TrainModels};
 use ddg_render::{Camera, FrameGeometry, PartLibrary, Projection, Renderer, SubView};
@@ -25,6 +25,8 @@ pub struct ResultViewInput<'a> {
     pub field7: i32,
     pub train_type: usize,
     pub record: &'a StopRecord,
+    /// The coupling flags of `0x855ff8` (course event 12, the minigame).
+    pub coupling: CouplingFlags,
 }
 
 /// The replay task's state.
@@ -52,12 +54,7 @@ impl ResultView {
     /// nothing recorded.
     pub fn new(tables: &ResultTables, models: &TrainModels, input: ResultViewInput<'_>) -> Self {
         let platform = PlatformSet::from_field(input.field7);
-        let set = tables.train_set(
-            input.stage,
-            input.station,
-            input.train_type,
-            CouplingFlags::default(),
-        );
+        let set = tables.train_set(input.stage, input.station, input.train_type, input.coupling);
         let cars = |row: usize| {
             models
                 .row(row)
@@ -79,7 +76,7 @@ impl ResultView {
             next: 0,
             dist,
             prev_dist: dist,
-            stopped: STOPPED_COUNTER_START,
+            stopped: input.coupling.stopped_counter_start(),
         }
     }
 

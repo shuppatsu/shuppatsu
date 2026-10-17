@@ -40,6 +40,7 @@ mod bonus;
 mod cab_mask;
 mod demo;
 mod ending;
+mod intro;
 mod opening;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -85,6 +86,8 @@ pub struct PlayOptions {
     pub variant: bool,
     /// Check aid: start with the ending (`full` or `plain`) instead of driving.
     pub ending: Option<bool>,
+    /// Check aid: play the stage intro (0x4091a0) and leave.
+    pub intro: bool,
     /// Language and font of the text sprites (docs/localisation.md).
     pub locale: crate::locale::LocaleConfig,
 }
@@ -187,6 +190,9 @@ pub fn run(opts: PlayOptions) -> Result<()> {
     let mut app = Play::new(shared, opts)?;
     if let Some(full) = app.opts.ending {
         app.start_ending(Some(full))?;
+    }
+    if app.opts.intro && !app.start_stage_intro()? {
+        eprintln!("stage {} has no fly-by intro", app.opts.stage);
     }
     if let Some((ticks, out)) = app.opts.shot.clone() {
         while app.ticks < ticks && !app.leave {
@@ -357,6 +363,7 @@ impl Play {
             ending_tables: None,
             bonus_view: None,
             opening: None,
+            intro: None,
             subtitles,
             opts,
         };
@@ -371,7 +378,12 @@ impl Play {
         let mut sound = self.sound.filter(crate::sound::Sound::has_device);
         if let Some(s) = sound.as_mut() {
             s.set_voice_log(false);
-            s.end_stage();
+            // The intro's music runs on into the departure board (0x4091a0 leaves it).
+            if self.intro.is_some() {
+                s.leave_stage();
+            } else {
+                s.end_stage();
+            }
         }
         let mut layer = self.layer;
         layer.wide = 0;
@@ -726,6 +738,8 @@ pub struct Play {
     bonus_view: Option<bonus::BonusView>,
     /// The attract opening (`play/opening.rs`).
     opening: Option<opening::Opening>,
+    /// The stage intro (`play/intro.rs`).
+    intro: Option<intro::Intro>,
     /// Setting `subtitles`: the voice lines in the translation (`subtitles.rs`).
     subtitles: Option<crate::subtitles::Subtitles>,
 }
@@ -743,6 +757,9 @@ impl Play {
         }
         if self.opening.is_some() {
             return self.opening_tick();
+        }
+        if self.intro.is_some() {
+            return self.intro_tick();
         }
         self.ticks += 1;
         let input = self.menu_input;
@@ -874,6 +891,7 @@ impl Play {
                 field7,
                 train_type: self.drive.train().train_type,
                 record: &r.stop_record,
+                coupling: r.result_coupling_flags(),
             },
         ));
     }
