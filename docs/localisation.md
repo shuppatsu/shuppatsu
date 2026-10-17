@@ -69,7 +69,7 @@ sprite) is an error, not a silent fallback.
 | Setting | Env | Argument |
 |---|---|---|
 | Language (default `ja`) | `DDG_LANG` | `--lang <code>` |
-| Body font list (TTF/OTF, `:`-separated: primary, then fallbacks) | `DDG_FONT` | `--font <files>` |
+| Body font list (TTF/OTF, `:`-separated: primary, then fallbacks; default: the bundled M+ 2 Medium, which is also appended as the last fallback) | `DDG_FONT` | `--font <files>` |
 | Display font list (same form; default: the body list) | `DDG_DISPLAY_FONT` | `--display-font <files>` |
 | Extra catalogue directory | `DDG_LOCALE_DIR` | `--locale-dir <dir>` |
 | HUD layout: `original` (default) or `enhanced` | `DDG_HUD_LAYOUT` | `--hud-layout <layout>` |

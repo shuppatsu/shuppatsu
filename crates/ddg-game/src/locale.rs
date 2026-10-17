@@ -713,11 +713,17 @@ impl LocaleConfig {
         Ok(())
     }
 
-    /// Whether text overrides will be drawn.
+    /// Whether text overrides will be drawn (any language but the original; the bundled font
+    /// is used when none is given).
     pub fn active(&self) -> bool {
-        self.lang != IDENTITY_LANG && self.font.is_some()
+        self.lang != IDENTITY_LANG
     }
 }
+
+/// The bundled body font, M+ 2 Medium (SIL OFL 1.1, assets/fonts/OFL-Mplus.txt; docs/localisation.md
+/// "Decided: a font"). Used when no `--font` is given, and appended as the last fallback of a
+/// user-supplied list so Japanese and macron vowels always render.
+const BUNDLED_FONT: &[u8] = include_bytes!("../../../assets/fonts/Mplus2-Medium.otf");
 
 /// Canvas multiples beyond [`ddg_render::overlay::MAX_MULTIPLE`] only cost memory.
 fn clamp_scale(s: usize) -> usize {
@@ -725,7 +731,7 @@ fn clamp_scale(s: usize) -> usize {
 }
 
 /// Builds the overlay for `cfg` and installs it on `bank`. Returns the number of sprites
-/// overridden (0 for `ja`). A language without a font keeps the original art, with a warning.
+/// overridden (0 for `ja`). Without `--font` the bundled M+ 2 Medium is used.
 pub fn install(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Result<usize> {
     if cfg.lang == IDENTITY_LANG {
         bank.set_text(None);
@@ -733,16 +739,6 @@ pub fn install(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Resu
         bank.set_display_label_font(None);
         return Ok(0);
     }
-    let Some(font_path) = &cfg.font else {
-        eprintln!(
-            "language {:?} needs a font (DDG_FONT or --font); showing the original art",
-            cfg.lang
-        );
-        bank.set_text(None);
-        bank.set_label_font(None);
-        bank.set_display_label_font(None);
-        return Ok(0);
-    };
     let sheets = SheetTables::read(exe)?;
     let locale = Locale::load(&cfg.lang, cfg.dir.as_deref(), &sheets)?;
     // A `:`-separated list (`;` on Windows), like PATH: the primary font, then fallbacks.
@@ -750,7 +746,11 @@ pub fn install(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Resu
         let paths: Vec<PathBuf> = std::env::split_paths(list).collect();
         FontGlyphs::load_all(&paths)
     };
-    let font = load(font_path)?;
+    let bundled = || FontGlyphs::from_bytes(BUNDLED_FONT);
+    let font = match &cfg.font {
+        Some(list) => load(list)?.with_fallback(bundled()?),
+        None => bundled()?,
+    };
     // The display role (headers, menu titles, banners): its own list, else the body font.
     let display = cfg.display_font.as_deref().map(load).transpose()?;
     let fonts = Fonts {
@@ -975,7 +975,9 @@ mod tests {
         c.take_args(&mut args).unwrap();
         assert!(args.is_empty());
         assert_eq!(c.display_font, Some(PathBuf::from("/a.ttf:/b.ttf")));
-        // A display font alone does not turn text on: the body font is still needed.
+        // English is on with the bundled body font; Japanese never is.
+        assert!(c.active());
+        c.lang = IDENTITY_LANG.to_owned();
         assert!(!c.active());
         assert!(c.take_args(&mut vec!["--display-font".into()]).is_err());
     }

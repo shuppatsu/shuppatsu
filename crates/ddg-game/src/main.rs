@@ -71,7 +71,7 @@ options:
   --size <WxH>             window/frame size (default 1280x800, 16:10)
   --lang <code>            text-sprite language (default ja = the original art; env DDG_LANG)
   --font <files>           TTF/OTF fonts for translated text, primary first, :-separated
-                           fallbacks (env DDG_FONT)
+                           fallbacks (env DDG_FONT; default: bundled M+ 2 Medium)
   --display-font <files>   the same for display text: headers, menu titles, banners
                            (env DDG_DISPLAY_FONT; default the --font list)
   --locale-dir <dir>       extra catalogue directory, <dir>/<lang>.toml (env DDG_LOCALE_DIR)
