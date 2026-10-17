@@ -143,6 +143,9 @@ pub struct Catalogue {
     /// `[caption]` `font` and `banner_font`: the font roles of the one-line captions and of
     /// the banners (body unless set).
     pub caption_fonts: [FontRole; 2],
+    /// `[subtitle]`: templates and lines of the subtitles for the Japanese voice lines, by key
+    /// (`subtitles.rs`, docs/localisation.md "Subtitles").
+    pub subtitles: Vec<(String, String)>,
 }
 
 /// The `[caption]` keys, by caption kind 0–6 (hud.md §3.13: 出発進行, 出発減速, 出発注意,
@@ -192,6 +195,7 @@ impl Catalogue {
         let mut landmarks = Vec::new();
         let mut captions = Vec::new();
         let mut caption_fonts = [FontRole::Body; 2];
+        let mut subtitles = Vec::new();
         for (section, value) in &root {
             match section.as_str() {
                 "meta" => {
@@ -293,6 +297,15 @@ impl Catalogue {
                         captions.push((k.clone(), s.to_owned()));
                     }
                 }
+                "subtitle" => {
+                    let t = value.as_table().context("[subtitle] must be a table")?;
+                    for (k, v) in t {
+                        ensure!(crate::subtitles::known_key(k), "unknown subtitle key {k:?}");
+                        let s = v.as_str().with_context(|| format!("subtitle.{k}"))?;
+                        ensure!(!s.trim().is_empty(), "subtitle.{k}: empty text");
+                        subtitles.push((k.clone(), s.to_owned()));
+                    }
+                }
                 _ => bail!("unknown section [{section}]"),
             }
         }
@@ -304,6 +317,7 @@ impl Catalogue {
             landmarks,
             captions,
             caption_fonts,
+            subtitles,
         })
     }
 

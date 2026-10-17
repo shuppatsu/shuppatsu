@@ -30,6 +30,7 @@ mod shot;
 mod slots;
 mod smooth;
 mod sound;
+mod subtitles;
 mod traffic;
 mod weather;
 mod window;
@@ -100,6 +101,7 @@ switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml
   --one-line-captions      translation: captions and banners as one line [on]
   --landmark-names         translation: names under the landmark plates [on]
   --board-names            translation: romaji under the route board's kanji [on]
+  --subtitles              translation: English subtitles for the Japanese voices [on]
   --save-on-change         eeprom.dat written after every change, not only at exit [on]
   --save-timed-out-names   a timed-out name entry is saved [on]
   --keyboard-with-controller

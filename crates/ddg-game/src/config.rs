@@ -368,6 +368,7 @@ mod tests {
         ("one_line_captions", true),
         ("landmark_names", true),
         ("board_names", true),
+        ("subtitles", true),
         ("save_on_change", true),
         ("save_timed_out_names", true),
         ("keyboard_with_controller", true),

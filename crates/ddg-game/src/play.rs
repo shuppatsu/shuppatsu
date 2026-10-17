@@ -301,6 +301,7 @@ impl Play {
                 })
         }));
 
+        let subtitles = start_subtitles(&opts, &bank, &data, &exe, &mut sound)?;
         if let Some(s) = sound.as_mut() {
             s.begin_stage(&exe, &drive)?;
         }
@@ -356,6 +357,7 @@ impl Play {
             ending_tables: None,
             bonus_view: None,
             opening: None,
+            subtitles,
             opts,
         };
         play.configure_gpu();
@@ -365,8 +367,10 @@ impl Play {
     /// Ends the run and hands the shared resources back (sound back to the menus, the HUD's
     /// sprites cleared).
     pub fn into_shared(self) -> Shared {
-        let mut sound = self.sound;
+        // A silent sound system (subtitles without a device) is not handed on.
+        let mut sound = self.sound.filter(crate::sound::Sound::has_device);
         if let Some(s) = sound.as_mut() {
+            s.set_voice_log(false);
             s.end_stage();
         }
         let mut layer = self.layer;
@@ -532,6 +536,33 @@ fn wide_hud(opts: &PlayOptions) -> bool {
     opts.locale.enhanced_hud()
 }
 
+/// Setting `subtitles`, with a translation drawn: the subtitle book, and the voice log of the
+/// sound (a silent one when there is no device, so headless runs and muted play have them).
+fn start_subtitles(
+    opts: &PlayOptions,
+    bank: &SpriteBank,
+    data: &GameData,
+    exe: &Exe<'_>,
+    sound: &mut Option<crate::sound::Sound>,
+) -> Result<Option<crate::subtitles::Subtitles>> {
+    if !(opts.settings.subtitles && opts.locale.active() && bank.has_label_font()) {
+        if let Some(s) = sound.as_mut() {
+            s.set_voice_log(false);
+        }
+        return Ok(None);
+    }
+    if sound.is_none() {
+        *sound = Some(crate::sound::Sound::silent(exe)?);
+    }
+    let Some(s) = sound.as_mut() else {
+        return Ok(None);
+    };
+    s.set_voice_log(true);
+    let cat = crate::locale::Catalogue::load(&opts.locale.lang, opts.locale.dir.as_deref())?;
+    let book = crate::subtitles::SubtitleBook::for_game(&cat, exe, data, s.tables())?;
+    Ok(Some(crate::subtitles::Subtitles::new(book)))
+}
+
 fn visibility(opts: &PlayOptions) -> Visibility {
     if !opts.settings.wide_visibility {
         return Visibility::Original;
@@ -695,6 +726,8 @@ pub struct Play {
     bonus_view: Option<bonus::BonusView>,
     /// The attract opening (`play/opening.rs`).
     opening: Option<opening::Opening>,
+    /// Setting `subtitles`: the voice lines in the translation (`subtitles.rs`).
+    subtitles: Option<crate::subtitles::Subtitles>,
 }
 
 impl Play {
@@ -789,6 +822,16 @@ impl Play {
         }
         self.weather.tick(&self.drive, hud_input.segment_started);
         self.weather.apply_to_scene(&mut self.scene);
+        if let (Some(subs), Some(s)) = (self.subtitles.as_mut(), self.sound.as_mut()) {
+            subs.feed(s.take_voice_events());
+            for t in subs.tick() {
+                eprintln!(
+                    "[{}] subtitle (play tick {}): {t}",
+                    self.drive.tick_count(),
+                    self.ticks
+                );
+            }
+        }
         self.update_hud(hud_input);
         self.needle
             .ticked(kmh_before, self.drive.speed_kmh(), &self.layer);
@@ -977,6 +1020,9 @@ impl Play {
                 self.drive.set_global_tick(global_tick);
                 self.controls.reset_levers();
                 self.meter_m = 0.0;
+                if let Some(s) = self.subtitles.as_mut() {
+                    s.clear();
+                }
                 self.interpolate = false;
                 self.flow.reset();
                 self.layer.slots.fill(Slot::CLEAR);
@@ -1066,6 +1112,9 @@ impl Play {
         let snap = Snap::of(&self.drive);
         self.cab
             .tick(&snap, &input, &self.last_events, &mut self.layer);
+        if let Some(s) = &self.subtitles {
+            s.draw(&mut self.layer);
+        }
         self.flow.draw(&mut self.layer);
         self.centre_screen();
         self.layer.compose(&self.bank, &mut self.canvas);

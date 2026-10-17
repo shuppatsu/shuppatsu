@@ -86,6 +86,10 @@ settings! {
     /// With a translation: romaji under the route board's kanji (localisation.md); off = kanji
     /// only.
     board_names = true;
+    /// With a translation: subtitles for the Japanese voice lines (station, signal and
+    /// speed-limit calls, announcements, navigator, time-up advice; localisation.md); off = the
+    /// voices alone, as the original. Never shown in Japanese.
+    subtitles = true;
     /// `eeprom.dat` written right after a ranking entry, a clear mark, an options change or a
     /// calibration (menus.md §14.1); off = only at exit, as the original.
     save_on_change = true;

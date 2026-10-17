@@ -14,7 +14,7 @@ mod stage;
 
 use anyhow::Result;
 use ddg_audio::{AudioOutput, HornEdge, MixerConfig, SoundBank, SoundSystem, SoundTables};
-use ddg_audio::{TrainSound, TrainTick};
+use ddg_audio::{TrainSound, TrainTick, VoiceEvent};
 use ddg_engine::bonus::BonusEvent;
 use ddg_engine::coupling::CouplingEvent;
 use ddg_engine::drive::Drive;
@@ -29,7 +29,10 @@ use std::sync::Arc;
 pub type Before = Snap;
 
 pub struct Sound {
-    out: AudioOutput,
+    /// `None`: a silent sound system, run only for its voice log (subtitles without a device).
+    out: Option<AudioOutput>,
+    /// Record the voice lines for subtitles ([`Sound::take_voice_events`]).
+    voice_log: bool,
     snd: SoundSystem,
     tables: Arc<SoundTables>,
     /// The sound option (`0x856356`): off makes the sound thread ignore play messages.
@@ -60,12 +63,48 @@ impl Sound {
             }
         };
         Ok(Some(Self {
-            out,
+            out: Some(out),
+            voice_log: false,
             snd: SoundSystem::new(tables.clone()),
             tables,
             enabled: true,
             stage: None,
         }))
+    }
+
+    /// The sound logic without a device: nothing is heard, but the voice lines are logged for
+    /// subtitles ([`Sound::set_voice_log`]).
+    pub fn silent(exe: &Exe<'_>) -> Result<Self> {
+        let tables = Arc::new(SoundTables::from_exe(exe)?);
+        Ok(Self {
+            out: None,
+            voice_log: false,
+            snd: SoundSystem::new(tables.clone()),
+            tables,
+            enabled: true,
+            stage: None,
+        })
+    }
+
+    /// Whether this plays on a device (not [`Sound::silent`]).
+    pub fn has_device(&self) -> bool {
+        self.out.is_some()
+    }
+
+    /// Records the voice lines started from now on, for subtitles.
+    pub fn set_voice_log(&mut self, on: bool) {
+        self.voice_log = on;
+        self.snd.set_voice_log(on);
+    }
+
+    /// The voice lines started and cut off since the last call.
+    pub fn take_voice_events(&mut self) -> Vec<VoiceEvent> {
+        self.snd.take_voice_events()
+    }
+
+    /// The sound tables read from the exe.
+    pub fn tables(&self) -> &SoundTables {
+        &self.tables
     }
 
     /// Sets up the train and stage sounds for `drive`'s stage, on a fresh sound system (the
@@ -76,6 +115,7 @@ impl Sound {
         self.flush();
         self.snd = SoundSystem::new(self.tables.clone());
         self.snd.set_enabled(self.enabled);
+        self.snd.set_voice_log(self.voice_log);
         let train = TrainSound::new(
             &self.tables,
             drive.rules().stage().0,
@@ -243,8 +283,12 @@ impl Sound {
     }
 
     fn flush(&mut self) {
-        self.out.send_all(self.snd.take_commands());
-        for e in self.out.take_errors() {
+        let commands = self.snd.take_commands();
+        let Some(out) = self.out.as_mut() else {
+            return;
+        };
+        out.send_all(commands);
+        for e in out.take_errors() {
             eprintln!("audio: {e}");
         }
     }
