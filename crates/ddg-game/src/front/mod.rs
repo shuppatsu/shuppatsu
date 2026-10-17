@@ -260,15 +260,26 @@ mod slot {
 /// Enhancement `wide_menus` (menus.md §14): the menu backdrops a wide canvas continues
 /// sideways: the patterned background tbl 0x501 and the black header bands (tbl 0x515 and
 /// the per-page bars of 0x42a820). Their repeat comes from the tile ids ([`Repeat::of`]);
-/// everything else on the menus stays in the centred 4:3 layout.
+/// everything else on the menus stays in the centred 4:3 layout. The attract title picture
+/// tbl 0x410, which has no pattern but plain paper texture at its edges, is mirrored instead
+/// ([`Mirror`]); the other attract pictures (photos, posters, the logo) and the departure board
+/// have black or photographic surroundings and stay centred.
 ///
 /// [`Repeat::of`]: ddg_render::sprites::Repeat::of
+/// [`Mirror`]: ddg_render::sprites::Mirror
 pub fn mark_backdrops(bank: &mut ddg_render::sprites::SpriteBank, t: &FrontTables) {
     let maps = [tbl::BACKGROUND, tbl::ROUTE_BAR]
         .into_iter()
         .chain(t.header_tbl.iter().copied());
     for m in maps.filter_map(|m| u16::try_from(m).ok()) {
         bank.set_wide_fill(m);
+    }
+    if let Ok(m) = u16::try_from(attract::TBL_TITLE) {
+        bank.set_wide_mirror(
+            m,
+            attract::TITLE_MIRROR_STRIP,
+            Some(attract::TITLE_MIRROR_BORROW),
+        );
     }
 }
 

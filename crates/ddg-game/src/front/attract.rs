@@ -38,7 +38,22 @@ const ITEM_LESSON_DEMO: u32 = 0x40e6e0;
 /// With `0x855ffc & 0x10` the walk starts at item 2.
 const RESTART_ITEM: usize = 2;
 /// The title picture (0x4037f0): tbl 0x410 in res modes 0/1/3 at (x0, y0), palette 0x17.
-const TBL_TITLE: i16 = 0x410;
+pub(super) const TBL_TITLE: i16 = 0x410;
+/// Enhancement `wide_menus` (menus.md §14): the title picture has no tile pattern, so a wide
+/// canvas mirrors the plain paper texture at its edges, over the 8 outermost tile columns on
+/// each side (128 px). Outside the logo band those are clear of the art: "PRESS START
+/// BUTTON" and the copyright lines start at x ≈ 140 and end at x ≈ 500 (measured on a 640×480
+/// shot of tbl 0x410, palette 0x17).
+pub(super) const TITLE_MIRROR_STRIP: u8 = 8;
+/// In the logo band, tile rows 3–15, the logo's glow starts at x ≈ 19 and the shadow of
+/// 番台 / the signal head reaches x ≈ 623, so those rows continue with the mirrored edge of
+/// rows 16–28, plain texture there (same shot).
+pub(super) const TITLE_MIRROR_BORROW: ddg_render::sprites::RowBorrow =
+    ddg_render::sprites::RowBorrow {
+        start: 3,
+        len: 13,
+        from: 16,
+    };
 const SLOT_TITLE: usize = 0xf;
 const PAL_TITLE: u8 = 0x17;
 const TITLE_TICKS: i32 = 300;
