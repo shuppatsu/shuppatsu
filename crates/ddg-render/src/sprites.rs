@@ -585,12 +585,15 @@ impl SpriteLayer {
                         if index == 0 {
                             continue;
                         }
-                        // Translated text only covers the slot's own columns.
-                        let lx = (tx * ts + px) as usize;
-                        let (bx, by) = (lx * c.s, (ty * ts + py) as usize * c.s);
-                        if (0..w).contains(&tx)
-                            && text.is_some_and(|parts| parts.iter().any(|p| p.contains(bx, by)))
-                        {
+                        // Translated text only covers the slot's own columns; the wide-fill
+                        // columns outside them have negative `tx`, so test that first.
+                        let covered = (0..w).contains(&tx)
+                            && text.is_some_and(|parts| {
+                                let lx = (tx * ts + px) as usize;
+                                let (bx, by) = (lx * c.s, (ty * ts + py) as usize * c.s);
+                                parts.iter().any(|p| p.contains(bx, by))
+                            });
+                        if covered {
                             continue;
                         }
                         // One original pixel becomes an s × s block.
