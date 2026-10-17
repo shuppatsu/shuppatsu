@@ -896,7 +896,8 @@ Approximated or left out:
   eeprom; a run reads it at its start.
 * The 4:3 layout is always centred (the port has no non-centred mode), so the
   `0x855ffc & 0x1000` toggling has no visible effect.
-* **Enhancement `wide_menus`** (port, approved by the user as widescreen presentation; on
+* **Enhancement `wide_menus`** (port, approved by the user as widescreen presentation; setting
+  `wide_menus`, on by default, `--no-wide-menus` keeps the 4:3 menus over black; it shows
   whenever the window is wider than 4:3, in both HUD layouts and every `--ui-scaling`): the
   front end's canvas takes the window's shape (`App::fit_front`) with every slot still
   centred, so items, header text, legends and cursor keep their 4:3 places and a 4:3 window is
@@ -925,22 +926,26 @@ Approximated or left out:
 
 ### 14.1 Decided port behaviour (deviations, on by default)
 
-The user decided these deviations from the original. They are always on; none has a config
-key.
+The user decided these deviations from the original. Each is on by default and has its own
+setting (docs/settings.md); off restores the original's behaviour.
 
 | What | Original | Port | Code |
 |---|---|---|---|
-| Name entry time-out | after 930 ticks the row is shown on the ranking page but `Ranking_ToEeprom` (0x41e670) is skipped, so it is never written (§11.2) | packed and saved like a completed name | `screens/ranking.rs` (`NameEntry::committed`), `save.rs` (`Save::finish_ranking`) |
-| When `eeprom.dat` is written | only at exit (0x434f50, §13.1) | also right after a ranking entry, a clear mark, an options change (options list and value pages) and a calibration; same 0x35a-byte format, written to `eeprom.dat.tmp` and renamed. The exit write is unchanged. Headless `--shot` runs have no save path and never write. A failed write is a warning; play goes on | `save.rs` (`Save::persist`, `write_atomic`), `play.rs`, `app.rs` (`apply`, `save_calibration`; `joystick.dat` is written atomically too) |
-| Keyboard with a controller | in modes 4–6 only Esc, Enter (menu confirm) and R reach the game (input.md §6) | the keyboard's horn (Space) and A / ATS confirm (Enter) also work while driving, OR-ed with the pad's buttons; the levers stay the controller's | `gamepad.rs` (`Joystick::poll`), input.md §10.3 |
-| Exit dialog いいえ | attract restarts at the title picture (§3) | the title menu comes back after the same 3 ticks, cursor on ゲーム終了, menu BGM restarted | `app.rs` (`exit_declined`) |
+| Name entry time-out (`save_timed_out_names`) | after 930 ticks the row is shown on the ranking page but `Ranking_ToEeprom` (0x41e670) is skipped, so it is never written (§11.2) | packed and saved like a completed name | `screens/ranking.rs` (`NameEntry::committed`), `save.rs` (`Save::finish_ranking`) |
+| When `eeprom.dat` is written (`save_on_change`) | only at exit (0x434f50, §13.1) | also right after a ranking entry, a clear mark, an options change (options list and value pages) and a calibration; same 0x35a-byte format, written to `eeprom.dat.tmp` and renamed. The exit write is unchanged. Headless `--shot` runs have no save path and never write. A failed write is a warning; play goes on | `save.rs` (`Save::persist`, `write_atomic`), `play.rs`, `app.rs` (`apply`, `save_calibration`; `joystick.dat` is written atomically too) |
+| Keyboard with a controller (`keyboard_with_controller`) | in modes 4–6 only Esc, Enter (menu confirm) and R reach the game (input.md §6) | the keyboard's horn (Space) and A / ATS confirm (Enter) also work while driving, OR-ed with the pad's buttons; the levers stay the controller's | `gamepad.rs` (`Joystick::poll`), input.md §10.3 |
+| Exit dialog いいえ (`exit_no_to_menu`) | attract restarts at the title picture (§3) | the title menu comes back after the same 3 ticks, cursor on ゲーム終了, menu BGM restarted | `app.rs` (`exit_declined`) |
 
 Evidence: unit tests `screens::ranking::tests::timeout_filters_and_commits`,
 `screens::flow::tests::time_out_offers_continue`, `save::tests::saves_after_every_change`
 (a temporary `$XDG_CONFIG_HOME`, passed to `save::config_dir_in`, never the real home),
 `save::tests::headless_saves_never_write`,
 `gamepad::tests::keyboard_drives_buttons_alongside_a_mode_4_pad`,
-`app::tests::exit_no_returns_to_the_menu_on_quit`; and a headless run (title menu → ゲーム終了 →
+`app::tests::exit_no_returns_to_the_menu_on_quit`; with the settings off
+`screens::ranking::tests::timeout_without_the_setting_is_not_committed`,
+`save::tests::without_save_on_change_only_the_exit_writes`,
+`gamepad::tests::keyboard_buttons_off_is_the_original_mask`,
+`app::tests::exit_no_without_the_setting_goes_to_attract`; and a headless run (title menu → ゲーム終了 →
 いいえ → title menu on ゲーム終了), shots in `out/explain/save_input/`.
 
 ## Open questions

@@ -483,6 +483,9 @@ render task's border quads (0x425680), the viewer camera preset (0x41c3c0) and t
 
 ### 13.9 Port enhancements (decided, on by default)
 
+Each has its setting in docs/settings.md (`config.toml` key, `DDG_<KEY>`, `--<key>` /
+`--no-<key>`).
+
 Presentation only: the weather state, its RNG for the original area, the rules and every trace
 are unchanged (the three drive replays stay at 0 mismatches).
 
@@ -495,7 +498,9 @@ are unchanged (the three drive replays stay at 0 mismatches).
   sequence. Only tiles that overlap the visible range are drawn, so at 4:3 the output is the
   original's pixel for pixel (checked by a headless pixel compare). The wiper shapes stay
   where they are: they belong to the cab.
-- **Interpolation at high refresh rates** (with the camera's interpolation; `crate::smooth`).
+- **`interpolate`** (off: `--no-interpolate`; with the camera's interpolation; `crate::smooth`).
+  Off, every frame shows the last tick (the camera, AI trains, wiper, snow and needle step at
+  30 Hz).
   The wiper angle, the snow counter (the three offsets are taken from the interpolated counter,
   modulo 256 = one texture repeat) and the analog speedometer needle are placed between the
   last two ticks with the render alpha. At alpha 0 and 1 they are exactly the ticks' values
@@ -508,7 +513,7 @@ are unchanged (the three drive replays stay at 0 mismatches).
   the farthest distance band, LOD 4 (traffic.md §4). The lateral bands and the 25 m behind are
   unchanged, and spawning, movement and the passing sounds (which use the original bands in
   the engine) are untouched.
-- **`snow_fog`**: the fog of §13.4 is on by default, as with DengoSetting's FOGENABLE checked.
+- **`snow_fog`** (key `fog`): the fog of §13.4 is on by default, as with DengoSetting's FOGENABLE checked.
   A fresh install of the original never ran DengoSetting, so FOGENABLE parses as 0 and it
   never fogs (§7). Off: `--no-fog` or `fog = false` in `config.toml` (localisation.md,
   "Settings"); `--fog` forces it on. It still only exists while it snows.

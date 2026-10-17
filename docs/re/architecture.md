@@ -220,8 +220,9 @@ Fidelity, verified against a screenshot of the original (Keihin, Higashi-Kanagaw
   sampling shimmer, the platform-floor gap at some stations (also visible in recordings of the
   original PC port).
 
-Enhancements (all off in arcade defaults): `wide_visibility` (on for wider than 4:3),
-`stable_track_variants`, `texture_filtering`, `fog` (the original's DengoSetting option).
+Enhancements (settings in docs/settings.md): `wide_visibility` (on for wider than 4:3),
+`stable_track_variants` and `texture_filtering` (off), `fog` (the original's DengoSetting
+option; on since the snow-fog decision, renderer.md §13.9).
 Candidates noted: platform-gap fill, smooth panorama, lighter fog distance, atlas-seam-free
 filtering.
 

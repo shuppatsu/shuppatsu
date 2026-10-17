@@ -77,11 +77,16 @@ sprite) is an error, not a silent fallback.
 | Presentation: `smooth` (default), `integer`, `nearest` | `DDG_UI_SCALING` | `--ui-scaling <mode>` |
 | Fixed canvas multiple 1..4 (default: follows the window) | `DDG_UI_SCALE` | `--ui-scale <n>` |
 
+These and every other port setting (one on/off switch per enhancement: `wide_weather`,
+`save_on_change`, `one_line_captions`, …) are listed in one table in [settings.md](settings.md),
+with their defaults, flags and what the original does instead.
+
 ### Settings: `config.toml` and the first-run language screen
 
 The port's own settings live in `config.toml` next to `eeprom.dat`: `$XDG_CONFIG_HOME/ddg/`
 (default `~/.config/ddg/`), `%APPDATA%\ddg\` on Windows. `eeprom.dat` keeps the original's
-options byte for byte; `config.toml` holds only what the port adds. Every key is optional:
+options byte for byte; `config.toml` holds only what the port adds. Every key is optional; the
+full list is [settings.md](settings.md):
 
 ```toml
 lang = "en"               # en, or ja for the original art
@@ -91,6 +96,7 @@ ui_scale = 2              # fixed canvas multiple 1..4 (omit: follows the window
 font = "/path/a.otf:/path/b.ttf"
 display_font = "/path/c.otf"
 fog = true                # the snow fog (renderer.md §13.9); false = as a fresh install
+wide_weather = true       # and the other switches of settings.md
 ```
 
 * Precedence: command-line flag > `DDG_*` environment variable > `config.toml` > built-in
@@ -116,7 +122,8 @@ fog = true                # the snow fog (renderer.md §13.9); false = as a fres
   `crates/ddg-game/src/front/language.rs` (the screen, a pure state machine), `App::choose_language`.
 * `fog` (decided enhancement `snow_fog`, on by default): the fog that the original draws only
   while it snows and only with DengoSetting's FOGENABLE. `--no-fog` / `--fog` override it for
-  one run; headless runs use the default (on).
+  one run; headless runs use the default (on). It is one of the switches of
+  [settings.md](settings.md), which all work this way (`DDG_<KEY>`, `--<key>` / `--no-<key>`).
 
 No font is shipped in the repo. Any TTF/OTF with Latin glyphs works; DejaVu Sans Bold or Noto
 Sans Bold are good starting points (on NixOS: `fc-list | grep -i dejavu`). The catalogue uses a
@@ -316,6 +323,9 @@ Decided by the user (enhancement):
 
 ## Captions and banners (enhancement `one_line_captions`)
 
+Setting `one_line_captions` (on; `--no-one-line-captions` keeps the translated sprites,
+[settings.md](settings.md)).
+
 The station captions (slots 0x36–0x38) and banners (0x39–0x3b) are each three sprites:
 name + 駅 + word (通過 / 停車 / 出発進行 …), hud.md §3.13. Translated sprite by sprite, each
 word is fitted to its own box, so the long name comes out small and "Stn" / "Stop" big.
@@ -349,6 +359,9 @@ captions.rs` (`OneLine`):
 
 ## Landmark captions (enhancement `landmark_names`)
 
+Setting `landmark_names` (on; `--no-landmark-names` shows the plate alone,
+[settings.md](settings.md)).
+
 The landmark captions (course event 17, `Landmark_Show` 0x410a70 → task 0x410bd0, slot 0x3c,
 hud.md §3.13) are 30 white plates naming bridges, rivers, roads and signal stations, one
 sprite each (tbl 0x222–0x23f, widths in the exe table 0x466a20).
@@ -376,6 +389,8 @@ it (`crates/ddg-game/src/captions.rs`, `LandmarkLines`):
 * A landmark without a `[landmark]` name, or Japanese, shows the sprite alone.
 
 ## Route board (enhancement `board_names`)
+
+Setting `board_names` (on; `--no-board-names` keeps the kanji only, [settings.md](settings.md)).
 
 Before departure the board of hud.md §3.7 / §5 shows the route diagram (slot 0x7b, one sprite
 per stage and stations served, e.g. 0x32a 秋田…大曲, 0x31e 直江津…犀潟): a white board with the
