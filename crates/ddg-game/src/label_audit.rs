@@ -323,6 +323,9 @@ pub struct Audited {
     pub boxed: bool,
     /// The backdrop per parity class, as the renderer takes it.
     pub pattern: [u8; 4],
+    /// The renderer's ink box `[x0, x1, y0, y1]` in region pixels (what the English is sized
+    /// from).
+    pub ink: Option<[usize; 4]>,
     pub findings: Vec<Finding>,
 }
 
@@ -393,6 +396,7 @@ pub fn audit(cat: &Catalogue, sheets: &SheetTables, bank: &SpriteBank) -> Result
                 region: a.scan.rect,
                 boxed: a.scan.boxed,
                 pattern: a.scan.pattern,
+                ink: a.scan.ink,
                 findings: a.findings,
             });
         }
@@ -579,6 +583,13 @@ pub fn run(args: &[String]) -> Result<()> {
         }
     }
     std::fs::write(out.join("report.md"), md)?;
+    // Every part with the ink box the English is sized from, for comparing catalogues.
+    let mut tsv = String::from("key\tpart\tregion\tink\n");
+    for i in &items {
+        let ink = i.ink.map_or("-".into(), |b| format!("{b:?}"));
+        writeln!(tsv, "{}\t{}\t{:?}\t{ink}", i.key, i.part, i.region)?;
+    }
+    std::fs::write(out.join("parts.tsv"), tsv)?;
 
     // Crops of every flagged part.
     let mut done = std::collections::HashSet::new();

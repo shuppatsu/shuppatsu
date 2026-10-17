@@ -100,8 +100,10 @@ not backdrop). Per part it reports, in sprite pixels:
 writes `out/explain/label_audit/report.md` with a magnified crop per flagged part (the
 original with the region outlined in cyan and the findings dotted: red leftover, orange nearby,
 blue intruding art, yellow frame, magenta off-panel; next to it the English as drawn).
-`--only <key>` restricts the crops, `--all-crops` crops unflagged parts too, `--dump <tbl>`
-prints a tilemap's palette indices as text with rulers (for measuring a region), `--palette <n>`
+`parts.tsv` lists every part with the ink box its English is sized from (for comparing two
+catalogues or renderers). `--only <key>` restricts the crops, `--all-crops` crops unflagged
+parts too, `--dump <tbl>` prints a tilemap's palette indices as text with rulers (for
+measuring a region), `--palette <n>`
 picks the crops' palette (default 4; art the palette draws in too few colours gets false
 colours). The data test `english_regions_fit_their_art` keeps the English catalogue at no
 findings outside `ALLOW` (`crates/ddg-game/src/label_audit.rs`), each allowance with its
