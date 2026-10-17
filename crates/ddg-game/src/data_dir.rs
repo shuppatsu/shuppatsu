@@ -3,11 +3,13 @@
 //! 1. the `DDG_DATA_DIR` environment variable;
 //! 2. the `--data <dir>` flag (any position, any subcommand);
 //! 3. `data/extracted` or `data` next to the executable;
-//! 4. `data_dir` in config.toml (a relative path is relative to the config directory).
+//! 4. `data/extracted` or `data` in the current directory (a checkout, `nix run .`);
+//! 5. `data_dir` in config.toml (a relative path is relative to the config directory).
 //!
 //! A directory may be the extracted disc (`install/Program_Executable_Files/{DATA,BIN}` inside,
 //! as scripts/extract-disc.sh writes it) or an installed copy of the game (`DATA` and `BIN`
-//! directly inside).
+//! directly inside), or a folder holding either of those in an `extracted` subfolder (so
+//! `--data data` finds `data/extracted`).
 
 use anyhow::{Result, bail};
 use std::path::{Path, PathBuf};
@@ -60,12 +62,19 @@ pub fn locate() -> Result<PathBuf> {
             }
         }
     }
+    if let Ok(cwd) = std::env::current_dir() {
+        for d in [cwd.join("data").join("extracted"), cwd.join("data")] {
+            if let Some(i) = try_install_dir(&d) {
+                return Ok(i);
+            }
+        }
+    }
     if let Some(d) = config_data_dir() {
         return install_dir(&d, "config.toml data_dir");
     }
     bail!(
         "the game data was not found. Extract your disc and either put it in a folder named \
-         `data` next to the executable{}, pass --data <dir>, set DDG_DATA_DIR, or set data_dir \
+         `data` next to the executable{} or in the current directory, pass --data <dir>, set DDG_DATA_DIR, or set data_dir \
          in {} (docs/building.md)",
         exe_dir.map_or(String::new(), |d| format!(
             " ({})",
@@ -77,9 +86,15 @@ pub fn locate() -> Result<PathBuf> {
 
 /// `root` as an extracted disc or an installed game directory.
 fn try_install_dir(root: &Path) -> Option<PathBuf> {
-    [root.join(DISC_INSTALL), root.to_owned()]
-        .into_iter()
-        .find(|d| d.join("DATA").is_dir() && d.join("BIN").is_dir())
+    let extracted = root.join("extracted");
+    [
+        root.join(DISC_INSTALL),
+        root.to_owned(),
+        extracted.join(DISC_INSTALL),
+        extracted,
+    ]
+    .into_iter()
+    .find(|d| d.join("DATA").is_dir() && d.join("BIN").is_dir())
 }
 
 fn install_dir(root: &Path, source: &str) -> Result<PathBuf> {
