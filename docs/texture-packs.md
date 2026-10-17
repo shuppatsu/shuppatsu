@@ -101,7 +101,8 @@ and alpha, mask smoothing) and `xbrz::tests` in ddg-tools.
 ## HUD sprites: comparison only (`ddg-tools upscale-sprites`)
 
 There is no runtime pack for the 2D sprites (`cg.rom` tiles, `tbl.rom` tilemaps, the exe's
-palettes; re/hud.md) yet. This tool writes contact sheets that compare upscalers on the HUD
+palettes; re/hud.md); the chosen method runs in the game instead (`hud_upscale`, below). This
+tool writes contact sheets that compare upscalers on the HUD
 art, plus whole frames recomposed with each method, so a method can be chosen first:
 
 ```sh
@@ -158,16 +159,50 @@ colour, exact for linear scalers, close for AI output) and the animated maps (0x
 strips) kept indexed. AI output blends lit and unlit segments and neighbouring palette
 entries, so it cannot be recoloured per entry.
 
-### Runtime integration (not done)
+### Runtime: the `hud_upscale` setting
 
-* Packs per tilemap at a whole factor N: slots address 16-px tile rects (`col, row, w, h`),
-  which map to 16·N-px rects; translated text (`text.rs`), the `wide_menus` repeat and paper
-  fills work on art pixels and would need the same factor (or keep the original art).
-* The canvas multiple (`ui_scale`, `overlay::auto_multiple`) must match N or the art be
-  resampled: smooth gives ×3 at 1440 and ×4 at 1600/2160, integer ×3 at 1440 and ×4 at
-  2160. A ×4 pack on a ×3 canvas has to be shrunk (or the canvas raised to ×4 and the
-  overlay shrinks it by 0.75 with plain bilinear, as the recomposed frames show: softer than
-  the native ×3). Best: build packs at ×3 and ×4 (index methods are instant) and pick by
-  the multiple; nearest blocks remain for multiples above the pack.
-* Colour methods would make the canvas compose RGBA sprites with binary alpha; index
-  methods need only larger index tiles (`SpriteBank` per tilemap instead of per 16×16 tile).
+The chosen method runs in the game, with no pack: `xbrz-indexed`, computed on first use
+(`crates/ddg-render/src/sprites/hires.rs`, the scaler in `sprites/xbrz.rs`, which
+`ddg-tools` uses too). Off (default) keeps the original's blocks.
+
+* **What is upscaled**: at canvas multiples 2, 3 and 4 (`ui_scale`, or the multiple the
+  window height gives), each tilemap as one image, so edges crossing tile borders are one
+  line and there are no seams. Multiples 1 and above 4 draw blocks. A backdrop continued by
+  its repeat on a wide canvas (`wide_menus`) is upscaled as the columns drawn side by side
+  (one image per window width), so the repeat's joins are shaped too. Slots showing a
+  sub-rectangle (`col, row, w, h`) sample the whole map's image at their offset ×N; the
+  sub-rects in use (clear stars 0x54b, the replay mark 0x50b) have transparent gaps
+  between their parts, so the hidden neighbours do not shape the visible edges and no
+  border clamping is needed (checked in shots).
+* **Palette effects**: the image holds palette indices and compose still looks every canvas
+  pixel up in the slot's palette, so palette swaps (4/5/6, 9/10), the animated readout
+  entries 0xdb..0xef and the route strip, and fades are untouched. The xBRZ decisions use
+  the colours the map is drawn with once they repeat a state seen at an earlier draw (the
+  end of a fade, a blink, the readout coming round); until then the blocks are drawn
+  (typically one frame). After that the shapes stay: palette effects change colours only.
+  Index 0 stays transparent; pixels at a silhouette may take index 0 or the opaque
+  neighbour, which is the shaping.
+* **Low contrast is left alone**: a 2×2 block whose four colours are all within the
+  equality tolerance (YCbCr distance 30) is not shaped. Without this, xBRZ turns the
+  dithered menu backdrops (their noise texture) into maze-like worms; with it they
+  keep their pixels while the digits, plates, dials and the navigator are smoothed. Also used
+  by `upscale-sprites`' `xbrz-indexed`; the colour `xbrz` of `upscale-textures` is unchanged.
+* **Unchanged**: the rect layer and fans, the speedometer needle, `Paper` fills (RGBA, drawn
+  as blocks), translated text (drawn over the art at canvas resolution; the art it covers is
+  left out per art pixel, as before), widgets, anchors and the shake.
+* **Cache**: per (tilemap, multiple, view), built lazily, rebuilt when the bank's tilemap
+  changes (compared on every use) or after `SpriteBank::clear_upscaled`; at most 96 MiB,
+  least recently drawn dropped first.
+* **Cost** (release, compose of the whole canvas, median of a run; the build is once per
+  map): driving HUD 2560×1440 (×3) 0.80 ms off / 0.57 ms on, 3840×2160 (×4, canvas
+  3413×1920) 2.1 ms / 1.2 ms (the image path writes rows without per-pixel bounds checks,
+  so it is faster than the block path); title menu with its wide backdrop 7.3 / 7.6 ms at
+  1440 and 15.5 / 15.1 ms at 2160 (a full-screen backdrop; most of that time is the menu's
+  own slots and text, the same either way). First use: the 4K wide backdrop takes about
+  10 ms to build, HUD maps well under that.
+* Tests: `sprites::xbrz::tests`, `sprites::hires::tests` (cache, waiting for settled colours),
+  `sprites::hires_tests` (off is the block blit and other multiples keep it, palette swaps
+  change only colours, sub-rect alignment, index-0 transparency, rebuild on a changed map,
+  no seams in a wide repeat).
+* Shots: `out/explain/hud_xbrz/` (gitignored): `<size>_<scene>_{before,after}.png` at
+  2560×1440 (×3), 2560×1600 and 3840×2160 (×4), and 1:1 crops in `crops/`.
