@@ -114,13 +114,17 @@ pub enum WidgetKind {
     Fill(Paint),
     /// A triangle pointing down: the rectangle's top edge to the middle of its bottom edge.
     DownArrow(Paint),
-    /// The `src` rectangle (`[x, y, w, h]` in art pixels) of a tilemap, `zoom` canvas pixels
-    /// per art pixel, centred in the widget's rectangle and clipped to it (never stretched).
-    /// Index 0 is transparent, as in a slot.
+    /// The `src` rectangle (`[x, y, w, h]` in art pixels) of a tilemap, `scale` original
+    /// pixels per art pixel (the same in x and y, so never stretched), centred in the widget's
+    /// rectangle and clipped to it. Index 0 is transparent, as in a slot. At a whole number of
+    /// canvas pixels per art pixel this is the plain nearest-neighbour blit; otherwise each
+    /// canvas pixel is the area average of the art under it (the art enlarged with nearest
+    /// neighbour and box-filtered), so only edge pixels blend: sharp bilinear when enlarging,
+    /// an area downscale when shrinking ([`resample_sprite`]).
     Sprite {
         tilemap: u16,
         src: [u16; 4],
-        zoom: u8,
+        scale: f32,
         palette: u8,
     },
     /// Text in the rectangle at canvas resolution, uniformly scaled, in the bank's label font
@@ -693,7 +697,7 @@ impl SpriteLayer {
             WidgetKind::Sprite {
                 tilemap,
                 src,
-                zoom,
+                scale,
                 palette: p,
             } => {
                 let (Some(pal), Some(map)) =
@@ -706,28 +710,25 @@ impl SpriteLayer {
                 let ah = usize::from(map.height) * TILE_SIZE;
                 let [ax, ay, sw, sh] = src.map(usize::from);
                 let (sw, sh) = (sw.min(aw.saturating_sub(ax)), sh.min(ah.saturating_sub(ay)));
-                let z = usize::from((*zoom).max(1));
-                // Centred in the unclipped rectangle (in signed canvas pixels).
-                let cx =
-                    ((x + sx as f32 + rw / 2.0) * s + shift).round() as i64 - (sw * z / 2) as i64;
-                let cy = ((y + sy as f32 + rh / 2.0) * s).round() as i64 - (sh * z / 2) as i64;
-                for py in y0..y1 {
-                    let ly = py as i64 - cy;
-                    if ly < 0 || ly >= (sh * z) as i64 {
-                        continue;
-                    }
-                    let row = ay + ly as usize / z;
-                    for px in x0..x1 {
-                        let lx = px as i64 - cx;
-                        if lx < 0 || lx >= (sw * z) as i64 {
-                            continue;
-                        }
-                        let index = art[row * aw + ax + lx as usize / z];
-                        if index != 0 {
-                            put(canvas, px, py, pal.rgba(index));
-                        }
-                    }
+                // Canvas pixels per art pixel.
+                let z = scale * s;
+                if z.is_nan() || z <= 0.0 || sw == 0 || sh == 0 {
+                    return;
                 }
+                // The sprite's size and its top left, centred in the unclipped rectangle on a
+                // whole canvas pixel (signed canvas pixels).
+                let (dw, dh) = (sw as f32 * z, sh as f32 * z);
+                let cx = ((x + sx as f32 + rw / 2.0) * s + shift).round() as i64
+                    - (dw / 2.0).floor() as i64;
+                let cy =
+                    ((y + sy as f32 + rh / 2.0) * s).round() as i64 - (dh / 2.0).floor() as i64;
+                let colours: Vec<[u8; 4]> = (0..=255u8).map(|i| pal.rgba(i)).collect();
+                let src = Art {
+                    px: &art,
+                    stride: aw,
+                    rect: [ax, ay, sw, sh],
+                };
+                resample_sprite(&src, &colours, z, (cx, cy), [x0, y0, x1, y1], c, canvas);
             }
             WidgetKind::Text { text, style } => {
                 let paint = style.paint;
@@ -806,6 +807,89 @@ impl SpriteLayer {
                     }
                 }
             }
+        }
+    }
+}
+
+/// Palette indices of a sprite: the `rect` (`[x, y, w, h]`) of a `stride`-wide image.
+struct Art<'a> {
+    px: &'a [u8],
+    stride: usize,
+    rect: [usize; 4],
+}
+
+/// The art pixels a canvas pixel `i` covers at `z` canvas pixels per art pixel, as
+/// `(art pixel, overlap)` pairs: the pixel's footprint `[i / z, (i + 1) / z)` cut to `0..n`.
+fn footprint(i: i64, z: f32, n: usize) -> impl Iterator<Item = (usize, f32)> {
+    let (a, b) = (i as f32 / z, (i + 1) as f32 / z);
+    let first = a.floor().max(0.0) as usize;
+    let last = (b.ceil().max(0.0) as usize).min(n);
+    (first..last).filter_map(move |k| {
+        let w = (b.min(k as f32 + 1.0) - a.max(k as f32)).max(0.0);
+        (w > 0.0).then_some((k, w))
+    })
+}
+
+/// Draws `art` with its top left at canvas pixel `origin`, `z` canvas pixels per art pixel,
+/// inside the canvas rectangle `clip` (`[x0, y0, x1, y1]`), colours by palette index
+/// (`colours[0]` is unused: index 0 is transparent). Each canvas pixel gets the area average
+/// of the art under it, premultiplied by coverage (a box filter of the art enlarged with
+/// nearest neighbour): at a whole `z` this is the exact pixel-doubling blit. Partly covered
+/// pixels blend over the canvas in sRGB like the label text, or over transparency keep their
+/// coverage as alpha (the overlay's alpha test then decides).
+fn resample_sprite(
+    art: &Art<'_>,
+    colours: &[[u8; 4]],
+    z: f32,
+    (ox, oy): (i64, i64),
+    [x0, y0, x1, y1]: [usize; 4],
+    c: Canvas,
+    canvas: &mut [u8],
+) {
+    let [ax, ay, sw, sh] = art.rect;
+    let (dw, dh) = ((sw as f32 * z).ceil() as i64, (sh as f32 * z).ceil() as i64);
+    let area = 1.0 / (z * z);
+    let xs = (x0 as i64).max(ox)..(x1 as i64).min(ox + dw);
+    for py in (y0 as i64).max(oy)..(y1 as i64).min(oy + dh) {
+        let rows: Vec<(usize, f32)> = footprint(py - oy, z, sh).collect();
+        for px in xs.clone() {
+            let mut sum = [0.0f32; 4];
+            for (col, wx) in footprint(px - ox, z, sw) {
+                for &(row, wy) in &rows {
+                    let index = art.px[(ay + row) * art.stride + ax + col];
+                    if index == 0 {
+                        continue;
+                    }
+                    let w = wx * wy;
+                    let rgba = colours[usize::from(index)];
+                    for (s, v) in sum.iter_mut().zip(rgba) {
+                        *s += f32::from(v) * w;
+                    }
+                }
+            }
+            if sum[3] <= 0.0 {
+                continue;
+            }
+            // Coverage, and the straight colour of the covered part.
+            let a = (sum[3] / 255.0 / area).min(1.0);
+            let colour = [0, 1, 2].map(|i| (sum[i] * 255.0 / sum[3]).round() as u8);
+            let o = (py as usize * c.w + px as usize) * 4;
+            let under: [u8; 4] = canvas[o..o + 4].try_into().expect("4 bytes");
+            let out = if a >= 1.0 {
+                [colour[0], colour[1], colour[2], 255]
+            } else if under[3] == 0 {
+                [colour[0], colour[1], colour[2], (a * 255.0).round() as u8]
+            } else {
+                let mix =
+                    |u: u8, v: u8| (f32::from(u) * (1.0 - a) + f32::from(v) * a).round() as u8;
+                [
+                    mix(under[0], colour[0]),
+                    mix(under[1], colour[1]),
+                    mix(under[2], colour[2]),
+                    under[3].max((a * 255.0).round() as u8),
+                ]
+            };
+            canvas[o..o + 4].copy_from_slice(&out);
         }
     }
 }
@@ -1208,7 +1292,7 @@ mod tests {
         let sprite = WidgetKind::Sprite {
             tilemap: 0,
             src: [0, 0, 32, 16],
-            zoom: 1,
+            scale: 0.5,
             palette: 0,
         };
         l.add_widget(0, [200.0, 200.0, 10.0, 20.0], sprite);
@@ -1235,6 +1319,59 @@ mod tests {
         assert!((600..700).all(|x| (600..620).all(|y| c[(y * w + x) * 4 + 3] == 0)));
         l.reset_transient();
         assert!(l.widgets.is_empty());
+    }
+
+    /// Fractional sprite scales: an area average of the art under each canvas pixel.
+    #[test]
+    fn sprite_widgets_resample_at_fractional_scales() {
+        // One tile, columns alternating red (2) and green (1).
+        let mut tile = [0u8; TILE_PIXELS];
+        for (i, v) in tile.iter_mut().enumerate() {
+            *v = if i % 2 == 0 { 2 } else { 1 };
+        }
+        let mut b = bank(1);
+        b.tiles[1] = Some(Box::new(tile));
+        let sprite = |scale| WidgetKind::Sprite {
+            tilemap: 0,
+            src: [0, 0, 16, 16],
+            scale,
+            palette: 0,
+        };
+        let draw = |canvas_scale: usize, scale: f32| {
+            let mut l = SpriteLayer {
+                scale: canvas_scale,
+                ..SpriteLayer::default()
+            };
+            l.palettes[0] = Some(palette());
+            l.add_widget(0, [100.0, 100.0, 40.0, 40.0], sprite(scale));
+            let (w, h) = l.canvas_size();
+            let mut c = vec![0; w * h * 4];
+            l.compose(&b, &mut c);
+            move |x: usize, y: usize| -> [u8; 4] { c[(y * w + x) * 4..][..4].try_into().unwrap() }
+        };
+        // Canvas multiple 3, half an original pixel per art pixel: 1.5 canvas pixels per art
+        // pixel, 24 × 24 centred on (360, 360). Pixel 0 is all red; pixel 1 is a third red and
+        // a third green; pixel 2 all green.
+        let px = draw(3, 0.5);
+        assert_eq!(px(347, 350), [0, 0, 0, 0]);
+        assert_eq!(px(348, 350), [255, 0, 0, 255]);
+        let mixed = |p: [u8; 4]| {
+            (127..=128).contains(&p[0]) && (127..=128).contains(&p[1]) && p[2..] == [0, 255]
+        };
+        assert!(mixed(px(349, 350)), "{:?}", px(349, 350));
+        assert_eq!(px(350, 350), [0, 255, 0, 255]);
+        assert_eq!(px(371, 350), [0, 255, 0, 255]);
+        assert_eq!(px(372, 350), [0, 0, 0, 0]);
+        // Multiple 1: two art pixels per canvas pixel, red and green averaged.
+        let px = draw(1, 0.5);
+        assert!(mixed(px(116, 116)), "{:?}", px(116, 116));
+        assert_eq!(px(115, 116), [0, 0, 0, 0]);
+        assert_eq!(px(124, 116), [0, 0, 0, 0]);
+        // Multiple 4: a whole 2 canvas pixels per art pixel, the plain doubling.
+        let px = draw(4, 0.5);
+        assert_eq!(px(464, 470), [255, 0, 0, 255]);
+        assert_eq!(px(465, 470), [255, 0, 0, 255]);
+        assert_eq!(px(466, 470), [0, 255, 0, 255]);
     }
 
     #[test]

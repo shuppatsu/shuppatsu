@@ -46,6 +46,65 @@ const ROMAJI_CAP_WIDE: f32 = 7.0;
 const GAP: f32 = 2.0;
 /// Side margin of the romaji in a box (the kanji may use the full width).
 const MARGIN: f32 = 2.0;
+/// The kanji name sprites' size: original pixels per art pixel, at every canvas multiple
+/// (half the art's size, 14 px high: the lettering size of the other HUD text). Relative to
+/// the boxes this is fixed; the group's [`RightGroup::scale`] applies on top.
+pub const KANJI_SCALE: f32 = 0.5;
+/// The least clear gap, in original pixels, between the remaining-time panel and the vehicle
+/// picture on its right ([`RightGroup::fit`]).
+pub const MIN_GAP: f32 = 4.0;
+/// The top right corner of the right group (the backdrop's): the fixed point when the group
+/// is made smaller.
+const GROUP_RIGHT: f32 = BACKDROP[0] + BACKDROP[2];
+const GROUP_TOP: f32 = BACKDROP[1];
+
+/// The layout of the right group (vehicle picture and horizontal plates) on one canvas.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RightGroup {
+    /// How much wider the boxes are than on 4:3, whole original pixels (0 ..= [`MAX_EXTRA`]);
+    /// the vehicle picture moves left by as much.
+    pub extra: f32,
+    /// A uniform size factor for the whole group about its top right corner, 1 unless even
+    /// the 4:3 layout would not leave [`MIN_GAP`] to the remaining time.
+    pub scale: f32,
+}
+
+impl RightGroup {
+    /// The layout for a canvas with `side_room` ([`SpriteLayer::side_room`]): the boxes take
+    /// the room the right group gains, up to [`MAX_EXTRA`], but never so much that the
+    /// vehicle picture comes closer than [`MIN_GAP`] to the remaining-time panel; when even
+    /// the unwidened layout does, the group is made just small enough (never stretched).
+    /// `picture_left`: the left edge of the picture's ink at its 4:3 place; `panel_right`: the
+    /// right edge of the panel's ink (both 640×480 x, the panel centred, the group at the
+    /// right edge, so the panel is `side_room` further left relative to the group).
+    pub fn fit(side_room: f32, picture_left: f32, panel_right: f32) -> Self {
+        let limit = panel_right + MIN_GAP - side_room.max(0.0);
+        let room = picture_left - limit;
+        if room < 0.0 {
+            let scale = (GROUP_RIGHT - limit) / (GROUP_RIGHT - picture_left);
+            return Self {
+                extra: 0.0,
+                scale: scale.clamp(0.0, 1.0),
+            };
+        }
+        Self {
+            extra: side_room.floor().clamp(0.0, MAX_EXTRA).min(room.floor()),
+            scale: 1.0,
+        }
+    }
+
+    /// A rectangle of the group's 4:3 layout made [`RightGroup::scale`] times smaller about
+    /// the group's top right corner.
+    pub fn place(&self, [x, y, w, h]: [f32; 4]) -> [f32; 4] {
+        let k = self.scale;
+        [
+            GROUP_RIGHT - (GROUP_RIGHT - x) * k,
+            GROUP_TOP + (y - GROUP_TOP) * k,
+            w * k,
+            h * k,
+        ]
+    }
+}
 
 struct Name {
     /// The plain horizontal name sprite and its inked columns `[x, w]`.
@@ -175,16 +234,16 @@ impl EnglishPlates {
         })
     }
 
-    /// Draws the boxes for the plate slots' current images (`None` = no plate), `extra`
-    /// pixels wider than on 4:3 ([`extra_width`]), and sets up [`PAL_PLATES`] from the
-    /// plates' palette as it is this tick.
+    /// Draws the boxes for the plate slots' current images (`None` = no plate) in the layout
+    /// `g` ([`RightGroup::fit`]), and sets up [`PAL_PLATES`] from the plates' palette as it
+    /// is this tick.
     pub fn draw(
         &self,
         layer: &mut SpriteLayer,
         l: u8,
         from: Option<i16>,
         next: Option<i16>,
-        extra: f32,
+        g: RightGroup,
     ) {
         if from.is_none() && next.is_none() {
             return;
@@ -202,13 +261,13 @@ impl EnglishPlates {
             palette: PAL_PLATES,
             index,
         };
-        let extra = extra.clamp(0.0, MAX_EXTRA);
+        let extra = g.extra.clamp(0.0, MAX_EXTRA);
         let [bx, by, bw, bh] = BACKDROP;
         let backdrop = [bx - extra, by, bw + extra, bh];
         let (box_x, box_w) = (BOX_X - extra, BOX_W + extra);
         let arrow = [box_x + (box_w - ARROW_W) / 2.0, ARROW_Y, ARROW_W, ARROW_H];
-        layer.add_widget(l, backdrop, WidgetKind::Fill(paint(c.plate_bg)));
-        layer.add_widget(l, arrow, WidgetKind::DownArrow(paint(c.plate_fg)));
+        layer.add_widget(l, g.place(backdrop), WidgetKind::Fill(paint(c.plate_bg)));
+        layer.add_widget(l, g.place(arrow), WidgetKind::DownArrow(paint(c.plate_fg)));
         let t = extra / MAX_EXTRA;
         let romaji = (
             ROMAJI_H + (ROMAJI_H_WIDE - ROMAJI_H) * t,
@@ -218,16 +277,18 @@ impl EnglishPlates {
             let Some(name) = plate.and_then(|p| self.names.get(&p)) else {
                 continue;
             };
-            let rect = [box_x, y, box_w, BOX_H];
+            let rect = g.place([box_x, y, box_w, BOX_H]);
             layer.add_widget(l, rect, WidgetKind::Fill(paint(c.grey)));
-            self.name(layer, l, name, rect, paint(c.plate_fg), romaji);
+            self.name(layer, l, name, rect, paint(c.plate_fg), romaji, g.scale);
         }
     }
 
-    /// The kanji sprite and the romaji under it, centred in `rect` as a group. The sprite is
-    /// drawn with whole canvas pixels per art pixel: 1 up to `ui_scale` 2, 2 at 3 and 4 (so at
-    /// 2× it is half the original size, the lettering size of the other HUD text).
-    /// `romaji`: the romaji line's height and capital height.
+    /// The kanji sprite and the romaji under it, centred in `rect` as a group, everything `k`
+    /// times its 4:3 size ([`RightGroup::scale`]). The sprite is [`KANJI_SCALE`] × `k` original
+    /// pixels per art pixel at every canvas multiple, resampled where that is not a whole
+    /// number of canvas pixels (the widget's area filter). `romaji`: the romaji line's height
+    /// and capital height.
+    #[allow(clippy::too_many_arguments)]
     fn name(
         &self,
         layer: &mut SpriteLayer,
@@ -236,15 +297,17 @@ impl EnglishPlates {
         rect: [f32; 4],
         paint: Paint,
         (romaji_h, romaji_cap): (f32, f32),
+        k: f32,
     ) {
-        let s = layer.scale.max(1);
-        let zoom = s.div_ceil(2);
-        let kanji_h = f32::from(self.ink_y[1]) * zoom as f32 / s as f32;
+        let scale = KANJI_SCALE * k;
+        let kanji_h = f32::from(self.ink_y[1]) * scale;
+        let (romaji_h, romaji_cap, gap, margin) =
+            (romaji_h * k, romaji_cap * k, GAP * k, MARGIN * k);
         // No romaji without a translation and its font (the names are then empty).
         let romaji = name.romaji.as_deref().filter(|r| !r.is_empty());
         let group_h = kanji_h
             + if romaji.is_some() {
-                GAP + romaji_h
+                gap + romaji_h
             } else {
                 0.0
             };
@@ -256,37 +319,39 @@ impl EnglishPlates {
             WidgetKind::Sprite {
                 tilemap: name.sprite,
                 src: [name.ink_x[0], self.ink_y[0], name.ink_x[1], self.ink_y[1]],
-                zoom: zoom as u8,
+                scale,
                 palette: PAL_PLATES,
             },
         );
         if let Some(r) = romaji {
-            let ry = top + kanji_h + GAP;
-            let rect = [x + MARGIN, ry, w - 2.0 * MARGIN, romaji_h];
+            let ry = top + kanji_h + gap;
+            let rect = [x + margin, ry, w - 2.0 * margin, romaji_h];
             layer.add_text(l, rect, r, paint, Some(romaji_cap));
         }
     }
 
-    /// Names whose kanji sprite is wider than a box at `ui_scale` `s` (clipped at both ends):
-    /// `(plate tilemap, ink width in art pixels)`.
-    pub fn too_wide(&self, s: usize) -> Vec<(i16, u16)> {
-        let s = s.max(1);
-        let room = (BOX_W * s as f32) as usize;
+    /// Names whose kanji sprite is wider than an unwidened (94-px) box and so clipped at both
+    /// ends: `(plate tilemap, ink width in art pixels)`. The kanji keep their size relative to
+    /// the box at every canvas multiple and group scale, so this is one list.
+    pub fn too_wide(&self) -> Vec<(i16, u16)> {
         let mut v: Vec<(i16, u16)> = self
             .names
             .iter()
-            .filter(|(_, n)| usize::from(n.ink_x[1]) * s.div_ceil(2) > room)
+            .filter(|(_, n)| f32::from(n.ink_x[1]) * KANJI_SCALE > BOX_W)
             .map(|(&p, n)| (p, n.ink_x[1]))
             .collect();
         v.sort_unstable();
         v
     }
-}
 
-/// How much wider the boxes can be on this canvas: the room the right group gained over the
-/// centred 4:3 layout (0 at 4:3), up to [`MAX_EXTRA`], in whole original pixels.
-pub fn extra_width(layer: &SpriteLayer) -> f32 {
-    layer.side_room().floor().clamp(0.0, MAX_EXTRA)
+    /// The widest kanji name: `(plate tilemap, ink width in art pixels)`.
+    #[cfg(test)]
+    pub fn widest(&self) -> Option<(i16, u16)> {
+        self.names
+            .iter()
+            .map(|(&p, n)| (p, n.ink_x[1]))
+            .max_by_key(|&(p, w)| (w, std::cmp::Reverse(p)))
+    }
 }
 
 #[cfg(test)]
@@ -296,8 +361,54 @@ mod tests {
     use ddg_formats::cab_hud::CabTables;
     use ddg_formats::exe::Exe;
 
+    /// The boxes widen into the side room unless that would bring the picture within
+    /// [`MIN_GAP`] of the remaining time; with no room left the group shrinks about its top
+    /// right corner just enough.
+    #[test]
+    fn right_group_keeps_the_gap() {
+        // The data: picture ink from 411, panel ink to 404 (7 px apart at 4:3).
+        let g = |room| RightGroup::fit(room, 411.0, 404.0);
+        assert_eq!(
+            g(0.0),
+            RightGroup {
+                extra: 0.0,
+                scale: 1.0
+            }
+        );
+        assert_eq!(
+            g(30.5),
+            RightGroup {
+                extra: 30.0,
+                scale: 1.0
+            }
+        );
+        assert_eq!(
+            g(64.0),
+            RightGroup {
+                extra: MAX_EXTRA,
+                scale: 1.0
+            }
+        );
+        // A picture reaching 405 at 4:3: widening waits until the room exceeds the deficit.
+        let g = |room| RightGroup::fit(room, 405.0, 404.0);
+        assert_eq!(
+            g(10.0),
+            RightGroup {
+                extra: 7.0,
+                scale: 1.0
+            }
+        );
+        let fit = g(0.0);
+        assert_eq!(fit.extra, 0.0);
+        // 588 - 405 = 183 px shrunk to 588 - 408 = 180.
+        assert!((fit.scale - 180.0 / 183.0).abs() < 1e-6);
+        let [x, y, w, h] = fit.place([405.0, 7.0, 80.0, 40.0]);
+        assert!((x - 408.0).abs() < 1e-4 && y == 7.0);
+        assert!((w / h - 2.0).abs() < 1e-6, "uniform");
+    }
+
     /// Against the user's data: the colours found in the art, every plate a stage shows has a
-    /// name sprite and a catalogued English name, and every kanji sprite fits a box at 2×.
+    /// name sprite and a catalogued English name, and every kanji sprite fits a 94-px box.
     #[test]
     fn plates_from_the_data() {
         if std::env::var_os("DDG_DATA_DIR").is_none() {
@@ -334,14 +445,20 @@ mod tests {
                 );
             }
         }
-        assert_eq!(p.too_wide(2), []);
+        assert_eq!(p.too_wide(), []);
+        // The widest name, Hokuhoku-Ōshima: 164 art px, 82 of the 94-px box.
+        assert_eq!(p.widest(), Some((0x4cf, 164)));
         // Drawing: backdrop, arrow, and per box a fill, the sprite and the romaji.
         let mut layer = SpriteLayer {
             scale: 2,
             ..SpriteLayer::default()
         };
         layer.palettes[4] = Some(Palette([0x0010_2030; 256]));
-        p.draw(&mut layer, 2, Some(0x4e1), Some(0x4e2), MAX_EXTRA);
+        let g = RightGroup {
+            extra: MAX_EXTRA,
+            scale: 1.0,
+        };
+        p.draw(&mut layer, 2, Some(0x4e1), Some(0x4e2), g);
         assert_eq!(layer.widgets.len(), 2 + 2 * 3);
         let pal = layer.palettes[usize::from(PAL_PLATES)].as_ref().unwrap();
         assert_eq!(pal.rgba(p.colours.grey), [0x30, 0x30, 0x30, 255]);

@@ -10,7 +10,7 @@ use ddg_formats::cab_hud::{CabTables, Place, VehicleRow};
 use ddg_formats::cg;
 use ddg_formats::exe::Exe;
 use ddg_formats::hud::{HudTables, digits_blank_leading};
-use ddg_render::sprites::{Anchor, Slot, SpriteBank, SpriteLayer};
+use ddg_render::sprites::{Anchor, Slot, SpriteBank, SpriteLayer, WidgetKind};
 use plates_en::EnglishPlates;
 use std::collections::HashMap;
 
@@ -190,6 +190,30 @@ pub struct Hud {
     english_plates: Option<EnglishPlates>,
     /// The vehicle picture's place in the layout table (moved left for wider plates).
     picture_pos: (i16, i16),
+    /// The 秒 slot's x in the layout table (the right end of the remaining-time panel).
+    seconds_x: i16,
+    /// With the horizontal plates: what the right group's fit needs.
+    right_group: Option<GroupEdges>,
+}
+
+/// What [`plates_en::RightGroup::fit`] needs, measured in the art at load (640×480 x).
+#[derive(Clone, Debug, Default)]
+struct GroupEdges {
+    /// The leftmost ink of any vehicle picture at its 4:3 place.
+    picture_left: f32,
+    /// The rightmost ink of the 秒 panel (exclusive).
+    panel_right: f32,
+    /// Picture art sizes `(w, h)` by tilemap, to draw a picture made smaller.
+    pictures: HashMap<i16, (usize, usize)>,
+}
+
+/// The first and one past the last inked column of a tilemap's art.
+fn ink_columns(bank: &SpriteBank, tbl: i16) -> Option<(usize, usize)> {
+    let (w, h, px) = bank.art(u16::try_from(tbl).ok()?)?;
+    let inked = |x: usize| (0..h).any(|y| px[y * w + x] != 0);
+    let first = (0..w).find(|&x| inked(x))?;
+    let last = (0..w).rev().find(|&x| inked(x))?;
+    Some((first, last + 1))
 }
 
 /// Enhancement `wide_hud` (docs/re/hud.md §6.4): the edge each driving-HUD slot keeps to on a
@@ -240,14 +264,20 @@ impl Hud {
     }
 
     fn with_tables(tables: HudTables, cab: &CabTables, remaining_label: i16) -> Self {
-        let picture_pos = tables
-            .layout
-            .iter()
-            .map(|r| r.at_640())
-            .find(|p| usize::try_from(p.slot) == Ok(SLOT_VEHICLE_PICTURE))
-            .map_or((411, 16), |p| (p.x, p.y));
+        let place = |slot: usize, default: (i16, i16)| {
+            tables
+                .layout
+                .iter()
+                .map(|r| r.at_640())
+                .find(|p| usize::try_from(p.slot) == Ok(slot))
+                .map_or(default, |p| (p.x, p.y))
+        };
+        let picture_pos = place(SLOT_VEHICLE_PICTURE, (411, 16));
+        let seconds_x = place(SLOT_SECONDS, (361, 56)).0;
         Self {
             picture_pos,
+            seconds_x,
+            right_group: None,
             tables,
             vehicles: cab.vehicles.to_vec(),
             dial_pos: cab.dial_pos,
@@ -270,25 +300,61 @@ impl Hud {
     /// Switches the station plates to the horizontal layout ([`plates_en`]; a translation in
     /// the enhanced HUD layout), with `romaji` names by plate tilemap id (empty: kanji only). Call
     /// before [`Hud::create`]. Returns false (and keeps the original plates) when the art has no
-    /// usable plates. Names whose kanji will be clipped at `ui_scale` are listed on stderr.
+    /// usable plates. Names whose kanji are clipped (at every canvas multiple) are listed on
+    /// stderr.
     pub fn use_horizontal_plates(
         &mut self,
         bank: &SpriteBank,
         romaji: &HashMap<u16, String>,
-        ui_scale: usize,
     ) -> bool {
         let palette = self.plate_places[0].palette as u8;
         self.english_plates =
             EnglishPlates::new(bank, &self.tables, &self.station_plates, palette, romaji);
-        if let Some(e) = &self.english_plates {
-            let wide = e.too_wide(ui_scale);
-            if !wide.is_empty() {
-                eprintln!(
-                    "station plates: kanji clipped at ui_scale {ui_scale} (plate, px): {wide:x?}"
-                );
+        let Some(e) = &self.english_plates else {
+            return false;
+        };
+        let wide = e.too_wide();
+        if !wide.is_empty() {
+            eprintln!("station plates: kanji clipped (plate, px): {wide:x?}");
+        }
+        let mut edges = GroupEdges {
+            picture_left: f32::INFINITY,
+            ..GroupEdges::default()
+        };
+        for v in &self.vehicles {
+            let Some((w, h, _)) = u16::try_from(v.picture).ok().and_then(|t| bank.art(t)) else {
+                continue;
+            };
+            edges.pictures.insert(v.picture, (w, h));
+            if let Some((first, _)) = ink_columns(bank, v.picture) {
+                edges.picture_left = edges
+                    .picture_left
+                    .min((self.picture_pos.0 as usize + first) as f32);
             }
         }
-        self.english_plates.is_some()
+        // 秒 as created (0x40d) and as updated (hud.md §3.2).
+        edges.panel_right = [TBL_SECONDS - 1, TBL_SECONDS]
+            .into_iter()
+            .filter_map(|t| ink_columns(bank, t))
+            .map(|(_, end)| f32::from(self.seconds_x) + end as f32)
+            .fold(0.0, f32::max);
+        if edges.picture_left.is_finite() && edges.panel_right > 0.0 {
+            self.right_group = Some(edges);
+        }
+        true
+    }
+
+    /// The right group's layout on this canvas: the boxes' widening and, only when even the
+    /// 4:3 layout would leave less than [`plates_en::MIN_GAP`] to the remaining time, a
+    /// smaller group (docs/localisation.md, "Station plates").
+    fn right_group(&self, layer: &SpriteLayer) -> plates_en::RightGroup {
+        match &self.right_group {
+            Some(e) => plates_en::RightGroup::fit(layer.side_room(), e.picture_left, e.panel_right),
+            None => plates_en::RightGroup {
+                extra: layer.side_room().floor().clamp(0.0, plates_en::MAX_EXTRA),
+                scale: 1.0,
+            },
+        }
     }
 
     pub fn tables(&self) -> &HudTables {
@@ -390,8 +456,8 @@ impl Hud {
             let shown = |slot: usize| Some(layer.slots[slot].tilemap).filter(|&t| t >= 0);
             let (from, next) = (shown(SLOT_PLATE_FROM), shown(SLOT_PLATE_NEXT));
             let l = layer.slots[SLOT_PLATE_ARROW].layer;
-            let extra = plates_en::extra_width(layer);
-            layer.anchored(Anchor::Right, |layer| e.draw(layer, l, from, next, extra));
+            let g = self.right_group(layer);
+            layer.anchored(Anchor::Right, |layer| e.draw(layer, l, from, next, g));
         }
     }
 
@@ -425,18 +491,40 @@ impl Hud {
         match s.vehicle {
             Some((name, picture)) => {
                 slots::image(layer, SLOT_VEHICLE_NAME, name);
+                let palette = picture_palette(picture);
                 if self.english_plates.is_some() {
                     // Room for the wider plates on its right (the same group, hud.md §6.4).
                     let (x, y) = self.picture_pos;
-                    let extra = plates_en::extra_width(layer) as i16;
-                    slots::move_to(layer, SLOT_VEHICLE_PICTURE, x - extra, y);
+                    let g = self.right_group(layer);
+                    let size = self
+                        .right_group
+                        .as_ref()
+                        .and_then(|e| e.pictures.get(&picture).copied());
+                    match size.filter(|_| g.scale < 1.0) {
+                        Some((w, h)) => {
+                            // Made smaller with the group: drawn as a widget, the slot parked
+                            // off screen (it keeps its state, like the plates).
+                            let off = Slot::CLEAR;
+                            slots::move_to(layer, SLOT_VEHICLE_PICTURE, off.x, off.y);
+                            let l = layer.slots[SLOT_VEHICLE_PICTURE].layer;
+                            let rect = g.place([f32::from(x), f32::from(y), w as f32, h as f32]);
+                            let sprite = WidgetKind::Sprite {
+                                tilemap: picture as u16,
+                                src: [0, 0, w as u16, h as u16],
+                                scale: g.scale,
+                                palette,
+                            };
+                            layer.anchored(Anchor::Right, |layer| {
+                                layer.add_widget(l, rect, sprite);
+                            });
+                        }
+                        None => {
+                            let extra = g.extra as i16;
+                            slots::move_to(layer, SLOT_VEHICLE_PICTURE, x - extra, y);
+                        }
+                    }
                 }
-                slots::image_palette(
-                    layer,
-                    SLOT_VEHICLE_PICTURE,
-                    picture,
-                    picture_palette(picture),
-                );
+                slots::image_palette(layer, SLOT_VEHICLE_PICTURE, picture, palette);
             }
             None => {
                 slots::image(layer, SLOT_VEHICLE_NAME, -1);
@@ -926,5 +1014,41 @@ mod tests {
         assert_eq!(picture_palette(0x69), 4);
         assert_eq!(picture_palette(0x68), 10);
         assert_eq!(picture_palette(0x129), 9);
+    }
+
+    /// Against the user's data: the enhanced 4:3 layout leaves the vehicle pictures at least
+    /// [`plates_en::MIN_GAP`] from the remaining time without shrinking anything (hud.md §6.4).
+    #[test]
+    fn right_group_gap_from_the_data() {
+        if std::env::var_os("DDG_DATA_DIR").is_none() {
+            eprintln!("skipped: DDG_DATA_DIR not set");
+            return;
+        }
+        let data = crate::scene::GameData::from_env().unwrap();
+        let exe_bytes = data.exe().unwrap();
+        let exe = Exe::parse(&exe_bytes).unwrap();
+        let bank = SpriteBank::new(
+            &cg::CgFile::parse(&data.read("cg.rom").unwrap()).unwrap(),
+            cg::parse_tbl(&data.read("tbl.rom").unwrap()).unwrap(),
+        );
+        let mut hud = Hud::new(&exe, 10).unwrap();
+        assert!(hud.use_horizontal_plates(&bank, &HashMap::new()));
+        let e = hud.right_group.clone().unwrap();
+        // 秒 (x 361, 0x40d / 0x40e) is inked up to 405 (exclusive); the pictures (x 411) from
+        // their first column: 6 px apart.
+        assert_eq!((e.picture_left, e.panel_right), (411.0, 405.0));
+        assert!(e.picture_left - e.panel_right >= plates_en::MIN_GAP);
+        let mut layer = SpriteLayer::default();
+        assert_eq!(
+            hud.right_group(&layer),
+            plates_en::RightGroup {
+                extra: 0.0,
+                scale: 1.0
+            }
+        );
+        // 16:10 at multiple 2: 64 px of side room, the boxes 56 px wider.
+        layer.scale = 2;
+        layer.wide = 256;
+        assert_eq!(hud.right_group(&layer).extra, plates_en::MAX_EXTRA);
     }
 }

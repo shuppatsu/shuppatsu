@@ -274,8 +274,7 @@ impl Play {
         // and the enhanced HUD layout; Japanese and the original layout keep the vertical plates.
         if opts.locale.enhanced_hud() && opts.locale.active() && bank.has_label_font() {
             let names = crate::locale::station_plate_names(&opts.locale)?;
-            cab.hud
-                .use_horizontal_plates(&bank, &names, opts.locale.ui_scale);
+            cab.hud.use_horizontal_plates(&bank, &names);
         }
         // Enhancement `landmark_names`: with a translation drawn, the name under the kanji.
         if bank.has_label_font() {
