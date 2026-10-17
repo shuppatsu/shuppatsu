@@ -28,10 +28,13 @@
         targets = [
           "x86_64-unknown-linux-gnu"
           "i686-pc-windows-gnu"
+          "x86_64-pc-windows-gnu"
         ];
       };
 
       mingw32 = pkgs.pkgsCross.mingw32;
+      # The 64-bit Windows build of the game and tools (docs/building.md).
+      mingwW64 = pkgs.pkgsCross.mingwW64;
 
       # Libraries winit/wgpu dlopen at runtime.
       runtimeLibs = with pkgs; [
@@ -164,6 +167,7 @@
           [
             rust
             mingw32.stdenv.cc
+            mingwW64.stdenv.cc
           ]
           ++ (with pkgs; [
             pkg-config
@@ -190,6 +194,9 @@
         CARGO_TARGET_I686_PC_WINDOWS_GNU_LINKER = "${mingw32.stdenv.cc}/bin/i686-w64-mingw32-gcc";
         # nixpkgs mingw gcc uses the mcfgthread threading model; libgcc_eh needs it.
         CARGO_TARGET_I686_PC_WINDOWS_GNU_RUSTFLAGS = "-L native=${mingw32.windows.pthreads}/lib -L native=${mingw32.windows.mcfgthreads}/lib -C link-arg=-l:libmcfgthread.a -C link-arg=-lkernel32 -C link-arg=-lntdll";
+        CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = "${mingwW64.stdenv.cc}/bin/x86_64-w64-mingw32-gcc";
+        # Static mcfgthread (as for i686), so the exe needs no MinGW DLLs next to it.
+        CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS = "-L native=${mingwW64.windows.pthreads}/lib -L native=${mingwW64.windows.mcfgthreads}/lib -C link-arg=-l:libmcfgthread.a -C link-arg=-lkernel32 -C link-arg=-lntdll";
         GHIDRA_HOME = "${pkgs.ghidra}/lib/ghidra";
         # The original game needs a Japanese locale (ANSI code page 932) under Wine; the host
         # system may only ship en_US, so use the full glibc locale set.
@@ -203,6 +210,8 @@
             export DDG_DATA_DIR="$PWD/data/extracted"
           fi
           export WINEPREFIX="''${WINEPREFIX:-$PWD/wine/prefix}"
+          # `cargo test/run --target x86_64-pc-windows-gnu` under Wine in its own prefix.
+          export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUNNER="$PWD/scripts/wine-run.sh"
         '';
       };
     };
