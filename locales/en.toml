@@ -511,7 +511,7 @@ name = "English"
 # ---------------------------------------------------------------------------------------------
 # Records / ranking (menus.md §5, §11.2)
 
-0x41d = "Records"                    # 乗務記録 header, 160×48
+0x41d = { region = [8, 6, 144, 36], font = "display", text = "Records" }   # 乗務記録 header, 160×48: the face inside its bevel (the bevel stays)
 # Header plates 0x46bc10 (line) and 0x46bc64 (series), 240×32 with a slanted bar.
 0x41f = { region = [64, 0, 176, 32], text = "Tazawako Line" }       # 田沢湖線 (bar est.)
 0x420 = { region = [64, 0, 176, 32], text = "Tōkaidō Main Line" }   # 東海道本線
@@ -551,7 +551,7 @@ name = "English"
     { region = [26, 2, 92, 21], group = "pro", text = "Pro Mode" },          # PROモード (the Professional plate)
     { region = [26, 25, 92, 21], group = "pro", text = "On/Off" },           # ON/OFF
     { region = [174, 23, 61, 22], group = "labels", text = "Brake" },           # ブレーキ
-    { region = [238, 2, 112, 68], backdrop = "solid", text = "Release\n↔\nEmergency" }, # 解除 ◆◆ 非常: the words sit beside the arrow, so it is redrawn
+    { region = [238, 2, 112, 68], backdrop = "solid", text = "Release\n▲▼\nEmergency" }, # 解除 ◆◆ 非常: the words sit beside the arrow, so it is redrawn (↔ is not in the bundled font)
     { region = [174, 254, 61, 22], group = "labels", text = "Power" },          # マスコン
     { region = [238, 233, 60, 25], backdrop = "solid", group = "power", text = "Off" },            # 切る ↕ (kept)
     { region = [238, 277, 60, 24], backdrop = "solid", group = "power", text = "Accelerate" },     # 加速
@@ -562,7 +562,7 @@ name = "English"
     { region = [26, 2, 92, 21], group = "pro", text = "Pro Mode" },
     { region = [26, 25, 92, 21], group = "pro", text = "On/Off" },
     { region = [174, 23, 61, 22], group = "labels", text = "Brake" },
-    { region = [238, 2, 112, 68], backdrop = "solid", text = "Release\n↔\nEmergency" },
+    { region = [238, 2, 112, 68], backdrop = "solid", text = "Release\n▲▼\nEmergency" },
     { region = [2, 255, 61, 22], group = "labels", text = "Power" },
     { region = [66, 234, 60, 25], backdrop = "solid", group = "power", text = "Off" },
     { region = [66, 278, 60, 24], backdrop = "solid", group = "power", text = "Accelerate" },
@@ -937,9 +937,9 @@ brake_setup = { rect = [0, 30, -1, 3], align = "left", font = "display", text = 
 
 # Name-entry legends (0x486184 keyboard, 0x48618a lever), 176×64 each.
 [sheet.0x53f]
-0 = "Select: ← → keys\nConfirm: Enter"          # 選択: カーソルキー左右 / 決定: Enter ボタン
+0 = "Select: ◀ ▶ keys\nConfirm: Enter"          # 選択: カーソルキー左右 / 決定: Enter ボタン
 1 = "Select: brake lever\nConfirm: A button"    # 選択: ブレーキ・スティック / 決定: A ボタン
-pad = { rect = [0, 8, -1, 4], text = "Select: D-pad ← →\nConfirm: A button" }  # 選択: 方向ボタン左右 (no known descriptor)
+pad = { rect = [0, 8, -1, 4], text = "Select: D-pad ◀ ▶\nConfirm: A button" }  # 選択: 方向ボタン左右 (no known descriptor)
 
 # Legend word sheet, 192×160. Integer keys: the label descriptors 0x47c538..0x47c550 of the
 # menu header 0x42a820 (title, options, controls); the route-select header 0x436210 uses an

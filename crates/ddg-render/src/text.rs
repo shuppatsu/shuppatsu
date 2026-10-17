@@ -271,6 +271,13 @@ impl FontGlyphs {
         Ok(Self(fonts))
     }
 
+    /// Whether `ch` is drawn as itself or its macron-less vowel, not as a missing-glyph box.
+    /// Whitespace and control characters count as drawn.
+    pub fn draws(&self, ch: char) -> bool {
+        let has = |c: char| self.0.iter().any(|f| f.lookup_glyph_index(c) != 0);
+        ch.is_whitespace() || ch.is_control() || has(ch) || has(strip_macron(ch))
+    }
+
     /// The font and character to draw `ch` with.
     fn pick(&self, ch: char) -> (&fontdue::Font, char) {
         let has = |c: char| self.0.iter().find(|f| f.lookup_glyph_index(c) != 0);

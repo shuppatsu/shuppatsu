@@ -954,6 +954,36 @@ mod tests {
         assert_eq!(cat.tbl_texts()[&0xe6], "Higashi-Kanagawa");
     }
 
+    /// Every character of the built-in catalogues is in the bundled font: a missing one draws
+    /// as an empty box (the name-entry legend's ← → once did; ◀ ▶ are in M+ 2).
+    #[test]
+    fn bundled_font_draws_every_catalogue_character() {
+        let font = FontGlyphs::from_bytes(BUNDLED_FONT).unwrap();
+        for (lang, src) in BUILTIN {
+            let cat = Catalogue::parse(src).unwrap();
+            let texts = cat
+                .entries
+                .iter()
+                .flat_map(|e| e.text.parts.iter().map(|p| p.text.as_str()))
+                .chain(cat.station_plates.iter().map(|(_, t)| t.as_str()))
+                .chain(cat.landmarks.iter().map(|(_, t)| t.as_str()))
+                .chain(
+                    [&cat.captions, &cat.subtitles, &cat.ui]
+                        .into_iter()
+                        .flatten()
+                        .map(|(_, t)| t.as_str()),
+                );
+            let missing: Vec<String> = texts
+                .flat_map(|t| {
+                    t.chars()
+                        .filter(|&ch| !font.draws(ch))
+                        .map(move |ch| format!("{ch:?} ({:#x}) in {t:?}", ch as u32))
+                })
+                .collect();
+            assert!(missing.is_empty(), "{lang}: {missing:#?}");
+        }
+    }
+
     #[test]
     fn rejects_bad_catalogues() {
         let head = "[meta]\nlanguage = \"xx\"\nname = \"X\"\n";

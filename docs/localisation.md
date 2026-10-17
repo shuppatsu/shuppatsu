@@ -132,11 +132,15 @@ wide_weather = true       # and the other switches of settings.md
   one run; headless runs use the default (on). It is one of the switches of
   [settings.md](settings.md), which all work this way (`DDG_<KEY>`, `--<key>` / `--no-<key>`).
 
-No font is shipped in the repo. Any TTF/OTF with Latin glyphs works; DejaVu Sans Bold or Noto
-Sans Bold are good starting points (on NixOS: `fc-list | grep -i dejavu`). The catalogue uses a
-few non-ASCII characters (macrons as in "Ōmagari", arrows "← →", the en dash), so the font
-should cover Latin Extended-A and arrows. A language without a font keeps the original art and
-prints a warning. Built-in catalogues (`en`) are compiled into the binary;
+The bundled M+ 2 Medium draws every catalogue unless `--font` names others (it stays the last
+fallback). Any TTF/OTF with Latin glyphs works as a primary font; DejaVu Sans Bold or Noto Sans
+Bold are good starting points (on NixOS: `fc-list | grep -i dejavu`). The catalogue uses a few
+non-ASCII characters (macrons as in "Ōmagari", the en dash, ◀ ▶ ▲ ▼). M+ 2 has no arrows
+(← → ↑ ↓ ↔ draw as empty boxes; the name-entry legend once showed "Select: □ □ keys"), so the
+catalogues use the triangles ◀ ▶ ▲ ▼ instead. The test
+`locale::tests::bundled_font_draws_every_catalogue_character` checks every text of the built-in
+catalogues against the bundled font (a macron vowel may fall back to its plain vowel). Built-in
+catalogues (`en`) are compiled into the binary;
 `<locale-dir>/<lang>.toml` overrides them, which is how a new language can be tried without a
 rebuild.
 
