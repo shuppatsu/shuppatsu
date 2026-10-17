@@ -652,3 +652,333 @@ fn gradient_event_tables_are_sane() {
     assert!(t.duration_ticks.iter().all(|&d| d > 0));
     assert!(t.min_remaining.iter().flatten().all(|&m| m >= 0));
 }
+
+/// Where the original activates scenery and side tracks: the distance from the camera to an
+/// object when it enters the live list, and to a side-track run's slots when its bucket first
+/// lists it (scene.md §5.3, the `early_activation` / `draw_distance` enhancements).
+#[test]
+#[ignore]
+fn activation_distance_report() {
+    let dir = require_data!();
+    let w = load(&dir);
+    let mut place = [0usize; 12]; // 4-unit bins of eye distance at activation
+    let mut run = [0usize; 12]; // 4-unit bins of the farthest slot of a newly listed run
+    for (&com, (route, area)) in &w.routes {
+        let eye_h = w.tables.eye_height(*area, com);
+        let cam = |e: usize| {
+            scene::cab_camera(
+                route,
+                scene::TrackPos {
+                    engine_index: e,
+                    t: 0.0,
+                },
+                eye_h,
+                0.0,
+            )
+        };
+        let (lo, hi) = scene::camera_limits(route);
+        for iv in scene::live_intervals(route) {
+            if iv.from <= lo || iv.from >= hi {
+                continue;
+            }
+            let p = &route.placements[usize::from(iv.placement)];
+            let c = cam(iv.from);
+            let d = ((p.x - c.eye[0]).powi(2) + (p.z - c.eye[2]).powi(2)).sqrt();
+            place[((d / 4.0) as usize).min(11)] += 1;
+        }
+        let mut seen = HashSet::new();
+        for (b, bucket) in route.buckets.iter().enumerate() {
+            let e = b * 4;
+            if e <= lo || e >= hi {
+                bucket.iter().for_each(|r| {
+                    seen.insert(r.slots.start);
+                });
+                continue;
+            }
+            let c = cam(e);
+            for r in bucket {
+                if !seen.insert(r.slots.start) {
+                    continue;
+                }
+                let d = r
+                    .slots
+                    .clone()
+                    .filter_map(|s| route.slots.get(s))
+                    .map(|p| ((p.x - c.eye[0]).powi(2) + (p.z - c.eye[2]).powi(2)).sqrt())
+                    .fold(0.0f32, f32::max);
+                run[((d / 4.0) as usize).min(11)] += 1;
+            }
+        }
+    }
+    eprintln!("placements activated at eye distance (4-unit bins): {place:?}");
+    eprintln!("new runs, farthest slot (4-unit bins): {run:?}");
+}
+
+#[test]
+#[ignore]
+fn run_lod_dump() {
+    let dir = require_data!();
+    let w = load(&dir);
+    let (route, _) = &w.routes[&1];
+    for (b, bucket) in route.buckets.iter().enumerate().skip(400).take(40) {
+        let s: Vec<String> = bucket
+            .iter()
+            .map(|r| format!("k{} {:?} {:?} d{:.0}", r.kind, r.slots, r.lod, r.dist_sq))
+            .collect();
+        eprintln!("{b}: {}", s.join(" | "));
+    }
+}
+
+#[test]
+#[ignore]
+fn lod_part_report() {
+    let dir = require_data!();
+    let w = load(&dir);
+    let stat = |area: usize, id: u32| -> String {
+        match area_part(&dir, area, id) {
+            Some(p) => {
+                let tris: usize = p.groups.iter().map(|g| g.triangles().count()).sum();
+                let zs = p
+                    .groups
+                    .iter()
+                    .flat_map(|g| &g.vertices)
+                    .map(|v| v.position()[2]);
+                let (lo, hi) = zs.fold((f32::MAX, f32::MIN), |(a, b), z| (a.min(z), b.max(z)));
+                format!("{id:#x}:{tris}t z{lo:.2}..{hi:.2}")
+            }
+            None => format!("{id:#x}:-"),
+        }
+    };
+    for area in 0..4 {
+        for ty in [0usize, 1, 2, 5] {
+            let s: Vec<String> = (0..8)
+                .map(|g| stat(area, w.tables.areas[area].rail[g][ty]))
+                .collect();
+            eprintln!("area {area} rail type {ty}: {}", s.join("  "));
+        }
+        for kind in [3u16, 4, 7, 8, 9, 20, 21, 117, 135, 145] {
+            if let Some(parts) = w.tables.kind_parts(area, kind) {
+                let s: Vec<String> = parts.iter().map(|&p| stat(area, p)).collect();
+                eprintln!("area {area} kind {kind}: {}", s.join("  "));
+            }
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn activation_swap_report() {
+    let dir = require_data!();
+    let w = load(&dir);
+    let (mut swaps, mut total) = (0usize, 0usize);
+    for (&com, (route, _)) in &w.routes {
+        for e in 1..route.activation_index.len() {
+            let acts = route.activations(e);
+            let adds: Vec<u16> = acts
+                .iter()
+                .filter(|v| **v > 0)
+                .map(|v| v.unsigned_abs())
+                .collect();
+            let rems: Vec<u16> = acts
+                .iter()
+                .filter(|v| **v < 0)
+                .map(|v| v.unsigned_abs())
+                .collect();
+            total += adds.len();
+            for &a in &adds {
+                let pa = &route.placements[usize::from(a)];
+                for &r in &rems {
+                    let pr = &route.placements[usize::from(r)];
+                    let d = ((pa.x - pr.x).powi(2) + (pa.z - pr.z).powi(2)).sqrt();
+                    if d < 0.5 {
+                        swaps += 1;
+                        if swaps < 30 {
+                            eprintln!(
+                                "COM {com} e {e}: +{a} part {:#x} / -{r} part {:#x} d {d:.3}",
+                                pa.part_id, pr.part_id
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    eprintln!("swaps {swaps} of {total} activations");
+}
+
+#[test]
+#[ignore]
+fn traffic_lod_report() {
+    let dir = require_data!();
+    let exe_bytes = std::fs::read(dir.join("BIN/dengo3k.exe")).unwrap();
+    let exe = Exe::parse(&exe_bytes).unwrap();
+    let models = ddg_formats::traffic::TrainModels::read(&exe).unwrap();
+    let mut tris = std::collections::HashMap::new();
+    for e in std::fs::read_dir(dir.join("DATA")).unwrap() {
+        let p = e.unwrap().path();
+        let n = p.file_name().unwrap().to_string_lossy().to_lowercase();
+        if !n.starts_with("parts") {
+            continue;
+        }
+        for entry in Rom2::parse(&std::fs::read(&p).unwrap()).unwrap().iter() {
+            if let Ok((id, part)) = ddg_formats::part::Part::parse_entry(entry) {
+                let t: usize = part.groups.iter().map(|g| g.triangles().count()).sum();
+                tris.entry(u32::from(id)).or_insert(t);
+            }
+        }
+    }
+    for (i, row) in models.rows.iter().enumerate() {
+        if let Some(c) = row.cars[0].first().or(row.cars[1].first()) {
+            let t: Vec<String> = c
+                .lods
+                .iter()
+                .map(|l| format!("{l:#x}:{:?}", tris.get(l)))
+                .collect();
+            eprintln!("row {i} kind {}: {}", row.kind, t.join(" "));
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn main_line_runs_report() {
+    let dir = require_data!();
+    let w = load(&dir);
+    for (&com, (route, _)) in &w.routes {
+        let main = route.segments[0].points.clone();
+        let mut ahead = Vec::new();
+        for (b, bucket) in route.buckets.iter().enumerate() {
+            let cam_slot = main.start + 1 + b * 4;
+            for r in bucket.iter().filter(|r| main.contains(&r.slots.start)) {
+                ahead.push((
+                    r.slots.start as isize - cam_slot as isize,
+                    r.slots.end as isize - cam_slot as isize,
+                    r.kind,
+                ));
+            }
+        }
+        let n = ahead.len();
+        let maxe = ahead.iter().map(|a| a.1).max();
+        let k1 = ahead.iter().filter(|a| a.2 == 1).count();
+        eprintln!(
+            "COM {com}: {n} runs on the main line ({k1} rail), farthest end {maxe:?} points ahead; sample {:?}",
+            &ahead[..n.min(5)]
+        );
+    }
+}
+
+/// `early_activation` (scene.md §5.3): activations only move earlier, removals stay, one
+/// placement is never live twice, and most objects now enter beyond 20 units.
+#[test]
+fn early_activation_moves_entries_to_the_far_plane() {
+    let dir = require_data!();
+    let w = load(&dir);
+    let view = scene::EarlyView {
+        reach: 32.0,
+        tan_half_fov_x: scene::ORIGINAL_TAN_HALF_FOV_X,
+        max_extra_points: 512,
+    };
+    let (mut near_before, mut near_after, mut total) = (0usize, 0usize, 0usize);
+    for (route, _) in w.routes.values() {
+        let iv = scene::live_intervals(route);
+        let early = scene::activate_early(route, &iv, view, |_| 0.5);
+        assert_eq!(iv.len(), early.len());
+        let key = |i: &scene::LiveInterval| (i.placement, i.to);
+        let mut by_key: BTreeMap<(u16, usize), usize> = BTreeMap::new();
+        for i in &iv {
+            by_key.insert(key(i), i.from);
+        }
+        let mut per_placement: BTreeMap<u16, Vec<(usize, usize)>> = BTreeMap::new();
+        for e in &early {
+            let from = by_key[&key(e)];
+            assert!(e.from <= from, "{e:?} starts after {from}");
+            per_placement
+                .entry(e.placement)
+                .or_default()
+                .push((e.from, e.to));
+        }
+        for spans in per_placement.values_mut() {
+            spans.sort_unstable();
+            for pair in spans.windows(2) {
+                assert!(pair[0].1 <= pair[1].0, "overlapping {pair:?}");
+            }
+        }
+        let (lo, hi) = scene::camera_limits(route);
+        let dist = |e: usize, n: u16| {
+            let cam = scene::cab_camera(
+                route,
+                scene::TrackPos {
+                    engine_index: e,
+                    t: 0.0,
+                },
+                0.0,
+                0.0,
+            );
+            let p = route.placements[usize::from(n)];
+            ((p.x - cam.eye[0]).powi(2) + (p.z - cam.eye[2]).powi(2)).sqrt()
+        };
+        for (before, after) in iv.iter().zip(&early) {
+            if before.from <= lo + 600 || before.from >= hi {
+                continue;
+            }
+            total += 1;
+            near_before += usize::from(dist(before.from, before.placement) < 20.0);
+            near_after += usize::from(dist(after.from, after.placement) < 20.0);
+        }
+    }
+    eprintln!("activations within 20 units: {near_before} of {total} before, {near_after} after");
+    assert!(near_after * 4 < near_before);
+}
+
+/// `max_lod` draws only single rail pieces and band-0 kind pieces; a `reach` adds main-line
+/// pieces out to it and side tracks from the buckets ahead.
+#[test]
+fn max_lod_and_reach_track_pieces() {
+    let dir = require_data!();
+    let w = load(&dir);
+    for (&com, (route, area)) in &w.routes {
+        let eye_h = w.tables.eye_height(*area, com);
+        let ctx = ctx_for(&w, com, 1);
+        let (lo, hi) = scene::camera_limits(route);
+        for e in (lo + 300..hi.saturating_sub(300)).step_by(997) {
+            let pos = scene::TrackPos {
+                engine_index: e,
+                t: 0.0,
+            };
+            let cam = scene::cab_camera(route, pos, eye_h, 0.0);
+            let max = scene::TrackOptions {
+                max_lod: true,
+                ..Default::default()
+            };
+            for i in scene::track_instances_with(route, &w.tables, ctx, pos, &cam, max) {
+                match i.source {
+                    PieceSource::MainLine { band }
+                    | PieceSource::Rail { band }
+                    | PieceSource::Kind { band, .. } => assert_eq!(band, 0, "COM {com}: {i:?}"),
+                    _ => {}
+                }
+            }
+            let original = scene::track_instances(route, &w.tables, ctx, pos, &cam);
+            let far = scene::TrackOptions {
+                reach: Some(64.0),
+                ..Default::default()
+            };
+            let reach = scene::track_instances_with(route, &w.tables, ctx, pos, &cam, far);
+            // Everything the original draws is drawn unchanged.
+            for o in &original {
+                assert!(reach.contains(o), "COM {com} at {e}: {o:?} missing");
+            }
+            let farthest = reach
+                .iter()
+                .filter(|i| matches!(i.source, PieceSource::MainLine { .. }))
+                .map(|i| i.slot)
+                .max()
+                .unwrap_or(0);
+            let main_end = route.segments[0].points.end;
+            assert!(
+                farthest + 64 >= (pos.slot(route) + 512).min(main_end - 1),
+                "COM {com} at {e}: main line ends at slot {farthest} of {main_end}"
+            );
+        }
+    }
+}

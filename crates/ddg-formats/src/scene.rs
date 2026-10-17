@@ -903,7 +903,7 @@ struct TrackBuilder<'a> {
 }
 
 /// Enhancements to track drawing; `Default` reproduces the original.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct TrackOptions {
     /// Choose the single-piece model variant of side-track runs from the track slot instead of
     /// the camera's engine index. The original passes `engine & 3` as the phase but counts from
@@ -911,6 +911,15 @@ pub struct TrackOptions {
     /// time the camera passes a point: the flicker around the tracks. The main line is anchored
     /// in the original already.
     pub anchor_side_variants: bool,
+    /// Enhancement `max_lod`: every rail and track-side piece in its nearest, most detailed
+    /// model at every distance (rails: single-point pieces instead of the 2–32-point bands;
+    /// other kinds: part P2 at one point per piece instead of P0/P3/P4), over the same slots.
+    pub max_lod: bool,
+    /// Enhancements `early_activation` / `draw_distance`: build track this far ahead
+    /// (world units) instead of the original's fixed windows: the main line past its 130
+    /// points, and the side-track runs of the buckets ahead of the camera's at slots its own
+    /// bucket does not list. `None` = the original's windows.
+    pub reach: Option<f32>,
 }
 
 fn h(p: &TrackPoint) -> i32 {
@@ -1014,6 +1023,15 @@ impl TrackBuilder<'_> {
                 PieceSource::Rail { band }
             }
         };
+        if self.options.max_lod {
+            let total = counts
+                .iter()
+                .enumerate()
+                .map(|(band, &n)| n * self.tables.rail_band_step[band])
+                .sum();
+            self.singles(start, total, phase, src(0));
+            return;
+        }
         self.singles(start, counts[0], phase, src(0));
         let mut i = start + counts[0];
         for (band, &count) in counts.iter().enumerate().skip(1) {
@@ -1068,6 +1086,30 @@ impl TrackBuilder<'_> {
 
     /// 0x41d7d0: bands 0..=3, the coarse remainder, then an optional buffer stop.
     fn kind_run(&mut self, run: &TrackRun, parts: [u32; 5], ctx: SceneContext, engine: usize) {
+        if self.options.max_lod {
+            // The slots of the bands and the remainder, all in band 0's model (P2).
+            let bands_end = run.slots.start
+                + (0..4)
+                    .map(|b| self.tables.kind_band_step[b] * usize::from(run.lod[b]))
+                    .sum::<usize>();
+            let end = bands_end.max(run.slots.end.saturating_sub(1));
+            let part = parts[self.tables.kind_band_model[0]];
+            let count = end - run.slots.start;
+            self.kind_band(run.slots.start, count, 0, part, run.kind, 0, ctx, engine);
+        } else {
+            self.kind_bands(run, parts, ctx, engine);
+        }
+        let end = run.slots.end;
+        let Some(&e) = self.slots.get(end) else {
+            return;
+        };
+        if run.lod[2] == 0 && e.flags & 0xf000 == 0xe000 && e.flags & 7 != 0 && end > 0 {
+            self.buffer_stop(end, parts[1], run.kind);
+        }
+    }
+
+    /// 0x41d7d0's bands 0..=3 and the coarse remainder.
+    fn kind_bands(&mut self, run: &TrackRun, parts: [u32; 5], ctx: SceneContext, engine: usize) {
         let mut i = run.slots.start;
         for band in 0..4 {
             let count = usize::from(run.lod[band]);
@@ -1079,12 +1121,6 @@ impl TrackBuilder<'_> {
         let rest = (end as isize - i as isize) - 1;
         if rest > 0 {
             self.kind_band(i, rest as usize, 1, parts[0], run.kind, 4, ctx, engine);
-        }
-        let Some(&e) = self.slots.get(end) else {
-            return;
-        };
-        if run.lod[2] == 0 && e.flags & 0xf000 == 0xe000 && e.flags & 7 != 0 && end > 0 {
-            self.buffer_stop(end, parts[1], run.kind);
         }
     }
 
@@ -1161,17 +1197,118 @@ pub fn track_instances_with(
     let phase = pos.engine_index & 3;
     b.rail_run(
         pos.slot(route) + MAIN_LINE_LEAD,
-        MAIN_LINE_BANDS,
+        main_line_bands(options.reach),
         phase,
         true,
     );
     b.limit = route.slots.len();
-    if let Some(bucket) = route.buckets.get(pos.engine_index / 4) {
+    let current = pos.engine_index / 4;
+    if let Some(bucket) = route.buckets.get(current) {
         for run in bucket {
             b.run(run, ctx, pos.engine_index);
         }
     }
-    b.out
+    let mut out = b.out;
+    if let Some(reach) = options.reach {
+        let mut covered = Coverage::default();
+        if let Some(bucket) = route.buckets.get(current) {
+            bucket.iter().for_each(|r| covered.add(r));
+        }
+        let ahead = current + 1..=current + buckets_within(reach);
+        extra_runs(
+            route,
+            tables,
+            ctx,
+            pos,
+            camera,
+            options,
+            ahead,
+            &mut covered,
+            &mut out,
+        );
+    }
+    out
+}
+
+/// Buckets (one per 4 points, 0.5 units) whose camera point lies within `reach` along the
+/// track.
+fn buckets_within(reach: f32) -> usize {
+    (reach / (4.0 * UNITS_PER_POINT)).ceil() as usize
+}
+
+/// The main line's piece counts (singles, then bands 1–5): the original's 130 points, or
+/// with a `reach` enough 32-point pieces more to run that far along the track.
+fn main_line_bands(reach: Option<f32>) -> [usize; 6] {
+    let mut bands = MAIN_LINE_BANDS;
+    if let Some(reach) = reach {
+        let points: usize = MAIN_LINE_LEAD
+            + bands
+                .iter()
+                .zip([1, 2, 4, 8, 16, 32])
+                .map(|(n, step)| n * step)
+                .sum::<usize>();
+        let wanted = (reach / UNITS_PER_POINT).ceil() as usize;
+        bands[5] += wanted.saturating_sub(points).div_ceil(32);
+    }
+    bands
+}
+
+/// Track slots already drawn from a nearer bucket, rails and other kinds apart.
+#[derive(Default)]
+struct Coverage(std::collections::HashSet<(bool, usize)>);
+
+impl Coverage {
+    fn add(&mut self, run: &TrackRun) {
+        for s in run.slots.clone() {
+            self.0.insert((run.kind == 1, s));
+        }
+    }
+
+    fn covers(&self, rail: bool, slot: usize) -> bool {
+        self.0.contains(&(rail, slot))
+    }
+
+    fn covers_all(&self, run: &TrackRun) -> bool {
+        run.slots.clone().all(|s| self.covers(run.kind == 1, s))
+    }
+}
+
+/// Adds the pieces of the runs of `buckets` (in that order) at slots no earlier bucket
+/// covers, and marks their slots covered.
+#[allow(clippy::too_many_arguments)]
+fn extra_runs(
+    route: &Route,
+    tables: &SceneTables,
+    ctx: SceneContext,
+    pos: TrackPos,
+    camera: &CabCamera,
+    options: TrackOptions,
+    buckets: impl Iterator<Item = usize>,
+    covered: &mut Coverage,
+    out: &mut Vec<TrackInstance>,
+) {
+    for k in buckets {
+        let Some(bucket) = route.buckets.get(k) else {
+            break;
+        };
+        for run in bucket {
+            if covered.covers_all(run) {
+                continue;
+            }
+            let mut builder = TrackBuilder::new(route, tables, ctx, camera);
+            builder.options = options;
+            builder.limit = route.slots.len();
+            builder.run(run, ctx, pos.engine_index);
+            let rail = run.kind == 1;
+            out.extend(
+                builder
+                    .out
+                    .into_iter()
+                    .filter(|i| !covered.covers(rail, i.slot)),
+            );
+            covered.add(run);
+        }
+    }
 }
 
 impl<'a> TrackBuilder<'a> {
@@ -1257,30 +1394,26 @@ pub fn track_instances_wide_with(
 ) -> Vec<TrackInstance> {
     let mut out = track_instances_with(route, tables, ctx, pos, camera, options);
     let current = pos.engine_index / 4;
-    let mut covered = std::collections::HashSet::new();
-    let cover = |covered: &mut std::collections::HashSet<(bool, usize)>, run: &TrackRun| {
-        for s in run.slots.clone() {
-            covered.insert((run.kind == 1, s));
-        }
-    };
-    if let Some(bucket) = route.buckets.get(current) {
-        bucket.iter().for_each(|r| cover(&mut covered, r));
-    }
-    for b in (current.saturating_sub(extra_buckets)..current).rev() {
-        for run in &route.buckets[b] {
-            let mut builder = TrackBuilder::new(route, tables, ctx, camera);
-            builder.options = options;
-            builder.limit = route.slots.len();
-            builder.run(run, ctx, pos.engine_index);
-            out.extend(
-                builder
-                    .out
-                    .into_iter()
-                    .filter(|i| !covered.contains(&(run.kind == 1, i.slot))),
-            );
-            cover(&mut covered, run);
+    let mut covered = Coverage::default();
+    // The camera's bucket and those ahead that track_instances_with drew from.
+    let ahead = options.reach.map_or(0, buckets_within);
+    for k in current..=current + ahead {
+        if let Some(bucket) = route.buckets.get(k) {
+            bucket.iter().for_each(|r| covered.add(r));
         }
     }
+    let behind = (current.saturating_sub(extra_buckets)..current).rev();
+    extra_runs(
+        route,
+        tables,
+        ctx,
+        pos,
+        camera,
+        options,
+        behind,
+        &mut covered,
+        &mut out,
+    );
     out
 }
 
@@ -1392,6 +1525,82 @@ pub fn widen_intervals(
             LiveInterval { to, ..iv }
         })
         .collect()
+}
+
+/// View parameters for [`activate_early`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EarlyView {
+    /// How far the view reaches (world units): the far plane.
+    pub reach: f32,
+    /// tan of the view's horizontal half-angle (the widest window shape it is built for).
+    pub tan_half_fov_x: f32,
+    /// Upper bound on how far an activation is moved forward, in points.
+    pub max_extra_points: usize,
+}
+
+/// Enhancement `early_activation` (scene.md §5.3): moves each activation earlier, to the
+/// first point of the stretch before it from which the object's bounding circle
+/// (`radius(part_id)`) is in front of the eye, inside the horizontal view and within `reach`,
+/// measured from the camera at each point. The original activates most scenery 40–200 m
+/// ahead, well inside its 320 m far plane, so it pops in within the view. Never earlier than
+/// the same placement's previous removal, so an object is not drawn twice; removals are kept.
+pub fn activate_early(
+    route: &Route,
+    intervals: &[LiveInterval],
+    view: EarlyView,
+    radius: impl Fn(u32) -> f32,
+) -> Vec<LiveInterval> {
+    let (_, max_engine) = camera_limits(route);
+    let cameras: Vec<([f32; 3], [f32; 2])> = (0..=max_engine.min(route.activation_index.len()))
+        .map(|e| {
+            let cam = cab_camera(
+                route,
+                TrackPos {
+                    engine_index: e,
+                    t: 0.0,
+                },
+                0.0,
+                0.0,
+            );
+            let (fx, fz) = (cam.target[0] - cam.eye[0], cam.target[2] - cam.eye[2]);
+            let len = (fx * fx + fz * fz).sqrt().max(f32::MIN_POSITIVE);
+            (cam.eye, [fx / len, fz / len])
+        })
+        .collect();
+    let sec = (1.0 + view.tan_half_fov_x * view.tan_half_fov_x).sqrt();
+    // Each placement's previous removal: intervals sorted by start.
+    let mut last_to: std::collections::HashMap<u16, usize> = std::collections::HashMap::new();
+    let mut order: Vec<usize> = (0..intervals.len()).collect();
+    order.sort_by_key(|&k| (intervals[k].from, intervals[k].placement));
+    let mut out = intervals.to_vec();
+    for k in order {
+        let iv = intervals[k];
+        let floor = last_to.get(&iv.placement).copied().unwrap_or(1).max(1);
+        last_to.insert(iv.placement, iv.to);
+        let Some(p) = route.placements.get(usize::from(iv.placement)) else {
+            continue;
+        };
+        let r = radius(p.part_id);
+        let visible = |e: usize| {
+            let Some(&(eye, f)) = cameras.get(e) else {
+                return false;
+            };
+            let (dx, dz) = (p.x - eye[0], p.z - eye[2]);
+            let along = dx * f[0] + dz * f[1];
+            let lat = (dx * f[1] - dz * f[0]).abs();
+            along > -r
+                && lat <= along * view.tan_half_fov_x + r * sec
+                && (dx * dx + dz * dz).sqrt() - r <= view.reach
+        };
+        let lowest = floor.max(iv.from.saturating_sub(view.max_extra_points));
+        let mut from = iv.from;
+        while from > lowest && visible(from - 1) {
+            from -= 1;
+        }
+        out[k].from = from;
+    }
+    out.sort_by_key(|i| (i.from, i.placement));
+    out
 }
 
 /// Placements live at engine index `e` under a set of intervals.
