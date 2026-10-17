@@ -58,6 +58,9 @@ impl Play {
             Ok((x.i32(4 * MODE_640)? as i16, y.i32(4 * MODE_640)? as i16))
         };
         self.drive.start_demo(kind, &tables);
+        if let Some(s) = self.sound.as_mut() {
+            s.start_demo();
+        }
         self.cab
             .demo_setup(&Snap::of(&self.drive), kind == DemoKind::Route);
         for (slot, _, (x, y)) in BLINK {

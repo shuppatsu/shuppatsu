@@ -131,6 +131,15 @@ impl Sound {
         Ok(())
     }
 
+    /// An attract demo drive's creator (0x40e4b0 / 0x40e6e0) starts the running noise and the
+    /// motor as a segment start does (0x4080d0); the demos have no segment start of their own.
+    pub fn start_demo(&mut self) {
+        if let Some(p) = self.stage.as_ref() {
+            p.train.start_segment(&mut self.snd);
+        }
+        self.flush();
+    }
+
     /// Back to the menus: every voice stopped, the stage half dropped.
     pub fn end_stage(&mut self) {
         self.stage = None;
