@@ -11,10 +11,12 @@ settings live only in the port's `config.toml`.
 * `config.toml` in the user's config dir, next to `eeprom.dat`: `$XDG_CONFIG_HOME/ddg/`
   (default `~/.config/ddg/`), `%APPDATA%\ddg\` on Windows. Every key is optional.
 * The environment: `DDG_<KEY>` in capitals (`DDG_WIDE_WEATHER=0`); switches take `1`/`0`,
-  `true`/`false`, `on`/`off`.
+  `true`/`false`, `on`/`off`; the two levels (`msaa`, `anisotropic`) take one of their steps
+  (`DDG_MSAA=4`) or `off` (= 1).
 * The command line: a switch is `--<key>` (on) / `--no-<key>` (off), with `-` for `_`
   (`--no-wide-weather`); the older names are kept as aliases (`--original-visibility`,
-  `--original-weather`, `--original-traffic`, `--uncapped`). The last flag of a pair wins.
+  `--original-weather`, `--original-traffic`, `--uncapped`). The last flag of a pair wins. A
+  level is `--msaa 4` or `--msaa=4`, `--no-msaa` for off; in `config.toml` `msaa = 4`.
 * Precedence: flag > environment > `config.toml` > default. The front end (`ddg-game`),
   `ddg-game play` and `ddg-game view` read the file; headless runs (`--shot`, the `shot`
   subcommand) never do, so checks stay reproducible with the defaults, the environment and
@@ -61,9 +63,10 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
 * **Groups**: Language & text (`lang`, `one_line_captions`, `landmark_names`, `board_names`,
   `subtitles`, `font`, `display_font`); Display (`hud_layout`, `ui_scaling`, `ui_scale`,
   `wide_menus`, `interpolate`, `vsync`); 3D & effects (`wide_visibility`, `square_pixels`,
-  `stable_track_variants`, `texture_filtering`, `texture_pack`, `fog`, `wide_weather`,
-  `far_traffic`); Saves & controls (`save_on_change`, `save_timed_out_names`,
-  `keyboard_with_controller`, `exit_no_to_menu`). All 25 keys of the table below.
+  `stable_track_variants`, `texture_filtering`, `anisotropic`, `msaa`, `ground_variation`,
+  `ground_detiling`, `texture_pack`, `fog`, `wide_weather`, `far_traffic`); Saves & controls
+  (`save_on_change`, `save_timed_out_names`, `keyboard_with_controller`, `exit_no_to_menu`).
+  All 29 keys of the table below.
 * **Keys**: up/down move (no wrap, repeat on hold), left/right step the value (switches flip,
   `ui_scale` runs Auto, 1×…4×, the others wrap), Enter (confirm) steps it on, Esc (cancel)
   goes back to the options list on the new row. Pad: the same through its menu bindings.
@@ -101,7 +104,11 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
 | `wide_visibility` | on | `--[no-]wide-visibility`, `--original-visibility` | scenery and side tracks from 4:3 visibility lists: pop-in at the edges of a wider view | the lists widened for the window's Hor+ view (at least 21:9) (scene.md §5.2) |
 | `square_pixels` | off | `--[no-]square-pixels` | the 3D view stretched 7.9 % horizontally (renderer.md §5) | square pixels (narrower field of view at the same height) |
 | `stable_track_variants` | off | `--[no-]stable-track-variants` | side-track single pieces swap model each time the camera passes a point (flicker) (scene.md §2.6) | the single-piece phase anchored to the run's slot (`run.slots.start & 3`): about half the change across a point, no swap with the camera |
-| `texture_filtering` | off | `--[no-]texture-filtering` | nearest sampling, no mipmaps (shimmer) | CPU-built mipmaps, trilinear and anisotropic filtering |
+| `texture_filtering` | off | `--[no-]texture-filtering` | nearest sampling, no mipmaps (shimmer) | CPU-built mipmaps and trilinear filtering of the 3D textures (blurs magnified texels); with `anisotropic` also anisotropic (renderer.md §14.4) |
+| `anisotropic` | 1 (off) | `--anisotropic <1\|2\|4\|8\|16>`, `--no-anisotropic` | nearest sampling, no mipmaps: distant ground and track shimmer and alias | CPU-built mipmaps and anisotropic filtering up to N×. Without `texture_filtering`, magnified texels stay sharp squares (antialiased edges) and only minified ones are filtered; with it, plain trilinear + anisotropic. Mip levels where a sub-rect of the atlas is under 4 texels are never used (renderer.md §14.4) |
+| `msaa` | 1 (off) | `--msaa <1\|2\|4\|8>`, `--no-msaa` | aliased polygon edges and colour-keyed cut-outs (wires, fences, trees) | the 3D pass multisampled N× and resolved (the HUD and 2D layers are not); the colour-keyed cut-outs use alpha to coverage from a sharpened bilinear key, so their edges are smoothed too. A count the GPU lacks falls back to the next lower one (renderer.md §14.3) |
+| `ground_variation` | off | `--[no-]ground-variation` | ground textures repeat with an even brightness | ground surfaces (fields, snow, gravel and verge strips, ground slabs; not track, platforms, buildings, trains or signs) get a soft world-space brightness (mostly ±6 %, at most ±15 %) and warm/cool tint (±4 %) variation over 5–25 m, procedural in the shader (renderer.md §14.1–14.2) |
+| `ground_detiling` | off | `--[no-]ground-detiling` | ground textures tile in a visible regular grid | the same ground surfaces sampled with per-region offsets and mirrors (blended at the region edges, keyed on world position), only along the axes where the texture repeats and wraps seamlessly, always inside its atlas rect (renderer.md §14.1, §14.5) |
 | `texture_pack` | unset | `--texture-pack <dir>` | the textures of `tex*.rom` | replacement 3D texture pages (area and train `tex*.rom`) from a pack directory, any whole multiple of the original size; a page the pack lacks keeps the original; sampling stays nearest unless `texture_filtering` (docs/texture-packs.md; packs made with `ddg-tools upscale-textures`) |
 | `fog` | on | `--[no-]fog` | the snow fog only with DengoSetting's FOGENABLE, which a fresh install lacks: no fog | the snow fog while it snows (`snow_fog`, renderer.md §13.9). `view --fog` is fog everywhere, a separate viewer option (off) |
 | `wide_weather` | on | `--[no-]wide-weather`, `--original-weather` | raindrops and snow in the 4:3 area only (x 0..496) | over the whole visible width; at 4:3 identical to the original (renderer.md §13.9). Test `weather::tests::wide_weather_off_is_the_original_area` |

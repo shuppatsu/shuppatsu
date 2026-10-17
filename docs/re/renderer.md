@@ -518,6 +518,111 @@ are unchanged (the three drive replays stay at 0 mismatches).
   never fogs (§7). Off: `--no-fog` or `fog = false` in `config.toml` (localisation.md,
   "Settings"); `--fog` forces it on. It still only exists while it snows.
 
+## 14. Port enhancements: shading (named settings, off by default)
+
+The original's world pass is nearest sampling without mipmaps, colour-key transparency and no
+antialiasing (§6, §9). Four settings change only how the 3D pass shades; each is off by
+default, and with all four off the frame is the same as before they existed (headless shots of
+the three comparison views below are byte-identical to the build before them). Settings in
+docs/settings.md; code in `crates/ddg-render/src/shader.wgsl`, `gpu.rs` and `ground.rs`.
+Comparison sheet: `out/explain/gfx/shading/` (not committed: derived from game data).
+
+### 14.1 Which surfaces are ground (`ddg_render::ground`)
+
+The original has no ground flag: terrain is ordinary part groups. The port marks it per vertex
+(`Vertex::surface`), from what the scene composer knows and from the geometry:
+
+- **Source**: only the non-rail runs (kinds 3/4/7/8/≥ 9, scene.md §2.7) and the live scenery
+  (§4) are candidates (`FrameGeometry::add_terrain_instance`, called from
+  `RouteScene::compose`). Rail pieces (main line and side tracks), buffer stops, the tunnel
+  plug, AI trains, the cab/result/opening props never are.
+- **Facing up**: ≥ 60 % of the group's world-space triangle area within 50° of horizontal
+  (either winding).
+- **Not raised on walls**: if the whole part has ≥ 12 % of its area steeper than 70° (a
+  platform, canopy, building, viaduct), only upward groups within 0.04 units (≈ 0.4 m) of
+  the part's lowest point count. This drops platform tops and canopies (Akita, stage 1) and
+  roofs; verges at the foot of a wall stay.
+- **Repeating axes** (for de-tiling): an axis counts if the group's UVs span at least one
+  whole rect along it and the rect's texture wraps without a seam along it (first vs last
+  texel column/row compared with the mean neighbouring difference inside the rect, × 2 + 6).
+  Transition textures (grass into gravel, the asphalt with a kerb line of Keihin's verge,
+  rect 952) fail along the axis that would move their edge.
+- Seen on the three views: Hokuhoku's rice and grass fields (scenery slabs 8180/8181, rects
+  1619/1620; runs 8723–8725, 8885–8889) and the viaduct's cable trough; Akita's snow strips
+  between the tracks (runs 4520–4524, rect 1956), not the snowy rail beds of the yard, which
+  are rail pieces; Keihin's ballast verges (runs 9826–9830, rect 1337), the grass bank and
+  the asphalt strip (9551–9553). **likely** (visual check with a debug tint of the bits).
+
+### 14.2 `ground_variation`
+
+On ground fragments the texel (linear colour) is multiplied by a procedural world-space value
+noise in x/z: brightness `1 + 0.3·(0.7·n(0.4·xz) + 0.3·n(1.5·xz) − 0.5)` (mostly ±6 %, at most
+±15 %, features of about 25 m and 7 m) and a warm/cool tint `(1 + 0.06t, 1, 1 − 0.08t)` with
+`t = n(0.25·xz) − 0.5`. No texture asset; fog applies after it. Keyed on world position, so it
+is continuous across parts and LOD pieces and stays put as the camera moves.
+
+### 14.3 `msaa` (1 / 2 / 4 / 8)
+
+The world pass (2D background quads, world, debug lines, weather effects: everything in the
+3D band) renders into a multisampled colour and depth target and resolves into the frame; the
+HUD/overlay pass is separate and unchanged. A view that does not clear (the station result's
+second view, scene.md §8) loads the multisampled target the first view left. Counts other
+than 1 and 4 need the adapter's format features: the game requests
+`TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES` when the adapter has it, and the renderer probes a
+count once (validation error scope) and falls back to the next lower power of two.
+
+Colour-keyed cut-outs (wires, fences, trees, signal masts) would get no edge antialiasing from
+MSAA with `discard`. With MSAA on, the world pipeline uses **alpha to coverage**: the coverage
+is the bilinear colour-key alpha sharpened to about one pixel (`(a − 0.5)/fwidth(a) + 0.5`),
+and where the nearest texel is the key but the coverage is not zero, the colour comes from the
+bilinear colour divided by its alpha (keyed texels are RGB 0, so that is the opaque
+neighbours' colour, no dark fringe). Magnified cut-outs therefore follow the bilinear 0.5
+contour (rounded corners instead of texel stair-steps). Checked on Keihin's fence rails and the
+Hokuhoku trees (sheet crops).
+
+### 14.4 Sampling: `texture_filtering` × `anisotropic`
+
+| `texture_filtering` | `anisotropic` | world pass |
+|---|---|---|
+| off | 1 | nearest, no mipmaps: the original |
+| on | 1 | mipmaps, trilinear (magnified texels blurred) |
+| off | N > 1 | mipmaps; along each axis where a texel covers more than a pixel the coordinate is pulled to the texel centre except within one pixel of its edge ("sharp texels", antialiased edges), elsewhere trilinear + N× anisotropic. Close-ups keep the original's square texels, distant ground stops shimmering |
+| on | N > 1 | mipmaps, trilinear + N× anisotropic |
+
+`texture_filtering` alone used to mean trilinear + 16× anisotropic; anisotropy is now its own
+setting (`texture_filtering = true` + `anisotropic = 16` is the old look). The 2D background
+and effect quads keep the page bind group's sampler (nearest, or with `texture_filtering`
+trilinear + 16×), unchanged.
+
+**Atlas bleeding.** Mipmaps are built per page (`mip.rs`, 2×2 box, alpha-weighted). Rects sit
+at power-of-two-aligned positions of their own size, so a level mixes neighbouring rects only
+once the rect is smaller than a texel there. The shader caps the derivatives of a sub-rect
+lookup at a quarter of the rect, so filtering never picks a level where the rect is under
+4×4 texels; whole-page rects wrap through the sampler and need no cap. Bilinear taps at a
+sub-rect edge can still take half a texel of the neighbour, as any filtered atlas does.
+
+### 14.5 `ground_detiling`
+
+Quilez's "texture repetition" technique 3: a smooth value noise of world x/z (0.6 per unit,
+regions of ≈ 15 m) picks one of 8 variants per region, and the two neighbouring variants are
+cross-faded (`smoothstep(0.2, 0.8, f − 0.1·Σ(a − b))`, so the seam follows the texels'
+contrast). A variant is a random offset and mirror applied **only along the repeating axes**
+of §14.1, to the part-local tile coordinate (`Vertex::tile`, 1.0 = one repeat), which is then
+wrapped inside the group's rect (`Vertex::rect`, origin and repeat size in page UV, exactly
+`TexRect::map_uv`'s mapping) — never into the neighbouring atlas texels. The lookups use the
+true screen derivatives (`textureSampleGrad`), so the wrap does not disturb mip selection. Keyed
+on world position: the pattern continues across part and LOD-band seams (whose tile coordinates
+restart). Non-repeating axes keep their coordinate. Cost: two lookups instead of one on ground
+fragments (four with MSAA's coverage lookup).
+
+### 14.6 The 2D textured ground background (scene.md §6.5)
+
+Not treated. Areas 0/4 draw it as a static screen-space tiling behind everything (page
+repeated every 16 virtual units), and area 3's water is a fixed picture seen through holes in
+the terrain. Both sit at the horizon, mostly covered by the 3D ground; a world-space variation
+has no world position to key on there, and a screen-space one would look like a stain fixed to
+the screen as the camera turns. **decided** (port).
+
 ## Implications for the port (Hor+)
 
 - Keep the vertical FOV from `0x84c150` and replace the aspect with the actual viewport aspect.
