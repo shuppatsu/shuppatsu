@@ -819,12 +819,38 @@ impl RegionScan {
         };
         // The backdrop is the commonest value along the region's edge per 2×2 parity class
         // (a plate's face is one colour; a caption band's dither alternates colours or
-        // transparency).
-        let pattern: [u8; 4] = std::array::from_fn(|c| {
+        // transparency). A region with an odd width and height has no edge pixel at odd x and
+        // odd y (its edges are columns 0 and w − 1, rows 0 and h − 1, all even): that class
+        // takes the commonest value of the whole edge, instead of index 255 from a tie of
+        // empty counts, which painted every fourth pixel of the box in colour 255.
+        let commonest = |counts: &[u32; 256]| {
             (0..=255u8)
-                .max_by_key(|&i| class[c][usize::from(i)])
+                .max_by_key(|&i| counts[usize::from(i)])
                 .unwrap_or(0)
+        };
+        let mut all = [0u32; 256];
+        for c in &class {
+            for (a, n) in all.iter_mut().zip(c) {
+                *a += n;
+            }
+        }
+        let mut pattern: [u8; 4] = std::array::from_fn(|c| {
+            if class[c].iter().any(|&n| n > 0) {
+                commonest(&class[c])
+            } else {
+                commonest(&all)
+            }
         });
+        // Stripes (two classes one value, two another, along rows or columns) are lettering on
+        // one edge of the region outvoting the face in the classes of that edge's parity (通過
+        // on the bottom row of the Shizukuishi tag); the art's dithers are checkerboards. The
+        // whole edge's commonest value is the backdrop then.
+        let p = pattern;
+        if (p[0] == p[1] && p[2] == p[3] && p[0] != p[2])
+            || (p[0] == p[2] && p[1] == p[3] && p[0] != p[1])
+        {
+            pattern = [commonest(&all); 4];
+        }
         let mut scan = Self {
             rect: [x, y, w, h],
             boxed,
@@ -999,8 +1025,13 @@ fn render_part_at(
             .unwrap_or(0);
         let solid = part.backdrop == Backdrop::Solid && opaque != 0;
         // Every opaque pixel is repainted with the backdrop, which erases the old lettering and
-        // keeps the box shape (transparent corners stay transparent). A solid backdrop also
-        // fills the transparent half of a dither (any opaque pixel in its 2×2 cell).
+        // keeps the box shape (transparent corners stay transparent). So are the clear pixels
+        // enclosed by the art (the clear half of dithered lettering, 合格範囲 on the distance
+        // plates), which would otherwise show the scene through the panel in the old
+        // lettering's shape. A solid backdrop also fills the transparent half of a dither (any
+        // opaque pixel in its 2×2 cell).
+        let holes = enclosed_clear(art, art_w, art_h);
+        let hole = |ax: usize, ay: usize| holes[(y + ay) * art_w + x + ax];
         let cell_opaque = |ax: usize, ay: usize| {
             let (cx, cy) = (ax & !1, ay & !1);
             (cy..(cy + 2).min(h)).any(|y| (cx..(cx + 2).min(w)).any(|x| region_art(x, y) != 0))
@@ -1010,7 +1041,7 @@ fn render_part_at(
                 let (ax, ay) = (px / s, py / s);
                 if solid && cell_opaque(ax, ay) {
                     base[py * sw + px] = opaque;
-                } else if region_art(ax, ay) != 0 {
+                } else if region_art(ax, ay) != 0 || hole(ax, ay) {
                     base[py * sw + px] = pattern[parity(ax, ay)];
                 }
             }
@@ -1325,6 +1356,52 @@ pub(crate) mod tests {
             dither.base.iter().filter(|&&b| b == 0).count(),
             4 * w * h / 2
         );
+    }
+
+    #[test]
+    fn an_odd_region_keeps_its_backdrop_at_odd_pixels() {
+        // A 9×7 plate of 5: a region with an odd width and height has no edge pixel at odd x
+        // and odd y, which used to make that class's backdrop 255.
+        let (w, h) = (9, 7);
+        let art = vec![5u8; w * h];
+        let part = TextPart {
+            text: "X".into(),
+            style: Style::Boxed,
+            ..TextPart::default()
+        };
+        let scan = RegionScan::of(&part, &art, w, h).unwrap();
+        assert_eq!(scan.pattern, [5; 4]);
+        assert_eq!(scan.ink, None);
+        let r = render_part(&part, &art, w, h, &BoxGlyphs, 1).unwrap();
+        assert!(r.base.iter().all(|&b| b == 5));
+    }
+
+    #[test]
+    fn dithered_lettering_leaves_no_hole_in_the_box() {
+        // A 12×8 plate of 5 framed by the void, with checkered lettering 1 / clear inside.
+        let (w, h) = (12, 8);
+        let art: Vec<u8> = (0..w * h)
+            .map(|i| {
+                let (x, y) = (i % w, i / w);
+                if x == 0 || y == 0 || x == w - 1 || y == h - 1 {
+                    0
+                } else if (3..9).contains(&x) && (2..6).contains(&y) {
+                    if (x + y) % 2 == 0 { 1 } else { 0 }
+                } else {
+                    5
+                }
+            })
+            .collect();
+        let holes = enclosed_clear(&art, w, h);
+        assert_eq!(holes.iter().filter(|&&b| b).count(), 12);
+        let part = TextPart {
+            region: Some([1, 1, 10, 6]),
+            text: "X".into(),
+            style: Style::Boxed,
+            ..TextPart::default()
+        };
+        let r = render_part(&part, &art, w, h, &BoxGlyphs, 1).unwrap();
+        assert!(r.base.iter().all(|&b| b == 5), "{:?}", r.base);
     }
 
     #[test]
