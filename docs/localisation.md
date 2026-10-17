@@ -77,6 +77,43 @@ sprite) is an error, not a silent fallback.
 | Presentation: `smooth` (default), `integer`, `nearest` | `DDG_UI_SCALING` | `--ui-scaling <mode>` |
 | Fixed canvas multiple 1..4 (default: follows the window) | `DDG_UI_SCALE` | `--ui-scale <n>` |
 
+### Settings: `config.toml` and the first-run language screen
+
+The port's own settings live in `config.toml` next to `eeprom.dat`: `$XDG_CONFIG_HOME/ddg/`
+(default `~/.config/ddg/`), `%APPDATA%\ddg\` on Windows. `eeprom.dat` keeps the original's
+options byte for byte; `config.toml` holds only what the port adds. Every key is optional:
+
+```toml
+lang = "en"               # en, or ja for the original art
+hud_layout = "original"   # original or enhanced
+ui_scaling = "smooth"     # smooth, integer or nearest
+ui_scale = 2              # fixed canvas multiple 1..4 (omit: follows the window)
+font = "/path/a.otf:/path/b.ttf"
+display_font = "/path/c.otf"
+```
+
+* Precedence: command-line flag > `DDG_*` environment variable > `config.toml` > built-in
+  default. Play, the front end and `view` read the file.
+* Headless runs (`--shot`, the `shot` subcommand) never read it, so checks stay reproducible:
+  they use the defaults, the environment and the flags.
+* Unknown keys are ignored when read and kept when the game writes the file. A file that does
+  not parse is reported and ignored (the defaults apply); a bad value (`hud_layout = "wide"`,
+  `ui_scale = 9`) loses only that setting; a `lang` with no catalogue is dropped. The game never
+  stops over the file.
+* First run: when no language comes from a flag, the environment or the file, `ddg-game`
+  (the front end) opens with a language screen before attract: "Language / 言語" over
+  **English** and **日本語**, the title menu's cursor frame, up/down (or the power lever) and
+  Enter / pad confirm, the menu move and decide sounds. The choice is installed at once (`en`,
+  or `ja` = the original art) and written to `config.toml` as `lang` (an existing file keeps its
+  other lines and comments; a corrupt one is moved to `config.toml.bad`). It sets only the
+  language: the HUD layout keeps its own setting (default `original`).
+* Changing it later: `--lang en|ja` for one run, or edit `lang` in `config.toml` (removing the
+  line brings the screen back). An options entry comes with the Phase 6 config UI.
+* Checking: the hidden flag `--first-run` forces the screen, also in headless shots
+  (`ddg-game --first-run --size 1280x800 --shot 12:out.ppm`); headless runs never write the file.
+* Code: `crates/ddg-game/src/config.rs` (`PortConfig`, `layered`, `store_lang`),
+  `crates/ddg-game/src/front/language.rs` (the screen, a pure state machine), `App::choose_language`.
+
 No font is shipped in the repo. Any TTF/OTF with Latin glyphs works; DejaVu Sans Bold or Noto
 Sans Bold are good starting points (on NixOS: `fc-list | grep -i dejavu`). The catalogue uses a
 few non-ASCII characters (macrons as in "Ōmagari", arrows "← →", the en dash), so the font
@@ -353,8 +390,8 @@ Nothing calls this yet. Three edits turn it on for `ddg-game play`:
 
    ```rust
    let mut args: Vec<String> = std::env::args().skip(2).collect();
-   let mut locale = locale::LocaleConfig::from_env();
-   locale.take_args(&mut args)?; // removes --lang/--font/--display-font/--locale-dir
+   // config.toml (unless headless), then the environment, then the flags it removes
+   let locale = config::locale(&mut args, headless)?;
    // ... PlayOptions { ..., locale, }
    ```
 
