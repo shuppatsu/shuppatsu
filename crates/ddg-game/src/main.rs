@@ -2,6 +2,8 @@
 //!
 //! Phase 3: `ddg-game view <route.com>` flies through a route; `ddg-game shot` renders one frame
 //! headless for checks.
+// Release builds on Windows have no console window; logs go to a file (win_console.rs).
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod app;
 mod board_en;
@@ -36,6 +38,7 @@ mod sound;
 mod subtitles;
 mod traffic;
 mod weather;
+mod win_console;
 mod window;
 
 use anyhow::{Context, Result, bail};
@@ -67,6 +70,8 @@ usage: ddg-game [options] [--joystick-dat <file>] [--combo <file>] [--mute]
 options:
   --data <dir>             the extracted disc or installed game (after env DDG_DATA_DIR; else
                            data\\ next to the exe, else config.toml data_dir; docs/building.md)
+  --console                Windows: log to the starting shell's console or a new one, not to
+                           %APPDATA%\\ddg\\ddg-game.log
   --speed <km/h>           fly-through speed (default 80)
   --gradient-variant <0|1> sky/ground gradient set (1 = the timed alternate set)
   --fog                    view: linear fog everywhere (off by default); elsewhere the switch
@@ -669,7 +674,7 @@ impl ApplicationHandler for App {
     }
 }
 
-fn main() -> Result<()> {
+fn run_main() -> Result<()> {
     let first = cli_args().into_iter().nth(1);
     if matches!(first.as_deref(), Some("-h" | "--help")) {
         println!("{USAGE}");
@@ -795,7 +800,19 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-/// The command line without `--data <dir>` (data_dir.rs).
+/// The command line without `--data <dir>` (data_dir.rs) and `--console` (win_console.rs).
 fn cli_args() -> Vec<String> {
     data_dir::args()
+        .into_iter()
+        .filter(|a| a != "--console")
+        .collect()
+}
+
+fn main() -> Result<()> {
+    let log = win_console::init(std::env::args().any(|a| a == "--console"));
+    let result = run_main();
+    if let Err(e) = &result {
+        win_console::fatal(e, log.as_deref());
+    }
+    result
 }
