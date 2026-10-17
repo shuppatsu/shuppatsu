@@ -129,6 +129,65 @@ pub fn scale(src: &[[u8; 3]], w: usize, h: usize, n: usize) -> Vec<[u8; 3]> {
     if n <= 1 || w == 0 || h == 0 {
         return src.to_vec();
     }
+    scale_by(
+        src,
+        src,
+        (w, h, n),
+        |c| c.map(f32::from),
+        |p, c, a| {
+            for ch in 0..3 {
+                p[ch] += (f32::from(c[ch]) - p[ch]) * a;
+            }
+        },
+    )
+    .into_iter()
+    .map(|v| v.map(|c| c.round().clamp(0.0, 255.0) as u8))
+    .collect()
+}
+
+/// The same edge shapes without new colours, for palettised art: the decisions are made on
+/// `colours` (`w`×`h` RGB), and every output pixel takes the `payload` (e.g. the palette
+/// index) of its own source pixel, or of the neighbour along the edge where more than half of
+/// it lies beyond the edge. Palette effects keep working on the result.
+pub fn scale_indexed<T: Copy>(
+    colours: &[[u8; 3]],
+    payload: &[T],
+    w: usize,
+    h: usize,
+    n: usize,
+) -> Vec<T> {
+    assert_eq!(colours.len(), w * h);
+    assert_eq!(payload.len(), w * h);
+    if n <= 1 || w == 0 || h == 0 {
+        return payload.to_vec();
+    }
+    scale_by(
+        colours,
+        payload,
+        (w, h, n),
+        |t| t,
+        |p, t, a| {
+            if a > 0.5 {
+                *p = t;
+            }
+        },
+    )
+}
+
+/// The scaler: corners classified on `src`; each pixel becomes an `n`×`n` block started from
+/// its payload (`start`) and blended towards a neighbour's payload with weight `a` (`mix`).
+fn scale_by<T: Copy, P: Copy>(
+    src: &[[u8; 3]],
+    payload: &[T],
+    (w, h, n): (usize, usize, usize),
+    start: impl Fn(T) -> P,
+    mix: impl Fn(&mut P, T, f32),
+) -> Vec<P> {
+    let pay = |x: i32, y: i32| -> T {
+        let x = x.clamp(0, w as i32 - 1) as usize;
+        let y = y.clamp(0, h as i32 - 1) as usize;
+        payload[y * w + x]
+    };
     let px = |x: i32, y: i32| -> [u8; 3] {
         let x = x.clamp(0, w as i32 - 1) as usize;
         let y = y.clamp(0, h as i32 - 1) as usize;
@@ -185,14 +244,12 @@ pub fn scale(src: &[[u8; 3]], w: usize, h: usize, n: usize) -> Vec<[u8; 3]> {
     // 2. Each pixel to an n×n block, blending its corners.
     let tables = cached_tables(n);
     let ow = w * n;
-    let mut out = vec![[0u8; 3]; ow * h * n];
-    let mut block = vec![[0f32; 3]; n * n];
+    let first = start(payload[0]);
+    let mut out = vec![first; ow * h * n];
+    let mut block = vec![first; n * n];
     for y in 0..h as i32 {
         for x in 0..w as i32 {
-            let centre = px(x, y);
-            for b in block.iter_mut() {
-                *b = centre.map(f32::from);
-            }
+            block.fill(start(pay(x, y)));
             let corners = blend[y as usize * w + x as usize];
             for r in 0..4 {
                 let at = |dx: i32, dy: i32| {
@@ -213,7 +270,13 @@ pub fn scale(src: &[[u8; 3]], w: usize, h: usize, n: usize) -> Vec<[u8; 3]> {
                     || !((corner(1, -1) != Blend::None && !eq(e, g))
                         || (corner(-1, 1) != Blend::None && !eq(e, c))
                         || (!eq(e, i) && eq(g, hh) && eq(hh, i) && eq(i, f) && eq(f, c)));
-                let col = if dist(e, f) <= dist(e, hh) { f } else { hh };
+                let col = if dist(e, f) <= dist(e, hh) {
+                    let (rx, ry) = rot(r, 1, 0);
+                    pay(x + rx, y + ry)
+                } else {
+                    let (rx, ry) = rot(r, 0, 1);
+                    pay(x + rx, y + ry)
+                };
                 let shape = if line {
                     let (fg, hc) = (dist(f, g), dist(hh, c));
                     let shallow = STEEP_RATIO * fg <= hc && e != g && d != g;
@@ -237,15 +300,12 @@ pub fn scale(src: &[[u8; 3]], w: usize, h: usize, n: usize) -> Vec<[u8; 3]> {
                     let m = n as i32 - 1;
                     let (rx, ry) = rot(r, 2 * sx - m, 2 * sy - m);
                     let (bx, by) = (((rx + m) / 2) as usize, ((ry + m) / 2) as usize);
-                    let dst = &mut block[by * n + bx];
-                    for ch in 0..3 {
-                        dst[ch] += (f32::from(col[ch]) - dst[ch]) * a;
-                    }
+                    mix(&mut block[by * n + bx], col, a);
                 }
             }
             let (x0, y0) = (x as usize * n, y as usize * n);
             for (k, v) in block.iter().enumerate() {
-                out[(y0 + k / n) * ow + x0 + k % n] = v.map(|c| c.round().clamp(0.0, 255.0) as u8);
+                out[(y0 + k / n) * ow + x0 + k % n] = *v;
             }
         }
     }

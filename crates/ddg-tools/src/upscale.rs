@@ -294,7 +294,7 @@ pub fn fill_keyed(tile: &mut Tile) {
 }
 
 /// Nearest-neighbour enlargement of a `w`×`h` buffer.
-fn nearest<T: Copy>(src: &[T], w: u32, h: u32, s: u32) -> Vec<T> {
+pub(crate) fn nearest<T: Copy>(src: &[T], w: u32, h: u32, s: u32) -> Vec<T> {
     let (ow, oh) = (w * s, h * s);
     (0..ow * oh)
         .map(|i| src[((i / ow / s) * w + (i % ow) / s) as usize])
@@ -430,7 +430,8 @@ pub fn run(args: &[String]) -> Result<()> {
     );
 
     let t_up = Instant::now();
-    let scaled = upscale_all(&opts, &jobs)?;
+    let tiles: Vec<&Tile> = jobs.iter().map(|j| &j.tile).collect();
+    let scaled = upscale_tiles(&opts, &tiles)?;
     let up_time = t_up.elapsed();
 
     let s = opts.scale;
@@ -506,20 +507,14 @@ fn parallel_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Ve
     })
 }
 
-/// The upscaled colour of every job's tile, (w·s)×(h·s).
-fn upscale_all(opts: &Options, jobs: &[Job]) -> Result<Vec<Vec<[u8; 3]>>> {
+/// The upscaled colour of every tile, (w·s)×(h·s), by `opts.method` at `opts.scale` (external
+/// tools work in `opts.out/.work`).
+pub(crate) fn upscale_tiles(opts: &Options, tiles: &[&Tile]) -> Result<Vec<Vec<[u8; 3]>>> {
     let s = opts.scale;
     match &opts.method {
-        Method::Nearest => Ok(parallel_map(jobs, |j| {
-            nearest(&j.tile.rgb, j.tile.w, j.tile.h, s)
-        })),
-        Method::Xbrz => Ok(parallel_map(jobs, |j| {
-            xbrz::scale(
-                &j.tile.rgb,
-                j.tile.w as usize,
-                j.tile.h as usize,
-                s as usize,
-            )
+        Method::Nearest => Ok(parallel_map(tiles, |t| nearest(&t.rgb, t.w, t.h, s))),
+        Method::Xbrz => Ok(parallel_map(tiles, |t| {
+            xbrz::scale(&t.rgb, t.w as usize, t.h as usize, s as usize)
         })),
         Method::Esrgan { model } => {
             // The x4plus models only scale ×4; animevideov3 has ×2, ×3 and ×4.
@@ -532,7 +527,7 @@ fn upscale_all(opts: &Options, jobs: &[Job]) -> Result<Vec<Vec<[u8; 3]>>> {
                 .tool
                 .clone()
                 .unwrap_or_else(|| PathBuf::from("realesrgan-ncnn-vulkan"));
-            external(opts, jobs, native, |inp, out| {
+            external(opts, tiles, native, |inp, out| {
                 let mut c = Command::new(&tool);
                 c.arg("-i").arg(inp).arg("-o").arg(out).args([
                     "-n",
@@ -550,7 +545,7 @@ fn upscale_all(opts: &Options, jobs: &[Job]) -> Result<Vec<Vec<[u8; 3]>>> {
                 .tool
                 .clone()
                 .unwrap_or_else(|| PathBuf::from("waifu2x-converter-cpp"));
-            external(opts, jobs, s, |inp, out| {
+            external(opts, tiles, s, |inp, out| {
                 let mut c = Command::new(&tool);
                 c.arg("-i")
                     .arg(inp)
@@ -570,7 +565,7 @@ fn upscale_all(opts: &Options, jobs: &[Job]) -> Result<Vec<Vec<[u8; 3]>>> {
 /// (box-filtered down when the tool's factor `native` is larger than the pack's).
 fn external(
     opts: &Options,
-    jobs: &[Job],
+    tiles: &[&Tile],
     native: u32,
     command: impl Fn(&Path, &Path) -> Command,
 ) -> Result<Vec<Vec<[u8; 3]>>> {
@@ -583,11 +578,11 @@ fn external(
     let _ = std::fs::remove_dir_all(&work);
     std::fs::create_dir_all(&inp)?;
     std::fs::create_dir_all(&outp)?;
-    let indices: Vec<usize> = (0..jobs.len()).collect();
+    let indices: Vec<usize> = (0..tiles.len()).collect();
     parallel_map(&indices, |&idx| -> Result<()> {
-        let j = &jobs[idx];
-        let buf: Vec<u8> = j.tile.rgb.iter().flatten().copied().collect();
-        image::RgbImage::from_raw(j.tile.w, j.tile.h, buf)
+        let t = tiles[idx];
+        let buf: Vec<u8> = t.rgb.iter().flatten().copied().collect();
+        image::RgbImage::from_raw(t.w, t.h, buf)
             .context("tile size")?
             .save(inp.join(format!("t{idx:06}.png")))?;
         Ok(())
@@ -620,12 +615,12 @@ fn external(
             .cloned()
     };
     let result = parallel_map(&indices, |&idx| -> Result<Vec<[u8; 3]>> {
-        let j = &jobs[idx];
+        let t = tiles[idx];
         let path = find(idx).with_context(|| format!("no output for tile {idx}"))?;
         let img = image::open(&path)
             .with_context(|| path.display().to_string())?
             .to_rgb8();
-        let (w, h) = (j.tile.w * native, j.tile.h * native);
+        let (w, h) = (t.w * native, t.h * native);
         if img.dimensions() != (w, h) {
             bail!(
                 "{}: {:?}, expected {w}×{h}",
