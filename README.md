@@ -32,7 +32,7 @@ measured from the original game, not guessed (see [docs/re/](docs/re/)).
 
 ## Requirements
 
-* **Linux** (x86-64; the main platform) or **Windows** (once the Windows build is released).
+* **Linux** (x86-64; the main platform) or **Windows** (x86-64, 10 or later).
 * A GPU with **Vulkan** (Linux) or **DirectX 12 / Vulkan** (Windows). Any GPU from the last
   ten years should do.
 * The **3000-bandai** disc (2000, volume label `DENGO3K`). The port is developed and tested
@@ -105,7 +105,16 @@ DDG_DATA_DIR=data/extracted ddg-tools check
 
 ## Installing and running
 
-The game looks for the extracted data in `DDG_DATA_DIR`:
+The game looks for your extracted data in this order (the first that exists wins):
+
+1. the `DDG_DATA_DIR` environment variable;
+2. `--data <dir>` on the command line;
+3. a folder `data/extracted` or `data` next to the `ddg-game` executable;
+4. `data_dir = "…"` in `config.toml` (see [Settings](#settings)).
+
+Each can point at an extracted disc (the folder holding `install/`) or at an installed copy of
+the original game (the folder holding `DATA` and `BIN`, e.g. `C:\Program Files\TAITO\DENGO3K`).
+For example:
 
 ```sh
 export DDG_DATA_DIR=/path/to/data/extracted
@@ -138,8 +147,12 @@ In `nix develop` everything is provided.
 
 ### Windows
 
-A Windows zip is planned; until it is released, build it from source (`docs/building.md` once
-available).
+Build the zip with `scripts/package-windows.sh` (cross-compiled from the Nix dev shell, see
+[docs/building.md](docs/building.md)); it writes `out/dist/ddg-windows.zip`. Unzip it and put your
+extracted data in a `data` folder next to `ddg-game.exe` (or use `--data` / `data_dir`). The game
+uses DirectX 12, falling back to Vulkan. There is no console window; the log goes to
+`%APPDATA%\ddg\ddg-game.log` (or run with `--console`). `install-desktop` is Linux-only; on
+Windows the taskbar icon comes from your `dengo3k.exe` automatically.
 
 ### Command line
 
@@ -264,8 +277,8 @@ to add a language).
 
 ## Troubleshooting
 
-* **`DDG_DATA_DIR is not set`**: point it at the folder that contains `install/`
-  (`export DDG_DATA_DIR=/path/to/data/extracted`).
+* **`the game data was not found`**: put the extracted data where the game looks for it (see
+  [Installing and running](#installing-and-running)), e.g. `--data /path/to/data/extracted`.
 * **`… not found in …/DATA`**: the extraction is incomplete or the layout differs. Check
   that `install/Program_Executable_Files/DATA` and `BIN/dengo3k.exe` exist, and run the
   checks in [Getting the game data](#3-check-it-optional).
