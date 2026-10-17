@@ -43,18 +43,13 @@ impl Gpu {
             .with_inner_size(winit::dpi::PhysicalSize::new(size.0, size.1));
         let attrs = crate::identity::apply(attrs);
         let window = Arc::new(event_loop.create_window(attrs)?);
-        let instance = wgpu::Instance::new(
-            wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(window.clone())),
-        );
-        let surface = instance.create_surface(window.clone())?;
-        let adapter = block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: Some(&surface),
-            ..Default::default()
-        }))?;
+        let (_instance, surface, adapter, device, queue) = crate::gpu_backend::open(
+            || wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(window.clone())),
+            |instance| Ok(Some(instance.create_surface(window.clone())?)),
+        )?;
+        let surface = surface.context("no surface")?;
         let info = adapter.get_info();
         eprintln!("adapter: {} ({:?})", info.name, info.backend);
-        let (device, queue) = block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
         let inner = window.inner_size();
         let mut config = surface
             .get_default_config(&adapter, inner.width.max(1), inner.height.max(1))

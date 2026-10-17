@@ -64,14 +64,10 @@ pub fn render_to_ppm_with(
     hud: Option<Canvas<'_>>,
     path: &std::path::Path,
 ) -> Result<()> {
-    let instance =
-        wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
-    let adapter = crate::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        ..Default::default()
-    }))?;
-    let (device, queue) =
-        crate::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))?;
+    let (_instance, _, _adapter, device, queue) = crate::gpu_backend::open(
+        wgpu::InstanceDescriptor::new_without_display_handle_from_env,
+        |_| Ok(None),
+    )?;
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
     let target = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("shot"),

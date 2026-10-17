@@ -13,6 +13,7 @@ mod departure_hud;
 mod desktop;
 mod front;
 mod gamepad;
+mod gpu_backend;
 mod hints;
 mod hud;
 mod identity;
