@@ -666,6 +666,10 @@ impl ApplicationHandler for App {
 
 fn main() -> Result<()> {
     let first = std::env::args().nth(1);
+    if matches!(first.as_deref(), Some("-h" | "--help")) {
+        println!("{USAGE}");
+        return Ok(());
+    }
     if first.as_deref().is_none_or(|a| a.starts_with("--")) {
         return app::run(parse_app_args()?);
     }
