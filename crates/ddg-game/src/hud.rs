@@ -679,7 +679,7 @@ fn picture_palette(picture: i16) -> u8 {
 }
 
 /// The speedometer needle triangle for `kmh` (hud.md §3.5), in canvas pixels.
-fn needle(kmh: f64) -> [[i32; 2]; 3] {
+pub(crate) fn needle(kmh: f64) -> [[i32; 2]; 3] {
     let v = kmh.clamp(0.0, DIAL_MAX_KMH);
     let theta = v * std::f64::consts::PI * 0.0125 - std::f64::consts::PI * 0.75;
     let (sin, cos) = theta.sin_cos();

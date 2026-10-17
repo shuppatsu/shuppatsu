@@ -94,6 +94,9 @@ pub struct RouteScene {
     pub hide_panorama: bool,
     /// AI-train cars to draw this frame ([`ddg_engine::drive::Drive::traffic_poses`]).
     pub traffic: Vec<ddg_engine::traffic::CarPose>,
+    /// Enhancement `far_traffic`: draw AI trains this far ahead (world units) in the farthest
+    /// distance band instead of the original's 15 (`None`: the original bands).
+    pub traffic_reach: Option<f64>,
     /// Frame of the animated 3D signals: the rules' `signal_model` (`0x85744c`).
     pub signal_model: usize,
 }
@@ -169,6 +172,7 @@ impl RouteScene {
             gradient_fade: None,
             hide_panorama: false,
             traffic: Vec::new(),
+            traffic_reach: None,
             signal_model: 0,
         })
     }

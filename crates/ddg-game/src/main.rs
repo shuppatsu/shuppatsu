@@ -27,6 +27,7 @@ mod scene;
 mod screens;
 mod shot;
 mod slots;
+mod smooth;
 mod sound;
 mod traffic;
 mod weather;
@@ -66,7 +67,11 @@ options:
   --stable-track-variants  enhancement: side-track models don't switch every point (no flicker)
   --texture-filtering      enhancement: mipmaps + trilinear/anisotropic filtering (no shimmer)
   --gradient-variant <0|1> sky/ground gradient set (1 = the timed alternate set)
-  --fog                    linear fog as DengoSetting's FOGENABLE (off on a fresh install)
+  --fog                    linear fog: in play, the snow fog of DengoSetting's FOGENABLE (on by
+                           default; config key fog); in view, everywhere (off by default)
+  --no-fog                 play: no snow fog (as a fresh install of the original)
+  --original-weather       play: raindrops and snow only in the original 4:3 area
+  --original-traffic       play: AI trains drawn only up to 150 m ahead, as the original
   --hud                    the driving HUD over the view (test values)
   --debug-title            live debug text in the window title (env DDG_DEBUG_TITLE=1)
   --size <WxH>             window/frame size (default 1280x800, 16:10)
@@ -89,7 +94,7 @@ options:
                            follows the window height (smooth: ceil(h/480), integer: floor(h/480))
 
 settings file: $XDG_CONFIG_HOME/ddg/config.toml (~/.config/ddg; %APPDATA%\\ddg on Windows),
-  keys lang, hud_layout, ui_scaling, ui_scale, font, display_font. Flags override the
+  keys lang, hud_layout, ui_scaling, ui_scale, font, display_font, fog. Flags override the
   environment, which overrides the file. Headless --shot runs never read it.
 
 play keys (mode 0): Down/Up power +/-, Right/Left brake +/- (one more press past B8 = EB),
@@ -144,7 +149,9 @@ fn parse_play_args() -> Result<play::PlayOptions> {
         original_visibility: false,
         stable_track_variants: false,
         texture_filtering: false,
-        fog: false,
+        fog: locale.fog,
+        wide_weather: true,
+        far_traffic: true,
         mute: false,
         inputs: None,
         shot: None,
@@ -186,6 +193,9 @@ fn parse_play_args() -> Result<play::PlayOptions> {
             "--stable-track-variants" => opts.stable_track_variants = true,
             "--texture-filtering" => opts.texture_filtering = true,
             "--fog" => opts.fog = true,
+            "--no-fog" => opts.fog = false,
+            "--original-weather" => opts.wide_weather = false,
+            "--original-traffic" => opts.far_traffic = false,
             other => bail!("unknown option {other}\n\n{USAGE}"),
         }
     }
@@ -211,7 +221,9 @@ fn parse_app_args() -> Result<app::AppOptions> {
         original_visibility: false,
         stable_track_variants: false,
         texture_filtering: false,
-        fog: false,
+        fog: locale.fog,
+        wide_weather: true,
+        far_traffic: true,
         mute: false,
         pad: gamepad::PadOptions::default(),
         inputs: None,
@@ -246,6 +258,9 @@ fn parse_app_args() -> Result<app::AppOptions> {
             "--stable-track-variants" => opts.stable_track_variants = true,
             "--texture-filtering" => opts.texture_filtering = true,
             "--fog" => opts.fog = true,
+            "--no-fog" => opts.fog = false,
+            "--original-weather" => opts.wide_weather = false,
+            "--original-traffic" => opts.far_traffic = false,
             other => bail!("unknown option {other}\n\n{USAGE}"),
         }
     }

@@ -3,9 +3,9 @@
 //! "Settings").
 //!
 //! `eeprom.dat` keeps the original game's options byte for byte; this file holds only what
-//! the port adds: the language, the fonts and the 2D layout and scaling. Every key is
-//! optional, and a setting is taken from, in order of precedence: the command-line flag, the
-//! `DDG_*` environment variable, this file, the built-in default.
+//! the port adds: the language, the fonts, the 2D layout and scaling, and the snow fog. Every
+//! key is optional, and a setting is taken from, in order of precedence: the command-line flag,
+//! the `DDG_*` environment variable, this file, the built-in default.
 //!
 //! ```toml
 //! lang = "en"               # en, or ja for the original art
@@ -14,6 +14,7 @@
 //! ui_scale = 2              # fixed 2D canvas multiple 1..=4 (default: follows the window)
 //! font = "/path/a.otf:/path/b.ttf"
 //! display_font = "/path/c.otf"
+//! fog = true              # the snow fog (false = as a fresh install of the original)
 //! ```
 //!
 //! Unknown keys are ignored when read and kept when the game writes the file. A file that
@@ -57,6 +58,9 @@ pub struct PortConfig {
     /// Font list for display text (`--display-font`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_font: Option<PathBuf>,
+    /// The snow fog, default true (`--fog` / `--no-fog`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fog: Option<bool>,
     /// Keys this version does not know, kept as they are when the file is written.
     #[serde(flatten)]
     pub other: toml::Table,
@@ -123,6 +127,9 @@ impl PortConfig {
         }
         if let Some(f) = &self.display_font {
             cfg.display_font = Some(f.clone());
+        }
+        if let Some(f) = self.fog {
+            cfg.fog = f;
         }
     }
 }

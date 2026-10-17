@@ -79,6 +79,9 @@ pub struct AppOptions {
     pub stable_track_variants: bool,
     pub texture_filtering: bool,
     pub fog: bool,
+    /// Enhancements `wide_weather` and `far_traffic` (see `PlayOptions`).
+    pub wide_weather: bool,
+    pub far_traffic: bool,
     pub mute: bool,
     pub pad: PadOptions,
     /// Scripted keys, `key <tick>[-<last>] <name>` (app ticks, the run's included).
@@ -406,6 +409,8 @@ impl App {
             stable_track_variants: self.opts.stable_track_variants,
             texture_filtering: self.opts.texture_filtering,
             fog: self.opts.fog,
+            wide_weather: self.opts.wide_weather,
+            far_traffic: self.opts.far_traffic,
             mute: self.opts.mute,
             inputs: None,
             shot: None,

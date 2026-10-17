@@ -5,8 +5,10 @@
 //!
 //! The state is stepped once per simulation tick from the rules' weather state (`0x84c3a0`
 //! active, `0x857230` level, `0x84c2e0` wiper flag) and the drive phase, and turned into 2D
-//! quads in the original's 496×400 virtual space for the renderer's effect pass. Positions stay
-//! in the original's 4:3 area (x 0..496) under Hor+.
+//! quads in the original's 496×400 virtual space for the renderer's effect pass. The original
+//! keeps the drops and snow in its 4:3 area (x 0..496); enhancement `wide_weather` (on by
+//! default, renderer.md §13.9) repeats them sideways over the visible Hor+ width. The wiper
+//! angle and the snow scroll are interpolated between ticks for high refresh rates.
 
 use crate::scene::{RouteScene, ScreenMap};
 use anyhow::Result;
@@ -42,6 +44,10 @@ const SNOW_V_SPAN: i16 = 0x570;
 const SNOW_U_SPAN: i16 = 0x7c0;
 /// The snow task's counter step per tick (0x425113).
 const SNOW_STEP: i32 = 8;
+/// Width of the original's weather area (virtual x 0..496, the band rect 0x47c32c).
+const TILE_W: i32 = 496;
+/// `wide_weather` drop tiles per side: enough for 1240 virtual units of half width (≈ 7.6:1).
+const WIDE_TILES: i32 = 2;
 /// Bottom and right edges of the virtual screen used by the wiper shapes (0x18f at 0x424a56,
 /// 0x424c8a, 0x424d8a; 0x1f0 at 0x424e27 / 0x424e59; 0x190 at 0x424a14; −399 at 0x424bc9).
 const BOTTOM: i32 = 0x18f;
@@ -329,10 +335,18 @@ struct Wiper {
     shape: usize,
     angle: f32,
     dir: i32,
+    /// The angle before the last step (interpolation only).
+    prev: f32,
 }
 
 impl Wiper {
+    /// The angle between the last two ticks (`alpha` 0 → the tick before, 1 → the last).
+    fn angle_at(&self, alpha: f32) -> f32 {
+        crate::smooth::lerp(self.prev, self.angle, alpha)
+    }
+
     fn step(&mut self, swing: Swing, wipe: bool) {
+        self.prev = self.angle;
         self.angle += self.dir as f32 * swing.speed;
         if self.dir > 0 {
             if self.angle > swing.max {
@@ -351,6 +365,9 @@ struct Drop {
     x: i32,
     y: i32,
     visible: bool,
+    /// The 496-unit tile it belongs to: 0 is the original's area, the others are
+    /// `wide_weather`'s copies to the left (< 0) and right.
+    tile: i32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -360,6 +377,8 @@ struct Overlay {
     drops: Vec<Drop>,
     /// The snow task's counter (+0x30); `None` without snow or after the task ended.
     snow: Option<i32>,
+    /// The counter before the last step (interpolation only).
+    snow_prev: i32,
 }
 
 /// A palette-3 fade of the sky gradient (0x40f320 → task 0x436a60).
@@ -375,6 +394,11 @@ pub struct Weather {
     stage: usize,
     kind: i16,
     rng: CrtRand,
+    /// Enhancement `wide_weather`: drops and snow over the whole visible width.
+    wide: bool,
+    /// Generators of the side tiles' drops (`wide_weather`), so tile 0 keeps the original's
+    /// sequence.
+    side_rng: [CrtRand; 2 * WIDE_TILES as usize],
     overlay: Option<Overlay>,
     /// Created by a segment start while the rules have the event off (0x424740 sets
     /// `0x84c3a0` again): alive until the next driving tick.
@@ -395,12 +419,15 @@ impl Weather {
     /// The run's effect state. The CRT seed starts at 1; the original reseeds it from the
     /// global tick counter when a traffic train spawns (0x404f10), which the port can't
     /// reproduce, so drop positions follow the same law but not the same sequence.
-    pub fn new(exe: &Exe<'_>, stage: usize) -> Result<Self> {
+    /// `wide` turns on enhancement `wide_weather`.
+    pub fn new(exe: &Exe<'_>, stage: usize, wide: bool) -> Result<Self> {
         Ok(Self {
             tables: EffectTables::read(exe)?,
             stage,
             kind: weather_type(stage),
             rng: CrtRand(1),
+            wide,
+            side_rng: std::array::from_fn(|i| CrtRand(2 + i as u32)),
             overlay: None,
             revived: false,
             wipe: false,
@@ -483,28 +510,45 @@ impl Weather {
                 shape,
                 angle: self.tables.swings[shape].min,
                 dir: 0,
+                prev: self.tables.swings[shape].min,
             }),
             drops: Vec::new(),
             snow: (extra == Extra::Snow).then_some(0),
+            snow_prev: 0,
         };
         if extra == Extra::Drops {
-            for i in 0..DROP_COUNT {
-                let d = self.new_drop(i & 7, camera_type);
-                overlay.drops.push(d);
+            for tile in self.tiles() {
+                for i in 0..DROP_COUNT {
+                    let d = self.new_drop(i & 7, camera_type, tile);
+                    overlay.drops.push(d);
+                }
             }
         }
         self.overlay = Some(overlay);
     }
 
-    /// 0x424f20: a drop at a random place; its visibility is fixed at creation.
-    fn new_drop(&mut self, counter: u32, camera_type: u8) -> Drop {
-        let x = (self.rng.next() * DROP_X_RANGE) >> 15;
-        let y = (self.rng.next() * DROP_Y_RANGE) >> 15;
+    /// The drop tiles: the original's area first, then `wide_weather`'s side tiles.
+    fn tiles(&self) -> impl Iterator<Item = i32> + use<> {
+        let side = if self.wide { WIDE_TILES } else { 0 };
+        std::iter::once(0).chain((1..=side).flat_map(|k| [-k, k]))
+    }
+
+    /// 0x424f20: a drop at a random place of `tile`; its visibility is fixed at creation. Side
+    /// tiles draw from their own generators with the same law.
+    fn new_drop(&mut self, counter: u32, camera_type: u8, tile: i32) -> Drop {
+        let visible = self.visible(camera_type);
+        let rng = match tile {
+            0 => &mut self.rng,
+            t => &mut self.side_rng[(t.unsigned_abs() as usize - 1) * 2 + usize::from(t > 0)],
+        };
+        let x = (rng.next() * DROP_X_RANGE) >> 15;
+        let y = (rng.next() * DROP_Y_RANGE) >> 15;
         Drop {
             counter,
-            x: x as i32,
+            x: x as i32 + tile * TILE_W,
             y: y as i32 + DROP_TOP,
-            visible: self.visible(camera_type),
+            visible,
+            tile,
         }
     }
 
@@ -535,7 +579,7 @@ impl Weather {
             if d.counter < DROP_LIFE {
                 drops.push(d);
             } else if active {
-                let mut n = self.new_drop(0, camera_type);
+                let mut n = self.new_drop(0, camera_type, d.tile);
                 n.counter = 1;
                 drops.push(n);
             }
@@ -543,6 +587,7 @@ impl Weather {
         o.drops = drops;
         // Snow (0x425100): +8 per tick; ends with the event (its kill callback turns the fog
         // off and lets the panorama draw again).
+        o.snow_prev = o.snow.unwrap_or(0);
         o.snow = o.snow.filter(|_| active).map(|n| n + SNOW_STEP);
         // The drop tasks outlive the wiper until their own counters run out.
         if o.wiper.is_some() || !o.drops.is_empty() {
@@ -608,12 +653,14 @@ impl Weather {
 
     /// Appends the overlay's quads for a frame, mapped into the 3D band of a target of band
     /// aspect `aspect` (width / band height). The caller clears `out` first; the drive's top
-    /// mask goes in before these quads (`Play::cab_mask`).
+    /// mask goes in before these quads (`Play::cab_mask`). `alpha` places the wiper and the snow
+    /// scroll between the last two ticks (0 = the tick before, 1 = the last tick, as headless).
     pub fn compose(
         &self,
         scene: &RouteScene,
         drive: &Drive,
         aspect: f32,
+        alpha: f32,
         out: &mut EffectGeometry,
     ) {
         let Some(o) = &self.overlay else {
@@ -621,9 +668,16 @@ impl Weather {
         };
         let map = ScreenMap { aspect };
         let ndc = |c: [[i32; 2]; 4]| c.map(|[x, y]| map.ndc(x as f32, y as f32));
+        // `wide_weather` draws what overlaps the visible width; the original only its area.
+        let (left, right) = if self.wide {
+            map.x_range()
+        } else {
+            (0.0, TILE_W as f32)
+        };
+        let shown = |x0: i32, x1: i32| x1 as f32 > left + 0.5 && (x0 as f32) < right - 0.5;
         // Draw order of list 5: wiper, then the drops, then (snow types) the snow task.
         if let Some(w) = &o.wiper {
-            for (corners, word) in self.tables.wiper_quads(w.shape, w.angle) {
+            for (corners, word) in self.tables.wiper_quads(w.shape, w.angle_at(alpha)) {
                 out.add_flat_quad(ndc(corners), colour(word), WIPER_DEPTH);
             }
         }
@@ -635,11 +689,14 @@ impl Weather {
         let uv = |p: [i16; 2]| p.map(|v| f32::from(v) / 256.0);
         for d in o.drops.iter().filter(|d| d.visible) {
             let frame = ((d.counter >> 1) & 3) as usize;
+            let (x0, y0) = (d.x, d.y);
+            let (x1, y1) = (x0 + DROP_SIZE, y0 + DROP_SIZE);
+            if d.tile != 0 && !shown(x0, x1) {
+                continue;
+            }
             let Some((page, tex)) = sprite(self.tables.drop_parts[frame]) else {
                 continue;
             };
-            let (x0, y0) = (d.x, d.y);
-            let (x1, y1) = (x0 + DROP_SIZE, y0 + DROP_SIZE);
             out.add_tex_quad(
                 page,
                 ndc([[x0, y0], [x1, y0], [x1, y1], [x0, y1]]),
@@ -657,14 +714,37 @@ impl Weather {
             base[1] = [SNOW_U_SPAN, SNOW_V_SPAN];
             base[2][1] = SNOW_V_SPAN;
             base[3][1] = 0;
+            // The band tiles sideways with v running on (`wide_weather`): tile k is the band
+            // moved by k·496 with v moved by k·0x570, so the texture continues across tiles.
+            let tiles =
+                (left / TILE_W as f32).floor() as i32..=(right / TILE_W as f32).ceil() as i32;
+            let tiles: Vec<i32> = tiles
+                .filter(|&k| k == 0 || shown(k * TILE_W, (k + 1) * TILE_W))
+                .collect();
             // 0x425120: three layers, each shifting u and v by a counter-derived offset.
-            let offsets = [(-3 * n) & 0xff, (n + 2) & 0xff, (n / 2 + 4) & 0xff];
-            for (off, depth) in offsets.into_iter().zip(SNOW_DEPTHS) {
-                let uvs = base.map(|p| p.map(|v| v.wrapping_add(off as i16)));
-                out.add_tex_quad(page, ndc(self.tables.band), uvs.map(uv), depth);
+            for (off, depth) in snow_offsets(o.snow_prev, n, alpha)
+                .into_iter()
+                .zip(SNOW_DEPTHS)
+            {
+                for &k in &tiles {
+                    let band = self.tables.band.map(|[x, y]| [x + k * TILE_W, y]);
+                    let shift = [off, off + f64::from(k * i32::from(SNOW_V_SPAN))];
+                    let uvs =
+                        base.map(|p| [0, 1].map(|i| ((f64::from(p[i]) + shift[i]) / 256.0) as f32));
+                    out.add_tex_quad(page, ndc(band), uvs, depth);
+                }
             }
         }
     }
+}
+
+/// The snow layers' scroll offsets (page units ×256) of 0x425120, `(−3n) & 0xff`,
+/// `(n + 2) & 0xff` and `(n/2 + 4) & 0xff`, for the counter interpolated between the last two
+/// ticks' `prev` and `n` (`alpha` 0 → `prev`, 1 → `n`, where they are the original's words).
+/// The texture repeats every 256 units, so the wrap does not show.
+fn snow_offsets(prev: i32, n: i32, alpha: f32) -> [f64; 3] {
+    let m = crate::smooth::lerp64(f64::from(prev), f64::from(n), alpha);
+    [-3.0 * m, m + 2.0, m / 2.0 + 4.0].map(|v| v.rem_euclid(256.0))
 }
 
 /// Track type (`flags & 0x1f`) of the camera's point, `0x850114` (0x41d160).
@@ -710,6 +790,7 @@ mod tests {
             shape: 0,
             angle: s.min,
             dir: 0,
+            prev: s.min,
         };
         w.step(s, false);
         assert_eq!((w.angle, w.dir), (1.0, 0));
@@ -761,6 +842,25 @@ mod tests {
         // Shape 2 is off screen below 94.3°, so at rest.
         assert!(t.wiper_quads(2, t.swings[2].min).is_empty());
         assert_eq!(t.wiper_quads(2, t.swings[2].max).len(), 1);
+    }
+
+    #[test]
+    fn wiper_and_snow_interpolate_between_ticks() {
+        let w = Wiper {
+            shape: 0,
+            angle: 1.526,
+            dir: 1,
+            prev: 1.5,
+        };
+        assert_eq!(w.angle_at(0.0), 1.5);
+        assert!((w.angle_at(0.5) - 1.513).abs() < 1e-6);
+        assert_eq!(w.angle_at(1.0), 1.526);
+        // The tick boundaries give the original's words; between them the scroll moves on.
+        let words = |n: i32| [(-3 * n) & 0xff, (n + 2) & 0xff, (n / 2 + 4) & 0xff].map(f64::from);
+        assert_eq!(snow_offsets(80, 88, 0.0), words(80));
+        assert_eq!(snow_offsets(80, 88, 1.0), words(88));
+        // n = 84: −252 ≡ 4, 86, 46.
+        assert_eq!(snow_offsets(80, 88, 0.5), [4.0, 86.0, 46.0]);
     }
 
     #[test]

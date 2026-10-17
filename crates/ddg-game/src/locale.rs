@@ -609,6 +609,9 @@ pub struct LocaleConfig {
     pub hud_layout: crate::presentation::HudLayout,
     /// `--ui-scaling` / `DDG_UI_SCALING`: how the canvas reaches the window.
     pub ui_scaling: ddg_render::overlay::UiScaling,
+    /// The snow fog (DengoSetting's FOGENABLE): `config.toml` key `fog`, default on
+    /// (decided enhancement `snow_fog`); `--fog` / `--no-fog` override it in `main`.
+    pub fog: bool,
 }
 
 impl Default for LocaleConfig {
@@ -623,6 +626,7 @@ impl Default for LocaleConfig {
             ui_scale_fixed: None,
             hud_layout: Default::default(),
             ui_scaling: Default::default(),
+            fog: true,
         }
     }
 }

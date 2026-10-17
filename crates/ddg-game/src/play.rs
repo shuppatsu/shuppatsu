@@ -75,6 +75,10 @@ pub struct PlayOptions {
     pub stable_track_variants: bool,
     pub texture_filtering: bool,
     pub fog: bool,
+    /// Enhancement `wide_weather`: drops and snow over the whole visible width.
+    pub wide_weather: bool,
+    /// Enhancement `far_traffic`: AI trains drawn to the far plane, not only 150 m.
+    pub far_traffic: bool,
     pub mute: bool,
     /// Scripted inputs: `tick notch brake` lines (the oracle's format, drive ticks), held from
     /// each tick on, and `key <tick>[-<last>] <enter|esc|space|up|down|left|right>` lines: the
@@ -343,7 +347,8 @@ impl Play {
             script,
             save,
             meter_m: 0.0,
-            weather: crate::weather::Weather::new(&exe, opts.stage)?,
+            weather: crate::weather::Weather::new(&exe, opts.stage, opts.wide_weather)?,
+            needle: Default::default(),
             result_view: None,
             world: WorldView::Cab,
             demo: None,
@@ -473,7 +478,7 @@ impl Play {
         let band_aspect = w as f32 / (h as f32 * (1.0 - band)).max(1.0);
         Self::cab_mask(&self.scene, self.ending.as_ref(), band_aspect, &mut effects);
         self.weather
-            .compose(&self.scene, &self.drive, band_aspect, &mut effects);
+            .compose(&self.scene, &self.drive, band_aspect, 1.0, &mut effects);
         Self::ending_masks(self.ending.as_ref(), &mut effects);
         let fog = fog && self.weather.fog();
         crate::shot::render_to_ppm(
@@ -553,6 +558,9 @@ fn load_scene(
     let t = Instant::now();
     let mut scene = RouteScene::load(data, com, visibility)?;
     scene.stable_track_variants = opts.stable_track_variants;
+    scene.traffic_reach = opts
+        .far_traffic
+        .then_some(f64::from(ddg_render::camera::FAR));
     crate::traffic::load_stage_trains(&mut scene, data, opts.stage)?;
     eprintln!("{com}: loaded in {:.2?}", t.elapsed());
     Ok(scene)
@@ -672,6 +680,8 @@ pub struct Play {
     /// start, kept over continues).
     meter_m: f32,
     weather: crate::weather::Weather,
+    /// The speedometer needle between ticks (presentation only).
+    needle: crate::smooth::Needle,
     /// The station result's replay (scene.md §8) and what the 3D layer shows.
     result_view: Option<ResultView>,
     world: WorldView,
@@ -724,6 +734,7 @@ impl Play {
             return Ok(());
         }
 
+        let kmh_before = self.drive.speed_kmh();
         let before = crate::sound::Before::of(&self.drive);
         let out = self.drive.tick(self.latched);
         self.scene.traffic = self.drive.traffic_poses(1.0);
@@ -778,6 +789,8 @@ impl Play {
         self.weather.tick(&self.drive, hud_input.segment_started);
         self.weather.apply_to_scene(&mut self.scene);
         self.update_hud(hud_input);
+        self.needle
+            .ticked(kmh_before, self.drive.speed_kmh(), &self.layer);
         self.track_meter();
         self.bonus_present()?;
         Ok(())
@@ -1124,6 +1137,16 @@ impl Play {
         if self.interpolate && !self.flow.paused() {
             self.scene.traffic = self.drive.traffic_poses(alpha);
         }
+        // The wiper, snow scroll and needle follow the camera (1 = the last tick).
+        let fx_alpha = if self.interpolate && !self.flow.paused() {
+            alpha
+        } else {
+            1.0
+        };
+        if self.world == WorldView::Cab && self.needle.frame(fx_alpha, &mut self.layer) {
+            self.layer.compose(&self.bank, &mut self.canvas);
+            self.canvas_dirty = true;
+        }
 
         let band = self
             .gpu
@@ -1172,7 +1195,7 @@ impl Play {
             fx.clear();
             Self::cab_mask(&self.scene, self.ending.as_ref(), band_aspect, fx);
             self.weather
-                .compose(&self.scene, &self.drive, band_aspect, fx);
+                .compose(&self.scene, &self.drive, band_aspect, fx_alpha, fx);
             Self::ending_masks(self.ending.as_ref(), fx);
             Self::opening_masks(
                 self.opening.as_ref(),

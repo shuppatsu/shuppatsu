@@ -70,7 +70,7 @@ const SPECIAL_UNTURNED_PARTS: [u32; 2] = [0x2eb8, 0x2ebc];
 
 /// View-space depth bands of the five LODs (doubles 0x458c30..0x458c00): z < −15 or z ≥ 2.5
 /// is not drawn; −15.. → LOD 4, −12.. → 3, −9.. → 2, −6.. → 1, −3..2.5 → 0.
-const LOD_DEPTHS: [f64; 5] = [-15.0, -12.0, -9.0, -6.0, -3.0];
+pub const LOD_DEPTHS: [f64; 5] = [-15.0, -12.0, -9.0, -6.0, -3.0];
 const LOD_BEHIND: f64 = 2.5;
 /// Lateral bands (0x458be0..0x458bf8): |x| > 16 / 24 / 32 adds 1 / 2 / 3, > 64 hides.
 const LOD_LATERAL: [f64; 4] = [16.0, 24.0, 32.0, 64.0];
