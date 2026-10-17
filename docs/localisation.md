@@ -538,32 +538,37 @@ translation (`subtitles = true`, `--[no-]subtitles`, `DDG_SUBTITLES`; never in J
 section of `locales/en.toml`, and the voice log of `ddg_audio::SoundSystem`
 (`set_voice_log`, `ddg_audio::voice`).
 
-**How a line's meaning is found.** Not by listening or transcribing: the sound system records
-every voice line it starts together with the call that built it (`Origin`: a single code, a
-table sequence, the approach pair call 0x41ffe0, the speed call 0x420180, the signal call
-0x420320, the announcer call 0x420040), and the meaning follows from the call's arguments and
-the event that made it (audio-text.md §5, §10):
+**How a line's words are found.** Every `effect.rom` clip was transcribed locally with Whisper
+(large-v3-turbo and kotoba-whisper; out/stt, not in the repo: the transcripts are derived from
+game audio) and each reading was cross-checked with the other model and with where the game
+plays the clip. The sound system records every voice line it starts together with the call that
+built it (`Origin`: a single code, a table sequence, the approach pair call 0x41ffe0, the speed
+call 0x420180, the signal call 0x420320, the announcer call 0x420040), and the subtitle follows
+from that (audio-text.md §5, §10):
 
 * station names: the pair table at 0x46c368 has one recording per station-name id (entries
-  5..89 the driver's voice, 95..179 the announcer's), the same ids as the HUD's name sprites
-  (`0x856d58`), so `{station}` is the name sprite's translation. The data test checks that
-  every station of every stage resolves;
-* the approach call (state 1 → 2 of 0x856d68) is pair `name` + pair 2 / 3, played with the
-  banner "name 駅 通過 / 停車": 0xbf = 通過 (passing), 0xbd = 停車 (stopping);
-* signal calls: 0x420320's word tables by index (kind 1 home, 2 starting; aspect words 0..6 =
-  進行, 減速, 注意, 警戒, 停止, 高速進行, 制限 by the aspect the HUD shows with them). Kind 0
-  (0xd1) is reached only from the repeater call of 0x40c010, so it is "repeater" (correcting
-  audio-text.md §10.3's "閉塞"); the repeater's prefix 1 / 2 names the repeated signal;
-* speed calls: 制限 + the number phrase indexed by km/h / 5, 0xc3 for 0 km/h ("lifted", the
-  call made with the 制限解除 sign);
-* numbered block calls: table sequences 5..0x10 = number phrase 0x9b + k + the aspect word,
-  started for blocks 3..9 counted down to the home signal (block 3 is the first block signal
-  outside it, 第1閉塞 by JR numbering: **likely**);
-* in-train announcements: "next" (0x111 / 0x147 / 0x168, as 0x420040 builds it) + an
-  announcer station code; the station is confirmed by where the course event fires
-  (sequence 0x2a at the leg to Amagasaki, 0x2d to Kōbe, 0x13 / 0x16 the Hokuhoku stops).
+  5..89 the driver's voice, 0x42..0x96; 95..179 the announcer's, 0xff..0x146 and
+  0x159..0x167), the same ids as the HUD's name sprites (`0x856d58`), so `{station}` is the name
+  sprite's translation. The transcripts confirm the names; the data test checks that every
+  station of every stage resolves;
+* signal calls: 0x420320's word tables by index (kind 1 home 0xc1 場内, 2 starting 0xc0 出発,
+  0 repeater 0xd1 中継; aspect words 0..6 = 0xa7 進行, 0xa8 減速, 0xa9 注意, 0xaa 警戒, 0xd2 停止,
+  0xbe 高速進行, 0xc2 制限); prefix 3 is 0xd4 本線, "main line";
+* speed calls: 制限 + the number phrase indexed by km/h / 5 (0xae..0xbb = 10..75,
+  0xc4..0xcd = 80..125; where the models disagree, 0xb0 = 20, 0xc6 = 90, 0xca = 110, the place
+  in the table decides), 0xc3 解除 for 0 km/h;
+* numbered calls: table sequences 5..0xb = 第1..7閉塞 (0x9b..0xa1) + aspect, started for
+  blocks 3..9 counted down to the home signal (that block 3 is 第1閉塞 is by the recording,
+  the numbering of the blocks by JR practice: **likely**); sequences 0xc..0x10 = 第1..5場内
+  (0xa2..0xa6) + aspect, not started in a stage;
+* sequences (announcements, the navigator's sequences, the result voices) get **a line per
+  sentence**: "next" (0x111 / 0x147 / 0x168) + an announcer station + "…に止まります" (0x112 /
+  0x148 / 0x169) as 0x420040 builds it; else the longest run of phrases with a key naming its
+  first and last code (`0x14e_0x150`: the three phrases of the Shinkansen connection at
+  Echigo-Yuzawa make one sentence); else the phrase's own key. Chimes (0x1a4, 0x1a7) and
+  fragments have no line of their own.
 
-**Display.** One line per voice line, white M+ 2 Medium (body font) with a dark outline, in a
+**Display.** One line per voice line or sentence, white M+ 2 Medium (body font) with a dark outline, in a
 port palette (0x7e), centred in the centre group, the newest line's box ending at y 342
 (640×480 space), an older one directly above: clear of the speedometer (y ≥ 345), the
 navigator's portrait and balloon (y ≥ 376), the distance panel (y ≥ 408), the time-up advice
@@ -574,55 +579,86 @@ least 30 ticks + 2 per character; at most two lines, the oldest goes; a line alr
 only kept longer; a stop-all or the sequencer switched off (end of a stop, the results)
 clears them. Headless and muted runs run a silent sound system for the log.
 
-### Voice codes the game plays while driving
+### Voice codes and their subtitles
 
-Confidence: **confirmed** = from the call structure and the HUD text shown with it;
-**likely** = from structure and context; **description** = the event is known but not the
-words, so the subtitle describes it in brackets; **not identified** = no subtitle, for the
-user to review by listening.
+Method for every row: transcribed locally with Whisper (out/stt, not in the repo), checked
+against where the code plays. Confidence: **confirmed** = both models (or the clear one plus
+the table position) agree and the context fits; **likely** = one model, or a garbled transcript
+whose gist the context settles.
 
-| Code / call | Played by | Subtitle | Confidence |
+| Code / call | Plays | Subtitle | Confidence |
 |---|---|---|---|
-| pair `name` + 0xbd / 0xbf | approach call at the banner (0x40c4e0) | "{station}: stopping." / "…passing through." | confirmed |
+| pair `name` + 0xbd 停車 / 0xbf 通過 | approach call at the banner (0x40c4e0) | "{station}: stopping." / "…passing through." | confirmed |
 | 0x42..0x96 | the driver's station names (pairs 5..89) | part of the above | confirmed |
-| 0x420040 modes 0 / 2 | course event 2, ~600 m before | "The next station is {station}." | likely ("next" by structure) |
-| 0x420040 mode 1 | course event 2 at 100 m | "{station}. {station}." | confirmed (name twice) |
-| 0xff..0x167 (pairs 95..179) | the announcer's station names | part of the above | confirmed |
-| 0x111/0x112, 0x147/0x148, 0x168/0x169 | "next" / closing phrase of 0x420040 | part of the above | likely |
+| 0x420040 modes 0 / 2 (次は + name + name / に止まります) | course event 2, ~600 m before | "The next station is {station}." | confirmed |
+| 0x420040 mode 1 | course event 2 at 100 m | "{station}. {station}." | confirmed |
+| 0xff..0x146, 0x159..0x167 | the announcer's station names (pairs 95..179) | part of the above and of the announcements | confirmed |
+| 0x111/0x112, 0x147/0x148, 0x168/0x169 | 次は / に止まります around an announcer name | part of "The next station is …" | confirmed |
 | 0x1a4, 0x1a7 | chimes before announcements | — (music) | confirmed |
-| 0x420320 kind + aspect (0xc1 home, 0xc0 starting, 0xd1 repeater; 0xa7 進行, 0xa8 減速, 0xa9 注意, 0xaa 警戒, 0xd2 停止, 0xbe 高速進行, 0xc2 制限) | signal sightings and repeaters (0x40c010) | "{Home signal / Starting signal / Repeater / Home repeater / Starting repeater}: {aspect}." | confirmed (kinds, aspects); 0xd1 likely |
-| 0xd4 | prefix 3 of 0x420320, sightings on passing routes when the station is passed | left out of the line | **not identified** |
-| 0xa8, 0xa9, 0xaa, 0xd2 alone | block signal aspects (0x40c010) | "Signal: Reduce." etc. | confirmed |
-| 0x97 | green at block 0, departure (aspect 0), recovery calls | "Starting signal: Clear." | confirmed (出発進行, banner 0x6b) |
-| 0x99 | green at blocks 1–2 (home signal) | "Home signal: Clear." | likely |
-| 0x98 | green from block 8 on | "Block signal: Clear." | likely |
-| sequences 5..0xb (0x9b..0xa1 + 0xa7) | green at blocks 3..7 | "Block signal {n}: Clear." | likely (the number n) |
-| 0xbe | green with the high-speed display variant (course event 15, Hokuhoku) | "Signal: High-speed clear." | likely |
-| 0xce, 0xcf, 0xd0 | departure by aspect 1–3 (0x413370) | "Starting signal: Reduce / Caution / Restricted." | confirmed (captions 出発減速/注意/警戒) |
-| 0xc2 + 0xae..0xbb, 0xc4..0xcd | speed-limit call 10..125 km/h | "Speed limit {kmh} km/h." | confirmed |
-| 0xc2 + 0xc3 | limit lifted | "Speed limit lifted." | confirmed |
-| 0xc2 alone | limit kind 4 on stages 0–2, or no number phrase | "Speed limit." | confirmed |
-| 0xbc | on-time pass (time message 13 定通) | "On-time pass." | confirmed |
-| 0xd6, 0xdc, 0xe2, 0xe6 | navigator reactions (EB, notch slam, overrun by stage set; the buffer-stop crash plays all four) | "[The navigator reacts]" | description |
-| 0xe5 | navigator, EB (stages 5–6) | "[The navigator reacts to the emergency brake]" | description |
-| 0xd8, sequence 0x12 (0xe4 0xe6 0xe8) | navigator, overrun | "[The navigator reacts to the overrun]" | description |
-| sequences 0x11 (0xe7 ×3), 0x25 (0xdb 0xdd) | navigator, notch slam | "[The navigator reacts to the rough handling]" | description |
-| 0xef, 0xf0 | time-up advice, cause 0 / 1 with balloon 0x3f6 | "Make use of coasting." | likely (balloon gist) |
-| 0xf6 | time-up advice with balloon 0x3fe | "Aim for precise driving!" | likely |
-| 0xf1 | balloon 0x3f9 | "Never release the brake before the door lamp lights up." | likely |
-| 0xea, 0xfb | balloon 0x3fa | "Brake gently and smoothly." | likely |
-| 0xfc | balloon 0x3f3 | "Your braking is too hard." | likely |
-| 0xeb, 0xf3 | balloon 0x3f2 | "Don't skip your stops." | likely |
-| 0xec | balloon 0x3f4 | "Obey the signals." | likely |
-| 0xf5 | balloon 0x3f7 | "Never force a level crossing. Stop and look first!" | likely |
-| 0xf2 | time-up advice, cause 5 (its balloon is the generic 0x3fe) | — | **not identified** |
-| 0xd5 | departure task tick 0x30, stages 3–16 (the navigator's voice set, 17.9 kHz; during the departure melody, before the doors close) | — | **not identified** (heard in the lesson stage at tick ~48) |
-| 0x16d, sequence 0x18 (0x16a..0x16d) | departure task tick 0x30 on the Shinkansen stages | — | **not identified** (platform/conductor announcement?) |
-| sequences 0x13, 0x16, 0x2a, 0x2b, 0x2c, 0x2d | in-train announcements (Hokuhoku, Kōbe line) | only their "next {station}" part (0x2c names 0x15f = Ashiya) | confirmed for that part; the rest **not identified** |
-| sequences 0x19..0x23, 0x2e (0x16e..0x18f) | Shinkansen in-train announcements | — | **not identified**; by position 0x177 Kakunodate, 0x17a Tazawako, 0x17c Shizukuishi and 0x173 "next" are likely, to confirm by listening |
+| 0x420320 kind + aspect | signal sightings and repeaters (0x40c010) | "{Home signal / Starting signal / Repeater / Home repeater / Starting repeater}: {Clear / Reduce / Caution / Restricted / Stop / High-speed clear / Limit}." | confirmed |
+| 0xd4 本線 (prefix 3) | sightings on passing-station routes when the train passes | "Main-line home signal: …" / "Main-line starting signal: …" | confirmed (word); "main line" by context |
+| 0xa8, 0xa9, 0xaa, 0xd2 alone | block signal aspects (0x40c010); 0xd2 also departure at stop | "Signal: Reduce / Caution / Restricted / Stop." | confirmed (0xd2 停止: Whisper heard ティッシュ, the table position decides) |
+| 0x97 出発進行 | departure (aspect 0), green at block 0, recovery calls | "Starting signal: Clear." | confirmed |
+| 0x99 場内進行 | green at blocks 1–2 | "Home signal: Clear." | confirmed |
+| 0x98 閉塞進行 | green from block 8 on | "Block signal: Clear." | confirmed |
+| 0x9a 中継進行 | not played in a stage | "Repeater: Clear." | confirmed |
+| sequences 5..0xb (0x9b..0xa1 第1..7閉塞 + 0xa7) | green at blocks 3..9 | "Block signal {n}: Clear." | confirmed (words); n's block by JR numbering likely |
+| sequences 0xc..0x10 (0xa2..0xa6 第1..5場内 + 0xa7) | not played in a stage | "Home signal {n}: Clear." | confirmed |
+| 0xbe 高速進行 | green with the high-speed display variant (Hokuhoku) | "Signal: High-speed clear." | confirmed |
+| 0xce 出発減速, 0xcf 出発注意, 0xd0 出発警戒 | departure by aspect 1–3 (0x413370) | "Starting signal: Reduce / Caution / Restricted." | confirmed |
+| 0xc2 制限 + 0xae..0xbb, 0xc4..0xcd | speed-limit call 10..125 km/h | "Speed limit {kmh} km/h." | confirmed (0xc2: Whisper failed; table position and the limit sign) |
+| 0xc2 + 0xc3 解除 | limit lifted | "Speed limit lifted." | confirmed |
+| 0xc2 alone | limit kind 4 on stages 0–2, or no number phrase | "Speed limit." | likely |
+| 0xbc 定通 | on-time pass (time message 13) | "On-time pass." | confirmed |
+| 0xd5 | departure task tick 0x30, stages 3–16 | "The doors are closing. Please be careful." | confirmed |
+| sequence 0x18 (0x16a..0x16d) | departure task tick 0x30, first station of the Komachi stages | "The Akita Shinkansen Komachi for Tōkyō will soon depart from track 12." "Please mind the closing doors." | confirmed |
+| 0x16d | departure task tick 0x30, their other stations | "Please mind the closing doors." | confirmed |
+| 0xd6 | navigator (anims 10, 11; buffer stop) | "Waaah!" | confirmed |
+| 0xd7 | navigator (anims 9, 19) | "Somebody stop it!" | confirmed |
+| 0xd8 | navigator, overrun (anims 8, 18) | "Open up!" | confirmed |
+| 0xda | navigator (anim 12) | "You're slow, aren't you." | confirmed |
+| 0xdb, 0xdd (sequence 0x25; 0xdd also anim 14) | navigator, rough handling (anim 1) | "Eek!" "That was close. W-what happened?" | confirmed (0xdb a 0.2 s cry, likely) |
+| 0xdc | navigator (anims 2, 15; buffer stop) | "Aaah!" | confirmed |
+| 0xe0 | navigator (anim 13) | "We'll be late!" | confirmed |
+| 0xe2 | navigator (anims 3, 16; buffer stop) | "What's with this train?!" | confirmed |
+| 0xe5 | navigator, EB (anim 5) | "Why?" | confirmed |
+| 0xe6 | navigator, buffer stop | "No way!" | confirmed |
+| sequence 0x11 (0xe7 ×3) | navigator (anim 6) | "Hey, what do you think you're doing?" | confirmed |
+| sequence 0x12 (0xe4 0xe6 0xe8) | navigator, overrun (anim 4) | "Huh?" "No way!" "You're really bad at this." | confirmed |
+| 0xd9, 0xde, 0xdf, 0xe1, 0xe3; sequences 0x26, 0x27 | navigator, no caller in a stage found | "Let me off!", "Do it properly, OK?", "You're clumsy.", "Yay!", "Hm?" | confirmed (0xde heard ちゃんとしたよね, read ちゃんとしてよね: likely) |
+| 0xef | time-up advice, cause 0 | "You're going too fast." | confirmed |
+| 0xf0 / 0xf6 | cause 1 (0xf6 also the default) | "Accelerate quickly, then coast." / "Keep to the timetable." | confirmed |
+| 0xf1 | cause 2 | "Save electricity, OK?" | confirmed |
+| 0xfb / 0xea | cause 3 (by the last deceleration), 0xfb also cause 0xb | "Your braking is rough." / "Your braking is too hard." | confirmed |
+| 0xfc | cause 4 | "Please don't use the emergency brake." | confirmed |
+| 0xf2 | cause 5 | "Please obey the speed limits." | confirmed |
+| 0xeb / 0xf3 | cause 6 | "Please stop at your stations." / "No reckless driving." | confirmed |
+| 0xec | cause 7 | "Please obey the signals." | confirmed |
+| 0xf5 | cause 9 | "Trains can't stop suddenly." | confirmed |
+| 0xe9, 0xed, 0xee, 0xf4 | no caller in a stage found | "Please press the Start button.", "Watch your speed entering stations, OK?", "Make good use of coasting, OK?", "Use full notch when starting off, OK?" | confirmed |
+| sequences 0..4 (0xfa + 0xf7 / 0xf8 / 0xf9 / 0xfd / 0xfe) | result screens (menus.md), which show no subtitles | "Congratulations!" + "You passed the beginner class." / "…intermediate class." / "Aim for a high score." / "Shift complete." / "Good work." | confirmed (0xf7/0xf8 初級/中級…合格) |
+| 0x40 | coupling minigame intro; E3 coupling (sequence 0x29 with 0x12) | "Prepare for coupling. Over." | likely (併合準備 … どうぞ; the middle word unclear) |
+| 0x3e | coupling minigame, after a successful coupling | "Oh, good." | likely (one model: あらよかった) |
+| sequence 0x13 (0x149 0x14a 0x14e..0x150 + next) | Hokuhoku, course event | "Thank you for riding with us." "This is the Limited Express Hakutaka, bound for Echigo-Yuzawa." "At Echigo-Yuzawa, change to the Shinkansen for Tōkyō on track 13." "The next station is Tōkamachi." | confirmed |
+| sequence 0x16 (0x151 0x152 + next) | Hokuhoku, course event | "Thank you for taking the Limited Express Hakutaka today." "The next station is Muikamachi." | confirmed |
+| sequences 0x14, 0x15, 0x17 (0x14c 0x14d, 0x14e..0x152); 0x14b | not played in a stage | "Thank you for riding with us." "This is Echigo-Yuzawa, the last stop." …; "The next station is Echigo-Yuzawa, the last stop." | confirmed |
+| sequences 0x2a..0x2d (0x153..0x158 + next) | Kōbe line, course events (0x2c not played) | "Thank you for riding with us." "This is the rapid service for Aboshi." "It runs rapid to Akashi, then stops at every station." "The next station is {Amagasaki / Ashiya / Kōbe}." "Transfer here for the JR Tōzai and JR Takarazuka lines." | confirmed (0x154 明石まで快速: Whisper 赤島で, likely) |
+| sequences 0x19, 0x1a (0x16e..0x172) | Komachi, course event (0x1a not played) | "Thank you for traveling with JR East today." "This is the Akita Shinkansen Komachi, bound for Tōkyō." "At Morioka, this train will be coupled to the Yamabiko." "From Ōmagari, the next station, the train will run in the opposite direction." "The next station is Ōmagari." | confirmed (0x172 heard 伴います, read 止まります) |
+| sequences 0x1b, 0x1c (0x173 0x174..0x176) | Komachi, before Ōmagari (0x1b not played) | "We will soon be arriving at Ōmagari." "Transfer here for the Ōu Line." "After Ōmagari, we will stop at Kakunodate." | confirmed (0x175 heard 大雨線, read 奥羽線: likely) |
+| sequence 0x1d (0x173 0x177..0x179) | Komachi, before Kakunodate | "We will soon be arriving at Kakunodate." "Transfer here for the Akita Nairiku Jūkan Railway." "After Kakunodate, we will stop at Tazawako." | confirmed |
+| sequences 0x1e, 0x2e (0x173 0x17a [0x17b]) | Komachi, before Tazawako | "We will soon be arriving at Tazawako." ["After Tazawako, we will stop at Shizukuishi."] | confirmed |
+| sequence 0x1f (0x173 0x17c 0x17d) | Komachi, before Shizukuishi | "We will soon be arriving at Shizukuishi." "After Shizukuishi, we will stop at Morioka." | confirmed |
+| sequence 0x20 (0x17e..0x180) | not played in a stage | "We will soon be arriving at Morioka." "Transfer here for the Yamada and Hanawa lines." "After Morioka, we will stop at Shin-Hanamaki." | confirmed |
+| sequence 0x21 (0x17e 0x17f 0x181..0x187 0x173 0x189) | Komachi, before Morioka | as 0x20's first two, then "At Morioka, this train will be coupled to the Yamabiko." "We will stop three times: 40 m short, 3 m short, then to couple." "The doors will open after coupling." "We will soon be arriving at Morioka." | confirmed |
+| 0x188 | not played | "Please wait until the doors open." | confirmed |
+| sequence 0x22 (0x16e 0x18b..0x18e) | Komachi, course event after Morioka | "Thank you for traveling with JR East today." "This is the Yamabiko and Komachi, bound for Tōkyō." "The next station is Shin-Hanamaki." | confirmed |
+| sequence 0x23 (0x18a 0x173 0x18f) | Komachi, before Shin-Hanamaki | "Thank you for traveling with us." "We will soon be arriving at Shin-Hanamaki." | confirmed |
 
-Outside driving, not subtitled (menus and screens): the run-end voices 0xf7, 0xf8, 0xf9, 0xfd,
-0xfe and sequences 0..4 (0xfa + one of those, report card by grade), the title call 0x1024
-(0x190, 0x191), sequences 0x26 / 0x27 (navigator-set phrases, caller not traced). Non-voice
-codes (bells, buzzers, joints, the passing train's sequence 0x28, the E3 coupling's 0x29) have
-no subtitles.
+**Still unclear (no subtitle):** the coupling-minigame radio 0x34 (intro), 0x36 (intro;
+"… 一旦停止 …", the instruction to stop once short of the train), 0x37 (the reminder every
+90 ticks), 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d (the calls at 8, 6.5 m, the stop window, 3, 2,
+1 m): both models garble them (radio filter) and their place does not settle the words. 0x35
+併合準備完了です and 0x41 (…完了) are clear but have no caller. Not in scope: the title calls
+0x190 / 0x191 (sequence 0x24, "Densha de GO! Kōsoku-hen") and 0x192..0x194 ("Excellent!") of
+the menus and result screens. Sound effects (0x01..0x33 and the non-voice codes; Whisper's
+"ご視聴ありがとうございました" there is a hallucination) have no subtitles.

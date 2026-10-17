@@ -512,9 +512,10 @@ stages 0–2 and 17–19; `stops` = 0x856d74.
 `0x420320(p, kind, word)` builds up to three phrases (each skipped when out of range):
 p 1..3 → (0xc1, 30) / (0xc0, 36) / (0xd4, 30); kind 0..2 → (0xd1, 30) 閉塞 / (0xc1, 30) 場内 /
 (0xc0, 36) 出発; word 0..6 → 0xa7 0xa8 0xa9 0xaa 0xd2 0xbe 0xc2 with delay 0x1c.
-Correction (**likely**): kind 0 (0xd1) is reached only by the repeater call (sightings always
-pass kind 1 or 2), so 0xd1 is 中継 (repeater), not 閉塞; the repeater's `p` names the repeated
-signal. Prefix 3 (0xd4) is not identified. Meanings used for subtitles: localisation.md,
+Correction (**confirmed**, by the call structure and a local transcription of the clips): kind 0
+(0xd1) is reached only by the repeater call (sightings always pass kind 1 or 2), and 0xd1 is
+中継 (repeater), not 閉塞; the repeater's `p` names the repeated signal. Prefix 3 (0xd4) is
+本線 (main line). Meanings used for subtitles: localisation.md,
 "Subtitles".
 
 ### 10.4 Limits, announcements, course events — confirmed
