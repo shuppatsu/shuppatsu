@@ -860,7 +860,7 @@ are unpacked to `0x84fca0 + 0x50·table + 8·row` (4 name bytes + 4 decimal digi
 ## 14. The port's front end
 
 `ddg-game` with no subcommand (`crates/ddg-game/src/app.rs`) sequences `Game_MainFlow`: attract →
-title menu → route select → lever check (modes 5/6) → stage intro (the fly-by stages;
+title menu → route select → lever check (modes 5/6) → stage intro (fly-by or chase,
 `play/intro.rs`, its own run) → departure board → the run (`crates/ddg-game/src/play.rs`,
 built from the app's shared window, sprite bank, layer, save,
 input and sound device) → attract again. The screens are `crates/ddg-game/src/front/`, one state

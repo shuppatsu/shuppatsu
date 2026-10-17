@@ -605,8 +605,8 @@ Faithful: everything above except the items below. **Approximated / differs:**
 before 0x40d040 and the departure board (menus.md §7). It is skipped on a retry (始発駅に戻る
 jumps past it) and when the debug byte `0x816840 & 0x18` is set. 0x408ec0 picks by a stack table
 of 20 flags (code immediates): **1 → 0x4091a0** (stages 1, 5, 6, 7, 8, 11, 12, 13, 14, 15, 18),
-**0 → 0x408f40** (stages 0, 2, 3, 4, 9, 10, 16, 17, 19). So every stage has an intro; only the
-first kind is ported. **confirmed** (code; oracle traces of stages 0, 1 and 13)
+**0 → 0x408f40** (stages 0, 2, 3, 4, 9, 10, 16, 17, 19). So every stage has an intro; both kinds
+are ported (§9.3). **confirmed** (code; oracle traces of stages 0, 1 and 13)
 
 ### 9.1 The fly-by 0x4091a0 — confirmed (code, oracle trace, Wine captures)
 
@@ -663,37 +663,57 @@ panel 0..94 virtual over a 3D band from y 52, 45°; no HUD exists yet), the line
 train coming towards the camera on the other track and passing it as the camera slows; the card
 at the bottom left is a black box with the series name and two lines about the train.
 
-### 9.2 The chase 0x408f40 — confirmed (code, oracle trace, one capture); not ported
+### 9.2 The chase 0x408f40 — confirmed (code, oracle trace, Wine captures of stages 0 and 9)
 
-The same frame (0x40eed0, `|= 0x20000`, caption, sound 0x197, closing) with: 0x408010(stage, 1),
-`Task_Tick` (the camera moves by whatever `0x850208` held), then the player's own train
-`0x406960(engine index + 6 + k[stage], mode 1, 100 km/h, 0, 0x4596e0[stage] | 0x1000, 1)`
-(k = stack table, 0x55 / 0x20 / 0x10 / 0x90 / 0x86 / 0x96 / 0x9a / 0x6e / 0x6b / 0x7b / 0xa7 by
-stage; the model row is the stage's train, 0x1000 picks the direction list). The camera follows
-at `0x850208 = 0.0925` (100 km/h) for counts < 0x6f, then loses 0.002775 a tick (f64 0x459430)
-and the train pulls away; the sound plays at count 0x78; the loop ticks through count 0x8c, so
-145 ticks in all (trace of stage 0: 142 with the 0x20000 bit). 0x406960 places the cars at an
-explicit track point instead of a `.COM` spawn (12-point bogies; the per-car placement by the
-car offsets is **likely**, not traced in detail); it needs its own port in `ddg_engine::traffic`.
-The capture of stage 0 shows the E3 set just ahead of the camera at the station, running away,
-and drawing off as the camera slows.
+The same frame (0x40eed0, `|= 0x20000`, caption, sound 0x197, closing) with: 0x408010(stage, 1)
+(the camera at station 1's stop), `Task_Tick` (the camera moves by whatever `0x850208` held: 0 in
+the trace), then the player's own train
+`0x406960(engine index + 6 + k[stage], mode 1, 100 km/h, 0, 0x4596e0[stage] | 0x1000, 1)`,
+BGM 0x197 and the card. k is a stack table built in 0x408f40's prologue (0x408f40..0x408fe0,
+read with `ddg_formats::code::stack_table`): 0x55 for stages 0–2 and 17–19, 0x20 for 3–4,
+0x10 for 5–6, 0x90 / 0x86 / 0x96 for 7 / 8 / 9, 0x9a for 10–11, 0x6e, 0x6b for 12, 13, 0x7b for
+14–15, 0xa7 for 16 (stage 0: 91 points ahead, stage 9: 156). The model row is the stage's
+train (0x4596e0: 11 for stage 0, 42 for stage 9); 0x1000 runs it forwards with the row's second
+car list. Loop, count i = 1, 2, …: i > 0x8c leaves (no tick); `0x850208 = 0.0925` (f32 immediate,
+100 km/h) for i < 0x6f, else `−= (float)0.002775` (f64 0x459430); i = 0x78: the passing sound
+(0x459e88[stage], and 1 with 4); the skip test (horn or A edge: 0x197 released); `Task_Tick`.
+So 3 + 140 + 2 = **145 ticks**. The oracle trace of stage 0 (`out/captures/intro0.csv`) agrees
+bit for bit: 142 ticks with 0x20000, `0x850208` = 0, 0, then 0.0925 ×110, 0.089725 … 0.00925003
+(30 decrements), and the value left in `0x850208` over the board. **confirmed**
+
+0x406960 (the train): `param_5 & 0x1000` → `+0x30` = 1 (forwards) and the list `0x457358[row·3 +
+1]` (reversed from list 0 for kinds 3, 7, 8, as in the spawner). The head is the slot
+`0x85020c + 12·param_1` (the engine index's slot). With `param_6 == 1` each car is walked back
+from the previous car's point by `−spacing − |fraction|` in steps of 0.125 (f32 0x458b80); the
+fraction is taken over only while the remainder is not 0 (so a whole-point spacing keeps the
+previous step's −0.125); `+0x60 = 0`. Otherwise every car starts on the head's point with
+`+0x60 = −offset`. Rear bogie 12 points back, gate `+0x3c` = 9000, `+0x54 = km/h · 0.000926`,
+`+0x58 = km/h · 0.926`, `+0x5c` = `+0x58² / 2p` in mode 2 else `p · 0.000926 · 0.033333`; the
+same update and draw tasks as the spawner's cars (0x405420 / 0x405640). **confirmed** (code;
+the stage 0 and 9 captures match the port's placement to the pixel)
+
+What it looks like: the driving view at the station, the train's tail standing just ahead under
+the card, running away with the camera at its heels, then drawing off as the camera slows.
 
 ### 9.3 Port (`crates/ddg-game/src/play/intro.rs`)
 
-The front end runs 0x4091a0 as its own `Play` (like the attract opening) between the 16 loading
+The front end runs the intro as its own `Play` (like the attract opening) between the 16 loading
 ticks and the 4 before the board; `ddg-game play <stage> --intro` plays it alone. The rows come
-from the exe; the camera is `Drive::ending_place` / `ending_tick` / `ending_kill`, the train the
-normal spawner. Compared frame by frame with the original (stages 1 and 13, ticks 3–142,
-`out/explain/stage_intro/`): camera, train and card match. Decisions:
+from the exe; the camera is `Drive::ending_place` / `ending_tick` / `ending_kill`, the fly-by's
+train the normal spawner, the chase's `Drive::ending_place_train` (`Traffic::place_train`, the
+0x406960 port). Compared frame by frame with the original (fly-by: stages 1 and 13; chase:
+stages 0 and 9; ticks 3–142, `out/explain/stage_intro/`, `chase_*.png` for the chase; the Wine
+frame of tick t is 2·(t − 3) after the first non-black one): camera, train and card match.
+Decisions:
 
 - **Widescreen**: Hor+ with the drive's top panel widened to the full width (as while driving,
   `Play::cab_mask`); no other masks exist to extend. The card stays in the centred 4:3 design in
   the original HUD layout and keeps to the left edge in the enhanced one (`wide_hud`), like the
   driving HUD's bottom-left group.
-- **High refresh rates**: camera and train interpolate between ticks, except across the jump.
+- **High refresh rates**: camera and train interpolate between ticks, except across the
+  fly-by's jump and the placement tick.
 - The intro's BGM runs on over the board (`Sound::leave_stage` instead of the stop-all a run
   ends with).
-- **Not ported**: 0x408f40 (§9.2); those stages keep the 20-tick gap without their 145 ticks.
 - **Translation**: the 13 caption cards (0x39b–0x3a7, the fly-by's and the chase's) are in
   `locales/en.toml`, one size per card, white as the title (the `ink` option, localisation.md).
 
