@@ -240,7 +240,8 @@ Bit sources (`[n]` = binding-table byte):
 | 0x4000 | [13] press only (kbd) | R | – | – | no reader found | confirmed (no use) |
 
 - In joystick mode the keyboard still contributes: Esc → 0x802000 (pause + cancel), R → 0x4000,
-  Enter → 0x1000. **confirmed**
+  Enter → 0x1000. **confirmed** (The port also passes Space → horn and Enter → A while driving:
+  decided port behaviour, §10.3.)
 - Bits 0x200, 0x400 and 0x8000000 are tested (0x425680, 0x4253c0) but never produced. They are arcade
   leftovers. **likely**
 - **Shift override:** LShift (DIK 0x2a) or RShift (0x36) held → flag 0x829d08. The joystick poll is then skipped
@@ -356,9 +357,10 @@ repeated inline. It is kept as a constant in `input::repeat_pulse`.
   and any other position applies at once and resets the counter. Code 10 is unreachable with a
   game-written calibration.
 - Station start: P0/EB is forced only in digital modes. Modes 5 and 6 keep the handle (0x4332c0).
-- Button word: per-device edges (pressed = held & ¬prev). In joystick modes the keyboard still
-  contributes Esc → pause+cancel, Enter → menu confirm (0x1000 only, so **not** the driving A
-  button 0x100000), and R → 0x4000. Keyboard Space does **not** horn in joystick modes.
+- Button word: per-device edges (pressed = held & ¬prev). In joystick modes the original's
+  keyboard still contributes Esc → pause+cancel, Enter → menu confirm (0x1000 only, so **not**
+  the driving A button 0x100000), and R → 0x4000; its Space does **not** horn. The port lets
+  more through (decided, §10.3).
 - Shift override: `Controls::poll(down, shift_allowed)`. Shift skips the joystick poll and the
   keyboard word becomes active. The levers hold.
 - Mode fallback: if a joystick mode is selected with no gamepad connected at start, the port drops
@@ -375,6 +377,7 @@ repeated inline. It is kept as a constant in `input::repeat_pulse`.
 | Choice | Original | Port | Why |
 |---|---|---|---|
 | Unplugged mid-run | GetDeviceState fails twice, so the stale word is kept, edges included | levers hold, buttons release | a stale "pressed" edge would re-fire every tick |
+| Keyboard alongside a controller (**decided port behaviour**, on by default, no config key) | modes 4–6: only Esc (pause + cancel), Enter (menu confirm 0x1000) and R reach the game; Space and the driving A bit 0x100000 are dropped, so the keyboard cannot horn or confirm ATS while driving (§6) | the keyboard's Space (horn 0x100) and Enter (A 0x100000 + menu confirm) also pass, OR-ed with the pad's buttons before the edges are taken (one edge while either holds); the levers still come only from the controller; Shift override and the unplug rule above unchanged (`Joystick::poll`; test `gamepad::tests::keyboard_drives_buttons_alongside_a_mode_4_pad`) | user decision: the keyboard always works |
 | Calibration file location | current directory | caller passes the path (`--joystick-dat`) | no writes into the install dir |
 | gilrs filters | DirectInput, no dead zone | gilrs default filters off (no dead zone or jitter filter) | keeps the thresholds meaningful |
 | FF ramp effect | created, never started (§1 0x434940 has no callers) | not implemented | dead code in the original |

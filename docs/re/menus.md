@@ -316,6 +316,7 @@ the last tick an exact copy); the title call 0x1024 at tick 100; the item ends a
 * Exit declined (いいえ, cancel or the pause key) does **not** return to the menu: 0x42a1c0 falls
   into case 0 with result −1 (BGM stop, clear, 3 ticks), `Game_MainFlow` sets `0x855ffc |= 0x10`
   and attract restarts at the title picture, the same as a title cancel. **confirmed**
+  (The port returns to the menu instead: decided port behaviour, §14.1.)
 * Exit confirm 0x42bb90: `Dialog_Run(0x47c848, cursor 1)`: frame tbl 0x542, title "終了しますか?"
   (0x544 idx 0x0a), はい/いいえ (idx 0x0c/0x0e), cursor starts on いいえ. Yes destroys the window
   (→ `WM_QUIT` → shutdown, eeprom/replay saved). **likely** (Ghidra garbled the return value; the
@@ -644,7 +645,8 @@ show the art lining up with these positions.
   * Page change when the counter reaches **930** (31 s) or the done tick: page 1, counter 0,
     the filter again. **On a time-out `Ranking_ToEeprom` is not called**: the row (with the letters
     entered so far, filtered) exists only in the unpacked table `0x84fca0` until some later
-    completed entry on the same table packs it, and is lost at exit otherwise.
+    completed entry on the same table packs it, and is lost at exit otherwise. (The port saves
+    it like a completed entry: decided port behaviour, §14.1.)
 * Name filter 0x41e7a0 (then `Name_Replace` 0x41e4c0 writes `0x46bf14[route]`, 4 bytes): list
   `0x46bf64` = exact matches (blank ×4, KKKK, the three single-blank variants, `SEX ` / ` SEX`);
   list `0x46bf88` = match when symbols 1–3 are equal and symbol 0 **differs** from the entry's
@@ -814,7 +816,7 @@ The checksum words +0x20 and +0x330 are rewritten by 0x418930 after every pack; 
 
 Our port keeps the file byte-compatible and stores it at `$XDG_CONFIG_HOME/ddg/eeprom.dat`
 (else `~/.config/ddg/`, `%APPDATA%\ddg\` on Windows); headless shots use the defaults and never
-write.
+write. Besides the exit write, the port writes the file right after every change (§14.1).
 
 | File off | VA | Content |
 |---|---|---|
@@ -920,6 +922,26 @@ Approximated or left out:
   background is black; the 0x515 band continues black on black), the departure board, the
   attract pictures and the stage-flow screens over the 3D view (their panels, e.g. the report
   card tbl 0x444, are framed art).
+
+### 14.1 Decided port behaviour (deviations, on by default)
+
+The user decided these deviations from the original. They are always on; none has a config
+key.
+
+| What | Original | Port | Code |
+|---|---|---|---|
+| Name entry time-out | after 930 ticks the row is shown on the ranking page but `Ranking_ToEeprom` (0x41e670) is skipped, so it is never written (§11.2) | packed and saved like a completed name | `screens/ranking.rs` (`NameEntry::committed`), `save.rs` (`Save::finish_ranking`) |
+| When `eeprom.dat` is written | only at exit (0x434f50, §13.1) | also right after a ranking entry, a clear mark, an options change (options list and value pages) and a calibration; same 0x35a-byte format, written to `eeprom.dat.tmp` and renamed. The exit write is unchanged. Headless `--shot` runs have no save path and never write. A failed write is a warning; play goes on | `save.rs` (`Save::persist`, `write_atomic`), `play.rs`, `app.rs` (`apply`, `save_calibration`; `joystick.dat` is written atomically too) |
+| Keyboard with a controller | in modes 4–6 only Esc, Enter (menu confirm) and R reach the game (input.md §6) | the keyboard's horn (Space) and A / ATS confirm (Enter) also work while driving, OR-ed with the pad's buttons; the levers stay the controller's | `gamepad.rs` (`Joystick::poll`), input.md §10.3 |
+| Exit dialog いいえ | attract restarts at the title picture (§3) | the title menu comes back after the same 3 ticks, cursor on ゲーム終了, menu BGM restarted | `app.rs` (`exit_declined`) |
+
+Evidence: unit tests `screens::ranking::tests::timeout_filters_and_commits`,
+`screens::flow::tests::time_out_offers_continue`, `save::tests::saves_after_every_change`
+(a temporary `$XDG_CONFIG_HOME`, passed to `save::config_dir_in`, never the real home),
+`save::tests::headless_saves_never_write`,
+`gamepad::tests::keyboard_drives_buttons_alongside_a_mode_4_pad`,
+`app::tests::exit_no_returns_to_the_menu_on_quit`; and a headless run (title menu → ゲーム終了 →
+いいえ → title menu on ゲーム終了), shots in `out/explain/save_input/`.
 
 ## Open questions
 
