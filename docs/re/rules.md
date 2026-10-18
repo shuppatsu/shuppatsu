@@ -407,7 +407,8 @@ after running into the forced-stop point (`0x8570b4`), and on stage 2 when it cl
 * Setup: distance panel off (`0x856d0c = 0`), timer 0x709 ticks (0x417040), caption tbl 0x2d8
   ボーナスゲーム (slot 0x33, 70 ticks); 10 ticks; BGM 0x19a; sprites slots 0x3f–0x4b at the
   per-resolution table 0x458fd0 (8 bytes × 4 resolutions per slot, palette 4, layer 3; slots
-  0x45–0x4a = tbl 0x17c, 0x17d, 0x17e, 0x181, 0x182, 0x183, slot 0x40 = digit 0); 80 ticks;
+  0x45–0x4a = tbl 0x17c, 0x17d, 0x17e, 0x181, 0x182, 0x183, slot 0x40 = digit 0) and
+  `0x84c0f8 = 1` (the black band under the panel, no speedometer: hud.md §3.16); 80 ticks;
   caption 0x2d9 時間内に衝撃なく列車を連結せよ (80 ticks); `0x857238 = 1`; 180 ticks with
   sounds 0x11, 0x34, 0x3f, 0x40, 0x36, 0x3f at 15, 30, 60, 70, 130, 175. Then `0x200` is set:
   the player drives.
@@ -437,7 +438,9 @@ Port: `ddg_engine::coupling` (state machine), `Rules::stage_ending_at_stop`,
 `train_type` applied by `Drive::sync_train_type`, `Rules::full_ending`. The 0x8000000 /
 0x10000000 bits are `Rules::coupling_partner` (2 / 1). The autopilot soak drives stage 1
 through the bonus section and couples on stages 2 and 17–19 (`tests/autopilot.rs`).
-Not traced in the original: no oracle run has reached these legs.
+Not traced in the original yet. A Wine capture reached and won the stage-17 minigame (a
+port-autopilot input script replayed by a hook that counts ticks across legs; its stop errors
+at stations 6, 10, 13 and 16 matched the port to 0.1 mm; hud.md §3.16).
 
 ## 8. Other rule events
 

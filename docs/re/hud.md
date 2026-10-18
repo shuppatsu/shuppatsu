@@ -274,9 +274,10 @@ hidden).
 
 Option byte `0x856354` (eeprom +0x334, settings item 4): 0 = none, 1 = analog, 2 = digital.
 Drawn by `Cab_Overlay` 0x434fd0 → 0x4350b0 on every rendered frame while the stage is active
-(`0x855ff8 & 2`), the train is waiting or driving (`& 0xa00`), the debug camera is off
-(`0x84c0f8 == 0`) and the section is not in ATC mode (`0x856d34 ≠ 2`). Bit 2 of `0x855ff8` is
-set only by `Stage_Run`, so the attract demos never show it (menus.md §2.4).
+(`0x855ff8 & 2`), the train is waiting or driving (`& 0xa00`), the 3D bottom band is down
+(`0x84c0f8 == 0`; it is up in the coupling minigame, §3.16, so the dial goes there) and the
+section is not in ATC mode (`0x856d34 ≠ 2`). Bit 2 of `0x855ff8` is set only by
+`Stage_Run`, so the attract demos never show it (menus.md §2.4).
 
 * **Analog**: slot 0x81 = dial 0x54a (0–120 km/h, 128×128) at (16, 345), palette 4, layer 3.
   The needle is **not a sprite**: it is a filled triangle in the rect layer (§6.2), colour
@@ -640,6 +641,35 @@ more after the wait ends (`0x829d18`), else slot 0x81 is cleared.
 | Navigator reactions | 0x410cb0(n), n from `0x45addc/0x45ade0` per stage | 0x61 at (80, 145), animation tables 0x465e04.. `{tbl, ticks}` | EB, notch slam, overrun, obstacle (§3.17) | confirmed |
 | 自動運転 | replay playback (`0x816974`) | 0x86 at (403, 40), sub-rect col 6, 6×2 tiles of 0x50b | while replaying | confirmed |
 
+**Coupling minigame readout panel (0x4093c0; confirmed, code and a Wine capture).** Slots 0x3f–0x4b, palette 4,
+layer 3, at 640×480: readout bar 0x17c (480×32, 東北 + km post, both speed digits on it) at
+(80, 292); 0x17d (256×32: あと, the distance box, m) at (112, 324) with digits 0x41–0x43 and
+the unit 0x171; the status lamp slot 0x47 at (384, 324), 160×32: 0x17e 併合準備完了 (green,
+steady from 10 m), 0x180 距離注意 (yellow on black, blinking below 10 m, and on a failure),
+0x17f 併合完了 (green, on a coupling); own nose 0x181 (128×64) at (80, 356); the partner train
+0x182 (352×64) at x = 208 + min(272, trunc(16 · dist)), y 356; the ruler 0x183 (480×16) at
+(80, 420), its 0 at x 208 and its end at x 560. So the partner train always reaches 352 px past
+its nose: up to 80 px past the strip's end, where the 640-px screen cuts it. Right after placing
+the slots it sets **`0x84c0f8 = 1`**; the render task 0x425680 (cases 0, 2, 3) then draws
+`Draw2D_FlatQuad(0x486ec4, colours 0x47c3e8, 4, 0)` before the task lists: corners
+(0,268)–(496,400) virtual (exe bytes), colour words 0 (black), depth 0, so the world below the
+readout bar (pixel rows 321..480) is black and the panel stands on it; `Cab_Overlay` hides the
+speedometer while it is set (§3.5). The flag is cleared at the cleanup (both exits) and before
+the 100-tick wait of a too-weak coupling. The opening's phase E and the endings use the same
+flag and quad and move its top edge (0x404110, 0x404920, 0x404a80, 0x4042b0; menus.md §12); a
+coupling after an ending in the same session would see the edge where the ending left it
+(**guess**, not run). Port: `coupling_hud.rs` (`CouplingHud::bottom_band`),
+`play/cab_mask.rs` (`bottom_band`, before the weather like the top mask), `hud.rs`
+(`HudState::bottom_band`). Widescreen (port): the band keeps the 4:3 width (virtual x 0..496,
+the centred design), and the coupling slots are cut at the design's edges on the enhanced
+layout's wide canvas (`SpriteLayer::frame`), so the panel is the same 4:3 picture in both
+layouts and the train ends at the band's edge as it ends at the screen's in the original.
+Wine (stage 17 from its start at difficulty 1, a port-autopilot input script replayed by the
+hook; `out/explain/coupling_panel/original_*.png`): rows 322..479 black across x 0..639 from
+the intro to the outro, no dial, 0x180 blinking without a box at 8.1 and 1.35 m, and the train
+ending at 560 + 16 · dist (x ≈ 582 at 1.36 m), cut only by the screen edge from 5 m out. Port
+shots: same folder (before/after, both layouts, en/ja, 16:10, 16:9, 21:9, 4:3).
+
 Details (**confirmed**):
 
 * Time-up creation (0x4158b0) cancels the signal, signs, hint, caption and banner tasks, clears
@@ -886,7 +916,8 @@ renderer.md §13, confirmed). None of the HUD elements in §3 use them, but the 
     (0x83–0x85), distance panel (0x5a, 0x7c, 0x7d, 0x20–0x24), signs and signal (0x5e–0x60)
     and the brake gauge in two-handle mode; **centre** = everything else: remaining time and
     vehicle name, captions, banners, landmarks, time messages, hints and navigator, ATS lamp,
-    popups, the departure strip and the coupling game's screen.
+    popups, the departure strip and the coupling game's screen (cut at the design's edges,
+    §3.16).
   * Screens stay a centred 4:3 inside the wide canvas: every tick starts with all anchors
     `Centre`; the driving HUD sets its own, and the slots the stage flow's screens drew (pause,
     station result, continue) are put back to `Centre`. With the HUD hidden (report card,
@@ -955,7 +986,10 @@ sprite or a rect-layer fan; it is the first thing the drive task draws:
    `0x856d30` yet. Adding the slot-0x60 tilemap to the hook trace would let the replay check the
    5-update delay, the forced handover and the expiry tick against the original.
 9. `NaviAnim(0)` (which hides the signal at the obstacle start) does nothing when
-   `0x84c0f8 == 1`, and the meaning of that flag is unknown. The engine always hides.
+   `0x84c0f8 == 1`. The flag is the 3D bottom band (§3.16: the coupling minigame, the
+   opening's phase E, the endings), so neither the signal hide nor the navigator reactions
+   (§3.17 creation) happen during the minigame; the port does not gate them on it yet (the
+   engine always hides).
    Separately, the obstacle-recovery hold length (and with it the tick of its `(0, 0, 0, 5)`
    green) is a guess (rules.md §12).
 10. The continue screen: 0x4080d0 waits for the time-up popup to end (`0x855ff8 & 0x400`,
