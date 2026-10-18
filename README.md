@@ -271,10 +271,13 @@ to add a language).
 * `interpolate` and `vsync` control smoothness: by default the picture is interpolated between
   the 30 Hz ticks and presented with vsync at your display's rate; `--uncapped` turns vsync
   off.
+* The **Komachi movie** (LOVE特急こまち) plays from its own file with our own MPEG-1 decoders:
+  in attract once every stage is cleared, as in the original, and from the title menu as item 6
+  (`movie_in_menu`, on by default). Enter skips it. `movie_scaling` (smooth, sharp, nearest) and
+  `movie_true_aspect` change how it is shown (docs/re/movie.md).
 
 ## Not supported
 
-* The **Komachi movie** (`komachi.dat`, an MPEG-1 video) does not play.
 * The original *Kōsoku-hen* release (not 3000-bandai), see Requirements.
 
 ## Troubleshooting

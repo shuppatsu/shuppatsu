@@ -411,8 +411,8 @@ MPEG-1 system stream: pack 0x1ba, video stream 0xe0 and **MPEG audio stream 0xc0
 Played by 0x428db0 through DirectShow `AMMultiMediaStream`: AddMediaStream(DDraw, primary video) and
 AddMediaStream(NULL, MSPID_PrimaryAudio, AMMSF_ADDDEFAULTRENDERER). The audio goes straight to the
 system renderer and does not pass through the DSound voices. **confirmed** (imports and stream ids). The
-reimplementation needs an MPEG-1 video + Layer I/II audio decoder, or it can skip the movie.
-The allowed dependency list has no decoder, so ask before adding one.
+port decodes it with its own MPEG-1 video and Layer II decoders and plays the soundtrack as a
+PCM stream in the mixer (decision D2, movie.md).
 
 ## 9. Reimplementation (`crates/ddg-audio`)
 

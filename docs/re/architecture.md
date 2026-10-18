@@ -157,11 +157,12 @@ Verified on the primary machine (2026-10-15):
   renders 3D ≈7.9 % horizontally stretched on 4:3 (virtual 496×348 band with projection aspect
   1.42), and the reimplementation reproduces that by default. Hor+ widening applies on top of it:
   the vertical FOV and the same pixel shape are kept, and the view extends sideways.
-- **D2, intro movie: POSTPONED (user, 2026-10-15).** `komachi.dat` is MPEG-1 (video plus an MPEG
-  audio stream, layer still to be confirmed). No maintained pure-Rust MPEG-1 video decoder exists.
-  Idea to revisit later: transcode it once with ffmpeg at setup time into a format that's easy to
-  play. The output is derived from game data, so it stays in the user's data dir and is never
-  committed. Writing our own decoder (~1.5–2k lines) is the fallback.
+- **D2, the Komachi movie: DECIDED (user, 2026-10-18): our own decoders.** `komachi.dat` is an
+  MPEG-1 program stream (320×144 video, Layer II 44.1 kHz stereo audio). It is decoded at
+  runtime by `ddg_formats::mpeg` (program stream, MPEG-1 video, MP2, written from ISO/IEC 11172;
+  no new dependency, nothing transcoded or stored) and played by `ddg-game` where the original
+  plays it, plus the title menu with setting `movie_in_menu`. Format, design, the ffmpeg
+  comparison (61.7 dB minimum PSNR, audio 86.8 dB SNR) and speed: movie.md.
 
 ## 10. Open questions → next phases
 
@@ -201,7 +202,7 @@ Open (moved to later phases):
 - Per-area track-model tables (`0x486170`, `0x486eb0`): needed to draw rails and ballast (Phase 3).
 - Course-event kinds (signal aspects, kind 3), timetable fields 4–8 (Phase 4, with the oracle).
 - Which palette each tilemap uses at runtime (Phase 5 menus/HUD).
-- `komachi.dat` playback (decision D2, postponed).
+- `komachi.dat` playback: done (decision D2, movie.md).
 
 ## 12. Phase 3 status: viewer (2026-10-15) — complete
 
