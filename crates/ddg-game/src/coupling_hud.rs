@@ -240,7 +240,8 @@ impl CouplingHud {
         if self.active {
             // The partner train (slot 0x49) runs up to 80 px past the strip's end at x 560;
             // the original's screen cuts it at x 640. On the wide canvas of the enhanced
-            // layout the panel stays that 4:3 picture.
+            // layout the panel stays that 4:3 picture, over `wide_coupling_band` too: the art's
+            // own end (x 832 at 17 m) cuts through a car and a wheel, never shown originally.
             layer.frame(FIRST_SLOT..FIRST_SLOT + SLOT_COUNT);
         }
     }

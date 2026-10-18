@@ -146,6 +146,7 @@ pub const ITEMS: &[Item] = {
         item("texture_pack", Effects, Kind::TexturePack, NextStage),
         switch("fog", Effects, NextStage),
         switch("wide_weather", Effects, NextStage),
+        switch("wide_coupling_band", Effects, NextStage),
         switch("far_traffic", Effects, NextStage),
         switch("max_lod", Effects, NextStage),
         switch("early_activation", Effects, NextStage),

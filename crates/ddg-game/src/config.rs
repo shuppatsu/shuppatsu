@@ -524,6 +524,7 @@ mod tests {
         ("ground_detiling", false),
         ("fog", true),
         ("wide_weather", true),
+        ("wide_coupling_band", true),
         ("far_traffic", true),
         ("max_lod", true),
         ("early_activation", true),

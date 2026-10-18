@@ -50,13 +50,14 @@ impl Play {
     /// 321..480 at 640×480) and only the panel's sprites show there. Like the top mask it comes
     /// before the weather overlay.
     ///
-    /// Widescreen: the band is the panel's backdrop, so it keeps the 4:3 width of the original
-    /// screen (virtual x 0..496, the centred 640-pixel design the panel is drawn in) and the
-    /// view goes on beside it; the partner train, cut at the same edge (`SpriteLayer::frame`),
-    /// then ends at the band's edge as it ends at the screen's in the original.
+    /// Widescreen: with `wide` (enhancement `wide_coupling_band`) the band spans the visible Hor+
+    /// range, so the bottom of the screen is black edge to edge under the centred panel;
+    /// without it the band keeps the 4:3 width of the original's screen (virtual x 0..496, the
+    /// centred 640-pixel design the panel is drawn in) and the view goes on beside it.
     pub(super) fn bottom_band(
         scene: &RouteScene,
         bottom_band: bool,
+        wide: bool,
         aspect: f32,
         fx: &mut EffectGeometry,
     ) {
@@ -64,12 +65,14 @@ impl Play {
             return;
         }
         let map = ScreenMap { aspect };
-        let xy = scene
-            .tables
-            .background
-            .bottom_band_quad
-            .xy
-            .map(|[x, y]| map.ndc(f32::from(x), f32::from(y)));
+        let quad = &scene.tables.background.bottom_band_quad;
+        let xy = if wide {
+            let (left, right) = map.x_range();
+            quad.widened([left, right])
+        } else {
+            quad.xy.map(|p| p.map(f32::from))
+        }
+        .map(|[x, y]| map.ndc(x, y));
         fx.add_flat_quad(xy, [0.0, 0.0, 0.0, 1.0], 0);
     }
 }

@@ -124,6 +124,7 @@ switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml
                            1 or --no-msaa = off) [off]
   --fog                    the snow fog of DengoSetting's FOGENABLE [on]
   --wide-weather           raindrops and snow over the whole width [on] (--original-weather)
+  --wide-coupling-band     the coupling game's black band over the whole width [on]
   --far-traffic            AI trains drawn to the far plane, not 150 m [on] (--original-traffic)
   --max-lod                track and trains in their most detailed models at any distance [on]
   --early-activation       scenery and side tracks activated at the far plane [on]

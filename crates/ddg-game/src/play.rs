@@ -517,6 +517,7 @@ impl Play {
         Self::bottom_band(
             &self.scene,
             self.cab.bottom_band(),
+            self.opts.settings.wide_coupling_band,
             band_aspect,
             &mut effects,
         );
@@ -1343,7 +1344,13 @@ impl Play {
             let fx = &mut gpu.renderer.effects;
             fx.clear();
             Self::cab_mask(&self.scene, self.ending.as_ref(), band_aspect, fx);
-            Self::bottom_band(&self.scene, self.cab.bottom_band(), band_aspect, fx);
+            Self::bottom_band(
+                &self.scene,
+                self.cab.bottom_band(),
+                self.opts.settings.wide_coupling_band,
+                band_aspect,
+                fx,
+            );
             self.weather
                 .compose(&self.scene, &self.drive, band_aspect, fx_alpha, fx);
             Self::ending_masks(self.ending.as_ref(), fx);

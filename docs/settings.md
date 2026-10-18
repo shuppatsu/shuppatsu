@@ -64,9 +64,9 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
   `subtitles`, `font`, `display_font`); Display (`hud_layout`, `ui_scaling`, `ui_scale`,
   `wide_menus`, `hud_upscale`, `interpolate`, `vsync`, `fullscreen`); 3D & effects (`wide_visibility`, `square_pixels`,
   `stable_track_variants`, `texture_filtering`, `anisotropic`, `msaa`, `ground_variation`,
-  `ground_detiling`, `texture_pack`, `fog`, `wide_weather`, `far_traffic`, `max_lod`,
+  `ground_detiling`, `texture_pack`, `fog`, `wide_weather`, `wide_coupling_band`, `far_traffic`, `max_lod`,
   `early_activation`, `draw_distance`, `distance_fade`, `fine_depth`); Sound (`audio_resampler`); Saves & controls (`save_on_change`,
-  `save_timed_out_names`, `keyboard_with_controller`, `exit_no_to_menu`). All 37 keys of
+  `save_timed_out_names`, `keyboard_with_controller`, `exit_no_to_menu`). All 38 keys of
   the table below.
 * **Keys**: up/down move (no wrap, repeat on hold), left/right step the value (switches flip,
   `ui_scale` runs Auto, 1×…4×, the others wrap), Enter (confirm) steps it on, Esc (cancel)
@@ -114,6 +114,7 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
 | `texture_pack` | unset | `--texture-pack <dir>` | the textures of `tex*.rom` | replacement 3D texture pages (area and train `tex*.rom`) from a pack directory, any whole multiple of the original size; a page the pack lacks keeps the original; sampling stays nearest unless `texture_filtering` (docs/texture-packs.md; packs made with `ddg-tools upscale-textures`) |
 | `fog` | on | `--[no-]fog` | the snow fog only with DengoSetting's FOGENABLE, which a fresh install lacks: no fog | the snow fog while it snows (`snow_fog`, renderer.md §13.9). `view --fog` is fog everywhere, a separate viewer option (off) |
 | `wide_weather` | on | `--[no-]wide-weather`, `--original-weather` | raindrops and snow in the 4:3 area only (x 0..496) | over the whole visible width; at 4:3 identical to the original (renderer.md §13.9). Test `weather::tests::wide_weather_off_is_the_original_area` |
+| `wide_coupling_band` | on | `--[no-]wide-coupling-band` | the coupling minigame's black band under its panel (virtual rows 268..400) only across the 4:3 width of the original's screen; the view goes on beside it on a wide window | the band across the whole visible width, so the bottom of the screen is black edge to edge under the centred panel; at 4:3 identical to the original (hud.md §3.16) |
 | `far_traffic` | on | `--[no-]far-traffic`, `--original-traffic` | AI trains drawn up to 150 m ahead | up to the far plane (320 m, or `draw_distance`'s), the farthest LOD beyond 150 m; spawning and sounds unchanged (traffic.md §4, renderer.md §13.9) |
 | `max_lod` | on | `--[no-]max-lod` | track pieces, AI trains and result-replay cars change to coarser models with distance (rails in 2–32-point bands re-cut every point, ballast and track-side kinds P0/P3/P4, cars LOD 1–4): visible LOD pop | the nearest band's model at every distance; whether something is drawn is unchanged (scene.md §5.3) |
 | `early_activation` | on | `--[no-]early-activation` | scenery appears 40–200 m ahead (activation lists), side tracks when their bucket lists them, the main line ends 160 m ahead: pop-in inside the 320 m view | each object activated from where its bounding circle comes inside the view and the far plane; main line and side-track runs built out to the far plane; removals unchanged (scene.md §5.3) |

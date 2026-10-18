@@ -107,6 +107,9 @@ settings! {
     /// Raindrops and snow over the whole visible width (renderer.md §13.9); off = the
     /// original's 4:3 area (`--original-weather`).
     wide_weather = true;
+    /// The coupling minigame's black band under its panel across the whole width of a wide
+    /// window (hud.md §3.16); off = the original's band, the 4:3 width of its screen.
+    wide_coupling_band = true;
     /// AI trains drawn to the far plane (renderer.md §13.9, traffic.md); off = up to 150 m
     /// (`--original-traffic`).
     far_traffic = true;
