@@ -387,6 +387,44 @@ fn drawn_in_the_centre_group() {
     assert!(layer.palettes[usize::from(PAL_SUBTITLE)].is_some());
 }
 
+/// With the coupling minigame's readout panel up, both lines sit above it.
+#[test]
+fn above_the_coupling_panel() {
+    let mut subs = Subtitles::new(book());
+    for text in ["A.", "B."] {
+        subs.show(Cue {
+            at: 0,
+            ticks: 5,
+            text: text.into(),
+        });
+    }
+    let mut layer = SpriteLayer::default();
+    // Slot 0x45 (the meter frame) at y 300 makes the panel's top.
+    layer.slots[0x45] = ddg_render::sprites::Slot {
+        x: 80,
+        y: 300,
+        tilemap: 0x17c,
+        ..ddg_render::sprites::Slot::CLEAR
+    };
+    let top = crate::coupling_hud::panel_top(&layer);
+    assert_eq!(top, Some(300.0));
+    subs.draw_below(&mut layer, None, top);
+    assert_eq!(layer.widgets.len(), 2);
+    let r = layer.widgets[0].rect;
+    assert_eq!(r[1] + r[3], 300.0 - PANEL_GAP);
+    assert!(layer.widgets[1].rect[1] < r[1]);
+    // The minigame's caption (slot 0x33) above the panel: above the caption.
+    layer.slots[0x33] = ddg_render::sprites::Slot {
+        y: 195,
+        tilemap: 0x2d9,
+        ..ddg_render::sprites::Slot::CLEAR
+    };
+    assert_eq!(crate::coupling_hud::panel_top(&layer), Some(195.0));
+    // No panel: the usual place, even with a caption up.
+    layer.slots[0x45] = ddg_render::sprites::Slot::CLEAR;
+    assert_eq!(crate::coupling_hud::panel_top(&layer), None);
+}
+
 /// Against the user's data: every station of every stage has a subtitle name, the in-train
 /// announcements that name a station resolve, and the clips with lines exist.
 #[test]

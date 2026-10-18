@@ -625,7 +625,9 @@ port palette (0x7e), centred in the centre group, the newest line's box ending a
 (640×480 space), an older one directly above: clear of the speedometer (y ≥ 345), the
 navigator's portrait and balloon (y ≥ 376), the distance panel (y ≥ 408), the time-up advice
 (y ≥ 344) and the signal (x ≥ 528). Checked in both HUD layouts at 4:3, 16:10 and 21:9
-(out/explain/subtitles/). A line comes up when its first spoken phrase starts (sequencer
+(out/explain/subtitles/). In the coupling minigame its readout panel (slots 0x3f–0x4a, from
+y ≈ 293) covers that place, so the lines end 2 pixels above the panel, or above its caption
+(slot 0x33) while that is up (`coupling_hud::panel_top`; out/explain/coupling_subs/). A line comes up when its first spoken phrase starts (sequencer
 timing, `step_offsets`) and stays for its phrases' length from `effect.rom` + 10 ticks, at
 least 30 ticks + 2 per character; at most two lines, the oldest goes; a line already up is
 only kept longer; a stop-all or the sequencer switched off (end of a stop, the results)

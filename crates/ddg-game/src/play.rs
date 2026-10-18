@@ -1189,7 +1189,9 @@ impl Play {
                 .ok()
                 .and_then(|t| self.bank.tilemaps.get(usize::from(t)))
                 .map(|m| f32::from(board.y) + f32::from(m.height) * 16.0);
-            s.draw_below(&mut self.layer, board_bottom);
+            // The coupling minigame's readout panel covers their usual place: above it.
+            let panel_top = crate::coupling_hud::panel_top(&self.layer);
+            s.draw_below(&mut self.layer, board_bottom, panel_top);
         }
         self.flow.draw(&mut self.layer);
         self.centre_screen();

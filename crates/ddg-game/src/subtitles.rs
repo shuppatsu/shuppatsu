@@ -64,6 +64,8 @@ const BOTTOM: f32 = 342.0;
 const LINE_H: f32 = 23.0;
 /// Space between the route board's lower edge and a subtitle under it.
 const BOARD_GAP: f32 = 2.0;
+/// Space between a subtitle and the coupling minigame's readout panel under it.
+const PANEL_GAP: f32 = 2.0;
 const LINE_W: f32 = 520.0;
 const CENTRE_X: f32 = 320.0;
 /// Capital height in original pixels (made smaller only to fit the width).
@@ -513,13 +515,20 @@ impl Subtitles {
     /// Draws the lines as text widgets in the centre group (white, dark outline).
     #[cfg(test)]
     pub fn draw(&self, layer: &mut SpriteLayer) {
-        self.draw_below(layer, None);
+        self.draw_below(layer, None, None);
     }
 
     /// [`Subtitles::draw`], but with the pre-departure route board up (its lower edge at
     /// `board_bottom`, 640×480 pixels): only the newest line, just under the board, where it
-    /// still clears the speedometer and the navigator balloon.
-    pub fn draw_below(&self, layer: &mut SpriteLayer, board_bottom: Option<f32>) {
+    /// still clears the speedometer and the navigator balloon. With the coupling minigame's
+    /// readout panel up (its upper edge at `panel_top`, coupling_hud.rs), which covers the
+    /// usual place, the lines sit just above the panel instead.
+    pub fn draw_below(
+        &self,
+        layer: &mut SpriteLayer,
+        board_bottom: Option<f32>,
+        panel_top: Option<f32>,
+    ) {
         if self.shown.is_empty() {
             return;
         }
@@ -542,9 +551,10 @@ impl Subtitles {
             font: FontRole::Body,
         };
         layer.anchored(Anchor::Centre, |layer| {
-            let (bottom, lines) = match board_bottom {
-                Some(b) => ((b + BOARD_GAP + LINE_H).max(BOTTOM), 1),
-                None => (BOTTOM, self.shown.len()),
+            let (bottom, lines) = match (board_bottom, panel_top) {
+                (Some(b), _) => ((b + BOARD_GAP + LINE_H).max(BOTTOM), 1),
+                (None, Some(t)) => ((t - PANEL_GAP).min(BOTTOM), self.shown.len()),
+                (None, None) => (BOTTOM, self.shown.len()),
             };
             for (i, s) in self.shown.iter().rev().take(lines).enumerate() {
                 let y = bottom - LINE_H * (i + 1) as f32;

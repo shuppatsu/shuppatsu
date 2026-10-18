@@ -10,7 +10,7 @@ use ddg_engine::coupling::{
 use ddg_engine::rules::RuleEvent;
 use ddg_formats::exe::Exe;
 use ddg_formats::hud::{MODE_640, RES_MODES};
-use ddg_render::sprites::SpriteLayer;
+use ddg_render::sprites::{Slot, SpriteLayer};
 
 use crate::slots;
 
@@ -346,4 +346,17 @@ impl CouplingHud {
         }
         self.active = false;
     }
+}
+
+/// The upper edge (640×480 pixels) of the minigame's readout panel while it is up: the
+/// highest of its slots 0x3f..=0x4a that shows a picture (the result plate 0x4b is not part
+/// of it), or of its caption (slot 0x33) while that is up too, since the caption sits just
+/// above the panel. The port's subtitles go above it (subtitles.rs).
+pub fn panel_top(layer: &SpriteLayer) -> Option<f32> {
+    let top = |s: &Slot| (s.tilemap >= 0 && s.y < Slot::CLEAR.y).then_some(f32::from(s.y));
+    let panel = layer.slots[FIRST_SLOT..SLOT_RESULT]
+        .iter()
+        .filter_map(top)
+        .reduce(f32::min)?;
+    Some(top(&layer.slots[SLOT_CAPTION]).map_or(panel, |c| c.min(panel)))
 }
