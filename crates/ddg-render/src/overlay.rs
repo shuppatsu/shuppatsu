@@ -408,7 +408,11 @@ impl Overlay {
         for (i, v) in [tw, th, rect[2], rect[3]].into_iter().enumerate() {
             params[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
         }
-        let mode = if self.bilinear { 2u32 } else { u32::from(!nearest) };
+        let mode = if self.bilinear {
+            2u32
+        } else {
+            u32::from(!nearest)
+        };
         params[16..20].copy_from_slice(&mode.to_le_bytes());
         queue.write_buffer(&self.params, 0, &params);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
