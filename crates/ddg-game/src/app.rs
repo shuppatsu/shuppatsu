@@ -518,7 +518,8 @@ impl App {
 
     /// Where the movie goes in a `window`-sized target: the original's rectangle on the
     /// presented 640×480 design (`hud_layout original`) or the window filled (`enhanced`), at
-    /// the stream's display aspect (`movie_true_aspect`) or the original's 2:1 doubling.
+    /// always at the stream's display aspect (2.03:1; the original's 2:1 doubling stretched it to
+    /// 2.22:1, a deviation the user decided on, docs/re/movie.md).
     fn movie_rect(&self, player: &MoviePlayer, window: (u32, u32)) -> [f32; 4] {
         let canvas = self.canvas_size();
         let design = ddg_render::overlay::design_rect(ddg_render::overlay::present_rect(
@@ -527,11 +528,7 @@ impl App {
             canvas,
             self.opts.locale.ui_scaling,
         ));
-        let dar = if self.opts.settings.movie_true_aspect {
-            player.display_aspect()
-        } else {
-            crate::movie::ORIGINAL_RECT[2] / crate::movie::ORIGINAL_RECT[3]
-        };
+        let dar = player.display_aspect();
         let enhanced = self.opts.locale.hud_layout == crate::presentation::HudLayout::Enhanced;
         crate::movie::movie_rect(window, design, enhanced, dar)
     }

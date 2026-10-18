@@ -12,8 +12,8 @@
 //!
 //! Where it goes on screen ([`movie_rect`]): with `hud_layout original` the original's
 //! rectangle on the centred 640×480 design, scaled with it; with `enhanced` as large as the
-//! window allows. Setting `movie_true_aspect` (on) gives it the stream's display aspect
-//! (sample aspect 200:219, 2.03:1); off, the original's 2:1 doubling (2.22:1).
+//! window allows, always at the stream's display aspect (sample aspect 200:219, 2.03:1; the
+//! original's 2:1 doubling showed 2.22:1, a deviation decided by the user).
 //! `movie_scaling` picks the filter.
 
 use anyhow::{Context, Result};

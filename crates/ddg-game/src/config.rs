@@ -572,7 +572,6 @@ mod tests {
         ("save_timed_out_names", true),
         ("keyboard_with_controller", true),
         ("exit_no_to_menu", true),
-        ("movie_true_aspect", true),
         ("movie_in_menu", true),
     ];
 

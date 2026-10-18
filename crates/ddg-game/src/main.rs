@@ -149,7 +149,6 @@ switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml
   --keyboard-with-controller
                            keyboard horn and ATS confirm in controller modes [on]
   --exit-no-to-menu        exit dialog No returns to the title menu, not attract [on]
-  --movie-true-aspect      the Komachi movie at its 2.03:1 display aspect, not 2.22:1 [on]
   --movie-in-menu          the Komachi movie as item 6 of the title menu [on]
 
 settings file: $XDG_CONFIG_HOME/ddg/config.toml (~/.config/ddg; %APPDATA%\\ddg on Windows),

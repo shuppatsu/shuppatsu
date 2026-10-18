@@ -139,7 +139,6 @@ pub const ITEMS: &[Item] = {
         switch("vsync", Display, Restart),
         switch("fullscreen", Display, Now),
         item("movie_scaling", Display, Kind::MovieScaling, Now),
-        switch("movie_true_aspect", Display, Now),
         switch("wide_visibility", Effects, NextStage),
         switch("square_pixels", Effects, NextStage),
         switch("stable_track_variants", Effects, NextStage),

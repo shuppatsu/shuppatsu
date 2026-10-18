@@ -171,9 +171,6 @@ settings! {
     /// The exit dialog's いいえ returns to the title menu on ゲーム終了 (menus.md §14.1); off =
     /// attract from the title picture, as the original.
     exit_no_to_menu = true;
-    /// The Komachi movie at the display aspect its stream codes (sample aspect 200:219, 2.03:1,
-    /// docs/re/movie.md); off = the original's blit of twice the 320×144 picture, 2.22:1.
-    movie_true_aspect = true;
     /// The title menu's unreachable sixth item, LOVE特急こまち (the Komachi movie), reachable as
     /// its last row (menus.md §3); off = the original's four or five items, the movie only in
     /// attract once every stage is cleared.

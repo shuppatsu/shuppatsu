@@ -273,8 +273,8 @@ to add a language).
   off.
 * The **Komachi movie** (LOVE特急こまち) plays from its own file with our own MPEG-1 decoders:
   in attract once every stage is cleared, as in the original, and from the title menu as item 6
-  (`movie_in_menu`, on by default). Enter skips it. `movie_scaling` (smooth, sharp, nearest) and
-  `movie_true_aspect` change how it is shown (docs/re/movie.md).
+  (`movie_in_menu`, on by default). Enter skips it. It is shown at its true 2.03:1 shape;
+  `movie_scaling` (smooth, sharp, nearest) picks the filter (docs/re/movie.md).
 
 ## Not supported
 

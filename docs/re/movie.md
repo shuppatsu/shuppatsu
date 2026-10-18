@@ -143,8 +143,9 @@ original's renderer).
   after 11.187 s of wall time at the skip (`movie:` log line).
 * **On screen**: black around the picture (the sprites are cleared). `hud_layout original`:
   the original's rectangle (§1) on the presented 640×480 design, scaled with it; `enhanced`:
-  the largest rectangle of the picture's shape in the window. `movie_true_aspect` (on): the
-  stream's 2.03:1 (584×288 on the design); off: the original's 640×288. `movie_scaling`:
+  the largest rectangle of the picture's shape in the window. Always the
+  stream's 2.03:1 (584×288 on the design), not the original's 640×288 stretch (2.22:1): a
+  deviation the user decided on, with no setting. `movie_scaling`:
   `smooth` (bilinear, default), `sharp` (sharp bilinear like the UI), `nearest`. Colour:
   BT.601 video range, chroma upsampled bilinearly from the MPEG-1 sample positions.
 * **Shots**: `out/explain/movie/` (menus in English and Japanese, frames at 2560×1440 and 4:3
