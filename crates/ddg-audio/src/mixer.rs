@@ -1169,7 +1169,9 @@ mod tests {
         for i in 0..8u32 {
             fx.push(effect(10_000 + 4000 * i, (0, 40_000), &pcm));
         }
-        let frames: Vec<(i16, i16)> = (0..44_100).map(|i| (i as i16, -(i as i16))).collect();
+        let frames: Vec<(i16, i16)> = (0..44_100)
+            .map(|i| ((i % 30_000) as i16, -((i % 30_000) as i16)))
+            .collect();
         let bgm = vec![bgm_frames(&frames), bgm_frames(&frames)];
         let mut bgm_rom = bgm.clone();
         while bgm_rom.len() < 8 {
