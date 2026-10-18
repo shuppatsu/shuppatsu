@@ -93,6 +93,10 @@ const COLOURS_GROUND_GRADIENT: u32 = 0x469c78;
 const COLOURS_GROUND_TOP: u32 = 0x469c80;
 const COLOURS_GROUND_BOTTOM: u32 = 0x469c88;
 const COLOURS_MASK: u32 = 0x469858;
+/// The bottom band the render task 0x425680 draws first while `0x84c0f8 = 1` (the coupling
+/// minigame, the opening's phase E and the endings, which move its top edge): (0,268)–(496,400).
+const QUAD_BOTTOM_BAND_XY: u32 = 0x486ec4;
+const COLOURS_BOTTOM_BAND: u32 = 0x47c3e8;
 /// {f32 x, y, z}[4] world corners of the extra quads 1 and 2 (0x41df00).
 const EXTRA_QUAD_POINTS: [u32; 2] = [0x469d24, 0x469d54];
 /// i16[20] by stage: station index from which the gradient event may start (0x40d340,
@@ -322,6 +326,9 @@ pub struct BackgroundTables {
     pub ground_tex_xy: [[i16; 2]; 4],
     /// Drawn at depth 0 before the track every frame (0x41e460): masks virtual rows 0..94.
     pub mask_quad: Quad2d,
+    /// Drawn at depth 0 before every task while `0x84c0f8 = 1` (0x425680): masks virtual rows
+    /// 268..400 (as stored in the exe; the endings move its top edge at run time).
+    pub bottom_band_quad: Quad2d,
     /// World corners of the extra flat quads 1 and 2 of area 3 (0x41df00: 0x469d24, 0x469d54).
     pub extra_quads: [[[f32; 3]; 4]; 2],
     /// Per-point switch tables by COM index (only 7, 10, 11, 12 have one).
@@ -614,6 +621,7 @@ fn read_background(exe: &Exe<'_>) -> Result<BackgroundTables> {
         ground_bottom_quad: quad(exe, QUAD_GROUND_XY, COLOURS_GROUND_BOTTOM)?,
         ground_tex_xy: quad_xy(exe, QUAD_GROUND_TEX_XY)?,
         mask_quad: quad(exe, QUAD_MASK_XY, COLOURS_MASK)?,
+        bottom_band_quad: quad(exe, QUAD_BOTTOM_BAND_XY, COLOURS_BOTTOM_BAND)?,
         extra_quads: [
             world_quad(exe, EXTRA_QUAD_POINTS[0])?,
             world_quad(exe, EXTRA_QUAD_POINTS[1])?,
@@ -2676,6 +2684,7 @@ mod tests {
                 ground_bottom_quad: quad,
                 ground_tex_xy: [[0; 2]; 4],
                 mask_quad: quad,
+                bottom_band_quad: quad,
                 extra_quads: [[[0.0; 3]; 4]; 2],
                 events: vec![vec![]; COM_COUNT],
             },

@@ -632,6 +632,12 @@ fn background_quads_resolve_and_cover_the_view() {
         bg.sky_quad.xy, bg.ground_quad.xy
     );
     eprintln!("extra quads {:?}", bg.extra_quads);
+    // The coupling minigame's bottom band (0x486ec4): virtual rows 268..400, black.
+    assert_eq!(
+        bg.bottom_band_quad.xy,
+        [[0, 268], [0, 400], [496, 400], [496, 268]]
+    );
+    assert_eq!(bg.bottom_band_quad.colours, [0; 4]);
     assert!(
         bg.extra_quads
             .iter()

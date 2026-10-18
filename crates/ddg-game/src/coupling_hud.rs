@@ -132,6 +132,8 @@ pub struct CouplingHud {
     caption: Option<Caption>,
     /// The minigame's sprites are placed (from intro tick 10 to the cleanup).
     active: bool,
+    /// The 3D view's black bottom band is up (`0x84c0f8`, see [`Self::bottom_band`]).
+    band: bool,
     result: Option<CouplingResult>,
 }
 
@@ -141,8 +143,17 @@ impl CouplingHud {
             t,
             caption: None,
             active: false,
+            band: false,
             result: None,
         }
+    }
+
+    /// `0x84c0f8 = 1`: from the slot setup (intro tick 10) to the cleanup, or until a too-weak
+    /// coupling hides the meter, the render task draws the depth-0 black band 0x486ec4
+    /// (virtual rows 268..400) over the 3D under the readout panel, and `Cab_Overlay` hides
+    /// the speedometer.
+    pub fn bottom_band(&self) -> bool {
+        self.band
     }
 
     /// Whether the HUD's own remaining-time readout is off (`0x856d1c = 0` from the start of
@@ -205,7 +216,9 @@ impl CouplingHud {
                         slots::image(layer, SLOT_RESULT, plate);
                     }
                     if r == CouplingResult::TooWeak {
-                        // 0x4093c0 hides the meter (not the plate) before its 100-tick wait.
+                        // 0x4093c0 hides the meter (not the plate) before its 100-tick wait
+                        // and clears `0x84c0f8`.
+                        self.band = false;
                         for s in (0x45..=0x4a).chain(0x3f..=0x44) {
                             slots::image(layer, s, -1);
                         }
@@ -266,6 +279,7 @@ impl CouplingHud {
         }
         slots::image(layer, SLOT_SPEED[1], self.t.speed_digits[0]);
         self.active = true;
+        self.band = true;
     }
 
     /// The readouts of one driving iteration (0x4097xx..0x409c4f).
@@ -345,6 +359,7 @@ impl CouplingHud {
             slots::clear(layer, s);
         }
         self.active = false;
+        self.band = false;
     }
 }
 

@@ -41,3 +41,35 @@ impl Play {
         fx.add_flat_quad(xy, [0.0, 0.0, 0.0, 1.0], 0);
     }
 }
+
+impl Play {
+    /// Adds the coupling minigame's bottom band (`bottom_band`, `0x84c0f8 = 1`) to the 3D
+    /// band's effect quads. The render task 0x425680 draws `Draw2D_FlatQuad` with the corners
+    /// at 0x486ec4, (0,268)–(496,400) virtual, colour words 0 (black, 0x47c3e8) at depth 0
+    /// before the task lists, so the world under the readout panel is black (pixel rows
+    /// 321..480 at 640×480) and only the panel's sprites show there. Like the top mask it comes
+    /// before the weather overlay.
+    ///
+    /// Widescreen: the band is the panel's backdrop, so it keeps the 4:3 width of the original
+    /// screen (virtual x 0..496, the centred 640-pixel design the panel is drawn in) and the
+    /// view goes on beside it; the partner train, cut at the same edge (`SpriteLayer::frame`),
+    /// then ends at the band's edge as it ends at the screen's in the original.
+    pub(super) fn bottom_band(
+        scene: &RouteScene,
+        bottom_band: bool,
+        aspect: f32,
+        fx: &mut EffectGeometry,
+    ) {
+        if !bottom_band {
+            return;
+        }
+        let map = ScreenMap { aspect };
+        let xy = scene
+            .tables
+            .background
+            .bottom_band_quad
+            .xy
+            .map(|[x, y]| map.ndc(f32::from(x), f32::from(y)));
+        fx.add_flat_quad(xy, [0.0, 0.0, 0.0, 1.0], 0);
+    }
+}

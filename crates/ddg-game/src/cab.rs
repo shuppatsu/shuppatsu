@@ -331,6 +331,11 @@ impl CabHud {
         self.panel_active && self.panel_on
     }
 
+    /// The coupling minigame's black band over the bottom of the 3D view is up (`0x84c0f8`).
+    pub fn bottom_band(&self) -> bool {
+        self.coupling.bottom_band()
+    }
+
     fn name_id(&self, station: usize) -> Option<usize> {
         self.name_ids.get(station).map(|&i| usize::from(i))
     }
@@ -516,8 +521,9 @@ impl CabHud {
             waiting: s.waiting(),
             train_driving: s.train_driving,
             lamp_lit: self.lamp_lit,
+            bottom_band: false,
         };
-        self.hud.update(&state, layer);
+        self.hud.hud_update(&state, layer);
         // Created by a course event, after the HUD task in list 3.
         if let Some(r) = self.ready.as_mut() {
             let busy = self.navigator.busy();
@@ -526,6 +532,12 @@ impl CabHud {
             }
         }
         self.coupling.update(s.coupling.as_ref(), events, layer);
+        // `Cab_Overlay` comes at the end of the frame, after every task (`Frame_End`).
+        let state = HudState {
+            bottom_band: self.coupling.bottom_band(),
+            ..state
+        };
+        self.hud.cab_overlay(&state, layer);
 
         // The time-up popup is created after the 20th `Task_Tick` past the game over; its first
         // update is in the next tick.

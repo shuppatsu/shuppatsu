@@ -162,6 +162,9 @@ pub struct HudState {
     pub train_driving: bool,
     /// The cab-signal lamp is lit (`0x829d16`).
     pub lamp_lit: bool,
+    /// The 3D view's bottom band is up (`0x84c0f8 = 1`, the coupling minigame): `Cab_Overlay`
+    /// then takes the train as idle and clears the speedometer.
+    pub bottom_band: bool,
 }
 
 pub struct Hud {
@@ -417,6 +420,12 @@ impl Hud {
 
     /// One HUD tick: `Hud_Update` then `Cab_Overlay`.
     pub fn update(&mut self, s: &HudState, layer: &mut SpriteLayer) {
+        self.hud_update(s, layer);
+        self.cab_overlay(s, layer);
+    }
+
+    /// `Hud_Update` alone; [`Self::cab_overlay`] is the end of the frame, after the other tasks.
+    pub fn hud_update(&mut self, s: &HudState, layer: &mut SpriteLayer) {
         self.handles(s, layer);
         if !s.clocks_frozen {
             self.clocks(s, layer);
@@ -426,7 +435,6 @@ impl Hud {
         self.vehicle_plate(s, layer);
         self.distance(s, layer);
         self.high_speed(s, layer);
-        self.cab_overlay(s, layer);
     }
 
     fn set(layer: &mut SpriteLayer, slot: usize, tbl: i16, palette: u8) {
@@ -701,10 +709,10 @@ impl Hud {
     }
 
     /// `Cab_Overlay` 0x434fd0 (once per drawn frame in the original, once per tick here): the
-    /// speedometer while waiting or driving outside ATC sections, and the cab-signal lamp
-    /// while waiting and 30 frames after.
-    fn cab_overlay(&mut self, s: &HudState, layer: &mut SpriteLayer) {
-        let active = self.stage_run && (s.waiting || s.train_driving);
+    /// speedometer while waiting or driving outside ATC sections (not under the coupling
+    /// minigame's bottom band), and the cab-signal lamp while waiting and 30 frames after.
+    pub fn cab_overlay(&mut self, s: &HudState, layer: &mut SpriteLayer) {
+        let active = self.stage_run && (s.waiting || s.train_driving) && !s.bottom_band;
         if !active {
             if self.overlay_waiting {
                 self.speedometer_draw(s, layer);
@@ -913,6 +921,23 @@ mod tests {
         h.stage_run = true;
         h.update(&state(80.0), &mut l);
         assert_eq!(l.slots[SLOT_SPEEDO].tilemap, TBL_DIAL);
+    }
+
+    #[test]
+    fn no_speedometer_under_the_bottom_band() {
+        // Coupling_Run sets `0x84c0f8 = 1`: Cab_Overlay clears slot 0x81 and draws no needle.
+        let mut h = hud();
+        let mut l = layer();
+        h.update(&state(5.0), &mut l);
+        assert_eq!(l.slots[SLOT_SPEEDO].tilemap, TBL_DIAL);
+        l.fans.clear();
+        let band = HudState {
+            bottom_band: true,
+            ..state(5.0)
+        };
+        h.update(&band, &mut l);
+        assert_eq!(l.slots[SLOT_SPEEDO].tilemap, -1);
+        assert!(l.fans.is_empty());
     }
 
     #[test]
