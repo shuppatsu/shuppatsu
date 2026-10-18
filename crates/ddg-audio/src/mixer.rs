@@ -17,6 +17,7 @@
 use crate::bank::{EffectInfo, SoundBank};
 use crate::code::{INVERTED_PITCH_CODE, LAST_EFFECT_CODE, Source};
 use crate::sinc::{self, HISTORY, TAPS, Window};
+use crate::stream::{PcmStream, StreamState};
 use crate::tables::CodeVolumes;
 use std::sync::Arc;
 
@@ -344,6 +345,69 @@ pub struct Mixer {
     config: MixerConfig,
     /// Per-frame gain step limit when smoothing (reaches any target in ~5 ms).
     smooth_step: f32,
+    /// The movie soundtrack, if one plays ([`Mixer::set_stream`]).
+    stream: Option<StreamVoice>,
+}
+
+/// The play state of a [`PcmStream`]: the same window as a voice under
+/// [`Interpolation::Sinc`] (frames `cursor − 15 ..= cursor + 16`), which the other modes read
+/// too (the cursor frame, and the next for linear).
+#[derive(Debug, Clone)]
+struct StreamVoice {
+    source: Arc<PcmStream>,
+    window: Window,
+    frac: f64,
+    /// Frames pushed into the window so far; the first reaches the cursor after `HISTORY + 1`.
+    loaded: u64,
+}
+
+impl StreamVoice {
+    /// Loads the next frame into the window: from the queue, zeros once it has finished, or
+    /// `false` when it is empty but not finished (an underrun: hold).
+    fn load(&mut self, s: &mut StreamState) -> bool {
+        let f = match s.queue.pop_front() {
+            Some(f) => f,
+            None if s.finished => [0.0; 2],
+            None => return false,
+        };
+        self.window.push(f);
+        self.loaded += 1;
+        true
+    }
+
+    /// One output frame at `step` source frames per output frame. Frames are loaded as the
+    /// position reaches them; while the queue is dry the output is silent and the position
+    /// (and so the clock) waits.
+    fn render(&mut self, s: &mut StreamState, step: f64, interp: Interpolation) -> (f32, f32) {
+        // Prime: the first frame at the cursor, the 16 after it ahead.
+        while self.loaded < (HISTORY + 1) as u64 {
+            if !self.load(s) {
+                return (0.0, 0.0);
+            }
+        }
+        while self.frac >= 1.0 {
+            if !self.load(s) {
+                return (0.0, 0.0);
+            }
+            self.frac -= 1.0;
+            s.played += 1;
+        }
+        let frames = self.window.frames();
+        let [a, b] = [frames[HISTORY - 1], frames[HISTORY]];
+        let t = self.frac as f32;
+        let out = match interp {
+            Interpolation::Nearest => (a[0], a[1]),
+            Interpolation::Linear => (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t),
+            Interpolation::Sinc if step == 1.0 && self.frac == 0.0 => (a[0], a[1]),
+            Interpolation::Sinc => {
+                let k = sinc::kernel();
+                self.window
+                    .dot_stereo(&k.coefficients(k.level_for(step), self.frac))
+            }
+        };
+        self.frac += step;
+        out
+    }
 }
 
 impl Mixer {
@@ -365,7 +429,23 @@ impl Mixer {
             out_rate,
             config,
             smooth_step: 1.0 / (out_rate as f32 * 0.005).max(1.0),
+            stream: None,
         }
+    }
+
+    /// Plays `stream` (replacing any other) at unity gain beside the voices, or stops it.
+    pub fn set_stream(&mut self, stream: Option<Arc<PcmStream>>) {
+        self.stream = stream.map(|source| StreamVoice {
+            source,
+            window: Window::ZERO,
+            frac: 0.0,
+            loaded: 0,
+        });
+    }
+
+    /// The stream playing, if any.
+    pub fn stream(&self) -> Option<&Arc<PcmStream>> {
+        self.stream.as_ref().map(|s| &s.source)
     }
 
     pub fn out_rate(&self) -> u32 {
@@ -554,6 +634,8 @@ impl Mixer {
         let bank = Arc::clone(&self.bank);
         let interp = self.config.interpolation;
         let kernel = (interp == Interpolation::Sinc).then(sinc::kernel);
+        let source = self.stream.as_ref().map(|s| Arc::clone(&s.source));
+        let mut stream_state = source.as_ref().map(|s| s.lock());
         for frame in out.as_chunks_mut::<2>().0 {
             let (mut l, mut r) = (0.0f32, 0.0f32);
             {
@@ -571,6 +653,14 @@ impl Mixer {
                     r += b * v.applied_gain;
                     Self::advance(&bank, v, step, kernel.is_some());
                 }
+            }
+            if let (Some(sv), Some(st)) = (self.stream.as_mut(), stream_state.as_deref_mut())
+                && !self.paused
+            {
+                let step = f64::from(sv.source.rate()) / f64::from(self.out_rate);
+                let (a, b) = sv.render(st, step, interp);
+                l += a;
+                r += b;
             }
             let m = self.config.master_volume;
             frame[0] = (l * m).clamp(-1.0, 1.0);
@@ -1207,6 +1297,85 @@ mod tests {
                 dt * 1000.0 / seconds as f64,
                 dt * 100.0 / seconds as f64
             );
+        }
+    }
+
+    fn ramp(n: usize) -> Vec<f32> {
+        (0..n)
+            .flat_map(|i| [i as f32 / 1000.0, -(i as f32) / 1000.0])
+            .collect()
+    }
+
+    /// A stream at the output rate comes out sample for sample at unity gain, in every mode,
+    /// and its clock counts the frames played.
+    #[test]
+    fn stream_at_the_output_rate_is_exact() {
+        for interpolation in Interpolation::ALL {
+            let config = MixerConfig {
+                interpolation,
+                ..MixerConfig::default()
+            };
+            let mut m = Mixer::new(bank(), CodeVolumes::uniform(127), 1000, config);
+            let s = PcmStream::new(1000);
+            s.push(&ramp(200), 2);
+            m.set_stream(Some(Arc::clone(&s)));
+            let out = render(&mut m, 100);
+            assert_eq!(out, ramp(100), "{interpolation:?}");
+            assert_eq!(s.played(), 99, "the 100th frame is at the cursor");
+        }
+    }
+
+    /// A dry queue holds the stream (silence, the clock waits) until data comes; after
+    /// `finish` the rest plays out.
+    #[test]
+    fn stream_underrun_holds_and_finish_plays_out() {
+        let mut m = mixer();
+        let s = PcmStream::new(1000);
+        m.set_stream(Some(Arc::clone(&s)));
+        assert!(render(&mut m, 10).iter().all(|&v| v == 0.0));
+        s.push(&ramp(20), 2);
+        // 16 frames stay queued as look-ahead: 4 play, then it waits.
+        let out = render(&mut m, 10);
+        assert_eq!(&out[..8], &ramp(4)[..]);
+        assert!(out[8..].iter().all(|&v| v == 0.0));
+        let clock = s.played();
+        assert_eq!(render(&mut m, 5), vec![0.0; 10]);
+        assert_eq!(s.played(), clock, "the clock waits");
+        s.finish();
+        let out = render(&mut m, 30);
+        assert_eq!(&out[..32], &ramp(20)[8..]);
+        assert!(out[32..].iter().all(|&v| v == 0.0));
+    }
+
+    /// 44.1 kHz into a 48 kHz device: the clock advances by the source rate.
+    #[test]
+    fn stream_resamples_to_the_device_rate() {
+        for interpolation in Interpolation::ALL {
+            let config = MixerConfig {
+                interpolation,
+                ..MixerConfig::default()
+            };
+            let mut m = Mixer::new(bank(), CodeVolumes::uniform(127), 48_000, config);
+            let s = PcmStream::new(44_100);
+            let tone: Vec<f32> = (0..50_000)
+                .flat_map(|i| {
+                    let v = 0.5 * (i as f32 * 2.0 * std::f32::consts::PI * 1000.0 / 44_100.0).sin();
+                    [v, v]
+                })
+                .collect();
+            s.push(&tone, 2);
+            m.set_stream(Some(Arc::clone(&s)));
+            let out = render(&mut m, 48_000);
+            assert!(
+                (s.played() as i64 - 44_100).abs() <= 1,
+                "{interpolation:?}: {}",
+                s.played()
+            );
+            let peak = out.iter().fold(0f32, |p, v| p.max(v.abs()));
+            assert!((peak - 0.5).abs() < 0.01, "{interpolation:?}: peak {peak}");
+            // Stopping it silences the mixer.
+            m.set_stream(None);
+            assert!(render(&mut m, 10).iter().all(|&v| v == 0.0));
         }
     }
 }

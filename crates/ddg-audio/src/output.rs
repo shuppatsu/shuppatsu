@@ -6,6 +6,7 @@
 
 use crate::bank::SoundBank;
 use crate::mixer::{Command, Mixer, MixerConfig};
+use crate::stream::PcmStream;
 use crate::tables::CodeVolumes;
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{FromSample, SampleFormat, SizedSample, StreamConfig};
@@ -29,6 +30,8 @@ pub struct AudioOutput {
     sender: Sender<Command>,
     /// Option changes, applied before the commands of the next callback.
     config_sender: Sender<MixerConfig>,
+    /// The movie soundtrack, handed to the mixer before the next callback.
+    stream_sender: Sender<Option<Arc<PcmStream>>>,
     config: MixerConfig,
     sample_rate: u32,
     channels: u16,
@@ -53,12 +56,13 @@ impl AudioOutput {
         let channels = stream_config.channels;
         let (sender, receiver) = channel();
         let (config_sender, config_receiver) = channel();
+        let (stream_sender, stream_receiver) = channel();
         if config.interpolation == crate::Interpolation::Sinc {
             crate::sinc::kernel();
         }
         let errors = Arc::new(Mutex::new(Vec::new()));
         let mixer = Mixer::new(bank, volumes, sample_rate, config);
-        let rx = (receiver, config_receiver);
+        let rx = (receiver, config_receiver, stream_receiver);
 
         let stream = match format {
             SampleFormat::F32 => build::<f32>(&device, stream_config, mixer, rx, &errors),
@@ -74,6 +78,7 @@ impl AudioOutput {
             stream,
             sender,
             config_sender,
+            stream_sender,
             config,
             sample_rate,
             channels,
@@ -118,6 +123,12 @@ impl AudioOutput {
         let _ = self.config_sender.send(config);
     }
 
+    /// Plays a PCM stream beside the voices (the movie soundtrack), or stops it, from the next
+    /// device buffer on.
+    pub fn set_stream(&self, stream: Option<Arc<PcmStream>>) {
+        let _ = self.stream_sender.send(stream);
+    }
+
     /// A sender usable from other threads.
     pub fn sender(&self) -> Sender<Command> {
         self.sender.clone()
@@ -142,11 +153,18 @@ impl AudioOutput {
     }
 }
 
+/// The audio thread's ends of the command, option and stream channels.
+type Receivers = (
+    Receiver<Command>,
+    Receiver<MixerConfig>,
+    Receiver<Option<Arc<PcmStream>>>,
+);
+
 fn build<T>(
     device: &cpal::Device,
     config: StreamConfig,
     mut mixer: Mixer,
-    (receiver, config_receiver): (Receiver<Command>, Receiver<MixerConfig>),
+    (receiver, config_receiver, stream_receiver): Receivers,
     errors: &Arc<Mutex<Vec<String>>>,
 ) -> Result<cpal::Stream, OutputError>
 where
@@ -161,6 +179,9 @@ where
             move |out: &mut [T], _| {
                 while let Ok(c) = config_receiver.try_recv() {
                     mixer.set_config(c);
+                }
+                while let Ok(s) = stream_receiver.try_recv() {
+                    mixer.set_stream(s);
                 }
                 while let Ok(cmd) = receiver.try_recv() {
                     mixer.apply(cmd);
