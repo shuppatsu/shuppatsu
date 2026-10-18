@@ -308,10 +308,11 @@ name = "English"
 0x2dc = "Coupled!"                   # 連結成功
 0x17c = { region = [212, 2, 84, 28], text = "Tōhoku" }  # 東北 (the line of the km post 496.5 km) on the readout bar, 480×32
 0x17d = { region = [10, 8, 44, 24], text = "dist" }      # あと before the distance digits, 256×32 (lettering x 11–52, y 9–31 on the black x 0–63, measured)
-# The status lamp (slot 0x47), 160×32 boxes, lettering x 7–153 / 18–137 / 29–130, y 4–27 (measured):
-0x17e = { region = [6, 3, 148, 26], text = "Ready to Couple" }   # 併合準備完了, steady from 10 m
-0x17f = { region = [6, 3, 148, 26], text = "Coupled" }           # 併合完了, on a coupling
-0x180 = { region = [6, 3, 148, 26], text = "Watch Distance" }    # 距離注意 (distance caution), blinking below 10 m and on a failure
+# The status lamp (slot 0x47), 160×32 (green boxes; 0x180 is lettering on transparency), lettering
+# x 7–153 / 18–137 / 29–130, y 4–27 (measured); one size for the three states:
+0x17e = { region = [6, 3, 148, 26], shared_group = "coupling.lamp", text = "Ready to Couple" }   # 併合準備完了, steady from 10 m
+0x17f = { region = [6, 3, 148, 26], shared_group = "coupling.lamp", text = "Coupled" }           # 併合完了, on a coupling
+0x180 = { region = [6, 3, 148, 26], shared_group = "coupling.lamp", style = "boxed", backdrop = "solid", text = "Watch Distance" }  # 距離注意 (distance caution), blinking below 10 m and on a failure; yellow on transparency, laid out in the whole region like the two boxes
 0x2dd = "Coupling failed"            # 連結失敗
 0x2de = "Ready"                      # 準備
 0x2df = "Go!"                        # 開始
