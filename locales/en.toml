@@ -520,7 +520,7 @@ name = "English"
     { region = [152, 3, 199, 43], shared_group = "ending.role", text = "Modelling, Textures\nMap Creation, Editing" },
 ] }
 0x3c8 = { align = "left", parts = [  # 石井 隆史 / ソフト / デモ表示処理
-    { region = [3, 3, 146, 41], shared_group = "ending.name", text = "Takashi Ishii" },   # 隆史: reading? (Takashi; also Takafumi)
+    { region = [3, 3, 146, 41], shared_group = "ending.name", text = "Takashi Ishii" },   # 隆史: reading? (Takashi; also Takafumi; MobyGames romanises the same 隆史 "Takashi" for 長尾 隆史 Takashi Nagao)
     { region = [156, 3, 58, 21], shared_group = "ending.role", text = "Software" },
     { region = [217, 23, 134, 23], shared_group = "ending.role", text = "Demo Display" },
 ] }
@@ -548,12 +548,12 @@ name = "English"
     { region = [159, 4, 104, 22], shared_group = "ending.role", text = "Design" },
 ] }
 0x3b7 = { align = "left", parts = [  # 古川典裕 / サウンド / 作曲
-    { region = [3, 3, 144, 41], shared_group = "ending.name", text = "Norihiro Furukawa" },   # confirmed (sound composer of Densha de GO!, exotica.org.uk)
+    { region = [3, 3, 144, 41], shared_group = "ending.name", text = "Norihiro Furukawa" },   # confirmed (MobyGames, Densha de GO! 2 PlayStation credits); also exotica.org.uk
     { region = [154, 5, 108, 22], shared_group = "ending.role", text = "Sound" },
     { region = [268, 15, 83, 22], shared_group = "ending.role", text = "Music" },
 ] }
 0x3b8 = { align = "left", parts = [  # 鎌田良和 / サウンド / SE
-    { region = [3, 3, 143, 41], shared_group = "ending.name", text = "Yoshikazu Kamata" },   # 鎌田: reading? (Kamata; also Kamada)
+    { region = [3, 3, 143, 41], shared_group = "ending.name", text = "Yoshikazu Kamata" },   # confirmed (MobyGames, Densha de GO! 2 PlayStation credits)
     { region = [154, 5, 108, 22], shared_group = "ending.role", text = "Sound" },
     { region = [268, 16, 83, 22], shared_group = "ending.role", text = "SFX" },
 ] }
@@ -581,18 +581,18 @@ name = "English"
     { region = [2, 1, 364, 22], align = "center", backdrop = "solid", shared_group = "ending.role", text = "Reference Materials" },
     { region = [1, 32, 107, 31], shared_group = "ending.name", text = "Akira Iwai" },   # 晃: reading? (as 0x3a9)
     { region = [112, 32, 141, 31], shared_group = "ending.name", text = "Yūichi Ōnogi" },
-    { region = [255, 32, 112, 31], shared_group = "ending.name", text = "Tetsushi Abe" },   # 哲士: reading? (Tetsushi; also Satoshi, Tetsuji)
+    { region = [255, 32, 112, 31], shared_group = "ending.name", text = "Tetsushi Abe" },   # confirmed (MobyGames, Densha de GO! 2 PlayStation credits)
 ] }
 0x3bd = { align = "left", parts = [  # 制作協力 / JR 株式会社ジェイアール東日本企画 (green; the JR mark stays), 464×64
     { region = [2, 0, 200, 20], shared_group = "ending.role", text = "Production Support" },
-    { region = [78, 21, 385, 40], text = "East Japan Marketing & Communications, Inc." },   # the company's own English name
+    { region = [78, 21, 385, 40], text = "JR East Marketing & Communications, Inc." },   # as MobyGames, Densha de GO! 2 PlayStation credits
 ] }
-0x3be = { region = [6, 3, 149, 41], shared_group = "ending.name", text = "Yoshikazu Aizu" }   # 会津善和, 160×48
-0x3bf = { region = [6, 3, 149, 41], shared_group = "ending.name", text = "Takashi Matsumoto" }   # 松本 隆
-0x3c0 = { region = [6, 3, 149, 41], shared_group = "ending.name", text = "Takeshi Kawata" }   # 河田壮司: reading? (壮司 Takeshi, also Sōji, Masashi; 河田 Kawata, also Kawada)
+0x3be = { region = [6, 3, 149, 41], shared_group = "ending.name", text = "Yoshikazu Aizu" }   # 会津善和, 160×48: confirmed (MobyGames, Densha de GO! 2 PlayStation credits)
+0x3bf = { region = [6, 3, 149, 41], shared_group = "ending.name", text = "Takashi Matsumoto" }   # 松本 隆: confirmed (MobyGames, Densha de GO! 2 PlayStation credits)
+0x3c0 = { region = [6, 3, 149, 41], shared_group = "ending.name", text = "Takeshi Kawata" }   # 河田壮司: reading? (壮司 Takeshi, also Sōji, Masashi; 河田 Kawata, also Kawada; MobyGames gives no romanisation)
 0x3c5 = { parts = [  # 協力 / 北越急行株式会社, 384×64
     { region = [2, 1, 200, 20], align = "left", shared_group = "ending.role", text = "Thanks to" },
-    { region = [50, 22, 333, 41], text = "Hokuetsu Express Co., Ltd." },   # the company's own English name
+    { region = [50, 22, 333, 41], text = "Hokuetsu Express Corporation" },   # as MobyGames, Densha de GO! 2 PlayStation credits
 ] }
 0x2ae = { align = "left", parts = [  # 協力 / 峠の釜めし本舗 おぎのや (a brush-lettered logo), 336×64
     { region = [2, 1, 150, 20], shared_group = "ending.role", text = "Thanks to" },

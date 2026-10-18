@@ -571,13 +571,16 @@ Decided for the roll:
   Bandō, Ōnogi, Yūichi, Seiichirō).
 * **Readings.** The credits print the names in kanji only, with no furigana or kana, so every
   reading is ours, taken from the kanji. Common readings are used; where a name has several
-  usual readings the catalogue marks it `reading?` with the alternatives. Uncertain: 晃
-  (Akira; Hikaru, Kō), 由浩 (Yoshihiro; Yukihiro), 英貴 (Hideki; Hidetaka), 貴和 (Takakazu;
-  Takawa, Kiwa), 一央 (Kazuhisa; Kazuhiro, Kazuo, Kazunaka), 隆史 (Takashi; Takafumi), 久美
-  (Kumi; Hisami), 操 (Misao; Midori, Sō), 鎌田 (Kamata; Kamada), 瓜田 (Urita; Uriuda), 国京
-  (Kunikyō; Kunigyō), 哲由 (Tetsuyoshi; Tetsuyuki, Akiyoshi), 村樫 (Murakashi; Muragashi), 哲士
-  (Tetsushi; Satoshi, Tetsuji), 河田壮司 (Kawata Takeshi; Kawada, Sōji, Masashi), 寿秋
-  (Toshiaki; Hisaaki), 山辺 (Yamabe; Yamanobe), 岸雄 (Kishio), 一二 (Kazuji; Ichiji,
+  usual readings the catalogue marks it `reading?` with the alternatives. Confirmed from
+  published credits: Akira Saitō, Yukihiro Moriyama, Masaya Kinoshita, Masayuki Kikuchi
+  (en.wikipedia, the shmuplations.com interview), and from MobyGames' Densha de GO! 2
+  PlayStation credits Tetsushi Abe, Yoshikazu Kamata (not Kamada), Yoshikazu Aizu, Takashi
+  Matsumoto and Norihiro Furukawa. Uncertain: 晃 of Iwai (Akira; Hikaru, Kō), 英貴 (Hideki;
+  Hidetaka), 貴和 (Takakazu; Takawa, Kiwa), 一央 (Kazuhisa; Kazuhiro, Kazuo, Kazunaka), 隆史
+  (Takashi; Takafumi; MobyGames romanises the same 隆史 "Takashi" for Takashi Nagao), 久美
+  (Kumi; Hisami), 操 (Misao; Midori, Sō), 瓜田 (Urita; Uriuda), 国京 (Kunikyō; Kunigyō), 哲由
+  (Tetsuyoshi; Tetsuyuki, Akiyoshi), 村樫 (Murakashi; Muragashi), 河田壮司 (Kawata Takeshi;
+  Kawada, Sōji, Masashi; MobyGames gives no romanisation), 寿秋 (Toshiaki; Hisaaki), 山辺 (Yamabe; Yamanobe), 岸雄 (Kishio), 一二 (Kazuji; Ichiji,
   Kazutsugu), 頭島 (Kashirajima; Tōjima, Zushima). A correction from a reliable source (the
   people themselves, a later credit with kana) replaces the reading in `en.toml` only.
 * **Roles** are translated: プロジェクトリーダー Project Leader, 企画 Planning, キャラデザイン
@@ -590,8 +593,9 @@ Decided for the roll:
   kept as written.
 * **Headers and companies**: 企画・資料協力 Planning & Reference Materials, 資料協力 Reference
   Materials, 制作協力 Production Support, 協力 Thanks to (short: the Stack Lab. card leaves it
-  84 px). The companies take their own English names: 株式会社ジェイアール東日本企画 East Japan
-  Marketing & Communications, Inc., 北越急行株式会社 Hokuetsu Express Co., Ltd.; 峠の釜めし本舗
+  84 px). The companies take their English names as MobyGames' PlayStation credits give them:
+  株式会社ジェイアール東日本企画 JR East Marketing & Communications, Inc., 北越急行株式会社
+  Hokuetsu Express Corporation; 峠の釜めし本舗
   おぎのや is romanised (Tōge no Kamameshi Honpo, Oginoya). 高速編 beside the title logo is
   "Kōsoku-hen", as in the subtitles.
 * **Sizes**: one size for every name and one for every role and header across the roll
