@@ -10,6 +10,7 @@
 //! quads over the 3D band; the credits are sprites on top.
 
 use super::Play;
+use crate::captions::{KIND_PASS, KIND_STOP, PlateLine};
 use crate::front::attract::Fade;
 use crate::screens::flow::WorldView;
 use crate::slots;
@@ -257,6 +258,8 @@ pub(super) struct Ending {
     world: bool,
     fade_in: Option<Fade>,
     fade_out: Option<FadeOut>,
+    /// Enhancement `one_line_captions`: the station plate as one line instead of its sprites.
+    plate_line: Option<PlateLine>,
     /// Enter / Esc ended it.
     pub(super) done: bool,
 }
@@ -310,6 +313,7 @@ impl Play {
             world: true,
             fade_in: None,
             fade_out: None,
+            plate_line: None,
             done: false,
         });
         self.world = WorldView::Cab;
@@ -349,7 +353,7 @@ impl Play {
         let skip = input.confirm || input.cancel;
         if (skip || e.t >= end_at) && e.t > skip_after {
             // Destroy 0x4048a0 / 0x404ca0, then 0x4040a0 kills lists 4, 5, 7.
-            self.ending_destroy();
+            self.ending_destroy(&mut e);
             self.drive.ending_kill();
             e.done = true;
             e.world = false;
@@ -378,6 +382,11 @@ impl Play {
         }
         self.interpolate = true;
         self.poll();
+        // The ending's only widget: the one-line station plate, redrawn every update.
+        self.layer.widgets.clear();
+        if let Some(line) = &e.plate_line {
+            line.draw(&mut self.layer);
+        }
         self.layer.compose(&self.bank, &mut self.canvas);
         self.canvas_dirty = true;
         let done = e.done;
@@ -489,7 +498,7 @@ impl Play {
                     e.world = false;
                 }
                 1 => {
-                    self.ending_hide_panels();
+                    self.ending_hide_panels(e);
                     self.drive.ending_place(e.idx - 1)?;
                     e.world = true;
                     let jump = if stop {
@@ -526,7 +535,7 @@ impl Play {
                     e.world = false;
                 }
                 1 if e.v >= 0.0 => {
-                    self.ending_hide_panels();
+                    self.ending_hide_panels(e);
                     self.drive.ending_place(station.max(0) as usize)?;
                     e.world = true;
                     e.v = (f64::from(jump) * JUMP_SCALE) as f32;
@@ -561,13 +570,25 @@ impl Play {
     }
 
     /// The station plate (0x417ab0) and the clock panel (0x417410) of station `e.idx`.
-    fn ending_panels(&mut self, e: &Ending, t: &EndingTables, stop: bool) {
+    fn ending_panels(&mut self, e: &mut Ending, t: &EndingTables, stop: bool) {
         let k = usize::from(stop);
         let l = &mut self.layer;
         let stage = self.drive.rules().stage().0;
         let ids = &self.cab.hud.tables().stage_station_ids;
         let id = ids.get(stage).and_then(|v| v.get(e.idx)).copied();
-        if let Some(&(name, width)) = id.and_then(|i| t.plates.get(usize::from(i))) {
+        // Enhancement `one_line_captions`: the plate is the caption set (name, 駅, word), so
+        // with a translation it is the in-game caption's line, at its size.
+        let kind = if stop { KIND_STOP } else { KIND_PASS };
+        e.plate_line = id.and_then(|i| {
+            self.cab
+                .captions()
+                .plate_line(usize::from(i), kind, t.plate_y)
+        });
+        if e.plate_line.is_some() {
+            for s in SLOT_PLATE..SLOT_PLATE + 3 {
+                slots::clear(l, s);
+            }
+        } else if let Some(&(name, width)) = id.and_then(|i| t.plates.get(usize::from(i))) {
             let x = 320 - (width + 64 + 32) / 2;
             let y = t.plate_y;
             slots::set(l, SLOT_PLATE, name, (x, y), 4, 3);
@@ -638,7 +659,8 @@ impl Play {
         }
     }
 
-    fn ending_hide_panels(&mut self) {
+    fn ending_hide_panels(&mut self, e: &mut Ending) {
+        e.plate_line = None;
         for s in PANEL_SLOTS.chain(SLOT_PLATE..SLOT_PLATE + 3) {
             slots::clear(&mut self.layer, s);
         }
@@ -646,8 +668,8 @@ impl Play {
 
     /// Destroy 0x4048a0 / 0x404ca0: panels hidden, the music released, every non-keep slot
     /// cleared.
-    fn ending_destroy(&mut self) {
-        self.ending_hide_panels();
+    fn ending_destroy(&mut self, e: &mut Ending) {
+        self.ending_hide_panels(e);
         if let Some(s) = self.sound.as_mut() {
             s.release(BGM_FULL);
         }
@@ -686,5 +708,34 @@ impl Play {
         self.start_ranking_now(true, &mut sfx);
         self.play(&sfx);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Against the user's data: the ending's plate is the caption set (name sprites, 駅 and
+    /// the 通過 / 停車 words), so the in-game caption's one line stands in for it.
+    #[test]
+    fn plate_is_the_caption_set() {
+        if std::env::var_os("DDG_DATA_DIR").is_none() {
+            eprintln!("skipped: DDG_DATA_DIR not set");
+            return;
+        }
+        let data = crate::scene::GameData::from_env().unwrap();
+        let exe_bytes = data.exe().unwrap();
+        let exe = Exe::parse(&exe_bytes).unwrap();
+        let t = EndingTables::read(&exe).unwrap();
+        let hud = ddg_formats::hud::HudTables::read(&exe).unwrap();
+        let cab = ddg_formats::cab_hud::CabTables::read(&exe).unwrap();
+        let names: Vec<(i16, i16)> = hud
+            .station_names
+            .iter()
+            .map(|n| (n.plain as i16, n.width as i16))
+            .collect();
+        assert_eq!(t.plates, names);
+        assert_eq!(t.station_word, cab.caption_station);
+        assert_eq!(t.kind_words[4..6], cab.caption_words[4..6]);
     }
 }

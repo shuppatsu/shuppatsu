@@ -268,6 +268,11 @@ impl CabHud {
         }
     }
 
+    /// The captions (for the ending's station plate: [`Captions::plate_line`]).
+    pub fn captions(&self) -> &Captions {
+        &self.captions
+    }
+
     /// Enhancement `board_names`: romaji under the route board's station names. `tbl_texts`:
     /// translated texts by tilemap id (the station names are their name sprites' texts).
     pub fn use_board_names(

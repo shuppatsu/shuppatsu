@@ -329,6 +329,30 @@ struct Line {
     fill: Option<([f32; 4], Paint)>,
 }
 
+impl Line {
+    fn draw(&self, layer: &mut SpriteLayer, anchor: Anchor) {
+        layer.anchored(anchor, |layer| {
+            if let Some((rect, paint)) = self.fill {
+                layer.add_widget(LAYER, rect, WidgetKind::Fill(paint));
+            }
+            layer.add_styled_text(LAYER, self.rect, &self.text, self.style);
+        });
+    }
+}
+
+/// Enhancement `one_line_captions` outside the caption tasks: the ending's station plate
+/// (0x417ab0: the caption set's name, 駅 and word sprites) as the in-game caption's one line,
+/// centred. Its owner draws it every update while the plate shows.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlateLine(Line);
+
+impl PlateLine {
+    /// Draws the line, centred on the 640-wide screen like the plate's sprites.
+    pub fn draw(&self, layer: &mut SpriteLayer) {
+        self.0.draw(layer, Anchor::Centre);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Until {
     Ticks(i32),
@@ -396,12 +420,7 @@ impl Task {
         if let Some(l) = self.line.as_ref().filter(|_| !hidden) {
             // Anchored with the task's slots (enhancement `wide_hud`).
             let anchor = slots.first().map_or(Anchor::Centre, |&s| layer.anchors[s]);
-            layer.anchored(anchor, |layer| {
-                if let Some((rect, paint)) = l.fill {
-                    layer.add_widget(LAYER, rect, WidgetKind::Fill(paint));
-                }
-                layer.add_styled_text(LAYER, l.rect, &l.text, l.style);
-            });
+            l.draw(layer, anchor);
         }
         let alive = match &mut self.until {
             Until::Ticks(t) => {
@@ -498,6 +517,23 @@ impl Captions {
     /// Draws captions and banners as one translated line from now on ([`OneLine`]).
     pub fn use_one_line(&mut self, one_line: OneLine) {
         self.one_line = Some(one_line);
+    }
+
+    /// The one-line text for a caption-set plate of station `id` and `kind` (4 通過, 5 停車)
+    /// with its sprites' top at `y`, centred on x = 320 ([`PlateLine`]). `None` keeps the
+    /// sprites: no translation drawn, the setting off, or no phrase for the kind.
+    pub fn plate_line(&self, id: usize, kind: u32, y: i16) -> Option<PlateLine> {
+        let rect = [
+            320.0 - BANNER_LINE_W / 2.0,
+            f32::from(y),
+            BANNER_LINE_W,
+            0.0,
+        ];
+        let k = (kind & 0xf) as usize;
+        self.one_line
+            .as_ref()
+            .and_then(|o| o.line(id, k, false, rect, Align::Center))
+            .map(PlateLine)
     }
 
     /// Draws the translated landmark names under the landmark captions ([`LandmarkLines`]).
@@ -1016,6 +1052,62 @@ mod tests {
         // Each set in its own font role.
         assert_eq!(style.font, FontRole::Display);
         assert_eq!(layer.slots[SLOT_BANNER].tilemap, -1);
+    }
+
+    /// The ending's station plate: the in-game caption's line (same text, size, colours and
+    /// font), centred on the screen; no line without the enhancement or without a phrase.
+    #[test]
+    fn plate_line_is_the_caption_line_centred() {
+        use ddg_render::sprites::WidgetKind;
+        let look = Look {
+            letter: 0x1c,
+            outline: Some(0x1d),
+            backdrop: None,
+            cap: 21.0,
+            height: 32.0,
+        };
+        let mut phrases: [Option<String>; 7] = Default::default();
+        phrases[KIND_STOP as usize] = Some("{name} · Stop".into());
+        phrases[KIND_PASS as usize] = Some("{name} · Pass".into());
+        let mut c = Captions::new(defs());
+        assert!(c.plate_line(1, KIND_STOP, 0x40).is_none());
+        c.use_one_line(OneLine {
+            names: [(1, "Ōmagari".to_owned())].into_iter().collect(),
+            phrases,
+            looks: [look, Look { cap: 9.0, ..look }],
+            fonts: [FontRole::Body, FontRole::Display],
+        });
+        let text = |l: &SpriteLayer| match &l.widgets[..] {
+            [w] => match &w.kind {
+                WidgetKind::Text { text, style } => (text.clone(), w.rect, *style),
+                k => panic!("{k:?}"),
+            },
+            w => panic!("{w:?}"),
+        };
+        let mut layer = SpriteLayer::default();
+        c.caption(&mut layer, 1, DISTANCE | KIND_STOP, 20, 0.0);
+        for _ in 0..7 {
+            layer.reset_transient();
+            c.update(&mut layer, false, 0.0);
+        }
+        let (_, _, caption) = text(&layer);
+        layer.reset_transient();
+        c.plate_line(1, KIND_STOP, 0x40).unwrap().draw(&mut layer);
+        let (t, rect, style) = text(&layer);
+        assert_eq!(t, "Ōmagari · Stop");
+        assert_eq!(rect, [39.0, 63.0, 562.0, 34.0]);
+        assert_eq!(rect[0] + rect[2] / 2.0, 320.0);
+        assert_eq!(
+            style,
+            TextStyle {
+                align: Align::Center,
+                ..caption
+            }
+        );
+        let pass = c.plate_line(1, KIND_PASS, 0x40).unwrap();
+        assert_eq!(pass.0.text, "Ōmagari · Pass");
+        assert!(c.plate_line(2, KIND_STOP, 0x40).is_none());
+        assert!(c.plate_line(1, 3, 0x40).is_none());
     }
 
     #[test]
