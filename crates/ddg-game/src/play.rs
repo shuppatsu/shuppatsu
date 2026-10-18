@@ -513,7 +513,12 @@ impl Play {
         let band = self.band_top((w, h));
         let band_aspect = w as f32 / (h as f32 * (1.0 - band)).max(1.0);
         Self::cab_mask(&self.scene, self.ending.as_ref(), band_aspect, &mut effects);
-        Self::bottom_band(&self.scene, self.cab.bottom_band(), band_aspect, &mut effects);
+        Self::bottom_band(
+            &self.scene,
+            self.cab.bottom_band(),
+            band_aspect,
+            &mut effects,
+        );
         self.weather
             .compose(&self.scene, &self.drive, band_aspect, 1.0, &mut effects);
         Self::ending_masks(self.ending.as_ref(), &mut effects);
