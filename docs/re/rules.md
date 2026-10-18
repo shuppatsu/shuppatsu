@@ -441,6 +441,12 @@ through the bonus section and couples on stages 2 and 17–19 (`tests/autopilot.
 Not traced in the original yet. A Wine capture reached and won the stage-17 minigame (a
 port-autopilot input script replayed by a hook that counts ticks across legs; its stop errors
 at stations 6, 10, 13 and 16 matched the port to 0.1 mm; hud.md §3.16).
+Its marks reached 13 by station 15 (on-time passes at 1, 2, 3, 8, 9, 12, 14, 15 from the
+trace's `pass_streak`, stops 1 + 2 + 2), so it placed the 8-car rows 17/18; the port's replay of
+the same script applied the inputs one tick earlier against the clock, missed four on-time
+pass windows (9 marks) and placed rows 20/21. With the inputs one tick later the port has the
+same 13 marks and the same waiting set (`out/explain/coupling_panel/cap17_port_inputs_aligned.txt`,
+`compare_v2_original_vs_port_aligned.png`).
 
 ## 8. Other rule events
 

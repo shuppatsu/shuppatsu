@@ -660,10 +660,15 @@ flag and quad and move its top edge (0x404110, 0x404920, 0x404a80, 0x4042b0; men
 coupling after an ending in the same session would see the edge where the ending left it
 (**guess**, not run). Port: `coupling_hud.rs` (`CouplingHud::bottom_band`),
 `play/cab_mask.rs` (`bottom_band`, before the weather like the top mask), `hud.rs`
-(`HudState::bottom_band`). Widescreen (port): the band keeps the 4:3 width (virtual x 0..496,
-the centred design), and the coupling slots are cut at the design's edges on the enhanced
-layout's wide canvas (`SpriteLayer::frame`), so the panel is the same 4:3 picture in both
-layouts and the train ends at the band's edge as it ends at the screen's in the original.
+(`HudState::bottom_band`). Widescreen (port): with `wide_coupling_band` (default on, docs/settings.md) the band spans the
+visible width; off, it keeps the 4:3 width (virtual x 0..496, the centred design). Either way
+the coupling slots are cut at the design's edges on the enhanced layout's wide canvas
+(`SpriteLayer::frame`), so the panel is the same 4:3 picture in both layouts: past x 640 the
+train art (to x 832 at 17 m) ends in a cut through a car and a wheel that the original never
+shows (shots `wideband_train_*`). The 持ち時間 label (slot 0x1c) stays up: Coupling_Run only
+sets `0x856d1c = 0`, `Hud_Update` skips the readout (0x4100a5) and nothing clears the label,
+while the minigame's timer writes the digits (`HudState::remaining_label_kept`). `NaviAnim`
+is gated on the flag (`Coupling::bottom_band`; cab.rs and the stage sounds).
 Wine (stage 17 from its start at difficulty 1, a port-autopilot input script replayed by the
 hook; `out/explain/coupling_panel/original_*.png`): rows 322..479 black across x 0..639 from
 the intro to the outro, no dial, 0x180 blinking without a box at 8.1 and 1.35 m, and the train
@@ -988,8 +993,9 @@ sprite or a rect-layer fan; it is the first thing the drive task draws:
 9. `NaviAnim(0)` (which hides the signal at the obstacle start) does nothing when
    `0x84c0f8 == 1`. The flag is the 3D bottom band (§3.16: the coupling minigame, the
    opening's phase E, the endings), so neither the signal hide nor the navigator reactions
-   (§3.17 creation) happen during the minigame; the port does not gate them on it yet (the
-   engine always hides).
+   (§3.17 creation) happen during the minigame. The port skips the reactions under the band
+   (`Coupling::bottom_band`); the obstacle hide needs no gate, since 0x40c4e0 does not run
+   inside Coupling_Run (nor the engine's drive step in that phase).
    Separately, the obstacle-recovery hold length (and with it the tick of its `(0, 0, 0, 5)`
    green) is a guess (rules.md §12).
 10. The continue screen: 0x4080d0 waits for the time-up popup to end (`0x855ff8 & 0x400`,
