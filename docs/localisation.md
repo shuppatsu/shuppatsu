@@ -628,6 +628,24 @@ Decided for the roll:
   `ending.name` are names, `ending.role` roles and headers, the rest companies and 高速編; " · "
   separates names in one part); the data tests `play::ending::roll_tests` check that both
   endings fit without overlaps and that every lettering pixel is a part, kept art or dropped.
+* **Kanji after the names** (setting `staff_kanji`, on; only with the text roll above), as
+  MobyGames writes credits ("Yuji Iwasaki (岩崎 雄二)"): each person's name is followed on its
+  line by the name in kanji as the credit art writes it, family name first, at the role size
+  (11.25 px capitals), baseline on baseline with the name, one name-size space after it, in a
+  dimmer white (palette 0x17 index 78, d0d0d0, beside the lettering's index 7, f8f8f8: the
+  credits' fade palette at exe 0x488290). Companies, headers and the title card get none. The
+  kanji are data: a `kanji` field on each name part of the credits' `[tbl]` entries (" · "
+  between names as in `text`; the catalogue checks the count), checked against the art, which
+  has 菊池 正行 (Kikuchi; the shmuplations.com interview writes 菊地). The form is
+  `[caption]` `staff_kanji` (`"{kanji}"` in en.toml; `"({kanji})"` gives MobyGames'
+  parentheses). The role column still clears the widest name of the roll, now with its kanji
+  (Kazuhiro Kawabata 川端 和博), so it moves right; to keep every screen inside the 16 px margins
+  with the person's roles unwrapped (Characters, Layout, Editing is 209 px) the names fit at 23
+  px instead of 24 (22 with parentheses). Only companies and headers above the names wrap
+  (the JR East name; Planning & Reference Materials), and a screen with a logo in the role
+  column that still does not fit clears its own names only (the Stack Lab. logo, 235 px,
+  beside Shimizu, Tsukano and Yamabe). The data test checks both endings with and without the
+  kanji, bare and in parentheses.
 * **Sprites** (setting off, or a font without the text): one size for every name and one for
   every role and header across the roll (`shared_group` `ending.name` / `ending.role`), so the
   cards read as one list; the longest name sets the name size, below the kanji's.
@@ -635,7 +653,7 @@ Decided for the roll:
 Shots: `ddg-game play 1 --ending full --lang en|ja --size 2560x1440 --shot <tick>:<file>`, one
 tick per credit (credit k ≥ 1 is up from tick 180 + 148 (k − 1) for 148 ticks), in
 out/explain/staff_roll/ (sprites) and out/explain/staff_roll_v2/ (text; `--no-one-line-captions`
-for the sprites).
+for the sprites); out/explain/staff_roll_kanji/ with the kanji (`--no-staff-kanji` for without).
 
 ## Decided: a font, M+ 2 Medium
 

@@ -251,6 +251,7 @@ HUD, signal and station captions and messages. Some extras, all on by default:
   announcements and the navigator.
 * `one_line_captions`, `landmark_names`, `board_names`: station captions as one line, English
   names under the landmark plates, romaji under the route board.
+* `staff_kanji`: the staff roll's names followed by their kanji, as in the original credits.
 
 The text uses the bundled M+ 2 font; `--font` / `font` takes your own TTF/OTF list.
 Translations live in [`locales/`](locales/) (see [docs/localisation.md](docs/localisation.md)
