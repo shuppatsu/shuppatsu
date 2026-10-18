@@ -523,6 +523,10 @@ pub struct SpriteLayer {
     pub anchors: [Anchor; SLOT_COUNT],
     /// Anchor given to widgets and fans as they are added ([`SpriteLayer::anchored`]).
     pub pen: Anchor,
+    /// Slots cut at the edges of the 4:3 design (original x 0..640, moved with the slot's
+    /// anchor) on a wide canvas, where the original's screen edge cut them; rebuilt every tick
+    /// by their owner like the widgets ([`SpriteLayer::frame`]).
+    pub framed: Vec<usize>,
 }
 
 impl Default for SpriteLayer {
@@ -537,6 +541,7 @@ impl Default for SpriteLayer {
             wide: 0,
             anchors: [Anchor::Centre; SLOT_COUNT],
             pen: Anchor::Centre,
+            framed: Vec::new(),
         }
     }
 }
@@ -549,6 +554,14 @@ impl SpriteLayer {
         }
         self.fans.clear();
         self.widgets.clear();
+        self.framed.clear();
+    }
+
+    /// Cuts `slots` at the edges of the 4:3 design on a wide canvas this tick, as the
+    /// original's 640-pixel screen cut them (a picture partly off the screen, like the coupling
+    /// minigame's partner train). No effect on the 4:3 canvas, whose edges are the design's.
+    pub fn frame(&mut self, slots: impl IntoIterator<Item = usize>) {
+        self.framed.extend(slots);
     }
 
     /// Adds a [`Widget`], anchored as [`SpriteLayer::anchored`] says (else `Centre`).
@@ -665,7 +678,11 @@ impl SpriteLayer {
             for (i, slot) in self.slots.iter().enumerate().rev() {
                 if slot.layer == layer {
                     let shift = self.anchor_shift(self.anchors[i]);
-                    self.blit(bank, slot, sx, sy, shift, c, canvas);
+                    if self.wide > 0 && self.framed.contains(&i) {
+                        self.blit_framed(bank, slot, (sx, sy), shift, c, canvas);
+                    } else {
+                        self.blit(bank, slot, sx, sy, shift, c, canvas);
+                    }
                 }
             }
             for w in self.widgets.iter().filter(|w| w.layer == layer) {
@@ -675,6 +692,54 @@ impl SpriteLayer {
         }
         for fan in &self.fans {
             fill_fan(fan, sx, sy, self.anchor_shift(fan.anchor), c, canvas);
+        }
+    }
+
+    /// [`Self::blit`] cut at the 4:3 design's edges ([`SpriteLayer::frame`]): the canvas
+    /// columns outside them, on the rows the slot covers, are put back as they were.
+    fn blit_framed(
+        &self,
+        bank: &SpriteBank,
+        slot: &Slot,
+        (sx, sy): (i32, i32),
+        shift: i32,
+        c: Canvas,
+        canvas: &mut [u8],
+    ) {
+        let Some(map) = usize::try_from(slot.tilemap)
+            .ok()
+            .and_then(|id| bank.tilemaps.get(id))
+        else {
+            return;
+        };
+        let s = c.s as i32;
+        let rows = if slot.h <= 0 {
+            i32::from(map.height)
+        } else {
+            i32::from(slot.h)
+        };
+        let top = (i32::from(slot.y) + sy) * s;
+        let ys = top.clamp(0, c.h as i32)..(top + rows * TILE_SIZE as i32 * s).clamp(0, c.h as i32);
+        let (x0, x1) = (
+            shift.clamp(0, c.w as i32) as usize,
+            (shift + (CANVAS_W * c.s) as i32).clamp(0, c.w as i32) as usize,
+        );
+        let row = |y: i32| y as usize * c.w * 4;
+        let saved: Vec<(Vec<u8>, Vec<u8>)> = ys
+            .clone()
+            .map(|y| {
+                let r = row(y);
+                (
+                    canvas[r..r + x0 * 4].to_vec(),
+                    canvas[r + x1 * 4..r + c.w * 4].to_vec(),
+                )
+            })
+            .collect();
+        self.blit(bank, slot, sx, sy, shift, c, canvas);
+        for (y, (left, right)) in ys.zip(saved) {
+            let r = row(y);
+            canvas[r..r + x0 * 4].copy_from_slice(&left);
+            canvas[r + x1 * 4..r + c.w * 4].copy_from_slice(&right);
         }
     }
 
@@ -1932,6 +1997,45 @@ mod tests {
         l.compose(&b, &mut c2);
         assert_eq!(at(&c2, 128, 20), green);
         assert_eq!(at(&c2, 0, 20), [0; 4]);
+    }
+
+    #[test]
+    fn framed_slots_stop_at_the_designs_edges() {
+        let b = bank(1);
+        let mut l = SpriteLayer::default();
+        l.palettes[0] = Some(palette());
+        // 16:9 at 1×: 213 canvas pixels wider, the design at x 106..746.
+        assert!(l.fit_window(1920, 1080));
+        let shift = l.anchor_shift(Anchor::Centre) as usize;
+        // A 16-px tile from design x 632 (over the right edge) and one from x −8 (left edge),
+        // the right one over another slot that must stay whole.
+        l.slots[0] = Slot::new(0, 632, 10, 0, 0, true);
+        l.slots[1] = Slot::new(0, -8, 10, 0, 0, true);
+        l.slots[2] = Slot::new(0, 640, 20, 0, 3, true);
+        let (w, h) = l.canvas_size();
+        let draw = |l: &SpriteLayer| {
+            let mut c = vec![0; w * h * 4];
+            l.compose(&b, &mut c);
+            c
+        };
+        let px = |c: &[u8], x: usize, y: usize| -> [u8; 4] {
+            c[(y * w + x) * 4..][..4].try_into().unwrap()
+        };
+        let green = [0, 255, 0, 255];
+        let before = draw(&l);
+        assert_eq!(px(&before, shift + 645, 12), green);
+        assert_eq!(px(&before, shift - 5, 12), green);
+        l.frame([0, 1]);
+        let c = draw(&l);
+        assert_eq!(px(&c, shift + 639, 12), green);
+        assert_eq!(px(&c, shift + 640, 12), [0; 4]);
+        assert_eq!(px(&c, shift, 12), green);
+        assert_eq!(px(&c, shift - 1, 12), [0; 4]);
+        // The slot underneath, outside the design, is untouched.
+        assert_eq!(px(&c, shift + 645, 22), green);
+        // Cleared with the transient elements.
+        l.reset_transient();
+        assert!(l.framed.is_empty());
     }
 
     #[test]
