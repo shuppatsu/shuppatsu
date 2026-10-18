@@ -142,6 +142,10 @@ settings! {
     /// With a translation: captions and banners as one line of text (localisation.md); off =
     /// the sprites translated one by one.
     one_line_captions = true;
+    /// With a translation and the staff roll as text (`one_line_captions`): each person's
+    /// name in kanji after the English, smaller and dimmer (localisation.md, "Staff roll");
+    /// off = the English alone.
+    staff_kanji = true;
     /// With a translation: the landmark's name under its kanji plate (localisation.md); off =
     /// the plate alone.
     landmark_names = true;

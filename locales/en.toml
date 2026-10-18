@@ -487,117 +487,119 @@ name = "English"
 # 0x15e) stay. With `one_line_captions` the ending draws these texts itself, not the sprites
 # (play/staff_roll.rs): `ending.name` parts are names, `ending.role` roles and headers, parts
 # without a shared group companies and 高速編, " · " separates names in one part, `\n` role
-# lines; the regions then only give the left column's position.
+# lines; the regions then only give the left column's position. `kanji` is a person's name as
+# the art writes it (family name first, " · " between names as in `text`, checked against the
+# credit art: 菊池, not 菊地); with `staff_kanji` the roll draws it after the English.
 0x3a8 = { region = [300, 2, 163, 42], text = "Kōsoku-hen" }   # 高速編 beside the 電車でGO!2 logo, over STAFF; 464×96, 高速編 ink x 318–418, y 6–39
 0x3a9 = { align = "left", parts = [  # 齋藤 晃 / プロジェクトリーダー / 企画・キャラデザイン, 352×48
-    { region = [5, 3, 146, 41], shared_group = "ending.name", text = "Akira Saitō" },   # 晃 Akira: confirmed (Akira Saito, en.wikipedia "Densha de Go!" and the shmuplations.com developer interview)
+    { region = [5, 3, 146, 41], shared_group = "ending.name", text = "Akira Saitō", kanji = "齋藤 晃" },   # 晃 Akira: confirmed (Akira Saito, en.wikipedia "Densha de Go!" and the shmuplations.com developer interview)
     { region = [158, 2, 193, 44], shared_group = "ending.role", text = "Project Leader\nPlanning, Character Design" },
 ] }
 0x3aa = { align = "left", parts = [  # 森山由浩 / MAP設計・編集 / MAP作成・企画
-    { region = [5, 3, 145, 41], shared_group = "ending.name", text = "Yukihiro Moriyama" },   # 由浩 Yukihiro: confirmed (en.wikipedia "Densha de Go!", shmuplations.com interview)
+    { region = [5, 3, 145, 41], shared_group = "ending.name", text = "Yukihiro Moriyama", kanji = "森山 由浩" },   # 由浩 Yukihiro: confirmed (en.wikipedia "Densha de Go!", shmuplations.com interview)
     { region = [158, 4, 193, 41], shared_group = "ending.role", text = "Map Design, Editing\nMap Creation, Planning" },
 ] }
 0x3ab = { align = "left", parts = [  # 石井英貴 / モデリング・TEXTURE / キャラ管理・構成・編集
-    { region = [4, 3, 144, 41], shared_group = "ending.name", text = "Hideki Ishii" },   # 英貴: reading? (Hideki; also Hidetaka)
+    { region = [4, 3, 144, 41], shared_group = "ending.name", text = "Hideki Ishii", kanji = "石井 英貴" },   # 英貴: reading? (Hideki; also Hidetaka)
     { region = [152, 2, 199, 42], shared_group = "ending.role", text = "Modelling, Textures\nCharacters, Layout, Editing" },
 ] }
 0x3ac = { align = "left", parts = [  # 木下昌也 / (mark)おさる 高速演算処理 / MAPデータ表示処理
-    { region = [3, 3, 144, 41], shared_group = "ending.name", text = "Masaya Kinoshita" },   # confirmed (shmuplations.com interview)
+    { region = [3, 3, 144, 41], shared_group = "ending.name", text = "Masaya Kinoshita", kanji = "木下 昌也" },   # confirmed (shmuplations.com interview)
     # おさる ("monkey", a nickname, after a red crossed mark that goes with it) and the roles
     { region = [152, 0, 199, 47], shared_group = "ending.role", text = "\"Osaru\", Fast Calculation\nMap Data Display" },
 ] }
 0x3ad = { align = "left", parts = [  # 菊池正行 / ソフト / 運転特性・演出 / 広報・雑務MER
-    { region = [3, 3, 145, 41], shared_group = "ending.name", text = "Masayuki Kikuchi" },   # 菊地 正行: confirmed (shmuplations.com interview)
+    { region = [3, 3, 145, 41], shared_group = "ending.name", text = "Masayuki Kikuchi", kanji = "菊池 正行" },   # confirmed (shmuplations.com interview, which writes 菊地; the art has 菊池)
     { region = [156, 3, 60, 21], shared_group = "ending.role", text = "Software" },
     { region = [219, 2, 132, 44], shared_group = "ending.role", text = "Train Handling, Effects\nPR, Odd Jobs, MER" },   # MER: Latin in the art, meaning unknown; kept
 ] }
 0x3ae = { align = "left", parts = [  # 小川浩二 / モデリング・TEXTURE
-    { region = [6, 3, 141, 41], shared_group = "ending.name", text = "Kōji Ogawa" },
+    { region = [6, 3, 141, 41], shared_group = "ending.name", text = "Kōji Ogawa", kanji = "小川 浩二" },
     { region = [152, 12, 199, 24], shared_group = "ending.role", text = "Modelling, Textures" },
 ] }
 0x3af = { align = "left", parts = [  # 中桐誠一郎 / キャラクター 作成
-    { region = [3, 3, 173, 41], shared_group = "ending.name", text = "Seiichirō Nakagiri" },
+    { region = [3, 3, 173, 41], shared_group = "ending.name", text = "Seiichirō Nakagiri", kanji = "中桐 誠一郎" },
     { region = [182, 12, 169, 24], shared_group = "ending.role", text = "Character Creation" },
 ] }
 0x3b0 = { align = "left", parts = [  # 馬場貴和 / モデリング・TEXTURE / キャラクター 作成
-    { region = [6, 3, 140, 41], shared_group = "ending.name", text = "Takakazu Baba" },   # 貴和: reading? (Takakazu; also Takawa, Kiwa)
+    { region = [6, 3, 140, 41], shared_group = "ending.name", text = "Takakazu Baba", kanji = "馬場 貴和" },   # 貴和: reading? (Takakazu; also Takawa, Kiwa)
     { region = [152, 3, 199, 43], shared_group = "ending.role", text = "Modelling, Textures\nCharacter Creation" },
 ] }
 0x3b1 = { align = "left", parts = [  # 板倉一央 / モデリング・TEXTURE / MAP作成・編集
-    { region = [5, 3, 142, 41], shared_group = "ending.name", text = "Kazuhisa Itakura" },   # 一央: reading? (Kazuhisa; also Kazuhiro, Kazuo, Kazunaka)
+    { region = [5, 3, 142, 41], shared_group = "ending.name", text = "Kazuhisa Itakura", kanji = "板倉 一央" },   # 一央: reading? (Kazuhisa; also Kazuhiro, Kazuo, Kazunaka)
     { region = [152, 3, 199, 43], shared_group = "ending.role", text = "Modelling, Textures\nMap Creation, Editing" },
 ] }
 0x3c8 = { align = "left", parts = [  # 石井 隆史 / ソフト / デモ表示処理
-    { region = [3, 3, 146, 41], shared_group = "ending.name", text = "Takashi Ishii" },   # 隆史: reading? (Takashi; also Takafumi; MobyGames romanises the same 隆史 "Takashi" for 長尾 隆史 Takashi Nagao)
+    { region = [3, 3, 146, 41], shared_group = "ending.name", text = "Takashi Ishii", kanji = "石井 隆史" },   # 隆史: reading? (Takashi; also Takafumi; MobyGames romanises the same 隆史 "Takashi" for 長尾 隆史 Takashi Nagao)
     { region = [156, 3, 58, 21], shared_group = "ending.role", text = "Software" },
     { region = [217, 23, 134, 23], shared_group = "ending.role", text = "Demo Display" },
 ] }
 0x3b2 = { align = "left", parts = [  # 榎本幸司 / メカ / 筐体設計
-    { region = [3, 3, 143, 41], shared_group = "ending.name", text = "Kōji Enomoto" },
+    { region = [3, 3, 143, 41], shared_group = "ending.name", text = "Kōji Enomoto", kanji = "榎本 幸司" },
     { region = [160, 3, 80, 21], shared_group = "ending.role", text = "Mechanical" },
     { region = [245, 13, 106, 23], shared_group = "ending.role", text = "Cabinet Design" },
 ] }
 0x3b3 = { align = "left", parts = [  # 川端和博 / メカ / 電気設計
-    { region = [3, 3, 144, 41], shared_group = "ending.name", text = "Kazuhiro Kawabata" },
+    { region = [3, 3, 144, 41], shared_group = "ending.name", text = "Kazuhiro Kawabata", kanji = "川端 和博" },
     { region = [160, 3, 80, 21], shared_group = "ending.role", text = "Mechanical" },
     { region = [245, 12, 106, 24], shared_group = "ending.role", text = "Electrical Design" },
 ] }
 0x3b4 = { align = "left", parts = [  # 坂東和彦 / ハード / ハード設計
-    { region = [5, 3, 142, 41], shared_group = "ending.name", text = "Kazuhiko Bandō" },
+    { region = [5, 3, 142, 41], shared_group = "ending.name", text = "Kazuhiko Bandō", kanji = "坂東 和彦" },
     { region = [157, 4, 82, 22], shared_group = "ending.role", text = "Hardware" },
     { region = [241, 15, 110, 21], shared_group = "ending.role", text = "Hardware Design" },
 ] }
 0x3b5 = { align = "left", parts = [  # 溝辺久美 / デザイン / GD (Latin, stays)
-    { region = [3, 3, 145, 41], shared_group = "ending.name", text = "Kumi Mizobe" },   # 久美: reading? (Kumi; also Hisami)
+    { region = [3, 3, 145, 41], shared_group = "ending.name", text = "Kumi Mizobe", kanji = "溝辺 久美" },   # 久美: reading? (Kumi; also Hisami)
     { region = [159, 4, 104, 22], shared_group = "ending.role", text = "Design" },
 ] }
 0x3b6 = { align = "left", parts = [  # 山中 操 / デザイン / ID (Latin, stays)
-    { region = [5, 3, 144, 41], shared_group = "ending.name", text = "Misao Yamanaka" },   # 操: reading? (Misao; also Midori, Sō)
+    { region = [5, 3, 144, 41], shared_group = "ending.name", text = "Misao Yamanaka", kanji = "山中 操" },   # 操: reading? (Misao; also Midori, Sō)
     { region = [159, 4, 104, 22], shared_group = "ending.role", text = "Design" },
 ] }
 0x3b7 = { align = "left", parts = [  # 古川典裕 / サウンド / 作曲
-    { region = [3, 3, 144, 41], shared_group = "ending.name", text = "Norihiro Furukawa" },   # confirmed (MobyGames, Densha de GO! 2 PlayStation credits); also exotica.org.uk
+    { region = [3, 3, 144, 41], shared_group = "ending.name", text = "Norihiro Furukawa", kanji = "古川 典裕" },   # confirmed (MobyGames, Densha de GO! 2 PlayStation credits); also exotica.org.uk
     { region = [154, 5, 108, 22], shared_group = "ending.role", text = "Sound" },
     { region = [268, 15, 83, 22], shared_group = "ending.role", text = "Music" },
 ] }
 0x3b8 = { align = "left", parts = [  # 鎌田良和 / サウンド / SE
-    { region = [3, 3, 143, 41], shared_group = "ending.name", text = "Yoshikazu Kamata" },   # confirmed (MobyGames, Densha de GO! 2 PlayStation credits)
+    { region = [3, 3, 143, 41], shared_group = "ending.name", text = "Yoshikazu Kamata", kanji = "鎌田 良和" },   # confirmed (MobyGames, Densha de GO! 2 PlayStation credits)
     { region = [154, 5, 108, 22], shared_group = "ending.role", text = "Sound" },
     { region = [268, 16, 83, 22], shared_group = "ending.role", text = "SFX" },
 ] }
 0x3c7 = { align = "left", parts = [  # 瓜田幸治 / サウンド / SE指導
-    { region = [1, 3, 144, 41], shared_group = "ending.name", text = "Kōji Urita" },   # 瓜田: reading? (Urita; also Uriuda)
+    { region = [1, 3, 144, 41], shared_group = "ending.name", text = "Kōji Urita", kanji = "瓜田 幸治" },   # 瓜田: reading? (Urita; also Uriuda)
     { region = [154, 5, 96, 22], shared_group = "ending.role", text = "Sound" },
     { region = [251, 15, 100, 23], shared_group = "ending.role", text = "SFX Advisor" },
 ] }
 0x3b9 = { align = "left", parts = [  # 国京砂織 / サウンド / 音声
-    { region = [1, 3, 144, 41], shared_group = "ending.name", text = "Saori Kunikyō" },   # 国京: reading? (Kunikyō; also Kunigyō)
+    { region = [1, 3, 144, 41], shared_group = "ending.name", text = "Saori Kunikyō", kanji = "国京 砂織" },   # 国京: reading? (Kunikyō; also Kunigyō)
     { region = [154, 5, 108, 22], shared_group = "ending.role", text = "Sound" },
     { region = [268, 15, 83, 23], shared_group = "ending.role", text = "Voice" },
 ] }
 0x3c6 = { align = "left", parts = [  # 菊池正行・山路哲由 / 音声, 400×48 (the ・ between the names stays)
-    { region = [3, 3, 148, 41], shared_group = "ending.name", text = "Masayuki Kikuchi" },
-    { region = [178, 3, 146, 41], shared_group = "ending.name", text = "Tetsuyoshi Yamaji" },   # 哲由: reading? (Tetsuyoshi; also Tetsuyuki, Akiyoshi; shmuplations.com's interview gives "Tetsuyu Yamaro", unconfirmed)
+    { region = [3, 3, 148, 41], shared_group = "ending.name", text = "Masayuki Kikuchi", kanji = "菊池 正行" },
+    { region = [178, 3, 146, 41], shared_group = "ending.name", text = "Tetsuyoshi Yamaji", kanji = "山路 哲由" },   # 哲由: reading? (Tetsuyoshi; also Tetsuyuki, Akiyoshi; shmuplations.com's interview gives "Tetsuyu Yamaro", unconfirmed)
     { region = [337, 12, 62, 24], shared_group = "ending.role", text = "Voice" },
 ] }
 0x3c3 = { align = "left", parts = [  # 企画・資料協力 / 村樫泰雄 阿部和政, 288×64
     { region = [2, 1, 284, 22], align = "center", backdrop = "solid", shared_group = "ending.role", text = "Planning & Reference Materials" },
-    { region = [4, 30, 138, 31], shared_group = "ending.name", text = "Yasuo Murakashi" },   # 村樫: reading? (Murakashi; also Muragashi)
-    { region = [168, 30, 118, 31], shared_group = "ending.name", text = "Kazumasa Abe" },
+    { region = [4, 30, 138, 31], shared_group = "ending.name", text = "Yasuo Murakashi", kanji = "村樫 泰雄" },   # 村樫: reading? (Murakashi; also Muragashi)
+    { region = [168, 30, 118, 31], shared_group = "ending.name", text = "Kazumasa Abe", kanji = "阿部 和政" },
 ] }
 0x3c4 = { align = "left", parts = [  # 資料協力 / 岩井 晃 大野木雄一 阿部哲士, 368×64
     { region = [2, 1, 364, 22], align = "center", backdrop = "solid", shared_group = "ending.role", text = "Reference Materials" },
-    { region = [1, 32, 107, 31], shared_group = "ending.name", text = "Akira Iwai" },   # 晃: reading? (as 0x3a9)
-    { region = [112, 32, 141, 31], shared_group = "ending.name", text = "Yūichi Ōnogi" },
-    { region = [255, 32, 112, 31], shared_group = "ending.name", text = "Tetsushi Abe" },   # confirmed (MobyGames, Densha de GO! 2 PlayStation credits)
+    { region = [1, 32, 107, 31], shared_group = "ending.name", text = "Akira Iwai", kanji = "岩井 晃" },   # 晃: reading? (as 0x3a9)
+    { region = [112, 32, 141, 31], shared_group = "ending.name", text = "Yūichi Ōnogi", kanji = "大野木 雄一" },
+    { region = [255, 32, 112, 31], shared_group = "ending.name", text = "Tetsushi Abe", kanji = "阿部 哲士" },   # confirmed (MobyGames, Densha de GO! 2 PlayStation credits)
 ] }
 0x3bd = { align = "left", parts = [  # 制作協力 / JR 株式会社ジェイアール東日本企画 (green; the JR mark stays), 464×64
     { region = [2, 0, 200, 20], shared_group = "ending.role", text = "Production Support" },
     { region = [78, 21, 385, 40], text = "JR East Marketing & Communications, Inc." },   # as MobyGames, Densha de GO! 2 PlayStation credits
 ] }
-0x3be = { region = [6, 3, 149, 41], shared_group = "ending.name", text = "Yoshikazu Aizu" }   # 会津善和, 160×48: confirmed (MobyGames, Densha de GO! 2 PlayStation credits)
-0x3bf = { region = [6, 3, 149, 41], shared_group = "ending.name", text = "Takashi Matsumoto" }   # 松本 隆: confirmed (MobyGames, Densha de GO! 2 PlayStation credits)
-0x3c0 = { region = [6, 3, 149, 41], shared_group = "ending.name", text = "Takeshi Kawata" }   # 河田壮司: reading? (壮司 Takeshi, also Sōji, Masashi; 河田 Kawata, also Kawada; MobyGames gives no romanisation)
+0x3be = { region = [6, 3, 149, 41], shared_group = "ending.name", text = "Yoshikazu Aizu", kanji = "会津 善和" }   # 会津善和, 160×48: confirmed (MobyGames, Densha de GO! 2 PlayStation credits)
+0x3bf = { region = [6, 3, 149, 41], shared_group = "ending.name", text = "Takashi Matsumoto", kanji = "松本 隆" }   # 松本 隆: confirmed (MobyGames, Densha de GO! 2 PlayStation credits)
+0x3c0 = { region = [6, 3, 149, 41], shared_group = "ending.name", text = "Takeshi Kawata", kanji = "河田 壮司" }   # 河田壮司: reading? (壮司 Takeshi, also Sōji, Masashi; 河田 Kawata, also Kawada; MobyGames gives no romanisation)
 0x3c5 = { parts = [  # 協力 / 北越急行株式会社, 384×64
     { region = [2, 1, 200, 20], align = "left", shared_group = "ending.role", text = "Thanks to" },
     { region = [50, 22, 333, 41], text = "Hokuetsu Express Corporation" },   # as MobyGames, Densha de GO! 2 PlayStation credits
@@ -610,15 +612,15 @@ name = "English"
 0x3c2 = { align = "left", parts = [  # 協力 / Stack Lab. (logo, stays) / 清水康則・塚野寿秋・山辺岸雄, 352×96
     { region = [2, 1, 84, 20], shared_group = "ending.role", text = "Thanks to" },
     # 寿秋: reading? (Toshiaki; also Hisaaki); 山辺: reading? (Yamabe; also Yamanobe); 岸雄: reading? (Kishio)
-    { region = [10, 62, 338, 30], align = "center", text = "Yasunori Shimizu · Toshiaki Tsukano · Kishio Yamabe" },
+    { region = [10, 62, 338, 30], align = "center", text = "Yasunori Shimizu · Toshiaki Tsukano · Kishio Yamabe", kanji = "清水 康則 · 塚野 寿秋 · 山辺 岸雄" },
 ] }
 0x3bb = { align = "left", parts = [  # 山田一二 / メカ / 監修
-    { region = [3, 3, 143, 41], shared_group = "ending.name", text = "Kazuji Yamada" },   # 一二: reading? (Kazuji; also Ichiji, Kazutsugu)
+    { region = [3, 3, 143, 41], shared_group = "ending.name", text = "Kazuji Yamada", kanji = "山田 一二" },   # 一二: reading? (Kazuji; also Ichiji, Kazutsugu)
     { region = [160, 3, 105, 21], shared_group = "ending.role", text = "Mechanical" },
     { region = [269, 12, 82, 23], shared_group = "ending.role", text = "Supervision" },
 ] }
 0x3bc = { align = "left", parts = [  # 頭島明男 / GM2 HEAD (Latin, stays)
-    { region = [3, 3, 144, 41], shared_group = "ending.name", text = "Akio Kashirajima" },   # 頭島: reading? (Kashirajima; also Tōjima, Zushima)
+    { region = [3, 3, 144, 41], shared_group = "ending.name", text = "Akio Kashirajima", kanji = "頭島 明男" },   # 頭島: reading? (Kashirajima; also Tōjima, Zushima)
 ] }
 
 # Departure-board flaps (menus.md §7: lists 0x466fa0 series, 0x466fd8 type, 0x466ff8 stations),
@@ -1240,6 +1242,8 @@ replay = { rect = [6, 0, 6, 2], region = [13, 4, 72, 23], style = "plain", text 
 [caption]
 # Captions in the body font, banners in the display font (docs/localisation.md, "Fonts").
 banner_font = "display"
+# Setting `staff_kanji`: how a staff-roll name's kanji follow the English ({kanji} = 齋藤 晃).
+staff_kanji = "{kanji}"
 depart_clear = "{name} · Depart: Clear!"
 depart_reduce = "{name} · Depart: Reduce"
 depart_caution = "{name} · Depart: Caution"
@@ -1449,6 +1453,8 @@ lang = "Language"
 lang_desc = "Menus and text in English, or the original Japanese art"
 one_line_captions = "One-line captions"
 one_line_captions_desc = "Station captions and banners as one line of English text"
+staff_kanji = "Kanji in the staff roll"
+staff_kanji_desc = "Each person's name in kanji after the English in the end credits"
 landmark_names = "Landmark names"
 landmark_names_desc = "The landmark's English name under its kanji plate"
 board_names = "Route board romaji"

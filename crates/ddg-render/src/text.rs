@@ -202,6 +202,10 @@ pub struct TextPart {
     pub shared_group: Option<String>,
     /// The font role (`font = "display"` in the catalogue).
     pub font: FontRole,
+    /// The names of the part in the original script, as the art writes them (`kanji = "齋藤
+    /// 晃"`; names separated as in `text`). Not drawn by the override: a caller that draws the
+    /// text itself may add them (the ending's staff roll, setting `staff_kanji`).
+    pub kanji: Option<String>,
 }
 
 /// The replacement for one sprite.

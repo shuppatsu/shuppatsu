@@ -303,7 +303,8 @@ impl Play {
         {
             if s.one_line_captions {
                 cab.use_one_line_captions(&bank, &p);
-                staff_parts = Some((p.tbl_parts.clone(), p.fonts[0]));
+                let kanji = s.staff_kanji.then(|| p.staff_kanji.clone());
+                staff_parts = Some((p.tbl_parts.clone(), p.fonts[0], kanji));
             }
             if s.board_names {
                 cab.use_board_names(&bank, &p.tbl_texts);
@@ -789,8 +790,9 @@ pub struct Play {
     ending: Option<ending::Ending>,
     ending_tables: Option<ending::EndingTables>,
     /// Enhancement `one_line_captions`: the catalogue's sprite parts and the caption font, from
-    /// which the ending draws its staff credits as text (`play/staff_roll.rs`).
-    staff_parts: Option<(StaffParts, ddg_render::text::FontRole)>,
+    /// which the ending draws its staff credits as text (`play/staff_roll.rs`), and with
+    /// `staff_kanji` how the names' kanji follow them.
+    staff_parts: Option<(StaffParts, ddg_render::text::FontRole, Option<String>)>,
     /// The bonus game's screen (`play/bonus.rs`) while it runs.
     bonus_view: Option<bonus::BonusView>,
     /// The attract opening (`play/opening.rs`).

@@ -163,6 +163,9 @@ pub struct Catalogue {
     /// `[caption]` `font` and `banner_font`: the font roles of the one-line captions and of
     /// the banners (body unless set).
     pub caption_fonts: [FontRole; 2],
+    /// `[caption]` `staff_kanji`: how a staff-roll name's kanji follow it, `{kanji}` for them
+    /// (setting `staff_kanji`; `play/staff_roll.rs`), `None` = the kanji alone.
+    pub staff_kanji: Option<String>,
     /// `[subtitle]`: templates and lines of the subtitles for the Japanese voice lines, by key
     /// (`subtitles.rs`, docs/localisation.md "Subtitles").
     pub subtitles: Vec<(String, String)>,
@@ -218,6 +221,7 @@ impl Catalogue {
         let mut landmarks = Vec::new();
         let mut captions = Vec::new();
         let mut caption_fonts = [FontRole::Body; 2];
+        let mut staff_kanji = None;
         let mut subtitles = Vec::new();
         let mut ui = Vec::new();
         for (section, value) in &root {
@@ -310,6 +314,12 @@ impl Catalogue {
                                 caption_fonts[1] = parse_role(v).with_context(ctx)?;
                                 continue;
                             }
+                            "staff_kanji" => {
+                                let s = v.as_str().with_context(ctx)?;
+                                ensure!(s.contains("{kanji}"), "caption.staff_kanji: no {{kanji}}");
+                                staff_kanji = Some(s.to_owned());
+                                continue;
+                            }
                             _ => {}
                         }
                         ensure!(
@@ -353,6 +363,7 @@ impl Catalogue {
             landmarks,
             captions,
             caption_fonts,
+            staff_kanji,
             subtitles,
             ui,
         })
@@ -396,6 +407,8 @@ pub struct CaptionPhrases {
     pub tbl_parts: HashMap<u16, Vec<TextPart>>,
     /// Font roles of the captions and of the banners.
     pub fonts: [FontRole; 2],
+    /// How a staff-roll name's kanji follow it (`{kanji}`; `[caption]` `staff_kanji`).
+    pub staff_kanji: String,
 }
 
 /// The `[caption]` phrases of `cfg`'s catalogue, or `None` unless text overrides are drawn
@@ -419,6 +432,7 @@ pub fn caption_phrases(cfg: &LocaleConfig) -> Result<Option<CaptionPhrases>> {
         tbl_texts: cat.tbl_texts(),
         tbl_parts: cat.tbl_parts(),
         fonts: cat.caption_fonts,
+        staff_kanji: cat.staff_kanji.unwrap_or_else(|| "{kanji}".to_owned()),
     }))
 }
 
@@ -499,6 +513,13 @@ fn parse_entry(v: &toml::Value) -> Result<(TextOverride, Option<SubRect>)> {
     };
     for p in &parts {
         ensure!(!p.text.trim().is_empty(), "empty text");
+        if let Some(k) = &p.kanji {
+            ensure!(
+                k.split(" · ").count() == p.text.split(" · ").count(),
+                "kanji {k:?}: not one per name of {:?}",
+                p.text
+            );
+        }
     }
     Ok((TextOverride { parts }, rect))
 }
@@ -576,6 +597,11 @@ fn apply_option(p: &mut TextPart, k: &str, v: &toml::Value) -> Result<()> {
             p.line_height = Some(em as f32);
         }
         "font" => p.font = parse_role(v)?,
+        "kanji" => {
+            let k = v.as_str().context("kanji must be a string")?;
+            ensure!(!k.trim().is_empty(), "empty kanji");
+            p.kanji = Some(k.to_owned());
+        }
         "backdrop" => {
             p.backdrop = match v.as_str() {
                 Some("art") => Backdrop::Art,
@@ -1007,9 +1033,11 @@ mod tests {
             let texts = cat
                 .entries
                 .iter()
-                .flat_map(|e| e.text.parts.iter().map(|p| p.text.as_str()))
+                .flat_map(|e| e.text.parts.iter())
+                .flat_map(|p| std::iter::once(p.text.as_str()).chain(p.kanji.as_deref()))
                 .chain(cat.station_plates.iter().map(|(_, t)| t.as_str()))
                 .chain(cat.landmarks.iter().map(|(_, t)| t.as_str()))
+                .chain(cat.staff_kanji.as_deref())
                 .chain(
                     [&cat.captions, &cat.subtitles, &cat.ui]
                         .into_iter()

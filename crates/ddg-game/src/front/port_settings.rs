@@ -121,6 +121,7 @@ pub const ITEMS: &[Item] = {
     &[
         item("lang", Text, Kind::Lang, Now),
         switch("one_line_captions", Text, NextStage),
+        switch("staff_kanji", Text, NextStage),
         switch("landmark_names", Text, NextStage),
         switch("board_names", Text, NextStage),
         switch("subtitles", Text, NextStage),

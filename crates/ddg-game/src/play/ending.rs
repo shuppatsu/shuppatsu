@@ -334,7 +334,7 @@ impl Play {
     /// that starts each; empty (the sprites) without the setting or when the roll does not fit.
     /// The sizes are fitted to both endings, so the roll looks the same in either.
     fn staff_roll(&self, t: &EndingTables, full: bool) -> HashMap<usize, CreditScreen> {
-        let Some((parts, font)) = &self.staff_parts else {
+        let Some((parts, font, kanji)) = &self.staff_parts else {
             return HashMap::new();
         };
         let tbls = t
@@ -342,7 +342,8 @@ impl Play {
             .iter()
             .chain(&t.plain)
             .filter_map(|r| u16::try_from(r.tbl).ok());
-        let Some(mut roll) = StaffRoll::new(&self.bank, parts, tbls, *font) else {
+        let Some(mut roll) = StaffRoll::new(&self.bank, parts, tbls, *font, kanji.as_deref())
+        else {
             return HashMap::new();
         };
         let m = BankMeasure(&self.bank, *font);
@@ -839,8 +840,9 @@ mod roll_tests {
     use super::*;
 
     /// The user's credits with the built-in English and the bundled font.
-    pub(super) fn data_roll() -> Option<(StaffRoll, ddg_render::sprites::SpriteBank, EndingTables)>
-    {
+    pub(super) fn data_roll(
+        kanji: Option<&str>,
+    ) -> Option<(StaffRoll, ddg_render::sprites::SpriteBank, EndingTables)> {
         if std::env::var_os("DDG_DATA_DIR").is_none() {
             eprintln!("skipped: DDG_DATA_DIR not set");
             return None;
@@ -862,73 +864,145 @@ mod roll_tests {
             .iter()
             .chain(&t.plain)
             .filter_map(|r| u16::try_from(r.tbl).ok());
-        let roll = StaffRoll::new(&bank, &parts, tbls, ddg_render::text::FontRole::Body).unwrap();
+        let roll =
+            StaffRoll::new(&bank, &parts, tbls, ddg_render::text::FontRole::Body, kanji).unwrap();
         Some((roll, bank, t))
     }
 
     /// Against the user's data: with the bundled font both endings' credits fit as text at
     /// one name size close to the kanji's and one role size, every text and logo inside the
-    /// 640-wide design (16 px margins) and inside the black bands, none overlapping another.
+    /// 640-wide design (16 px margins) and inside the black bands, none overlapping another,
+    /// no role of a person wrapped (only the JR East company and the Planning & Reference
+    /// Materials header may be); with the names' kanji after them too (setting `staff_kanji`,
+    /// bare or in parentheses), where the names come out a little smaller.
     #[test]
     fn staff_roll_fits_both_endings() {
-        let Some((mut roll, bank, t)) = data_roll() else {
-            return;
-        };
-        let m = BankMeasure(&bank, ddg_render::text::FontRole::Body);
-        // The kanji: 32 px names, 15 px one-line roles (0.75 of them for Latin capitals).
-        assert_eq!((roll.name_cap, roll.role_cap), (24.0, 11.25));
-        let all: Vec<(Vec<Shown>, Bands)> = [true, false]
-            .into_iter()
-            .flat_map(|f| {
-                credit_screens(&t, f)
-                    .into_iter()
-                    .map(move |(_, s)| (s, credit_bands(f)))
-            })
-            .collect();
-        assert!(roll.fit(&m, &all));
-        eprintln!(
-            "staff roll: names {} px, roles {} px",
-            roll.name_cap, roll.role_cap
-        );
-        assert!(roll.name_cap >= 22.0, "names {}", roll.name_cap);
-        let mut text_screens = 0;
-        for (shown, bands) in &all {
-            let Some(screen) = roll.layout(&m, shown, *bands) else {
-                // Only the blank credit and the closing logos keep their sprites.
-                assert!(
-                    shown.iter().all(|s| [0x304, 0x15e].contains(&s.0)),
-                    "{shown:x?}"
+        let parts = crate::locale::Catalogue::load("en", None)
+            .unwrap()
+            .tbl_parts();
+        let wrappable = [
+            "JR East Marketing & Communications, Inc.",
+            "Planning & Reference Materials",
+        ];
+        for (kanji, name_cap) in [
+            (None, 24.0),
+            (Some("{kanji}"), 23.0),
+            (Some("({kanji})"), 22.0),
+        ] {
+            // Every line of the catalogue as written, and the kanji in the format.
+            let mut whole: Vec<String> = Vec::new();
+            for p in parts.values().flatten() {
+                whole.extend(
+                    p.text
+                        .split(['\n'])
+                        .flat_map(|l| l.split(" · "))
+                        .map(str::to_owned),
                 );
-                continue;
-            };
-            text_screens += 1;
-            let boxes = screen.ink_boxes(&m);
-            for (what, [x0, y0, x1, y1]) in &boxes {
-                assert!(
-                    *x0 >= 16.0 - 0.01 && *x1 <= 624.0 + 0.01,
-                    "{what} {x0}..{x1} {shown:x?}"
-                );
-                let clear = *y1 <= bands.view.0 || *y0 >= bands.view.1;
-                assert!(
-                    clear && *y0 >= 0.0 && *y1 <= 480.0,
-                    "{what} {y0}..{y1} {shown:x?}"
-                );
-            }
-            for (i, (a, p)) in boxes.iter().enumerate() {
-                for (b, q) in &boxes[i + 1..] {
-                    let apart = p[2] <= q[0] || q[2] <= p[0] || p[3] <= q[1] || q[3] <= p[1];
-                    assert!(apart, "{a} {p:?} overlaps {b} {q:?}");
+                if let (Some(f), Some(k)) = (kanji, &p.kanji) {
+                    whole.extend(k.split(" · ").map(|k| f.replace("{kanji}", k)));
                 }
             }
+            let Some((mut roll, bank, t)) = data_roll(kanji) else {
+                return;
+            };
+            let m = BankMeasure(&bank, ddg_render::text::FontRole::Body);
+            // The kanji: 32 px names, 15 px one-line roles (0.75 of them for Latin capitals).
+            assert_eq!((roll.name_cap, roll.role_cap), (24.0, 11.25));
+            let all: Vec<(Vec<Shown>, Bands)> = [true, false]
+                .into_iter()
+                .flat_map(|f| {
+                    credit_screens(&t, f)
+                        .into_iter()
+                        .map(move |(_, s)| (s, credit_bands(f)))
+                })
+                .collect();
+            assert!(roll.fit(&m, &all), "{kanji:?}");
+            eprintln!(
+                "staff roll {kanji:?}: names {} px, roles {} px",
+                roll.name_cap, roll.role_cap
+            );
+            assert_eq!(roll.name_cap, name_cap, "{kanji:?}");
+            let mut text_screens = 0;
+            let mut kanji_texts = 0;
+            for (shown, bands) in &all {
+                let Some(screen) = roll.layout(&m, shown, *bands) else {
+                    // Only the blank credit and the closing logos keep their sprites.
+                    assert!(
+                        shown.iter().all(|s| [0x304, 0x15e].contains(&s.0)),
+                        "{shown:x?}"
+                    );
+                    continue;
+                };
+                text_screens += 1;
+                let boxes = screen.ink_boxes(&m);
+                kanji_texts += boxes
+                    .iter()
+                    .filter(|(w, _)| w.chars().any(|c| ('\u{4e00}'..='\u{9fff}').contains(&c)))
+                    .count();
+                for (what, _) in &boxes {
+                    assert!(
+                        what.starts_with("art ")
+                            || whole.contains(what)
+                            || wrappable.iter().any(|w| w.contains(what.as_str())),
+                        "{what:?} wrapped {shown:x?} {kanji:?}"
+                    );
+                }
+                for (what, [x0, y0, x1, y1]) in &boxes {
+                    assert!(
+                        *x0 >= 16.0 - 0.01 && *x1 <= 624.0 + 0.01,
+                        "{what} {x0}..{x1} {shown:x?} {kanji:?}"
+                    );
+                    let clear = *y1 <= bands.view.0 || *y0 >= bands.view.1;
+                    assert!(
+                        clear && *y0 >= 0.0 && *y1 <= 480.0,
+                        "{what} {y0}..{y1} {shown:x?}"
+                    );
+                }
+                for (i, (a, p)) in boxes.iter().enumerate() {
+                    for (b, q) in &boxes[i + 1..] {
+                        let apart = p[2] <= q[0] || q[2] <= p[0] || p[3] <= q[1] || q[3] <= p[1];
+                        assert!(apart, "{a} {p:?} overlaps {b} {q:?} {kanji:?}");
+                    }
+                }
+            }
+            assert_eq!(text_screens, 29 + 27);
+            // Every person of both endings (34 names in each, Kikuchi twice), and nothing
+            // else, has kanji.
+            assert_eq!(kanji_texts, if kanji.is_some() { 2 * 34 } else { 0 });
         }
-        assert_eq!(text_screens, 29 + 27);
+    }
+
+    /// Every credited person in the English catalogue has their kanji, one per name.
+    #[test]
+    fn every_credited_name_has_kanji() {
+        let parts = crate::locale::Catalogue::load("en", None)
+            .unwrap()
+            .tbl_parts();
+        let mut names = 0;
+        for (tbl, ps) in &parts {
+            for p in ps {
+                let is_name = p.shared_group.as_deref() == Some("ending.name")
+                    || (p.text.contains(" · ") && (0x3a8..=0x3c8).contains(tbl));
+                if !is_name {
+                    assert!(p.kanji.is_none(), "{tbl:#x} {:?}", p.text);
+                    continue;
+                }
+                let k = p
+                    .kanji
+                    .as_deref()
+                    .unwrap_or_else(|| panic!("{tbl:#x} {:?}", p.text));
+                assert_eq!(k.split(" · ").count(), p.text.split(" · ").count());
+                names += k.split(" · ").count();
+            }
+        }
+        assert_eq!(names, 34);
     }
 
     /// Against the user's data: every credit's lettering is either under a catalogue part
     /// (drawn as text) or kept or dropped art, and every kept box has ink.
     #[test]
     fn kept_art_covers_the_untranslated_ink() {
-        let Some((_, bank, t)) = data_roll() else {
+        let Some((_, bank, t)) = data_roll(None) else {
             return;
         };
         let parts = crate::locale::Catalogue::load("en", None)

@@ -135,6 +135,7 @@ switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml
   --wide-menus             menu backdrops to the edges of a wide window [on]
   --hud-upscale            HUD and menu art enlarged with xBRZ edges, not pixel blocks [off]
   --one-line-captions      translation: captions and banners as one line [on]
+  --staff-kanji            translation: kanji after the staff roll's names [on]
   --landmark-names         translation: names under the landmark plates [on]
   --board-names            translation: romaji under the route board's kanji [on]
   --subtitles              translation: English subtitles for the Japanese voices [on]

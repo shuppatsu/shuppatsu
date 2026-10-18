@@ -535,6 +535,7 @@ mod tests {
         ("wide_menus", true),
         ("hud_upscale", false),
         ("one_line_captions", true),
+        ("staff_kanji", true),
         ("landmark_names", true),
         ("board_names", true),
         ("subtitles", true),

@@ -47,6 +47,13 @@ const INK_MARGIN: f32 = 2.0;
 /// A text widget's height in capitals: a line box with room to spare (M+ 2 is 1.98).
 const LINE_BOX: f32 = 3.0;
 const WIDGET_LAYER: u8 = 3;
+/// Setting `staff_kanji`: a name's kanji follow it on its line at the role size, baseline on
+/// baseline, this many name-size spaces after it, in a dimmer white: palette 0x17 is the
+/// credits' fade palette (exe 0x488290, record kind 4), where the lettering is index 7
+/// (f8f8f8) and index 78 is d0d0d0.
+const KANJI_GAP_SPACES: f32 = 1.0;
+const LETTERING_WHITE: u8 = 7;
+const KANJI_WHITE: u8 = 78;
 
 /// Art kept from the original credits (`[x, y, w, h]` in art pixels; ink bounds of the
 /// lettering colours from the art, see the `kept_art_covers_the_untranslated_ink` test) and
@@ -97,6 +104,8 @@ struct Part {
     /// The lettering colour of the region (palette 0x17) and the height of its rows.
     colour: u8,
     ink_h: usize,
+    /// The original names of a name part, one per line (empty without them).
+    kanji: Vec<String>,
 }
 
 /// One credit sprite.
@@ -214,6 +223,9 @@ pub struct Bands {
 pub struct StaffRoll {
     cards: HashMap<u16, Card>,
     font: FontRole,
+    /// Setting `staff_kanji`: how a name's kanji follow it (`{kanji}` for them); `None` = the
+    /// English alone.
+    kanji: Option<String>,
     /// Name and role capital heights, original pixels.
     pub name_cap: f32,
     pub role_cap: f32,
@@ -221,12 +233,15 @@ pub struct StaffRoll {
 
 impl StaffRoll {
     /// The cards of the credit sprites `tbls` that have a catalogue entry with art; the
-    /// preferred sizes from the kanji. `None` when no credit has an entry.
+    /// preferred sizes from the kanji. With `kanji` (setting `staff_kanji`: the catalogue's
+    /// format, `{kanji}` for them) each name is followed by its kanji. `None` when no credit
+    /// has an entry.
     pub fn new(
         bank: &SpriteBank,
         parts: &HashMap<u16, Vec<TextPart>>,
         tbls: impl IntoIterator<Item = u16>,
         font: FontRole,
+        kanji: Option<&str>,
     ) -> Option<Self> {
         let mut cards = HashMap::new();
         for tbl in tbls {
@@ -249,6 +264,7 @@ impl StaffRoll {
         Some(Self {
             cards,
             font,
+            kanji: kanji.map(str::to_owned),
             name_cap: LATIN_CAP_OF_LETTERING * names?,
             role_cap: LATIN_CAP_OF_LETTERING * roles?,
         })
@@ -366,6 +382,18 @@ impl StaffRoll {
                     .find(|k| k.1 == Place::Before(i))
                     .map(|k| (tbl, k.0))
             };
+            // Companies and headers (roles above the names) may wrap; a person's roles do not.
+            let names_top = card
+                .parts
+                .iter()
+                .filter(|p| p.kind == Kind::Name)
+                .map(|p| p.region[1])
+                .min();
+            let wraps = |p: &Part| {
+                p.kind == Kind::Feature
+                    || (p.kind == Kind::Role
+                        && names_top.is_some_and(|t| p.region[1] + p.region[3] <= t))
+            };
             for (i, p) in card.parts.iter().enumerate() {
                 // Without a person, a company is the credited party and its header goes above
                 // it, as in the original.
@@ -386,12 +414,16 @@ impl StaffRoll {
                         colour: p.colour,
                         style,
                         art: Some(art),
+                        kanji: None,
+                        wrap: wraps(p),
                     }),
-                    None => col.extend(p.lines.iter().map(|l| Row::Text {
+                    None => col.extend(p.lines.iter().enumerate().map(|(li, l)| Row::Text {
                         lines: vec![l.clone()],
                         colour: p.colour,
                         style,
                         art: None,
+                        kanji: self.kanji_of(p, li),
+                        wrap: wraps(p),
                     })),
                 }
                 for k in card.kept.iter().filter(|k| k.1 == Place::After(i)) {
@@ -406,10 +438,11 @@ impl StaffRoll {
         if left.is_empty() {
             return None;
         }
-        // The role column clears the widest name of the whole roll, so it lines up from card
-        // to card; a wider left column (a company) pushes it further on its own screen. A
-        // screen too wide for its place moves left (the plain ending's right-hand credits).
-        let delta = self.widest_name(m) + COLUMN_GAP * self.name_cap;
+        // The role column clears the widest name of the whole roll (with its kanji), so it
+        // lines up from card to card; a wider left column (a company) pushes it further on its
+        // own screen. A screen too wide for its place moves left (the plain ending's right-hand
+        // credits).
+        let mut delta = self.widest_name(m) + COLUMN_GAP * self.name_cap;
         let (top, bottom) = g
             .iter()
             .map(|(c, _, y, _)| (f32::from(*y), f32::from(*y) + f32::from(c.size.1)))
@@ -429,20 +462,44 @@ impl StaffRoll {
                 self.stack(m, &right, lx + off, centre, area, items)?;
                 return Some(());
             }
-            // Too wide even against the left margin: wrap the widest line that can be.
-            if !self.wrap_widest(m, &mut right) && !self.wrap_widest(m, &mut left) {
+            // Too wide even against the left margin: a logo in the role column clears only
+            // this screen's names (the Stack Lab. logo beside three names with kanji), else
+            // wrap the widest company or header line.
+            if delta > 0.0 && right.iter().any(|r| matches!(r, Row::Art(..))) {
+                delta = 0.0;
+            } else if !self.wrap_widest(m, &mut right) && !self.wrap_widest(m, &mut left) {
                 return None;
             }
         }
     }
 
+    /// The widest name of the roll, with its kanji.
     fn widest_name(&self, m: &impl Measure) -> f32 {
         self.cards
             .values()
             .flat_map(|c| c.parts.iter().filter(|p| p.kind == Kind::Name))
-            .flat_map(|p| p.lines.iter())
-            .map(|l| m.extent(l, self.name_cap).0)
+            .flat_map(|p| (0..p.lines.len()).map(move |i| (p, i)))
+            .map(|(p, i)| {
+                m.extent(&p.lines[i], self.name_cap).0
+                    + self.kanji_width(m, self.kanji_of(p, i).as_deref())
+            })
             .fold(0.0, f32::max)
+    }
+
+    /// Setting `staff_kanji`: the kanji after line `i` of name part `p`, in the roll's format.
+    fn kanji_of(&self, p: &Part, i: usize) -> Option<String> {
+        let format = self.kanji.as_deref()?;
+        let k = p.kanji.get(i).filter(|_| p.kind == Kind::Name)?;
+        Some(format.replace("{kanji}", k))
+    }
+
+    /// What the kanji `k` add to a name's line: the gap and their width.
+    fn kanji_width(&self, m: &impl Measure, k: Option<&str>) -> f32 {
+        k.map_or(0.0, |k| self.kanji_gap(m) + m.extent(k, self.role_cap).0)
+    }
+
+    fn kanji_gap(&self, m: &impl Measure) -> f32 {
+        KANJI_GAP_SPACES * m.extent(" ", self.name_cap).0
     }
 
     fn cap(&self, s: Style) -> f32 {
@@ -462,12 +519,18 @@ impl StaffRoll {
     fn row_width(&self, m: &impl Measure, r: &Row) -> f32 {
         match r {
             Row::Text {
-                lines, style, art, ..
+                lines,
+                style,
+                art,
+                kanji,
+                ..
             } => {
-                let w = lines
-                    .iter()
-                    .map(|l| m.extent(l, self.cap(*style)).0)
-                    .fold(0.0, f32::max);
+                let cap = self.cap(*style);
+                let w = lines.iter().enumerate().fold(0.0, |w: f32, (i, l)| {
+                    // The kanji follow the last line.
+                    let k = kanji.as_deref().filter(|_| i + 1 == lines.len());
+                    w.max(m.extent(l, cap).0 + self.kanji_width(m, k))
+                });
                 art.map_or(w, |(_, s)| f32::from(s[2]) + ART_GAP * self.role_cap + w)
             }
             Row::Art(_, s) => f32::from(s[2]),
@@ -492,11 +555,17 @@ impl StaffRoll {
         }
     }
 
-    /// Splits the widest line of `col` that has a space into two balanced lines.
+    /// Splits the widest wrappable line of `col` that has a space into two balanced lines.
     fn wrap_widest(&self, m: &impl Measure, col: &mut [Row]) -> bool {
         let mut best: Option<(usize, usize, f32)> = None;
         for (ri, r) in col.iter().enumerate() {
-            if let Row::Text { lines, style, .. } = r {
+            if let Row::Text {
+                lines,
+                style,
+                wrap: true,
+                ..
+            } = r
+            {
                 for (li, l) in lines.iter().enumerate() {
                     let w = m.extent(l, self.cap(*style)).0;
                     if l.contains(' ') && best.is_none_or(|b| w > b.2) {
@@ -558,6 +627,8 @@ impl StaffRoll {
                     colour,
                     style,
                     art,
+                    kanji,
+                    ..
                 } => {
                     let cap = self.cap(*style);
                     let pitch = self.pitch(*style);
@@ -575,6 +646,15 @@ impl StaffRoll {
                     for (i, l) in lines.iter().enumerate() {
                         let baseline = first + i as f32 * pitch + (pitch + cap) / 2.0;
                         items.push(self.text(m, l, tx, baseline, cap, *colour));
+                        if let Some(k) = kanji.as_deref().filter(|_| i + 1 == lines.len()) {
+                            let kx = tx + m.extent(l, cap).0 + self.kanji_gap(m);
+                            let dim = if *colour == LETTERING_WHITE {
+                                KANJI_WHITE
+                            } else {
+                                *colour
+                            };
+                            items.push(self.text(m, k, kx, baseline, self.role_cap, dim));
+                        }
                     }
                 }
                 Row::Art(tbl, src) => {
@@ -642,6 +722,10 @@ enum Row {
         colour: u8,
         style: Style,
         art: Option<(u16, [u16; 4])>,
+        /// Setting `staff_kanji`: a name's kanji, formatted, after the last line.
+        kanji: Option<String>,
+        /// May be wrapped when too wide (a company or a header beside names).
+        wrap: bool,
     },
     Art(u16, [u16; 4]),
 }
@@ -680,7 +764,20 @@ impl Card {
                         }
                     })
                     .filter(|l| !l.trim().is_empty())
-                    .collect();
+                    .collect::<Vec<_>>();
+                // A name's kanji, separated as the names (the catalogue checks the count).
+                let kanji = match (&p.kanji, kind) {
+                    (Some(k), Kind::Name) => k
+                        .split(NAME_SEPARATOR)
+                        .map(|k| k.trim().to_owned())
+                        .collect::<Vec<_>>(),
+                    _ => Vec::new(),
+                };
+                let kanji = if kanji.len() == lines.len() {
+                    kanji
+                } else {
+                    Vec::new()
+                };
                 let (colour, ink_h) = lettering(w, h, px, region, backdrop)?;
                 Some(Part {
                     kind,
@@ -688,6 +785,7 @@ impl Card {
                     region,
                     colour,
                     ink_h,
+                    kanji,
                 })
             })
             .collect::<Option<Vec<_>>>()?;
@@ -838,6 +936,7 @@ mod tests {
             region,
             colour: 7,
             ink_h: 30,
+            kanji: Vec::new(),
         }
     }
 
@@ -915,6 +1014,7 @@ mod tests {
         StaffRoll {
             cards: cards.into_iter().collect(),
             font: FontRole::Body,
+            kanji: None,
             name_cap: 20.0,
             role_cap: 10.0,
         }
@@ -1149,6 +1249,68 @@ mod tests {
         tiny.role_cap = 100.0;
         assert!(!tiny.fit(&Fake, &screens));
         assert_eq!(tiny.name_cap, 20.0);
+    }
+
+    /// `roll()` with kanji on the person cards in `format`.
+    fn kanji_roll(format: &str) -> StaffRoll {
+        let mut r = roll();
+        r.kanji = Some(format.to_owned());
+        for (tbl, k) in [
+            (1, vec!["齋藤 晃"]),
+            (2, vec!["森山 由浩"]),
+            (3, vec!["菊池 正行", "山路 哲由"]),
+            (4, vec!["岩井 晃", "大野木 雄一", "阿部 哲士"]),
+        ] {
+            let c = r.cards.get_mut(&tbl).unwrap();
+            let mut k = k.into_iter();
+            for p in c.parts.iter_mut().filter(|p| p.kind == Kind::Name) {
+                p.kanji = vec![k.next().unwrap().to_owned()];
+            }
+        }
+        r
+    }
+
+    /// Setting `staff_kanji`: each name's kanji follow it on its baseline, a name-size space
+    /// after it, at the role size in the dimmer white; the role column clears the widest
+    /// name with its kanji; a company gets none, and without the setting nothing changes.
+    #[test]
+    fn kanji_follow_each_name() {
+        for format in ["{kanji}", "({kanji})"] {
+            let r = kanji_roll(format);
+            let s = r.layout(&Fake, &[(1, 24, 360)], BANDS).unwrap();
+            let k = format.replace("{kanji}", "齋藤 晃");
+            let name = rect_of(&s, "Akira Saitō");
+            let gap = Fake.extent(" ", 20.0).0;
+            assert_eq!(
+                rect_of(&s, &k)[0],
+                name[0] + Fake.extent("Akira Saitō", 20.0).0 + gap
+            );
+            assert!((baseline(&s, &k, 10.0) - baseline(&s, "Akira Saitō", 20.0)).abs() < 1e-3);
+            let style = style_of(&s, &k);
+            assert_eq!(style.cap, Some(10.0));
+            assert_eq!(style.paint.index, KANJI_WHITE);
+            // The widest name with its kanji: Tetsuyoshi Yamaji 山路 哲由.
+            let widest = Fake.extent("Tetsuyoshi Yamaji", 20.0).0
+                + gap
+                + Fake.extent(&format.replace("{kanji}", "山路 哲由"), 10.0).0;
+            assert_eq!(
+                rect_of(&s, "Project Leader")[0],
+                29.0 + widest + COLUMN_GAP * 20.0
+            );
+            // Stacked names each have theirs.
+            let three = r.layout(&Fake, &[(4, 24, 360)], BANDS).unwrap();
+            for (n, k) in [("Akira Iwai", "岩井 晃"), ("Tetsushi Abe", "阿部 哲士")] {
+                let k = format.replace("{kanji}", k);
+                assert!((baseline(&three, &k, 10.0) - baseline(&three, n, 20.0)).abs() < 1e-3);
+            }
+            let company = r.layout(&Fake, &[(5, 24, 360)], BANDS).unwrap();
+            assert_eq!(company.items.len(), 2);
+        }
+        let plain = roll().layout(&Fake, &[(1, 24, 360)], BANDS).unwrap();
+        assert_eq!(plain.texts().len(), 3);
+        let mut off = kanji_roll("{kanji}");
+        off.kanji = None;
+        assert_eq!(off.layout(&Fake, &[(1, 24, 360)], BANDS).unwrap(), plain);
     }
 
     /// The title card keeps its art where it is, 高速編 at the name size on its row.
