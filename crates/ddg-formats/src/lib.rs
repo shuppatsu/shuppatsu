@@ -11,6 +11,7 @@ pub mod exe;
 pub mod hud;
 pub mod icon;
 pub mod lz;
+pub mod mpeg;
 pub mod part;
 pub mod reader;
 pub mod result_camera;
