@@ -122,7 +122,7 @@ struct Params {
     // Canvas size in texels, target rectangle size in pixels.
     tex: vec2<f32>,
     dst: vec2<f32>,
-    // 0 nearest, 1 sharp bilinear.
+    // 0 nearest, 1 sharp bilinear, 2 plain bilinear.
     mode: u32,
 };
 
@@ -161,8 +161,12 @@ fn fs(in: Out) -> @location(0) vec4<f32> {
     if (params.mode == 0u) {
         c = fetch(floor(x));
     } else {
-        // Sharp bilinear (overlay.rs `sharp_bilinear_coord`), then one bilinear tap.
-        let p = max(ceil(params.dst / params.tex - vec2<f32>(1e-4)), vec2<f32>(1.0));
+        // Sharp bilinear (overlay.rs `sharp_bilinear_coord`), then one bilinear tap; with a
+        // prescale of 1 (mode 2) that is plain bilinear.
+        var p = max(ceil(params.dst / params.tex - vec2<f32>(1e-4)), vec2<f32>(1.0));
+        if (params.mode == 2u) {
+            p = vec2<f32>(1.0);
+        }
         let base = floor(x);
         let d = x - base - vec2<f32>(0.5);
         let range = vec2<f32>(0.5) - vec2<f32>(0.5) / p;
@@ -192,6 +196,9 @@ pub struct Overlay {
     size: (u32, u32),
     /// How [`Overlay::render`] maps the canvas to its rectangle.
     pub scaling: UiScaling,
+    /// Plain bilinear filtering instead of [`Overlay::scaling`]: for live-action pictures
+    /// (the Komachi movie, setting `movie_scaling smooth`), not pixel art.
+    pub bilinear: bool,
 }
 
 impl Overlay {
@@ -288,6 +295,7 @@ impl Overlay {
             bind_group,
             size,
             scaling: UiScaling::default(),
+            bilinear: false,
         }
     }
 
@@ -380,8 +388,8 @@ impl Overlay {
     }
 
     /// Draws the canvas into `rect` (x, y, width, height in target pixels) over what is there:
-    /// unfiltered when [`Overlay::scaling`] is `Nearest`, or `Integer` with a whole multiple
-    /// in `rect`; sharp bilinear otherwise.
+    /// plain bilinear with [`Overlay::bilinear`]; else unfiltered when [`Overlay::scaling`] is
+    /// `Nearest`, or `Integer` with a whole multiple in `rect`; sharp bilinear otherwise.
     pub fn render(
         &self,
         device: &wgpu::Device,
@@ -400,7 +408,8 @@ impl Overlay {
         for (i, v) in [tw, th, rect[2], rect[3]].into_iter().enumerate() {
             params[i * 4..i * 4 + 4].copy_from_slice(&v.to_le_bytes());
         }
-        params[16..20].copy_from_slice(&u32::from(!nearest).to_le_bytes());
+        let mode = if self.bilinear { 2u32 } else { u32::from(!nearest) };
+        params[16..20].copy_from_slice(&mode.to_le_bytes());
         queue.write_buffer(&self.params, 0, &params);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("overlay"),
