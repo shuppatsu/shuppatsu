@@ -405,6 +405,8 @@ captions.rs` (`OneLine`):
   already one sprite per label and stay as they are. No other screen draws the caption
   sprites: the attract demo is a `Play` and gets the setting with the cab HUD; the plain
   ending, the result replay and the bonus game have no station captions.
+* **The ending's staff credits** follow the plate: with the setting on they are text in the
+  same font, not the credit sprites (see "Staff roll" below).
 * **Size**: capitals 0.75 × the original lettering height (`rasterise_sized`'s rule), measured
   from the 駅 sprite of the set; smaller only when the line does not fit.
 * **Colours** come from palette 4 at draw time, so palette changes apply as on the art. The
@@ -598,15 +600,42 @@ Decided for the roll:
   Hokuetsu Express Corporation; 峠の釜めし本舗
   おぎのや is romanised (Tōge no Kamameshi Honpo, Oginoya). 高速編 beside the title logo is
   "Kōsoku-hen", as in the subtitles.
-* **Sizes**: one size for every name and one for every role and header across the roll
-  (`shared_group` `ending.name` / `ending.role`), so the cards read as one list. Long Western
-  names make the names smaller than the kanji were (the longest, Yoshihiro Moriyama, sets
-  it); the roles stay a step smaller than the names. The company names and the three names
-  under Stack Lab. are sized on their own.
+* **Drawn as text** (enhancement `one_line_captions`, with a translation; `play/staff_roll.rs`),
+  like the station plate above it: the sprites squeezed the Western names into the kanji boxes
+  at half the kanji's height. Each screen (the credits shown together) is laid out alike: the
+  credited party in a left column from the original's name position (x 29 on most cards), one
+  per line, and the roles in a right column, one line each (multi-line roles stay so: the
+  category, ソフト or サウンド, on its own line above the role). Two sizes for the whole roll,
+  measured from the art: names 0.75 × the median kanji name (32 px, so 24 px capitals),
+  roles and headers 0.75 × the median one-line role (15 px, so 11.25 px), as the captions'
+  rule; the names would shrink in 0.5 px steps until every screen of both endings fits, and
+  with the bundled font they fit at 24. The role column is one x for the roll, clear of the
+  widest name (Kazuhiro Kawabata); a longer left column (a company) pushes it on its own
+  screen. Stacked names are 1.7 capitals apart (clear of macrons and descenders), roles 1.6
+  (the original's two-line roles). Several names on one card (Kikuchi / Yamaji, the
+  協力 cards, the three under Stack Lab., the three JR East people) are stacked one per line,
+  the header in the role column. A company without a named person is the credited party: name
+  size, its header (Thanks to) above it, as the original; beside names it is their
+  affiliation, in the role size, wrapped when too wide (the JR East name, after its mark).
+  Logos and Latin art are drawn from the art: the JR mark before its company, the Stack Lab.
+  logo under its header, GD / ID under Design, GM2 HEAD in the role column; the title card
+  keeps its layout with "Kōsoku-hen" at the name size where 高速編 was; the ・ between
+  Kikuchi and Yamaji goes. White (the art's lettering colour, the JR company green) on the
+  black band, no outline, the caption font; palette 0x17, so the fades apply. Text stays 16 px
+  inside the 640 design and 4 px clear of the 3D view; a screen too wide for its place (the
+  plain ending's right-hand credits at x 264) moves left. Wide screens centre the 640 design
+  like the credit sprites. The English is the credits' own `[tbl]` entries (parts in
+  `ending.name` are names, `ending.role` roles and headers, the rest companies and 高速編; " · "
+  separates names in one part); the data tests `play::ending::roll_tests` check that both
+  endings fit without overlaps and that every lettering pixel is a part, kept art or dropped.
+* **Sprites** (setting off, or a font without the text): one size for every name and one for
+  every role and header across the roll (`shared_group` `ending.name` / `ending.role`), so the
+  cards read as one list; the longest name sets the name size, below the kanji's.
 
 Shots: `ddg-game play 1 --ending full --lang en|ja --size 2560x1440 --shot <tick>:<file>`, one
 tick per credit (credit k ≥ 1 is up from tick 180 + 148 (k − 1) for 148 ticks), in
-out/explain/staff_roll/.
+out/explain/staff_roll/ (sprites) and out/explain/staff_roll_v2/ (text; `--no-one-line-captions`
+for the sprites).
 
 ## Decided: a font, M+ 2 Medium
 
