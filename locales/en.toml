@@ -479,7 +479,10 @@ name = "English"
 # room. The two centred headers are `backdrop = "solid"` so their English may use the whole row
 # (a box otherwise grows only by the lettering's smaller margin). Logos and Latin art
 # (電車でGO!2, STAFF, the JR mark, Stack Lab., GD, ID, GM2 HEAD, GM R&D SECT#2 0x304, TAITO
-# 0x15e) stay.
+# 0x15e) stay. With `one_line_captions` the ending draws these texts itself, not the sprites
+# (play/staff_roll.rs): `ending.name` parts are names, `ending.role` roles and headers, parts
+# without a shared group companies and 高速編, " · " separates names in one part, `\n` role
+# lines; the regions then only give the left column's position.
 0x3a8 = { region = [300, 2, 163, 42], text = "Kōsoku-hen" }   # 高速編 beside the 電車でGO!2 logo, over STAFF; 464×96, 高速編 ink x 318–418, y 6–39
 0x3a9 = { align = "left", parts = [  # 齋藤 晃 / プロジェクトリーダー / 企画・キャラデザイン, 352×48
     { region = [5, 3, 146, 41], shared_group = "ending.name", text = "Akira Saitō" },   # 晃 Akira: confirmed (Akira Saito, en.wikipedia "Densha de Go!" and the shmuplations.com developer interview)

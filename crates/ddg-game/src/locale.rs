@@ -371,6 +371,20 @@ impl Catalogue {
             })
             .collect()
     }
+
+    /// The parts of every whole-tilemap entry, by tilemap id (the ending's staff credits read
+    /// their texts, regions and shared groups: `staff_roll`).
+    pub fn tbl_parts(&self) -> HashMap<u16, Vec<TextPart>> {
+        self.entries
+            .iter()
+            .filter_map(|e| match &e.key {
+                Key::Tbl { tbl, rect } if *rect == SubRect::WHOLE.canonical() => {
+                    Some((*tbl, e.text.parts.clone()))
+                }
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 /// One-line captions for a translation: phrases by kind and texts by tilemap id.
@@ -378,6 +392,8 @@ impl Catalogue {
 pub struct CaptionPhrases {
     pub by_kind: [Option<String>; 7],
     pub tbl_texts: HashMap<u16, String>,
+    /// Every whole-tilemap entry's parts (the ending's staff credits: `staff_roll`).
+    pub tbl_parts: HashMap<u16, Vec<TextPart>>,
     /// Font roles of the captions and of the banners.
     pub fonts: [FontRole; 2],
 }
@@ -401,6 +417,7 @@ pub fn caption_phrases(cfg: &LocaleConfig) -> Result<Option<CaptionPhrases>> {
     Ok(Some(CaptionPhrases {
         by_kind,
         tbl_texts: cat.tbl_texts(),
+        tbl_parts: cat.tbl_parts(),
         fonts: cat.caption_fonts,
     }))
 }

@@ -7,9 +7,11 @@
 //!
 //! The camera is the drive's: [`Drive::ending_place`] (0x408080), [`Drive::ending_tick`] with
 //! `0x850208 = v × 0.000925` and [`Drive::ending_kill`] (list 5 killed). The masks are black
-//! quads over the 3D band; the credits are sprites on top.
+//! quads over the 3D band; the credits are sprites on top (text with `one_line_captions`:
+//! `play/staff_roll.rs`).
 
 use super::Play;
+use super::staff_roll::{Bands, BankMeasure, CreditScreen, Shown, StaffRoll};
 use crate::captions::{KIND_PASS, KIND_STOP, PlateLine};
 use crate::front::attract::Fade;
 use crate::screens::flow::WorldView;
@@ -21,6 +23,7 @@ use ddg_formats::exe::Exe;
 use ddg_formats::hud::{MODE_640, RES_MODES};
 use ddg_render::effects::EffectGeometry;
 use ddg_render::sprites::SpriteLayer;
+use std::collections::HashMap;
 
 const WHAT: &str = "ending tables";
 /// Text tables: 0x30-byte records, one 12-byte sub-record per resolution mode
@@ -44,7 +47,7 @@ const DIGITS: [u32; 2] = [0x465d8c, 0x465dd0];
 /// Fade palettes (title palette data): kind 4 → 0x488290, kind 11 → 0x488e90.
 const FADE_PALETTES: [(i16, u32); 2] = [(4, 0x488290), (11, 0x488e90)];
 const FADE_TICKS: i32 = 24;
-const PAL_TEXT: u8 = 0x17;
+pub(super) const PAL_TEXT: u8 = 0x17;
 const SLOT_TEXT: usize = 0x6e;
 const TEXT_SLOTS: usize = 5;
 
@@ -260,6 +263,10 @@ pub(super) struct Ending {
     fade_out: Option<FadeOut>,
     /// Enhancement `one_line_captions`: the station plate as one line instead of its sprites.
     plate_line: Option<PlateLine>,
+    /// Enhancement `one_line_captions`: the staff credits as text, by the record that starts
+    /// each screen, and the screen on show.
+    roll: HashMap<usize, CreditScreen>,
+    credits: Option<CreditScreen>,
     /// Enter / Esc ended it.
     pub(super) done: bool,
 }
@@ -290,6 +297,7 @@ impl Play {
             self.ticks,
             if full { "full" } else { "plain" }
         );
+        let roll = self.staff_roll(&tables, full);
         self.ending_tables = Some(tables);
         self.ending = Some(Ending {
             full,
@@ -314,10 +322,47 @@ impl Play {
             fade_in: None,
             fade_out: None,
             plate_line: None,
+            roll,
+            credits: None,
             done: false,
         });
         self.world = WorldView::Cab;
         Ok(())
+    }
+
+    /// Enhancement `one_line_captions`: the screens of the staff roll as text, by the record
+    /// that starts each; empty (the sprites) without the setting or when the roll does not fit.
+    /// The sizes are fitted to both endings, so the roll looks the same in either.
+    fn staff_roll(&self, t: &EndingTables, full: bool) -> HashMap<usize, CreditScreen> {
+        let Some((parts, font)) = &self.staff_parts else {
+            return HashMap::new();
+        };
+        let tbls = t
+            .full
+            .iter()
+            .chain(&t.plain)
+            .filter_map(|r| u16::try_from(r.tbl).ok());
+        let Some(mut roll) = StaffRoll::new(&self.bank, parts, tbls, *font) else {
+            return HashMap::new();
+        };
+        let m = BankMeasure(&self.bank, *font);
+        let all: Vec<(Vec<Shown>, Bands)> = [true, false]
+            .into_iter()
+            .flat_map(|f| {
+                let bands = credit_bands(f);
+                credit_screens(t, f)
+                    .into_iter()
+                    .map(move |(_, s)| (s, bands))
+            })
+            .collect();
+        if !roll.fit(&m, &all) {
+            eprintln!("[ending] staff roll does not fit as text; the sprites stay");
+            return HashMap::new();
+        }
+        credit_screens(t, full)
+            .into_iter()
+            .filter_map(|(rec, s)| Some((rec, roll.layout(&m, &s, credit_bands(full))?)))
+            .collect()
     }
 
     /// One tick of the ending: the task update, then list 5 (camera and AI trains).
@@ -387,6 +432,9 @@ impl Play {
         if let Some(line) = &e.plate_line {
             line.draw(&mut self.layer);
         }
+        if let Some(c) = &e.credits {
+            c.draw(&mut self.layer);
+        }
         self.layer.compose(&self.bank, &mut self.canvas);
         self.canvas_dirty = true;
         let done = e.done;
@@ -423,6 +471,13 @@ impl Play {
                         e.mask_anim = false;
                     }
                     None => slots::clear(l, slot),
+                }
+            }
+            // Enhancement `one_line_captions`: the screen as text instead of its sprites.
+            e.credits = e.roll.get(&e.rec).cloned();
+            if e.credits.is_some() {
+                for i in 0..TEXT_SLOTS {
+                    slots::clear(l, SLOT_TEXT + i);
                 }
             }
             e.rec += n.saturating_sub(1);
@@ -670,6 +725,7 @@ impl Play {
     /// cleared.
     fn ending_destroy(&mut self, e: &mut Ending) {
         self.ending_hide_panels(e);
+        e.credits = None;
         if let Some(s) = self.sound.as_mut() {
             s.release(BGM_FULL);
         }
@@ -711,6 +767,44 @@ impl Play {
     }
 }
 
+/// Design pixels per virtual pixel down the screen (the masks' 400 rows over 480).
+const VIRTUAL_TO_DESIGN: f32 = 480.0 / 400.0;
+
+/// The 3D view between the masks while credits show (the open bottom edge of a station shot
+/// in the full ending, the plain ending's own), design y.
+fn credit_bands(full: bool) -> Bands {
+    let bottom = if full {
+        MASK_BOTTOM_OPEN
+    } else {
+        MASK_BOTTOM_PLAIN
+    };
+    Bands {
+        view: (
+            MASK_TOP as f32 * VIRTUAL_TO_DESIGN,
+            bottom as f32 * VIRTUAL_TO_DESIGN,
+        ),
+    }
+}
+
+/// The screens of a text table as [`Play::ending_text`] shows them: the record that starts
+/// each and its credits `(tbl, x, y)` (blank credits and the end mark show none).
+fn credit_screens(t: &EndingTables, full: bool) -> Vec<(usize, Vec<Shown>)> {
+    let (recs, dy) = if full { (&t.full, 0) } else { (&t.plain, -8) };
+    let mut out = Vec::new();
+    let mut rec = 0;
+    while let Some(first) = recs.get(rec).filter(|r| r.tbl != -1) {
+        let n = first.n.max(0) as usize;
+        let shown = recs[rec..]
+            .iter()
+            .take(n)
+            .filter_map(|r| Some((u16::try_from(r.tbl).ok().filter(|&t| t > 0)?, r.x, r.y + dy)))
+            .collect();
+        out.push((rec, shown));
+        rec += n.max(1);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -737,5 +831,127 @@ mod tests {
         assert_eq!(t.plates, names);
         assert_eq!(t.station_word, cab.caption_station);
         assert_eq!(t.kind_words[4..6], cab.caption_words[4..6]);
+    }
+}
+
+#[cfg(test)]
+mod roll_tests {
+    use super::*;
+
+    /// The user's credits with the built-in English and the bundled font.
+    pub(super) fn data_roll() -> Option<(StaffRoll, ddg_render::sprites::SpriteBank, EndingTables)>
+    {
+        if std::env::var_os("DDG_DATA_DIR").is_none() {
+            eprintln!("skipped: DDG_DATA_DIR not set");
+            return None;
+        }
+        let data = crate::scene::GameData::from_env().unwrap();
+        let exe_bytes = data.exe().unwrap();
+        let exe = Exe::parse(&exe_bytes).unwrap();
+        let t = EndingTables::read(&exe).unwrap();
+        let mut bank = ddg_render::sprites::SpriteBank::new(
+            &ddg_formats::cg::CgFile::parse(&data.read("cg.rom").unwrap()).unwrap(),
+            ddg_formats::cg::parse_tbl(&data.read("tbl.rom").unwrap()).unwrap(),
+        );
+        crate::locale::install_label_font(&mut bank).unwrap();
+        let parts = crate::locale::Catalogue::load("en", None)
+            .unwrap()
+            .tbl_parts();
+        let tbls = t
+            .full
+            .iter()
+            .chain(&t.plain)
+            .filter_map(|r| u16::try_from(r.tbl).ok());
+        let roll = StaffRoll::new(&bank, &parts, tbls, ddg_render::text::FontRole::Body).unwrap();
+        Some((roll, bank, t))
+    }
+
+    /// Against the user's data: with the bundled font both endings' credits fit as text at
+    /// one name size close to the kanji's and one role size, every text and logo inside the
+    /// 640-wide design (16 px margins) and inside the black bands, none overlapping another.
+    #[test]
+    fn staff_roll_fits_both_endings() {
+        let Some((mut roll, bank, t)) = data_roll() else {
+            return;
+        };
+        let m = BankMeasure(&bank, ddg_render::text::FontRole::Body);
+        // The kanji: 32 px names, 15 px one-line roles (0.75 of them for Latin capitals).
+        assert_eq!((roll.name_cap, roll.role_cap), (24.0, 11.25));
+        let all: Vec<(Vec<Shown>, Bands)> = [true, false]
+            .into_iter()
+            .flat_map(|f| {
+                credit_screens(&t, f)
+                    .into_iter()
+                    .map(move |(_, s)| (s, credit_bands(f)))
+            })
+            .collect();
+        assert!(roll.fit(&m, &all));
+        eprintln!(
+            "staff roll: names {} px, roles {} px",
+            roll.name_cap, roll.role_cap
+        );
+        assert!(roll.name_cap >= 22.0, "names {}", roll.name_cap);
+        let mut text_screens = 0;
+        for (shown, bands) in &all {
+            let Some(screen) = roll.layout(&m, shown, *bands) else {
+                // Only the blank credit and the closing logos keep their sprites.
+                assert!(
+                    shown.iter().all(|s| [0x304, 0x15e].contains(&s.0)),
+                    "{shown:x?}"
+                );
+                continue;
+            };
+            text_screens += 1;
+            let boxes = screen.ink_boxes(&m);
+            for (what, [x0, y0, x1, y1]) in &boxes {
+                assert!(
+                    *x0 >= 16.0 - 0.01 && *x1 <= 624.0 + 0.01,
+                    "{what} {x0}..{x1} {shown:x?}"
+                );
+                let clear = *y1 <= bands.view.0 || *y0 >= bands.view.1;
+                assert!(
+                    clear && *y0 >= 0.0 && *y1 <= 480.0,
+                    "{what} {y0}..{y1} {shown:x?}"
+                );
+            }
+            for (i, (a, p)) in boxes.iter().enumerate() {
+                for (b, q) in &boxes[i + 1..] {
+                    let apart = p[2] <= q[0] || q[2] <= p[0] || p[3] <= q[1] || q[3] <= p[1];
+                    assert!(apart, "{a} {p:?} overlaps {b} {q:?}");
+                }
+            }
+        }
+        assert_eq!(text_screens, 29 + 27);
+    }
+
+    /// Against the user's data: every credit's lettering is either under a catalogue part
+    /// (drawn as text) or kept or dropped art, and every kept box has ink.
+    #[test]
+    fn kept_art_covers_the_untranslated_ink() {
+        let Some((_, bank, t)) = data_roll() else {
+            return;
+        };
+        let parts = crate::locale::Catalogue::load("en", None)
+            .unwrap()
+            .tbl_parts();
+        let mut n = 0;
+        for tbl in t.full.iter().filter_map(|r| u16::try_from(r.tbl).ok()) {
+            let Some(p) = parts.get(&tbl) else {
+                continue;
+            };
+            let (stray, empty) = super::super::staff_roll::unaccounted_ink(&bank, p, tbl);
+            assert!(
+                stray.is_empty(),
+                "{tbl:#x}: {} stray pixels, first {:?}",
+                stray.len(),
+                &stray[..stray.len().min(4)]
+            );
+            assert!(
+                empty.is_empty(),
+                "{tbl:#x}: kept boxes without ink {empty:?}"
+            );
+            n += 1;
+        }
+        assert_eq!(n, 32);
     }
 }

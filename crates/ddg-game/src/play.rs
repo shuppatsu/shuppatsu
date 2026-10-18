@@ -42,6 +42,7 @@ mod demo;
 mod ending;
 mod intro;
 mod opening;
+mod staff_roll;
 pub use intro::has_stage_intro;
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, KeyEvent, WindowEvent};
@@ -295,12 +296,14 @@ impl Play {
         // Enhancements `one_line_captions` and `board_names` (docs/localisation.md): with a
         // translation drawn.
         let s = opts.settings;
+        let mut staff_parts = None;
         if (s.one_line_captions || s.board_names)
             && bank.has_label_font()
             && let Some(p) = crate::locale::caption_phrases(&opts.locale)?
         {
             if s.one_line_captions {
                 cab.use_one_line_captions(&bank, &p);
+                staff_parts = Some((p.tbl_parts.clone(), p.fonts[0]));
             }
             if s.board_names {
                 cab.use_board_names(&bank, &p.tbl_texts);
@@ -372,6 +375,7 @@ impl Play {
             demo: None,
             ending: None,
             ending_tables: None,
+            staff_parts,
             bonus_view: None,
             opening: None,
             intro: None,
@@ -716,6 +720,9 @@ fn track_pos(units: f32) -> TrackPos {
     }
 }
 
+/// The catalogue's parts by sprite tilemap ([`crate::locale::CaptionPhrases::tbl_parts`]).
+type StaffParts = std::collections::HashMap<u16, Vec<ddg_render::text::TextPart>>;
+
 pub struct Play {
     opts: PlayOptions,
     tables: Tables,
@@ -775,6 +782,9 @@ pub struct Play {
     /// The ending (`play/ending.rs`) and its tables.
     ending: Option<ending::Ending>,
     ending_tables: Option<ending::EndingTables>,
+    /// Enhancement `one_line_captions`: the catalogue's sprite parts and the caption font, from
+    /// which the ending draws its staff credits as text (`play/staff_roll.rs`).
+    staff_parts: Option<(StaffParts, ddg_render::text::FontRole)>,
     /// The bonus game's screen (`play/bonus.rs`) while it runs.
     bonus_view: Option<bonus::BonusView>,
     /// The attract opening (`play/opening.rs`).
