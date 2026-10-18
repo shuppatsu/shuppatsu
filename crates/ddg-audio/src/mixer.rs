@@ -16,6 +16,7 @@
 
 use crate::bank::{EffectInfo, SoundBank};
 use crate::code::{INVERTED_PITCH_CODE, LAST_EFFECT_CODE, Source};
+use crate::sinc::{self, HISTORY, TAPS, Window};
 use crate::tables::CodeVolumes;
 use std::sync::Arc;
 
@@ -50,7 +51,15 @@ pub enum Command {
     Pause(bool),
 }
 
-/// Sample interpolation of the resampler.
+/// Sample interpolation of the resampler (setting `audio_resampler`, docs/settings.md).
+///
+/// The original left resampling to DirectSound: every voice buffer (`LOCSOFTWARE`, its rate set
+/// with SetFrequency) was converted by the Windows 9x software mixer into the never-formatted
+/// primary buffer, by default 22.05 kHz 8-bit (audio-text.md §1). That mixer steps through the
+/// source with a fixed-point increment; whether it took the nearest or a linearly interpolated
+/// sample is not known (audio-text.md open question 8). [`Interpolation::Nearest`] and
+/// [`Interpolation::Linear`] are those two candidates; [`Interpolation::Sinc`] is an
+/// enhancement the original never had. None of them reproduces the 22.05 kHz primary.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Interpolation {
     /// Sample-and-hold.
@@ -58,6 +67,30 @@ pub enum Interpolation {
     /// Linear between neighbouring source samples (default).
     #[default]
     Linear,
+    /// Band-limited: a 32-tap Kaiser-windowed sinc ([`crate::sinc`]) whose cutoff follows the
+    /// pitch when a voice plays faster than the output rate. No images or aliasing, reads
+    /// across loop seams, zero-padded at the ends of one-shots.
+    Sinc,
+}
+
+impl Interpolation {
+    /// Every mode, in the settings screen's order.
+    pub const ALL: [Self; 3] = [Self::Linear, Self::Nearest, Self::Sinc];
+
+    /// The `audio_resampler` value.
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Nearest => "nearest",
+            Self::Linear => "linear",
+            Self::Sinc => "sinc",
+        }
+    }
+
+    /// Parses an `audio_resampler` value (case-insensitive).
+    pub fn parse(s: &str) -> Option<Self> {
+        let s = s.trim().to_ascii_lowercase();
+        Self::ALL.into_iter().find(|m| m.name() == s)
+    }
 }
 
 /// Mixer options. The defaults are the arcade behaviour; every non-default value is an
@@ -150,6 +183,13 @@ struct Voice {
     /// Stopped by a pause (0x430a00 stops every active buffer); a voice started while paused
     /// plays, as a new DirectSound buffer would.
     held: bool,
+    /// [`Interpolation::Sinc`] only: the source frames `cursor − 15 ..= cursor + 16` as they
+    /// play (across loop seams; zeros before the start and after the end).
+    window: Window,
+    /// The source index the window loads next (`None`: past the end, zeros follow).
+    ahead: Option<usize>,
+    /// After the data ended: source steps left until the last sample leaves the kernel.
+    ring_out: u8,
 }
 
 impl Voice {
@@ -166,6 +206,9 @@ impl Voice {
         gain: 0.0,
         applied_gain: 0.0,
         held: false,
+        window: Window::ZERO,
+        ahead: None,
+        ring_out: 0,
     };
 
     fn is_free(&self) -> bool {
@@ -195,8 +238,49 @@ impl Voice {
         let half = self.half();
         let halves = self.streamed.div_ceil(half).max(1);
         self.stop_at = Some(halves * half);
+        self.ring_out = (HISTORY - 1) as u8;
         if self.streamed >= halves * half {
             *self = Self::FREE;
+        }
+    }
+
+    /// Reloads the window at the cursor (play, the release jump, or switching to
+    /// [`Interpolation::Sinc`]): the frames before it from what just played (`keep_history`,
+    /// the release tail continues the loop seamlessly) or zeros, the rest read ahead.
+    fn refill_window(&mut self, bank: &SoundBank, keep_history: bool) {
+        let old = *self.window.frames();
+        let mut new = [[0.0; 2]; TAPS];
+        if keep_history {
+            // The old window's cursor sat at HISTORY − 1; the frames up to it become the past.
+            new[..HISTORY - 1].copy_from_slice(&old[1..HISTORY]);
+        }
+        let mut next = (self.stop_at.is_none()).then_some(self.cursor);
+        for f in &mut new[HISTORY - 1..] {
+            if let Some(i) = next {
+                let (l, r) = frame_at(bank, self.source, i);
+                *f = [l, r];
+                next = next_index(bank, self.source, i);
+            }
+        }
+        self.window.set(&new);
+        self.ahead = next;
+        self.ring_out = 0;
+    }
+
+    /// Moves the window one source sample on.
+    #[inline]
+    fn shift_window(&mut self, bank: &SoundBank) {
+        let f = match self.ahead {
+            Some(i) => {
+                self.ahead = next_index(bank, self.source, i);
+                let (l, r) = frame_at(bank, self.source, i);
+                [l, r]
+            }
+            None => [0.0; 2],
+        };
+        self.window.push(f);
+        if self.stop_at.is_some() {
+            self.ring_out = self.ring_out.saturating_sub(1);
         }
     }
 }
@@ -288,8 +372,17 @@ impl Mixer {
         self.config
     }
 
+    /// Changes the options; switching to [`Interpolation::Sinc`] loads the sounding voices'
+    /// windows (their past as silence).
     pub fn set_config(&mut self, config: MixerConfig) {
+        let load = config.interpolation == Interpolation::Sinc
+            && self.config.interpolation != Interpolation::Sinc;
         self.config = config;
+        if load {
+            for v in self.voices.iter_mut().filter(|v| !v.is_free()) {
+                v.refill_window(&self.bank, false);
+            }
+        }
     }
 
     pub fn is_paused(&self) -> bool {
@@ -388,6 +481,9 @@ impl Mixer {
             ..Voice::FREE
         };
         v.restart_at(0, len);
+        if self.config.interpolation == Interpolation::Sinc {
+            v.refill_window(&self.bank, false);
+        }
     }
 
     /// 0x430870: key off.
@@ -403,6 +499,9 @@ impl Mixer {
                 // Still looping: jump to the release tail. Already in the tail: nothing.
                 if v.cursor < le && v.stop_at.is_none() {
                     v.restart_at(le, fx.len());
+                    if self.config.interpolation == Interpolation::Sinc {
+                        v.refill_window(&self.bank, true);
+                    }
                 }
                 return;
             }
@@ -449,6 +548,8 @@ impl Mixer {
     /// left untouched).
     pub fn render(&mut self, out: &mut [f32]) {
         let bank = Arc::clone(&self.bank);
+        let interp = self.config.interpolation;
+        let kernel = (interp == Interpolation::Sinc).then(sinc::kernel);
         for frame in out.as_chunks_mut::<2>().0 {
             let (mut l, mut r) = (0.0f32, 0.0f32);
             {
@@ -457,11 +558,14 @@ impl Mixer {
                         let d = v.gain - v.applied_gain;
                         v.applied_gain += d.clamp(-self.smooth_step, self.smooth_step);
                     }
-                    let (a, b) = Self::sample(&bank, v, self.config.interpolation);
+                    let step = v.hz as f64 / self.out_rate as f64;
+                    let (a, b) = match kernel {
+                        Some(k) => Self::sample_sinc(k, v, step),
+                        None => Self::sample(&bank, v, interp),
+                    };
                     l += a * v.applied_gain;
                     r += b * v.applied_gain;
-                    let step = v.hz as f64 / self.out_rate as f64;
-                    Self::advance(&bank, v, step);
+                    Self::advance(&bank, v, step, kernel.is_some());
                 }
             }
             let m = self.config.master_volume;
@@ -485,11 +589,34 @@ impl Mixer {
         (a.0 + (b.0 - a.0) * t, a.1 + (b.1 - a.1) * t)
     }
 
-    fn advance(bank: &SoundBank, v: &mut Voice, step: f64) {
+    /// The band-limited sample at `cursor + frac` from the voice's window.
+    fn sample_sinc(k: &sinc::Kernel, v: &Voice, step: f64) -> (f32, f32) {
+        if v.stop_at.is_some() && v.ring_out == 0 {
+            return (0.0, 0.0);
+        }
+        if step == 1.0 && v.frac == 0.0 {
+            // No rate change: the samples themselves (the kernel would only low-pass them).
+            let [l, r] = v.window.frames()[HISTORY - 1];
+            return (l, r);
+        }
+        let c = k.coefficients(k.level_for(step), v.frac);
+        match v.source {
+            Source::Effect(_) => {
+                let s = v.window.dot_mono(&c);
+                (s, s)
+            }
+            Source::Bgm(_) => v.window.dot_stereo(&c),
+        }
+    }
+
+    fn advance(bank: &SoundBank, v: &mut Voice, step: f64, window: bool) {
         v.frac += step;
         while v.frac >= 1.0 && !v.is_free() {
             v.frac -= 1.0;
             v.streamed += 1;
+            if window {
+                v.shift_window(bank);
+            }
             match v.stop_at {
                 Some(stop) => {
                     if v.streamed >= stop {
@@ -796,5 +923,284 @@ mod tests {
         let mut m = Mixer::new(bank(), CodeVolumes::uniform(127), 1000, cfg);
         m.apply(Command::Play(2));
         assert_eq!(render(&mut m, 1)[0], 0.25);
+    }
+
+    // --- Interpolation::Sinc -------------------------------------------------------------
+
+    fn sinc_cfg() -> MixerConfig {
+        MixerConfig {
+            interpolation: Interpolation::Sinc,
+            ..MixerConfig::default()
+        }
+    }
+
+    /// A bank whose effect `code` (1-based) is `pcm` at `rate`, looping `loop_`; every other
+    /// effect is a short one-shot.
+    fn bank_with(code: u16, rate: u32, loop_: (u32, u32), pcm: &[u8]) -> Arc<SoundBank> {
+        let mut fx: Vec<Vec<u8>> = (1..code)
+            .map(|_| effect(22_050, (0, 0), &[0x80; 4]))
+            .collect();
+        fx.push(effect(rate, loop_, pcm));
+        let bgm = vec![bgm_frames(&[(0, 0); 2])];
+        Arc::new(SoundBank::from_roms(rom2(&fx), rom2(&bgm)).unwrap())
+    }
+
+    /// `len` u8 samples of a sine of `period` samples (any real), amplitude `amp` / 128.
+    fn sine_pcm(len: usize, period: f64, amp: f64) -> Vec<u8> {
+        (0..len)
+            .map(|i| {
+                let s = (2.0 * std::f64::consts::PI * i as f64 / period).sin();
+                (128.0 + amp * s).round() as u8
+            })
+            .collect()
+    }
+
+    /// Left channel of interleaved stereo.
+    fn left(out: &[f32]) -> Vec<f32> {
+        out.iter().step_by(2).copied().collect()
+    }
+
+    /// Amplitude of the component at `f` Hz (Hann-windowed DFT bin).
+    fn tone(x: &[f32], fs: f64, f: f64) -> f64 {
+        let n = x.len() as f64;
+        let (mut re, mut im, mut wsum) = (0.0, 0.0, 0.0);
+        for (i, &s) in x.iter().enumerate() {
+            let w = 0.5 - 0.5 * (2.0 * std::f64::consts::PI * i as f64 / n).cos();
+            let a = 2.0 * std::f64::consts::PI * f * i as f64 / fs;
+            re += s as f64 * w * a.cos();
+            im += s as f64 * w * a.sin();
+            wsum += w;
+        }
+        2.0 * (re * re + im * im).sqrt() / wsum
+    }
+
+    fn render_mode(bank: Arc<SoundBank>, rate: u32, interp: Interpolation, code: u16) -> Mixer {
+        let cfg = MixerConfig {
+            interpolation: interp,
+            ..MixerConfig::default()
+        };
+        let mut m = Mixer::new(bank, CodeVolumes::uniform(127), rate, cfg);
+        m.apply(Command::Play(code));
+        m
+    }
+
+    #[test]
+    fn sinc_pitched_up_does_not_alias() {
+        // 16 kHz source, 8 kHz output: step 2. A 7013 Hz tone is above the output's Nyquist
+        // and must vanish instead of folding to 987 Hz; a 2003 Hz tone passes. (Frequencies
+        // incommensurate with the rates, so the u8 rounding error is noise, not a line at the
+        // alias frequency.)
+        let run = |interp, f_in: f64, f_measure: f64| {
+            let pcm = sine_pcm(16_000, 16_000.0 / f_in, 100.0);
+            let bank = bank_with(1, 16_000, (0, 0), &pcm);
+            let mut m = render_mode(bank, 8000, interp, 1);
+            render(&mut m, 800);
+            let x = left(&render(&mut m, 4000));
+            tone(&x, 8000.0, f_measure)
+        };
+        let amp = 100.0 / 128.0;
+        let sinc = run(Interpolation::Sinc, 7013.0, 987.0);
+        let linear = run(Interpolation::Linear, 7013.0, 987.0);
+        let nearest = run(Interpolation::Nearest, 7013.0, 987.0);
+        let db = |a: f64| 20.0 * (a / amp).log10();
+        println!(
+            "alias at 987 Hz: sinc {:.1} dB, linear {:.1} dB, nearest {:.1} dB",
+            db(sinc),
+            db(linear),
+            db(nearest)
+        );
+        assert!(db(sinc) < -60.0, "sinc alias {:.1} dB", db(sinc));
+        assert!(
+            db(linear) > -30.0 && db(nearest) > -30.0,
+            "{linear} {nearest}"
+        );
+        let pass = db(run(Interpolation::Sinc, 2003.0, 2003.0));
+        assert!(pass.abs() < 0.3, "passband {pass:.2} dB");
+    }
+
+    #[test]
+    fn sinc_upsampling_has_no_images() {
+        // A 10 kHz voice at 48 kHz: a 4.5 kHz tone images at 5.5 kHz unless filtered.
+        let image = |interp| {
+            let pcm = sine_pcm(10_000, 10.0 / 4.5, 100.0);
+            let bank = bank_with(1, 10_000, (0, 10_000), &pcm);
+            let mut m = render_mode(bank, 48_000, interp, 1);
+            render(&mut m, 4800);
+            let x = left(&render(&mut m, 48_000));
+            (tone(&x, 48_000.0, 4500.0), tone(&x, 48_000.0, 5500.0))
+        };
+        let (t, i) = image(Interpolation::Sinc);
+        let rel = 20.0 * (i / t).log10();
+        assert!(rel < -60.0, "sinc image {rel:.1} dB");
+        let (t, i) = image(Interpolation::Linear);
+        let rel_linear = 20.0 * (i / t).log10();
+        println!("image at 5.5 kHz: sinc {rel:.1} dB, linear {rel_linear:.1} dB");
+        assert!(rel_linear > -10.0, "linear image {rel_linear:.1} dB");
+    }
+
+    #[test]
+    fn sinc_dc_has_unity_gain() {
+        // Code 2: a constant 0xc0 (0.5) looping 10..20. Upsampling, bypass and downsampling.
+        for rate in [1370, 1000, 700, 260] {
+            let mut m = Mixer::new(bank(), CodeVolumes::uniform(127), rate, sinc_cfg());
+            m.apply(Command::Play(2));
+            render(&mut m, 60);
+            let out = render(&mut m, 500);
+            for s in out {
+                assert!((s - 0.5).abs() < 2e-4, "rate {rate}: {s}");
+            }
+        }
+    }
+
+    #[test]
+    fn sinc_reads_across_the_loop_seam() {
+        // A sine of period 20 looping 20..120 (5 periods): the output must be the unbroken
+        // sine through every seam, up to the u8 quantisation.
+        let pcm = sine_pcm(140, 20.0, 100.0);
+        let bank = bank_with(1, 1000, (20, 120), &pcm);
+        let mut m = render_mode(bank, 1370, Interpolation::Sinc, 1);
+        let step = 1000.0 / 1370.0;
+        let x = left(&render(&mut m, 700));
+        let mut worst: f64 = 0.0;
+        for (n, &y) in x.iter().enumerate().skip(30) {
+            let pos = n as f64 * step;
+            let want = 100.0 / 128.0 * (2.0 * std::f64::consts::PI * pos / 20.0).sin();
+            worst = worst.max((y as f64 - want).abs());
+        }
+        // Positions 22..511: four seams crossed.
+        assert!(worst < 0.008, "max error {worst}");
+    }
+
+    #[test]
+    fn sinc_pitch_sweep_is_continuous() {
+        // Code 0x31 (inverted pitch): an 800 Hz sine at 16 kHz into 12 kHz, swept from 1.33×
+        // the output rate (downsampling, levels 1–2) to 0.68× and back.
+        let pcm = sine_pcm(16_000, 20.0, 100.0);
+        let bank = bank_with(0x31, 16_000, (0, 16_000), &pcm);
+        let mut m = render_mode(bank, 12_000, Interpolation::Sinc, 0x31);
+        m.apply(Command::SetPitch(0x31, 127));
+        render(&mut m, 100);
+        let mut x = Vec::new();
+        for p in (1..=127).rev().chain(1..=127) {
+            m.apply(Command::SetPitch(0x31, p));
+            x.extend(left(&render(&mut m, 37)));
+        }
+        // The steepest slope of the fastest tone (800 Hz at 12 kHz), plus some noise.
+        let amp = 100.0 / 128.0;
+        let bound = 2.0 * std::f64::consts::PI * 800.0 / 12_000.0 * amp * 1.05 + 0.01;
+        let worst = x
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs() as f64)
+            .fold(0.0, f64::max);
+        assert!(worst < bound, "largest step {worst:.4} > {bound:.4}");
+        // The level stays full: no dropout at a level switch.
+        let min_peak = x
+            .chunks(400)
+            .map(|c| c.iter().fold(0f32, |a, s| a.max(s.abs())))
+            .fold(f32::MAX, f32::min);
+        assert!(min_peak > 0.7, "{min_peak}");
+    }
+
+    #[test]
+    fn sinc_one_shot_rings_out_and_drains() {
+        let mut m = Mixer::new(bank(), CodeVolumes::uniform(127), 1000, sinc_cfg());
+        m.apply(Command::Play(1));
+        let out = left(&render(&mut m, 140));
+        // Step 1: the samples themselves (no filtering without a rate change).
+        assert_eq!(out[50], 50.0 / 128.0);
+        assert!(out[110..].iter().all(|&s| s == 0.0));
+        // At a fractional step the ramp's end rings for at most 15 source samples.
+        let mut m = Mixer::new(bank(), CodeVolumes::uniform(127), 1370, sinc_cfg());
+        m.apply(Command::Play(1));
+        let out = left(&render(&mut m, 0x1400));
+        let last = out.iter().rposition(|&s| s != 0.0).unwrap();
+        let end = (100.0 * 1.37) as usize;
+        assert!(last > end && last < end + 23, "{last}");
+        assert!(out.iter().all(|s| s.is_finite()));
+        assert!(m.is_playing(1), "still draining the half-buffer");
+        render(&mut m, 0x800);
+        assert!(!m.is_playing(1));
+    }
+
+    #[test]
+    fn sinc_release_and_switching_modes() {
+        // Release from the loop into the tail, and turning sinc on mid-sound.
+        let mut m = Mixer::new(bank(), CodeVolumes::uniform(127), 1370, sinc_cfg());
+        m.apply(Command::Play(2));
+        render(&mut m, 100);
+        m.apply(Command::Release(2));
+        // The tail is 10 samples, so the end of the data already rings in the kernel.
+        let out = left(&render(&mut m, 5));
+        assert!(out.iter().all(|s| (s - 0.5).abs() < 0.02), "{out:?}");
+        let mut m = mixer();
+        m.apply(Command::Play(2));
+        render(&mut m, 30);
+        m.set_config(sinc_cfg());
+        let out = render(&mut m, 100);
+        assert!(
+            out.iter()
+                .all(|s| s.is_finite() && (-1.0..=1.0).contains(s))
+        );
+        assert!((out[198] - 0.5).abs() < 1e-3);
+    }
+
+    #[test]
+    fn sinc_deterministic() {
+        let run = || {
+            let mut m = Mixer::new(bank(), CodeVolumes::uniform(127), 1370, sinc_cfg());
+            for c in [1, 2, 0x31, 0x197] {
+                m.apply(Command::Play(c));
+            }
+            m.apply(Command::SetPitch(2, 50));
+            render(&mut m, 500)
+        };
+        assert_eq!(run(), run());
+    }
+
+    /// CPU cost: `cargo test --release -p ddg-audio cpu_cost -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn cpu_cost() {
+        let pcm = sine_pcm(40_000, 37.3, 100.0);
+        let mut fx: Vec<Vec<u8>> = Vec::new();
+        for i in 0..8u32 {
+            fx.push(effect(10_000 + 4000 * i, (0, 40_000), &pcm));
+        }
+        let frames: Vec<(i16, i16)> = (0..44_100).map(|i| (i as i16, -(i as i16))).collect();
+        let bgm = vec![bgm_frames(&frames), bgm_frames(&frames)];
+        let mut bgm_rom = bgm.clone();
+        while bgm_rom.len() < 8 {
+            bgm_rom.push(bgm_frames(&[(0, 0); 2]));
+        }
+        let bank = Arc::new(SoundBank::from_roms(rom2(&fx), rom2(&bgm_rom)).unwrap());
+        let seconds = 20;
+        for interp in Interpolation::ALL {
+            let cfg = MixerConfig {
+                interpolation: interp,
+                ..MixerConfig::default()
+            };
+            let mut m = Mixer::new(bank.clone(), CodeVolumes::uniform(127), 48_000, cfg);
+            for c in (1..=8).chain([0x197, 0x198]) {
+                m.apply(Command::Play(c));
+            }
+            assert_eq!(m.voices().count(), 10);
+            let mut buf = vec![0f32; 2 * 480];
+            let t = std::time::Instant::now();
+            for block in 0..100 * seconds {
+                // Pitch moves every 10 ms, like the motor sounds.
+                m.apply(Command::SetPitch(
+                    1 + (block % 8) as u16,
+                    (block % 120) as i16,
+                ));
+                m.render(&mut buf);
+            }
+            let dt = t.elapsed().as_secs_f64();
+            println!(
+                "{:>8}: {:.1} ms per s of audio ({:.2} % of one core), 10 voices at 48 kHz",
+                interp.name(),
+                dt * 1000.0 / seconds as f64,
+                dt * 100.0 / seconds as f64
+            );
+        }
     }
 }

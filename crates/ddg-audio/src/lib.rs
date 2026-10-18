@@ -22,6 +22,7 @@ pub mod bank;
 pub mod code;
 pub mod mixer;
 pub mod output;
+pub mod sinc;
 pub mod system;
 pub mod tables;
 pub mod train;

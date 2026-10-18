@@ -429,8 +429,15 @@ The allowed dependency list has no decoder, so ask before adding one.
   f32 stereo at the device rate, resampled per voice at `pitch_hz`, with linear interpolation
   by default.
   - Enhancements, each a `MixerConfig` field: `master_volume` (≠ 1), `smooth_volume` (ramps
-    volume changes over 5 ms; arcade = off), `interpolation` (`Nearest` / `Linear`). Which one
-    sounds closest to Win9x DirectSound software mixing is unknown.
+    volume changes over 5 ms; arcade = off), `interpolation` (`Nearest` / `Linear` / `Sinc`,
+    the setting `audio_resampler`). Which of nearest and linear sounds closest to Win9x
+    DirectSound software mixing is unknown (open question 8); `Sinc` is an enhancement: a 32-tap
+    Kaiser-windowed sinc (β 8, cutoff 0.9 of the band kept, 256 phases blended linearly; images
+    and aliases below −70 dB), its cutoff scaled by 2^(−k/4) when a voice plays faster than the
+    output rate, reading across loop seams and zero-padded at the ends of one-shots
+    (`ddg-audio/src/sinc.rs`). With no rate change (step exactly 1) it passes the samples through.
+    Cost at 48 kHz with 10 voices, release build: nearest 0.3 %, linear 0.6 %, sinc 1.5 % of one
+    core. The original also mixed into a 22.05 kHz primary (§1), which none of the modes imitate.
   - Out-of-range frequencies at play time are clamped instead of leaving a stuck silent voice (§2).
     No code path in the game hits this.
 - `SoundSystem` (game thread) implements `snd_request`, the post functions with their pause and
