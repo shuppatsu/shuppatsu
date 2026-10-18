@@ -137,6 +137,10 @@ pub struct HudState {
     /// The clocks are not redrawn this tick (`0x856c6c > 0` after a station is passed).
     pub clocks_frozen: bool,
     pub remaining_visible: bool,
+    /// With the readout off, its 持ち時間 label stays: the coupling minigame only sets
+    /// `0x856d1c = 0`, `Hud_Update` (0x4100a5) then skips the readout and nothing clears slot
+    /// 0x1c (Wine capture, hud.md §3.16).
+    pub remaining_label_kept: bool,
     /// The driving panel (distance readout) is active (`0x856d0c`).
     pub panel_active: bool,
     /// The panel shows the distance (1) or the "Professional" plate (0) (`0x856c70`).
@@ -474,7 +478,9 @@ impl Hud {
             for i in 0..4 {
                 layer.slots[SLOT_REMAINING + i].tilemap = -1;
             }
-            layer.slots[SLOT_REMAINING_LABEL].tilemap = -1;
+            if !s.remaining_label_kept {
+                layer.slots[SLOT_REMAINING_LABEL].tilemap = -1;
+            }
             return;
         }
         let palette = if s.remaining_s > 14 { PAL_5 } else { PAL_4 };
@@ -938,6 +944,29 @@ mod tests {
         h.update(&band, &mut l);
         assert_eq!(l.slots[SLOT_SPEEDO].tilemap, -1);
         assert!(l.fans.is_empty());
+    }
+
+    #[test]
+    fn remaining_label_can_outlast_the_readout() {
+        let mut h = hud();
+        let mut l = layer();
+        let on = HudState {
+            remaining_visible: true,
+            ..state(0.0)
+        };
+        h.update(&on, &mut l);
+        let label = l.slots[SLOT_REMAINING_LABEL].tilemap;
+        assert_eq!(label, h.remaining_label);
+        // The coupling minigame: digits off, label kept.
+        let kept = HudState {
+            remaining_label_kept: true,
+            ..state(0.0)
+        };
+        h.update(&kept, &mut l);
+        assert_eq!(l.slots[SLOT_REMAINING].tilemap, -1);
+        assert_eq!(l.slots[SLOT_REMAINING_LABEL].tilemap, label);
+        h.update(&state(0.0), &mut l);
+        assert_eq!(l.slots[SLOT_REMAINING_LABEL].tilemap, -1);
     }
 
     #[test]

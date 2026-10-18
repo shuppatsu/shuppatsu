@@ -503,6 +503,7 @@ impl CabHud {
             remaining_visible: s.drive_phase != DrivePhase::Cleared
                 && !self.coupling.hides_remaining(s.coupling.as_ref())
                 && !s.bonus,
+            remaining_label_kept: self.coupling.hides_remaining(s.coupling.as_ref()),
             panel_active: self.panel_active,
             panel_on: self.panel_on,
             next_is_stop: s.target_stops,
