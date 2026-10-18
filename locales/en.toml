@@ -1242,8 +1242,9 @@ replay = { rect = [6, 0, 6, 2], region = [13, 4, 72, 23], style = "plain", text 
 [caption]
 # Captions in the body font, banners in the display font (docs/localisation.md, "Fonts").
 banner_font = "display"
-# Setting `staff_kanji`: how a staff-roll name's kanji follow the English ({kanji} = 齋藤 晃).
-staff_kanji = "{kanji}"
+# Setting `staff_kanji`: how a staff-roll name's kanji follow the English ({kanji} = 齋藤 晃); in
+# parentheses, as MobyGames writes them (the user's choice).
+staff_kanji = "({kanji})"
 depart_clear = "{name} · Depart: Clear!"
 depart_reduce = "{name} · Depart: Reduce"
 depart_caution = "{name} · Depart: Caution"
