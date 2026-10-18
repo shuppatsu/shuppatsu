@@ -128,6 +128,7 @@ pub struct MoviePlayer {
     shown: Option<u64>,
     rgba: Vec<u8>,
     video_done: bool,
+    started: std::time::Instant,
 }
 
 impl MoviePlayer {
@@ -157,6 +158,7 @@ impl MoviePlayer {
             shown: None,
             rgba: Vec::new(),
             video_done: false,
+            started: std::time::Instant::now(),
         };
         player.decode_next();
         if let (Some(v), Some(a)) = (
@@ -274,6 +276,16 @@ impl MoviePlayer {
         self.video_done
             && self.next.is_none()
             && self.clock() >= self.next_index as f64 * self.period
+    }
+
+    /// The clock against the wall time since the start, for the log.
+    pub fn timing(&self) -> String {
+        format!(
+            "clock {:.3} s after {:.3} s, picture {:?}",
+            self.clock(),
+            self.started.elapsed().as_secs_f64(),
+            self.shown
+        )
     }
 
     /// The display index of the picture on show.

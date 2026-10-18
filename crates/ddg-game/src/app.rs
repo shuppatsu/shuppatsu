@@ -473,7 +473,7 @@ impl App {
             Err(e) => {
                 eprintln!("movie: {e:#}");
                 let mut sfx = Vec::new();
-                let s = self.end_movie(from, false, &mut sfx);
+                let s = self.end_movie(from, false, String::new(), &mut sfx);
                 self.play_sfx(&sfx);
                 s
             }
@@ -483,14 +483,24 @@ impl App {
     /// The movie ended (`skipped` by the confirm edge): the soundtrack stops, attract goes on
     /// ([`Attract::movie_done`]) or the title menu comes back on the movie item with its BGM
     /// (0x42a1c0 case 5).
-    fn end_movie(&mut self, from: MovieFrom, skipped: bool, sfx: &mut Vec<Sfx>) -> Screen {
+    fn end_movie(
+        &mut self,
+        from: MovieFrom,
+        skipped: bool,
+        timing: String,
+        sfx: &mut Vec<Sfx>,
+    ) -> Screen {
         let env = self.env();
         let r = self.res.as_mut().expect("resources");
         if let Some(s) = r.sound.as_ref() {
             s.play_stream(None);
         }
         self.movie_overlay = None;
-        eprintln!("movie: {}", if skipped { "skipped" } else { "ended" });
+        eprintln!(
+            "movie: {} ({})",
+            if skipped { "skipped" } else { "ended" },
+            timing
+        );
         match from {
             MovieFrom::Attract(mut a) => {
                 a.movie_done(skipped, &mut r.layer);
@@ -571,7 +581,7 @@ impl App {
         let mut next: Option<Next> = None;
         let mut demo: Option<(Option<AttractDemo>, usize)> = None;
         let mut movie: Option<MovieFrom> = None;
-        let mut movie_ended: Option<(MovieFrom, bool)> = None;
+        let mut movie_ended: Option<(MovieFrom, bool, String)> = None;
         let mut set_option: Option<(usize, u8)> = None;
         let mut calibrated = None;
         let mut language = None;
@@ -857,7 +867,7 @@ impl App {
                 m.player.advance(TICK.as_secs_f64());
                 m.player.update();
                 if skipped || m.player.finished() {
-                    movie_ended = Some((m.from, skipped));
+                    movie_ended = Some((m.from, skipped, m.player.timing()));
                     Screen::Quit
                 } else {
                     Screen::Movie(m)
@@ -868,8 +878,8 @@ impl App {
         if let Some(from) = movie {
             self.screen = self.start_movie(from);
         }
-        if let Some((from, skipped)) = movie_ended {
-            self.screen = self.end_movie(from, skipped, &mut sfx);
+        if let Some((from, skipped, timing)) = movie_ended {
+            self.screen = self.end_movie(from, skipped, timing, &mut sfx);
         }
         if let Some((item, v)) = set_option {
             self.apply(item, v, &mut sfx)?;
