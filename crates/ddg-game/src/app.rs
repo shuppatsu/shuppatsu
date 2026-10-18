@@ -228,7 +228,7 @@ impl App {
         let mut sound = if headless || opts.mute {
             None
         } else {
-            crate::sound::Sound::open_device(data.data_dir(), &exe)?
+            crate::sound::Sound::open_device(data.data_dir(), &exe, opts.locale.audio_resampler)?
         };
         if let Some(s) = sound.as_mut() {
             s.set_enabled(save.eeprom.options().sound == 0);
@@ -894,6 +894,12 @@ impl App {
             // The canvas is composed again every frame.
             "hud_upscale" => self.res().bank.set_upscale(s.hud_upscale),
             "save_on_change" => self.res().save.save_on_change = s.save_on_change,
+            "audio_resampler" => {
+                let m = self.opts.locale.audio_resampler;
+                if let Some(snd) = self.res.as_mut().and_then(|r| r.sound.as_mut()) {
+                    snd.set_resampler(m);
+                }
+            }
             "keyboard_with_controller" => {
                 self.opts.pad.keyboard_with_controller = s.keyboard_with_controller;
                 let mode = self.res().save.eeprom.options().control_mode;

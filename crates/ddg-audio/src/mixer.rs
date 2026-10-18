@@ -353,6 +353,9 @@ impl Mixer {
         config: MixerConfig,
     ) -> Self {
         let out_rate = out_rate.max(1);
+        if config.interpolation == Interpolation::Sinc {
+            sinc::kernel();
+        }
         Self {
             bank,
             volumes,

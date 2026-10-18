@@ -55,6 +55,9 @@ pub struct PortConfig {
     /// `original`, `2x`, `3x` or `max` (`--draw-distance`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub draw_distance: Option<String>,
+    /// `linear`, `nearest` or `sinc` (`--audio-resampler`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub audio_resampler: Option<String>,
     /// A fixed canvas multiple, 1..=4 (`--ui-scale`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ui_scale: Option<i64>,
@@ -125,6 +128,12 @@ impl PortConfig {
             match crate::scene::DrawDistance::parse(v) {
                 Some(d) => cfg.draw_distance = d,
                 None => warn("draw_distance", "\"original\", \"2x\", \"3x\" or \"max\""),
+            }
+        }
+        if let Some(v) = &self.audio_resampler {
+            match ddg_audio::Interpolation::parse(v) {
+                Some(m) => cfg.audio_resampler = m,
+                None => warn("audio_resampler", "\"linear\", \"nearest\" or \"sinc\""),
             }
         }
         if let Some(n) = self.ui_scale {
@@ -334,6 +343,7 @@ const VALUE_FLAGS: &[(&str, &str)] = &[
     ("--ui-scaling", "ui_scaling"),
     ("--texture-pack", "texture_pack"),
     ("--draw-distance", "draw_distance"),
+    ("--audio-resampler", "audio_resampler"),
 ];
 
 /// Every key of docs/settings.md: the values, then the switches.
@@ -401,6 +411,30 @@ mod tests {
         let d = std::env::temp_dir().join(format!("ddg-config-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    #[test]
+    fn audio_resampler_layers() {
+        use ddg_audio::Interpolation;
+        let file = PortConfig::parse("audio_resampler = \"sinc\"\n").unwrap();
+        let get = |f: Option<&PortConfig>, e: &[(&str, &str)], a: &[&str]| {
+            layered(f, env(e), &mut args(a)).unwrap().0.audio_resampler
+        };
+        assert_eq!(get(None, &[], &[]), Interpolation::Linear);
+        assert_eq!(get(Some(&file), &[], &[]), Interpolation::Sinc);
+        let var = [("DDG_AUDIO_RESAMPLER", "nearest")];
+        assert_eq!(get(Some(&file), &var, &[]), Interpolation::Nearest);
+        let flag = ["--audio-resampler", "linear"];
+        assert_eq!(get(Some(&file), &var, &flag), Interpolation::Linear);
+        // A bad value in the file loses only that setting.
+        let bad = PortConfig::parse("audio_resampler = \"cubic\"\n").unwrap();
+        assert_eq!(get(Some(&bad), &[], &[]), Interpolation::Linear);
+        assert!(layered(None, env(&[]), &mut args(&["--audio-resampler", "x"])).is_err());
+        let l = locks(env(&var), &args(&["--audio-resampler"]));
+        assert_eq!(
+            l.get("audio_resampler"),
+            Some(&Lock::Flag("--audio-resampler".into()))
+        );
     }
 
     #[test]
@@ -550,6 +584,7 @@ mod tests {
             "display_font",
             "texture_pack",
             "draw_distance",
+            "audio_resampler",
         ]) {
             assert!(rows.contains(k), "{k} is not in docs/settings.md");
         }
@@ -571,6 +606,7 @@ mod tests {
                     "display_font",
                     "texture_pack",
                     "draw_distance",
+                    "audio_resampler",
                 ]
                 .contains(r);
             assert!(known, "docs/settings.md lists {r}, which is no setting");

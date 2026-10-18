@@ -66,8 +66,8 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
   `wide_menus`, `hud_upscale`, `interpolate`, `vsync`, `fullscreen`); 3D & effects (`wide_visibility`, `square_pixels`,
   `stable_track_variants`, `texture_filtering`, `anisotropic`, `msaa`, `ground_variation`,
   `ground_detiling`, `texture_pack`, `fog`, `wide_weather`, `far_traffic`, `max_lod`,
-  `early_activation`, `draw_distance`, `distance_fade`, `fine_depth`); Saves & controls (`save_on_change`,
-  `save_timed_out_names`, `keyboard_with_controller`, `exit_no_to_menu`). All 36 keys of
+  `early_activation`, `draw_distance`, `distance_fade`, `fine_depth`); Sound (`audio_resampler`); Saves & controls (`save_on_change`,
+  `save_timed_out_names`, `keyboard_with_controller`, `exit_no_to_menu`). All 37 keys of
   the table below.
 * **Keys**: up/down move (no wrap, repeat on hold), left/right step the value (switches flip,
   `ui_scale` runs Auto, 1×…4×, the others wrap), Enter (confirm) steps it on, Esc (cancel)
@@ -80,7 +80,8 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
 * **When it applies** (the status line): *Applies now*: `lang` (the locale is installed again:
   sprite text, header art and these strings switch at once), `ui_scaling`, `ui_scale`,
   `wide_menus` (the canvas is refitted), `hud_upscale` (the canvas is composed every frame), `fullscreen`, `save_on_change`, `keyboard_with_controller` (the
-  input is rebuilt), `exit_no_to_menu`. *Applies from the next stage*: everything a run reads
+  input is rebuilt), `exit_no_to_menu`, `audio_resampler` (sent to the audio thread, heard from the next
+  device buffer). *Applies from the next stage*: everything a run reads
   when it starts (the HUD layout, interpolation, the 3D and caption switches,
   `save_timed_out_names`). *Applies after a restart*: `vsync` (the surface's present mode is
   chosen when the window opens).
@@ -132,6 +133,7 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
 | `save_timed_out_names` | on | `--[no-]save-timed-out-names` | a name entry that times out is shown but never packed (`Ranking_ToEeprom` 0x41e670 skipped): lost at exit | saved like a completed name (menus.md §14.1). Test `screens::ranking::tests::timeout_without_the_setting_is_not_committed` |
 | `keyboard_with_controller` | on | `--[no-]keyboard-with-controller` | in controller modes 4–6 only Esc, Enter (menu confirm) and R reach the game | the keyboard's horn (Space) and A / ATS confirm (Enter) work too; the levers stay the controller's (input.md §10.3). Test `gamepad::tests::keyboard_buttons_off_is_the_original_mask` |
 | `exit_no_to_menu` | on | `--[no-]exit-no-to-menu` | the exit dialog's いいえ restarts attract at the title picture | the title menu again, cursor on ゲーム終了 (menus.md §14.1). Test `app::tests::exit_no_without_the_setting_goes_to_attract` |
+| `audio_resampler` | `linear` | `--audio-resampler <linear\|nearest\|sinc>` | every voice (8-bit effects at 9–44.1 kHz, pitch-shifted live; 44.1 kHz music) resampled by the Windows 9x DirectSound software mixer into a 22.05 kHz 8-bit primary buffer, nearest or linear: not known (audio-text.md §1, open question 8) | how each voice reaches the device rate: `linear` interpolation (the default) or `nearest` (sample-and-hold), the two candidates for the original, neither imitating its 22.05 kHz primary; `sinc` is band-limited: a 32-tap Kaiser-windowed sinc whose cutoff follows the pitch, reading across loop seams, with images and aliases below −70 dB (clearer 10 kHz voices), about 1.5 % of a core for 10 voices at 48 kHz (audio-text.md §9) |
 
 Not settings: the window size (`--size`), `--mute`, the controller files (`--joystick-dat`,
 `--combo`) and the check aids (`--shot`, `--inputs`, `--speedometer`, `--ending`,

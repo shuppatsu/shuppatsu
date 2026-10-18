@@ -680,6 +680,9 @@ pub struct LocaleConfig {
     /// `--draw-distance` / `DDG_DRAW_DISTANCE` (enhancement `draw_distance`, the 3D view's
     /// far plane; kept here with the other valued settings).
     pub draw_distance: crate::scene::DrawDistance,
+    /// `--audio-resampler` / `DDG_AUDIO_RESAMPLER` (`audio_resampler`: how each voice is resampled
+    /// to the device rate; `sinc` is an enhancement, docs/settings.md).
+    pub audio_resampler: ddg_audio::Interpolation,
 }
 
 impl Default for LocaleConfig {
@@ -696,6 +699,7 @@ impl Default for LocaleConfig {
             ui_scaling: Default::default(),
             texture_pack: None,
             draw_distance: Default::default(),
+            audio_resampler: Default::default(),
         }
     }
 }
@@ -720,7 +724,7 @@ impl LocaleConfig {
     }
 
     /// `DDG_LANG`, `DDG_FONT`, `DDG_DISPLAY_FONT`, `DDG_LOCALE_DIR`, `DDG_TEXTURE_PACK`,
-    /// `DDG_UI_SCALE`, `DDG_HUD_LAYOUT`, `DDG_UI_SCALING` over what is set (the defaults or
+    /// `DDG_UI_SCALE`, `DDG_HUD_LAYOUT`, `DDG_UI_SCALING`, `DDG_DRAW_DISTANCE`, `DDG_AUDIO_RESAMPLER` over what is set (the defaults or
     /// `config.toml`; unknown values are ignored with a warning).
     pub fn apply_env(&mut self) {
         self.apply_vars(|k| std::env::var_os(k));
@@ -765,6 +769,12 @@ impl LocaleConfig {
             match crate::scene::DrawDistance::parse(&v.to_string_lossy()) {
                 Some(d) => c.draw_distance = d,
                 None => eprintln!("DDG_DRAW_DISTANCE: expected original, 2x, 3x or max"),
+            }
+        }
+        if let Some(v) = var("DDG_AUDIO_RESAMPLER") {
+            match ddg_audio::Interpolation::parse(&v.to_string_lossy()) {
+                Some(m) => c.audio_resampler = m,
+                None => eprintln!("DDG_AUDIO_RESAMPLER: expected linear, nearest or sinc"),
             }
         }
         c.ui_scale = c.ui_scale_fixed.unwrap_or(1);
@@ -815,6 +825,11 @@ impl LocaleConfig {
                     let v = it.next().unwrap_or_default();
                     self.draw_distance = crate::scene::DrawDistance::parse(&v)
                         .context("--draw-distance needs original, 2x, 3x or max")?;
+                }
+                "--audio-resampler" => {
+                    let v = it.next().unwrap_or_default();
+                    self.audio_resampler = ddg_audio::Interpolation::parse(&v)
+                        .context("--audio-resampler needs linear, nearest or sinc")?;
                 }
                 _ => rest.push(a),
             }

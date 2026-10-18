@@ -13,7 +13,9 @@
 mod stage;
 
 use anyhow::Result;
-use ddg_audio::{AudioOutput, HornEdge, MixerConfig, SoundBank, SoundSystem, SoundTables};
+use ddg_audio::{
+    AudioOutput, HornEdge, Interpolation, MixerConfig, SoundBank, SoundSystem, SoundTables,
+};
 use ddg_audio::{TrainSound, TrainTick, VoiceEvent};
 use ddg_engine::bonus::BonusEvent;
 use ddg_engine::coupling::CouplingEvent;
@@ -50,12 +52,20 @@ struct StageParts {
 }
 
 impl Sound {
-    /// Opens the default device with no stage (menus); `Ok(None)` when there is none.
-    pub fn open_device(data_dir: &Path, exe: &Exe<'_>) -> Result<Option<Self>> {
+    /// Opens the default device with no stage (menus), resampling with `resampler` (setting
+    /// `audio_resampler`); `Ok(None)` when there is no device.
+    pub fn open_device(
+        data_dir: &Path,
+        exe: &Exe<'_>,
+        resampler: Interpolation,
+    ) -> Result<Option<Self>> {
         let bank = Arc::new(SoundBank::load(data_dir)?);
         let tables = Arc::new(SoundTables::from_exe(exe)?);
-        let out = match AudioOutput::open(bank, tables.code_volume.clone(), MixerConfig::default())
-        {
+        let config = MixerConfig {
+            interpolation: resampler,
+            ..MixerConfig::default()
+        };
+        let out = match AudioOutput::open(bank, tables.code_volume.clone(), config) {
             Ok(o) => o,
             Err(e) => {
                 eprintln!("no sound: {e}");
@@ -84,6 +94,17 @@ impl Sound {
             enabled: true,
             stage: None,
         })
+    }
+
+    /// Changes the resampler (setting `audio_resampler`) from the next device buffer on.
+    pub fn set_resampler(&mut self, resampler: Interpolation) {
+        if let Some(out) = self.out.as_mut() {
+            let config = MixerConfig {
+                interpolation: resampler,
+                ..out.config()
+            };
+            out.set_config(config);
+        }
     }
 
     /// Whether this plays on a device (not [`Sound::silent`]).

@@ -4,7 +4,7 @@
 //! Reached from ゲーム設定 (the original's options list, menus.md §4) as a seventh item after
 //! the original six, which stay where and as they are; with the analog levers, whose cursor
 //! follows the power notch and so cannot reach a seventh row, the horn opens it. It lists the
-//! settings in four groups with their current values and a one-line description, and changes
+//! settings in five groups with their current values and a one-line description, and changes
 //! them in place: left / right step a value, confirm toggles (or steps it on). Every change is
 //! written to `config.toml` at once by the app ([`crate::config::store`]), and applied live
 //! where the front end can show it; otherwise the status line says when it takes effect. A
@@ -25,6 +25,7 @@ use crate::presentation::HudLayout;
 use crate::scene::DrawDistance;
 use crate::screens::{MenuInput, Sfx};
 use crate::settings::Settings;
+use ddg_audio::Interpolation;
 use ddg_formats::cg::Palette;
 use ddg_render::overlay::{MAX_MULTIPLE, UiScaling};
 use ddg_render::sprites::{Paint, SpriteLayer, TextStyle, WidgetKind};
@@ -32,12 +33,13 @@ use ddg_render::text::{Align, FontRole};
 use std::collections::HashMap;
 use std::path::Path;
 
-/// The four groups, in screen order.
+/// The five groups, in screen order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
     Text,
     Display,
     Effects,
+    Sound,
     Saves,
 }
 
@@ -48,6 +50,7 @@ impl Group {
             Self::Text => "group_text",
             Self::Display => "group_display",
             Self::Effects => "group_3d",
+            Self::Sound => "group_sound",
             Self::Saves => "group_saves",
         }
     }
@@ -73,6 +76,8 @@ pub enum Kind {
     Level,
     /// `draw_distance`: one of [`DrawDistance::ALL`].
     DrawDistance,
+    /// `audio_resampler`: one of [`Interpolation::ALL`].
+    Resampler,
 }
 
 /// When a change takes effect, seen from the menus (the only place the screen is reached).
@@ -146,6 +151,7 @@ pub const ITEMS: &[Item] = {
         item("draw_distance", Effects, Kind::DrawDistance, NextStage),
         switch("distance_fade", Effects, NextStage),
         switch("fine_depth", Effects, NextStage),
+        item("audio_resampler", Sound, Kind::Resampler, Now),
         switch("save_on_change", Saves, Now),
         switch("save_timed_out_names", Saves, NextStage),
         switch("keyboard_with_controller", Saves, Now),
@@ -231,6 +237,11 @@ impl Item {
                 let i = all.iter().position(|d| *d == cfg.draw_distance);
                 cfg.draw_distance = all[cycle(i.unwrap_or(0), dir, all.len())];
             }
+            Kind::Resampler => {
+                let all = Interpolation::ALL;
+                let i = all.iter().position(|m| *m == cfg.audio_resampler);
+                cfg.audio_resampler = all[cycle(i.unwrap_or(0), dir, all.len())];
+            }
         }
     }
 
@@ -253,6 +264,7 @@ impl Item {
             Kind::TexturePack => path(&cfg.texture_pack),
             Kind::Level => s.level(self.key).map(|v| Value::Integer(i64::from(v))),
             Kind::DrawDistance => Some(Value::String(cfg.draw_distance.name().to_owned())),
+            Kind::Resampler => Some(Value::String(cfg.audio_resampler.name().to_owned())),
         }
     }
 
@@ -320,6 +332,13 @@ impl Item {
                     DrawDistance::Max => "distance_max",
                 })
                 .to_owned(),
+            Kind::Resampler => ui
+                .get(match cfg.audio_resampler {
+                    Interpolation::Linear => "resampler_linear",
+                    Interpolation::Nearest => "resampler_nearest",
+                    Interpolation::Sinc => "resampler_sinc",
+                })
+                .to_owned(),
         }
     }
 }
@@ -331,6 +350,7 @@ const UI_IDS: &[&str] = &[
     "group_text",
     "group_display",
     "group_3d",
+    "group_sound",
     "group_saves",
     "on",
     "off",
@@ -347,6 +367,9 @@ const UI_IDS: &[&str] = &[
     "distance_2x",
     "distance_3x",
     "distance_max",
+    "resampler_linear",
+    "resampler_nearest",
+    "resampler_sinc",
     "status_now",
     "status_stage",
     "status_restart",
@@ -807,7 +830,7 @@ mod tests {
             .iter()
             .filter(|r| matches!(r, Row::Heading(_)))
             .count();
-        assert_eq!(headings, 4);
+        assert_eq!(headings, 5);
     }
 
     #[test]

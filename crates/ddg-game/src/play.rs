@@ -184,7 +184,7 @@ pub fn run(mut opts: PlayOptions) -> Result<()> {
     let sound = if opts.shot.is_some() || opts.mute {
         None
     } else {
-        crate::sound::Sound::open_device(data.data_dir(), &exe)?
+        crate::sound::Sound::open_device(data.data_dir(), &exe, opts.locale.audio_resampler)?
     };
     let shared = Shared {
         data,
