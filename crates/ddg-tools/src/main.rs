@@ -5,6 +5,7 @@ mod export;
 mod gltf;
 mod hud_upscale;
 mod inventory;
+mod movie;
 mod pe;
 mod sound;
 mod trace;
@@ -33,6 +34,9 @@ commands:
                     [--volume V] [--release-after S] [--resampler linear|nearest|sinc]
                                   play a sound code (hex 0x31 / 31h or decimal; 0x1000|n =
                                   sequence n) live, or render it to a WAV (gitignored out/)
+  movie <info|decode|compare|png> [file] [...]
+                                  decode komachi.dat with our MPEG-1 decoders: facts and speed,
+                                  raw dumps, PSNR/SNR against a reference (movie for the options)
   upscale-textures --method <xbrz|esrgan|waifu2x|nearest> [--scale N] [--out DIR] [...]
                                   build a texture pack from $DDG_DATA_DIR (upscale-textures
                                   --help for the options; docs/texture-packs.md)
@@ -60,6 +64,7 @@ fn main() -> Result<()> {
         }
         "pe" => pe::print_report(&path(1)?),
         "play-sound" => sound::play_sound(&args[1..]),
+        "movie" => movie::run(&args[1..]),
         "export" => run_export(&args[1..]),
         "upscale-textures" => {
             if args.iter().any(|a| a == "--help" || a == "-h") {
