@@ -1193,8 +1193,18 @@ limit_lifted = "Speed limit lifted."
 0xfc = "Please don't use the emergency brake."
 0xfd = "Shift complete."
 0xfe = "Good work."
-# Coupling (the minigame and the E3 coupling, sequence 0x29).
-0x40 = "Prepare for coupling. Over."      # 併合準備…どうぞ
+# Coupling (the minigame and the E3 coupling, sequence 0x29): the radio, in playing order
+# (intro at loop ticks 30, 70, 130; calls by the distance to the coupler).
+0x34 = "Begin coupling preparations. Over."    # intro (the verb unclear)
+0x40 = "Coupling preparations complete. Over." # intro; E3 coupling
+0x36 = "Stop once at 3 metres, then proceed."  # intro
+0x37 = "Come ahead."                           # every 90 ticks while 9 m or more away, or waiting at the mark
+0x38 = "All right."                            # 8 m (unclear)
+0x39 = "Stop, stop!"                           # 6.5 m, the mark
+0x3a = "Now for the coupling."                 # stopped at the mark
+0x3b = "OK, 3 metres."
+0x3c = "OK, 2 metres."
+0x3d = "OK, 1 metre."
 0x3e = "Oh, good."
 # Hokuhoku line: Limited Express Hakutaka.
 0x149 = "Thank you for riding with us."

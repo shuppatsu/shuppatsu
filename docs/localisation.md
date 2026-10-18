@@ -689,7 +689,14 @@ whose gist the context settles.
 | 0xf5 | cause 9 | "Trains can't stop suddenly." | confirmed |
 | 0xe9, 0xed, 0xee, 0xf4 | no caller in a stage found | "Please press the Start button.", "Watch your speed entering stations, OK?", "Make good use of coasting, OK?", "Use full notch when starting off, OK?" | confirmed |
 | sequences 0..4 (0xfa + 0xf7 / 0xf8 / 0xf9 / 0xfd / 0xfe) | result screens (menus.md), which show no subtitles | "Congratulations!" + "You passed the beginner class." / "…intermediate class." / "Aim for a high score." / "Shift complete." / "Good work." | confirmed (0xf7/0xf8 初級/中級…合格) |
-| 0x40 | coupling minigame intro; E3 coupling (sequence 0x29 with 0x12) | "Prepare for coupling. Over." | likely (併合準備 … どうぞ; the middle word unclear) |
+| 0x34 | coupling minigame intro, loop tick 30 | "Begin coupling preparations. Over." | guess ("coupling preparations" + a request + "over"; the verb garbled) |
+| 0x40 | coupling minigame intro, tick 70; E3 coupling (sequence 0x29 with 0x12) | "Coupling preparations complete. Over." | likely (0x35 + "over"; one model reads it whole, the other in the intro's context) |
+| 0x36 | coupling minigame intro, tick 130 | "Stop once at 3 metres, then proceed." | likely (one model whole; "3 m" though the mark is 4.5–6.5 m) |
+| 0x37 | coupling reminder every 90 ticks (≥ 9 m, or waiting at the mark) | "Come ahead." | guess (by its vowels: "forward" + "all right") |
+| 0x38 | coupling call at 8 m | "All right." | guess (0.6 s; "all right" by its vowels) |
+| 0x39 | coupling call at 6.5 m (the mark) | "Stop, stop!" | confirmed (both models in context) |
+| 0x3a | coupling, stopped at the mark | "Now for the coupling." | likely ("next" + "coupling", a word both models garble in every clip) |
+| 0x3b, 0x3c, 0x3d | coupling calls at 3, 2, 1 m | "OK, 3 metres." / "OK, 2 metres." / "OK, 1 metre." | confirmed (both models, the clips in a row) |
 | 0x3e | coupling minigame, after a successful coupling | "Oh, good." | likely (one model: あらよかった) |
 | sequence 0x13 (0x149 0x14a 0x14e..0x150 + next) | Hokuhoku, course event | "Thank you for riding with us." "This is the Limited Express Hakutaka, bound for Echigo-Yuzawa." "At Echigo-Yuzawa, change to the Shinkansen for Tōkyō on track 13." "The next station is Tōkamachi." | confirmed |
 | sequence 0x16 (0x151 0x152 + next) | Hokuhoku, course event | "Thank you for taking the Limited Express Hakutaka today." "The next station is Muikamachi." | confirmed |
@@ -706,11 +713,11 @@ whose gist the context settles.
 | sequence 0x22 (0x16e 0x18b..0x18e) | Komachi, course event after Morioka | "Thank you for traveling with JR East today." "This is the Yamabiko and Komachi, bound for Tōkyō." "The next station is Shin-Hanamaki." | confirmed |
 | sequence 0x23 (0x18a 0x173 0x18f) | Komachi, before Shin-Hanamaki | "Thank you for traveling with us." "We will soon be arriving at Shin-Hanamaki." | confirmed |
 
-**Still unclear (no subtitle):** the coupling-minigame radio 0x34 (intro), 0x36 (intro;
-"… 一旦停止 …", the instruction to stop once short of the train), 0x37 (the reminder every
-90 ticks), 0x38, 0x39, 0x3a, 0x3b, 0x3c, 0x3d (the calls at 8, 6.5 m, the stop window, 3, 2,
-1 m): both models garble them (radio filter) and their place does not settle the words. 0x35
-併合準備完了です and 0x41 (…完了) are clear but have no caller. Not in scope: the title calls
+**The coupling radio.** Alone, the short radio-filtered clips defeat both models. Normalised,
+padded with silence and transcribed in context (the intro clips in a row, the distance calls in a
+row) with beam search, they come out (out/stt/coupling/): the 3/2/1 m calls and "stop, stop"
+agree in both models; the rest is read from the vowels and the place. Only 0x34, 0x37 and 0x38 are
+guesses. 0x35 (0x40 without "over") and 0x41 have no caller and no line. Not in scope: the title calls
 0x190 / 0x191 (sequence 0x24, "Densha de GO! Kōsoku-hen") and 0x192..0x194 ("Excellent!") of
 the menus and result screens. Sound effects (0x01..0x33 and the non-voice codes; Whisper's
 "ご視聴ありがとうございました" there is a hallucination) have no subtitles.

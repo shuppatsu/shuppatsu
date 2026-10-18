@@ -98,6 +98,67 @@ fn catalogue_keys_are_known() {
     }
 }
 
+/// The coupling minigame's radio (docs/localisation.md, "Voice codes and their subtitles"):
+/// a perfect game through `ddg_engine::coupling`, every sound it requests through the
+/// sound system and the book. The squelch 0x3f and the effects have no line.
+#[test]
+fn coupling_radio_has_a_line_per_call() {
+    use ddg_engine::coupling::{Coupling, CouplingEvent, CouplingInput, INTRO_TICKS};
+    let mut c = Coupling::new();
+    // (km/h, metres to the coupler, horn); the stop mark is 40 m before the coupler.
+    let mut drive = vec![(0.0, 40.0, false); INTRO_TICKS as usize];
+    drive.extend([
+        (0.0, 40.0, true),
+        (3.0, 20.0, false),
+        (1.0, 8.0, false),
+        (1.0, 7.0, false),
+        (1.0, 6.4, false),
+        (0.0, 5.5, false),
+        (0.0, 5.5, true),
+        (1.0, 2.9, false),
+        (1.0, 1.9, false),
+        (1.0, 0.9, false),
+        (0.5, 0.0, false),
+    ]);
+    drive.extend([(0.0, 0.0, false); 210]);
+    let mut codes = Vec::new();
+    for (kmh, d, horn) in drive {
+        let t = c.step(&CouplingInput {
+            speed_mps: kmh / 3.6,
+            dist_to_stop_m: d - 40.0,
+            horn_pressed: horn,
+        });
+        codes.extend(t.events.iter().filter_map(|e| match e {
+            CouplingEvent::Sound(code) => Some(*code),
+            _ => None,
+        }));
+    }
+    let lines: Vec<String> = codes
+        .iter()
+        .flat_map(|&code| texts(|s| s.request(code)))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "Begin coupling preparations. Over.",
+            "Coupling preparations complete. Over.",
+            "Stop once at 3 metres, then proceed.",
+            // The reminder (every 90 ticks while 9 m or more away), then the 8 m call.
+            "Come ahead.",
+            "All right.",
+            "Stop, stop!",
+            "Now for the coupling.",
+            "OK, 3 metres.",
+            "OK, 2 metres.",
+            "OK, 1 metre.",
+            "Oh, good.",
+        ]
+    );
+    for squelch in [0x3f, 0x11, 0x2a] {
+        assert!(texts(|s| s.request(squelch)).is_empty());
+    }
+}
+
 #[test]
 fn station_calls_name_the_station() {
     // Approach call 0x41ffe0(stops ? 3 : 2, name).
