@@ -396,6 +396,15 @@ captions.rs` (`OneLine`):
   three slots stay empty and the task adds a text widget each update it would have drawn
   them. Captions are left-aligned from the caption's x (80) to the same margin on the right;
   banners are centred on the original's centre (x 320), at most 560 px wide.
+* **The ending's station plate** (full ending, 0x417ab0, slots 0x36–0x38) is the same caption
+  set: plain name sprite (0x4665c4), 駅 (0x465518) and 通過 / 停車 (0x465500); the data test
+  `play::ending::tests::plate_is_the_caption_set` checks this. With the setting on it is the caption's line
+  (`Captions::plate_line`: same text, size, colours and font), centred on x 320 at the plate's
+  y, redrawn every update while the plate shows; off, or in Japanese, the three sprites.
+  The clock labels under it (定刻 / 通過時刻, 到着時刻: one sprite each, 0x20a–0x20d) are
+  already one sprite per label and stay as they are. No other screen draws the caption
+  sprites: the attract demo is a `Play` and gets the setting with the cab HUD; the plain
+  ending, the result replay and the bonus game have no station captions.
 * **Size**: capitals 0.75 × the original lettering height (`rasterise_sized`'s rule), measured
   from the 駅 sprite of the set; smaller only when the line does not fit.
 * **Colours** come from palette 4 at draw time, so palette changes apply as on the art. The
