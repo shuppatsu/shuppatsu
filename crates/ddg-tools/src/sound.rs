@@ -3,7 +3,7 @@
 
 use crate::export::GameDirs;
 use anyhow::{Context, Result, bail};
-use ddg_audio::mixer::{Command, Mixer, MixerConfig};
+use ddg_audio::mixer::{Command, Interpolation, Mixer, MixerConfig};
 use ddg_audio::{AudioOutput, SoundBank, SoundSystem, SoundTables};
 use ddg_formats::exe::Exe;
 use std::path::PathBuf;
@@ -12,6 +12,7 @@ use std::time::{Duration, Instant};
 
 /// The original's tick (33 ms timer).
 const TICK: Duration = Duration::from_millis(33);
+/// Default WAV rate (`--rate`).
 const WAV_RATE: u32 = 44_100;
 
 /// Parses `0x31`, `31h` or decimal.
@@ -34,6 +35,9 @@ pub fn play_sound(args: &[String]) -> Result<()> {
     let mut volume = None;
     let mut release_after = None;
     let mut wav: Option<PathBuf> = None;
+    let mut interpolation = Interpolation::default();
+    let mut wav_rate = WAV_RATE;
+    let mut sweep: Option<(i16, i16)> = None;
     let mut rest = args[1..].iter();
     while let Some(a) = rest.next() {
         let mut value = || rest.next().with_context(|| format!("{a} needs a value"));
@@ -43,6 +47,17 @@ pub fn play_sound(args: &[String]) -> Result<()> {
             "--volume" => volume = Some(value()?.parse::<i16>()?),
             "--release-after" => release_after = Some(value()?.parse::<f64>()?),
             "--wav" => wav = Some(PathBuf::from(value()?)),
+            "--resampler" => {
+                let v = value()?;
+                interpolation = Interpolation::parse(v)
+                    .with_context(|| format!("--resampler {v}: linear, nearest or sinc"))?;
+            }
+            "--rate" => wav_rate = value()?.parse()?,
+            "--sweep" => {
+                let v = value()?;
+                let (a, b) = v.split_once(':').context("--sweep needs FROM:TO")?;
+                sweep = Some((a.parse()?, b.parse()?));
+            }
             other => bail!("unknown option {other}"),
         }
     }
@@ -62,32 +77,46 @@ pub fn play_sound(args: &[String]) -> Result<()> {
         .or(loops.then_some(3.0))
         .map(|s| (s / TICK.as_secs_f64()) as u64);
 
+    let config = MixerConfig {
+        interpolation,
+        ..MixerConfig::default()
+    };
+    if let Some(e) = bank.effect(code) {
+        println!(
+            "effect {code:#x}: {} Hz, {} samples, loop {}..{}",
+            e.sample_rate,
+            e.len(),
+            e.loop_start,
+            e.loop_end
+        );
+    }
     let output = if wav.is_none() {
         Some(AudioOutput::open(
             bank.clone(),
             tables.code_volume.clone(),
-            MixerConfig::default(),
+            config,
         )?)
     } else {
         None
     };
-    let rate = output.as_ref().map_or(WAV_RATE, |o| o.sample_rate());
+    let rate = output.as_ref().map_or(wav_rate, |o| o.sample_rate());
     // Renders the WAV, or shadows the device mixer to know when playback has ended.
-    let mut mixer = Mixer::new(
-        bank,
-        tables.code_volume.clone(),
-        rate,
-        MixerConfig::default(),
-    );
+    let mut mixer = Mixer::new(bank, tables.code_volume.clone(), rate, config);
     let mut snd = SoundSystem::new(tables);
     snd.request(code);
     if let Some(p) = pitch {
         snd.set_pitch(code, p);
     }
+    if let Some((from, _)) = sweep {
+        snd.set_pitch(code, from);
+    }
     if let Some(v) = volume {
         snd.set_volume(code, v);
     }
-    println!("playing {code:#x} at {rate} Hz");
+    println!(
+        "playing {code:#x} at {rate} Hz, {} resampling",
+        interpolation.name()
+    );
 
     let mut pcm: Vec<u8> = Vec::new();
     let mut buf = Vec::new();
@@ -100,6 +129,11 @@ pub fn play_sound(args: &[String]) -> Result<()> {
         }
         if Some(tick) == release_tick {
             snd.release(code);
+        }
+        if let Some((from, to)) = sweep {
+            // Linear in the pitch parameter over the whole duration, one step per tick.
+            let t = tick as f64 / max_ticks.max(1) as f64;
+            snd.set_pitch(code, (from as f64 + (to - from) as f64 * t).round() as i16);
         }
         let cmds = snd.take_commands();
         for &c in &cmds {

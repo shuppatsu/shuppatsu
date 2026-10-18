@@ -29,7 +29,8 @@ commands:
                                   replay an oracle trace through the engine physics (or, with
                                   --rules, the game rules; with --drive, the whole engine from
                                   the logged notches and buttons only) and compare
-  play-sound <code> [--wav FILE] [--seconds S] [--pitch P] [--volume V] [--release-after S]
+  play-sound <code> [--wav FILE] [--rate HZ] [--seconds S] [--pitch P | --sweep FROM:TO]
+                    [--volume V] [--release-after S] [--resampler linear|nearest|sinc]
                                   play a sound code (hex 0x31 / 31h or decimal; 0x1000|n =
                                   sequence n) live, or render it to a WAV (gitignored out/)
   upscale-textures --method <xbrz|esrgan|waifu2x|nearest> [--scale N] [--out DIR] [...]
