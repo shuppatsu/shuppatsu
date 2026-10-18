@@ -522,7 +522,8 @@ landmark names.
   departure board (header and all 37 flaps), route select (groups, difficulty, rank badges,
   Shizukuishi tags), records (header, 7 line and 13 series plates, legends), press START,
   the seven control-mode diagrams of Options → Controls (callouts only; the controller
-  pictures 0x493–0x498 and 0x4a1 are not text).
+  pictures 0x493–0x498 and 0x4a1 are not text), the ending's staff roll (32 credits, "Staff
+  roll" below).
 * Sheets: title items (5), options labels and values (2 × 31), pause/dialog texts (27), screen
   headers (13), name-entry legends (3), legend words (5: 選択 / キャンセル / 決定 / おわり /
   モード切替 by descriptor, 0x47c538; the key pictures beside them stay) and the replay mark.
@@ -543,6 +544,56 @@ Not catalogued, on purpose:
 
 Regions marked `(est.)` in `en.toml` were measured by eye and should be checked in the running
 game.
+
+## Staff roll
+
+The ending's credits (menus.md §12.2) are one tile-art sprite per credit, so they are ordinary
+`[tbl]` overrides: 0x3a8–0x3c8 and 0x2ae, in the order of the text tables 0x45811c (full
+ending) and 0x457a5c (plain ending), which show the same sprites at other positions. Each
+sprite is a black box; a staff card has the name on the left and the role on the right (often a
+small category such as ソフト or サウンド above the role itself), and the parts follow that
+layout. Everything else stays: the 電車でGO!2 logo, STAFF, the JR mark, the Stack Lab. logo,
+GD / ID / GM2 HEAD, the GM R&D SECT#2 and TAITO logos (0x304, 0x15e), all Latin or pictures.
+
+Decided for the roll:
+
+* **Name order: given name first** (Western order), in every credit, since an English reader
+  takes the first name as the given name. Hepburn with macrons as everywhere (Saitō, Kōji,
+  Bandō, Ōnogi, Yūichi, Seiichirō).
+* **Readings.** The credits print the names in kanji only, with no furigana or kana, so every
+  reading is ours, taken from the kanji. Common readings are used; where a name has several
+  usual readings the catalogue marks it `reading?` with the alternatives. Uncertain: 晃
+  (Akira; Hikaru, Kō), 由浩 (Yoshihiro; Yukihiro), 英貴 (Hideki; Hidetaka), 貴和 (Takakazu;
+  Takawa, Kiwa), 一央 (Kazuhisa; Kazuhiro, Kazuo, Kazunaka), 隆史 (Takashi; Takafumi), 久美
+  (Kumi; Hisami), 操 (Misao; Midori, Sō), 鎌田 (Kamata; Kamada), 瓜田 (Urita; Uriuda), 国京
+  (Kunikyō; Kunigyō), 哲由 (Tetsuyoshi; Tetsuyuki, Akiyoshi), 村樫 (Murakashi; Muragashi), 哲士
+  (Tetsushi; Satoshi, Tetsuji), 河田壮司 (Kawata Takeshi; Kawada, Sōji, Masashi), 寿秋
+  (Toshiaki; Hisaaki), 山辺 (Yamabe; Yamanobe), 岸雄 (Kishio), 一二 (Kazuji; Ichiji,
+  Kazutsugu), 頭島 (Kashirajima; Tōjima, Zushima). A correction from a reliable source (the
+  people themselves, a later credit with kana) replaces the reading in `en.toml` only.
+* **Roles** are translated: プロジェクトリーダー Project Leader, 企画 Planning, キャラデザイン
+  Character Design, MAP設計 / 作成 / 編集 Map Design / Creation / Editing, モデリング・TEXTURE
+  Modelling, Textures, ソフト Software, メカ Mechanical, ハード Hardware, デザイン Design,
+  サウンド Sound, 作曲 Music, SE SFX, SE指導 SFX Advisor, 音声 Voice, 監修 Supervision,
+  筐体設計 Cabinet Design, 高速演算処理 Fast Calculation, 運転特性・演出 Train Handling,
+  Effects. おさる on Kinoshita's card is a nickname ("Osaru", monkey) after a small crossed
+  mark; the part replaces both. MER on Kikuchi's card is Latin art of unknown meaning and is
+  kept as written.
+* **Headers and companies**: 企画・資料協力 Planning & Reference Materials, 資料協力 Reference
+  Materials, 制作協力 Production Support, 協力 Thanks to (short: the Stack Lab. card leaves it
+  84 px). The companies take their own English names: 株式会社ジェイアール東日本企画 East Japan
+  Marketing & Communications, Inc., 北越急行株式会社 Hokuetsu Express Co., Ltd.; 峠の釜めし本舗
+  おぎのや is romanised (Tōge no Kamameshi Honpo, Oginoya). 高速編 beside the title logo is
+  "Kōsoku-hen", as in the subtitles.
+* **Sizes**: one size for every name and one for every role and header across the roll
+  (`shared_group` `ending.name` / `ending.role`), so the cards read as one list. Long Western
+  names make the names smaller than the kanji were (the longest, Yoshihiro Moriyama, sets
+  it); the roles stay a step smaller than the names. The company names and the three names
+  under Stack Lab. are sized on their own.
+
+Shots: `ddg-game play 1 --ending full --lang en|ja --size 2560x1440 --shot <tick>:<file>`, one
+tick per credit (credit k ≥ 1 is up from tick 180 + 148 (k − 1) for 148 ticks), in
+out/explain/staff_roll/.
 
 ## Decided: a font, M+ 2 Medium
 

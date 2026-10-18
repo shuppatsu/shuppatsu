@@ -469,6 +469,150 @@ name = "English"
     { region = [29, 42, 287, 21], text = "and braking for fast running on a high-spec line." },
 ] }
 
+# Staff roll of the ending (menus.md §12.2: text tables 0x45811c full / 0x457a5c plain, one
+# sprite per credit, palette 0x17, black box). Names: given name first, Hepburn with macrons
+# (docs/localisation.md "Staff roll"). The credits give no furigana, so every reading comes from
+# the kanji alone; the less certain ones are marked "reading?" with the alternatives. One size
+# per kind across the roll (`shared_group`): the names, and the roles with the cooperation
+# headers. Regions: the ink bounds from `label-audit --dump` with 2–3 px of box round them; a
+# role region starts left of its lettering where the black box is free, so the English has
+# room. The two centred headers are `backdrop = "solid"` so their English may use the whole row
+# (a box otherwise grows only by the lettering's smaller margin). Logos and Latin art
+# (電車でGO!2, STAFF, the JR mark, Stack Lab., GD, ID, GM2 HEAD, GM R&D SECT#2 0x304, TAITO
+# 0x15e) stay.
+0x3a8 = { region = [300, 2, 163, 42], text = "Kōsoku-hen" }   # 高速編 beside the 電車でGO!2 logo, over STAFF; 464×96, 高速編 ink x 318–418, y 6–39
+0x3a9 = { align = "left", parts = [  # 齋藤 晃 / プロジェクトリーダー / 企画・キャラデザイン, 352×48
+    { region = [5, 3, 146, 41], shared_group = "ending.name", text = "Akira Saitō" },   # 晃: reading? (Akira; also Hikaru, Kō)
+    { region = [158, 2, 193, 44], shared_group = "ending.role", text = "Project Leader\nPlanning, Character Design" },
+] }
+0x3aa = { align = "left", parts = [  # 森山由浩 / MAP設計・編集 / MAP作成・企画
+    { region = [5, 3, 145, 41], shared_group = "ending.name", text = "Yoshihiro Moriyama" },   # 由浩: reading? (Yoshihiro; also Yukihiro)
+    { region = [158, 4, 193, 41], shared_group = "ending.role", text = "Map Design, Editing\nMap Creation, Planning" },
+] }
+0x3ab = { align = "left", parts = [  # 石井英貴 / モデリング・TEXTURE / キャラ管理・構成・編集
+    { region = [4, 3, 144, 41], shared_group = "ending.name", text = "Hideki Ishii" },   # 英貴: reading? (Hideki; also Hidetaka)
+    { region = [152, 2, 199, 42], shared_group = "ending.role", text = "Modelling, Textures\nCharacters, Layout, Editing" },
+] }
+0x3ac = { align = "left", parts = [  # 木下昌也 / (mark)おさる 高速演算処理 / MAPデータ表示処理
+    { region = [3, 3, 144, 41], shared_group = "ending.name", text = "Masaya Kinoshita" },
+    # おさる ("monkey", a nickname, after a red crossed mark that goes with it) and the roles
+    { region = [152, 0, 199, 47], shared_group = "ending.role", text = "\"Osaru\", Fast Calculation\nMap Data Display" },
+] }
+0x3ad = { align = "left", parts = [  # 菊池正行 / ソフト / 運転特性・演出 / 広報・雑務MER
+    { region = [3, 3, 145, 41], shared_group = "ending.name", text = "Masayuki Kikuchi" },
+    { region = [156, 3, 60, 21], shared_group = "ending.role", text = "Software" },
+    { region = [219, 2, 132, 44], shared_group = "ending.role", text = "Train Handling, Effects\nPR, Odd Jobs, MER" },   # MER: Latin in the art, meaning unknown; kept
+] }
+0x3ae = { align = "left", parts = [  # 小川浩二 / モデリング・TEXTURE
+    { region = [6, 3, 141, 41], shared_group = "ending.name", text = "Kōji Ogawa" },
+    { region = [152, 12, 199, 24], shared_group = "ending.role", text = "Modelling, Textures" },
+] }
+0x3af = { align = "left", parts = [  # 中桐誠一郎 / キャラクター 作成
+    { region = [3, 3, 173, 41], shared_group = "ending.name", text = "Seiichirō Nakagiri" },
+    { region = [182, 12, 169, 24], shared_group = "ending.role", text = "Character Creation" },
+] }
+0x3b0 = { align = "left", parts = [  # 馬場貴和 / モデリング・TEXTURE / キャラクター 作成
+    { region = [6, 3, 140, 41], shared_group = "ending.name", text = "Takakazu Baba" },   # 貴和: reading? (Takakazu; also Takawa, Kiwa)
+    { region = [152, 3, 199, 43], shared_group = "ending.role", text = "Modelling, Textures\nCharacter Creation" },
+] }
+0x3b1 = { align = "left", parts = [  # 板倉一央 / モデリング・TEXTURE / MAP作成・編集
+    { region = [5, 3, 142, 41], shared_group = "ending.name", text = "Kazuhisa Itakura" },   # 一央: reading? (Kazuhisa; also Kazuhiro, Kazuo, Kazunaka)
+    { region = [152, 3, 199, 43], shared_group = "ending.role", text = "Modelling, Textures\nMap Creation, Editing" },
+] }
+0x3c8 = { align = "left", parts = [  # 石井 隆史 / ソフト / デモ表示処理
+    { region = [3, 3, 146, 41], shared_group = "ending.name", text = "Takashi Ishii" },   # 隆史: reading? (Takashi; also Takafumi)
+    { region = [156, 3, 58, 21], shared_group = "ending.role", text = "Software" },
+    { region = [217, 23, 134, 23], shared_group = "ending.role", text = "Demo Display" },
+] }
+0x3b2 = { align = "left", parts = [  # 榎本幸司 / メカ / 筐体設計
+    { region = [3, 3, 143, 41], shared_group = "ending.name", text = "Kōji Enomoto" },
+    { region = [160, 3, 80, 21], shared_group = "ending.role", text = "Mechanical" },
+    { region = [245, 13, 106, 23], shared_group = "ending.role", text = "Cabinet Design" },
+] }
+0x3b3 = { align = "left", parts = [  # 川端和博 / メカ / 電気設計
+    { region = [3, 3, 144, 41], shared_group = "ending.name", text = "Kazuhiro Kawabata" },
+    { region = [160, 3, 80, 21], shared_group = "ending.role", text = "Mechanical" },
+    { region = [245, 12, 106, 24], shared_group = "ending.role", text = "Electrical Design" },
+] }
+0x3b4 = { align = "left", parts = [  # 坂東和彦 / ハード / ハード設計
+    { region = [5, 3, 142, 41], shared_group = "ending.name", text = "Kazuhiko Bandō" },
+    { region = [157, 4, 82, 22], shared_group = "ending.role", text = "Hardware" },
+    { region = [241, 15, 110, 21], shared_group = "ending.role", text = "Hardware Design" },
+] }
+0x3b5 = { align = "left", parts = [  # 溝辺久美 / デザイン / GD (Latin, stays)
+    { region = [3, 3, 145, 41], shared_group = "ending.name", text = "Kumi Mizobe" },   # 久美: reading? (Kumi; also Hisami)
+    { region = [159, 4, 104, 22], shared_group = "ending.role", text = "Design" },
+] }
+0x3b6 = { align = "left", parts = [  # 山中 操 / デザイン / ID (Latin, stays)
+    { region = [5, 3, 144, 41], shared_group = "ending.name", text = "Misao Yamanaka" },   # 操: reading? (Misao; also Midori, Sō)
+    { region = [159, 4, 104, 22], shared_group = "ending.role", text = "Design" },
+] }
+0x3b7 = { align = "left", parts = [  # 古川典裕 / サウンド / 作曲
+    { region = [3, 3, 144, 41], shared_group = "ending.name", text = "Norihiro Furukawa" },
+    { region = [154, 5, 108, 22], shared_group = "ending.role", text = "Sound" },
+    { region = [268, 15, 83, 22], shared_group = "ending.role", text = "Music" },
+] }
+0x3b8 = { align = "left", parts = [  # 鎌田良和 / サウンド / SE
+    { region = [3, 3, 143, 41], shared_group = "ending.name", text = "Yoshikazu Kamata" },   # 鎌田: reading? (Kamata; also Kamada)
+    { region = [154, 5, 108, 22], shared_group = "ending.role", text = "Sound" },
+    { region = [268, 16, 83, 22], shared_group = "ending.role", text = "SFX" },
+] }
+0x3c7 = { align = "left", parts = [  # 瓜田幸治 / サウンド / SE指導
+    { region = [1, 3, 144, 41], shared_group = "ending.name", text = "Kōji Urita" },   # 瓜田: reading? (Urita; also Uriuda)
+    { region = [154, 5, 96, 22], shared_group = "ending.role", text = "Sound" },
+    { region = [251, 15, 100, 23], shared_group = "ending.role", text = "SFX Advisor" },
+] }
+0x3b9 = { align = "left", parts = [  # 国京砂織 / サウンド / 音声
+    { region = [1, 3, 144, 41], shared_group = "ending.name", text = "Saori Kunikyō" },   # 国京: reading? (Kunikyō; also Kunigyō)
+    { region = [154, 5, 108, 22], shared_group = "ending.role", text = "Sound" },
+    { region = [268, 15, 83, 23], shared_group = "ending.role", text = "Voice" },
+] }
+0x3c6 = { align = "left", parts = [  # 菊池正行・山路哲由 / 音声, 400×48 (the ・ between the names stays)
+    { region = [3, 3, 148, 41], shared_group = "ending.name", text = "Masayuki Kikuchi" },
+    { region = [178, 3, 146, 41], shared_group = "ending.name", text = "Tetsuyoshi Yamaji" },   # 哲由: reading? (Tetsuyoshi; also Tetsuyuki, Akiyoshi)
+    { region = [337, 12, 62, 24], shared_group = "ending.role", text = "Voice" },
+] }
+0x3c3 = { align = "left", parts = [  # 企画・資料協力 / 村樫泰雄 阿部和政, 288×64
+    { region = [2, 1, 284, 22], align = "center", backdrop = "solid", shared_group = "ending.role", text = "Planning & Reference Materials" },
+    { region = [4, 30, 138, 31], shared_group = "ending.name", text = "Yasuo Murakashi" },   # 村樫: reading? (Murakashi; also Muragashi)
+    { region = [168, 30, 118, 31], shared_group = "ending.name", text = "Kazumasa Abe" },
+] }
+0x3c4 = { align = "left", parts = [  # 資料協力 / 岩井 晃 大野木雄一 阿部哲士, 368×64
+    { region = [2, 1, 364, 22], align = "center", backdrop = "solid", shared_group = "ending.role", text = "Reference Materials" },
+    { region = [1, 32, 107, 31], shared_group = "ending.name", text = "Akira Iwai" },   # 晃: reading? (as 0x3a9)
+    { region = [112, 32, 141, 31], shared_group = "ending.name", text = "Yūichi Ōnogi" },
+    { region = [255, 32, 112, 31], shared_group = "ending.name", text = "Tetsushi Abe" },   # 哲士: reading? (Tetsushi; also Satoshi, Tetsuji)
+] }
+0x3bd = { align = "left", parts = [  # 制作協力 / JR 株式会社ジェイアール東日本企画 (green; the JR mark stays), 464×64
+    { region = [2, 0, 200, 20], shared_group = "ending.role", text = "Production Support" },
+    { region = [78, 21, 385, 40], text = "East Japan Marketing & Communications, Inc." },   # the company's own English name
+] }
+0x3be = { region = [6, 3, 149, 41], shared_group = "ending.name", text = "Yoshikazu Aizu" }   # 会津善和, 160×48
+0x3bf = { region = [6, 3, 149, 41], shared_group = "ending.name", text = "Takashi Matsumoto" }   # 松本 隆
+0x3c0 = { region = [6, 3, 149, 41], shared_group = "ending.name", text = "Takeshi Kawata" }   # 河田壮司: reading? (壮司 Takeshi, also Sōji, Masashi; 河田 Kawata, also Kawada)
+0x3c5 = { parts = [  # 協力 / 北越急行株式会社, 384×64
+    { region = [2, 1, 200, 20], align = "left", shared_group = "ending.role", text = "Thanks to" },
+    { region = [50, 22, 333, 41], text = "Hokuetsu Express Co., Ltd." },   # the company's own English name
+] }
+0x2ae = { align = "left", parts = [  # 協力 / 峠の釜めし本舗 おぎのや (a brush-lettered logo), 336×64
+    { region = [2, 1, 150, 20], shared_group = "ending.role", text = "Thanks to" },
+    { region = [18, 25, 170, 30], text = "Tōge no Kamameshi Honpo" },
+    { region = [190, 17, 146, 46], align = "center", text = "Oginoya" },
+] }
+0x3c2 = { align = "left", parts = [  # 協力 / Stack Lab. (logo, stays) / 清水康則・塚野寿秋・山辺岸雄, 352×96
+    { region = [2, 1, 84, 20], shared_group = "ending.role", text = "Thanks to" },
+    # 寿秋: reading? (Toshiaki; also Hisaaki); 山辺: reading? (Yamabe; also Yamanobe); 岸雄: reading? (Kishio)
+    { region = [10, 62, 338, 30], align = "center", text = "Yasunori Shimizu · Toshiaki Tsukano · Kishio Yamabe" },
+] }
+0x3bb = { align = "left", parts = [  # 山田一二 / メカ / 監修
+    { region = [3, 3, 143, 41], shared_group = "ending.name", text = "Kazuji Yamada" },   # 一二: reading? (Kazuji; also Ichiji, Kazutsugu)
+    { region = [160, 3, 105, 21], shared_group = "ending.role", text = "Mechanical" },
+    { region = [269, 12, 82, 23], shared_group = "ending.role", text = "Supervision" },
+] }
+0x3bc = { align = "left", parts = [  # 頭島明男 / GM2 HEAD (Latin, stays)
+    { region = [3, 3, 144, 41], shared_group = "ending.name", text = "Akio Kashirajima" },   # 頭島: reading? (Kashirajima; also Tōjima, Zushima)
+] }
+
 # Departure-board flaps (menus.md §7: lists 0x466fa0 series, 0x466fd8 type, 0x466ff8 stations),
 # 128×48: the regions are the flap's face inside its bevel (x 6–121, y 2–37, measured; the bevel
 # at x 5 / 122 and rows 1 / 38 stays). The split-flap gap across the middle (rows 19–24) goes
