@@ -482,11 +482,11 @@ name = "English"
 # 0x15e) stay.
 0x3a8 = { region = [300, 2, 163, 42], text = "Kōsoku-hen" }   # 高速編 beside the 電車でGO!2 logo, over STAFF; 464×96, 高速編 ink x 318–418, y 6–39
 0x3a9 = { align = "left", parts = [  # 齋藤 晃 / プロジェクトリーダー / 企画・キャラデザイン, 352×48
-    { region = [5, 3, 146, 41], shared_group = "ending.name", text = "Akira Saitō" },   # 晃: reading? (Akira; also Hikaru, Kō)
+    { region = [5, 3, 146, 41], shared_group = "ending.name", text = "Akira Saitō" },   # 晃 Akira: confirmed (Akira Saito, en.wikipedia "Densha de Go!" and the shmuplations.com developer interview)
     { region = [158, 2, 193, 44], shared_group = "ending.role", text = "Project Leader\nPlanning, Character Design" },
 ] }
 0x3aa = { align = "left", parts = [  # 森山由浩 / MAP設計・編集 / MAP作成・企画
-    { region = [5, 3, 145, 41], shared_group = "ending.name", text = "Yoshihiro Moriyama" },   # 由浩: reading? (Yoshihiro; also Yukihiro)
+    { region = [5, 3, 145, 41], shared_group = "ending.name", text = "Yukihiro Moriyama" },   # 由浩 Yukihiro: confirmed (en.wikipedia "Densha de Go!", shmuplations.com interview)
     { region = [158, 4, 193, 41], shared_group = "ending.role", text = "Map Design, Editing\nMap Creation, Planning" },
 ] }
 0x3ab = { align = "left", parts = [  # 石井英貴 / モデリング・TEXTURE / キャラ管理・構成・編集
@@ -494,12 +494,12 @@ name = "English"
     { region = [152, 2, 199, 42], shared_group = "ending.role", text = "Modelling, Textures\nCharacters, Layout, Editing" },
 ] }
 0x3ac = { align = "left", parts = [  # 木下昌也 / (mark)おさる 高速演算処理 / MAPデータ表示処理
-    { region = [3, 3, 144, 41], shared_group = "ending.name", text = "Masaya Kinoshita" },
+    { region = [3, 3, 144, 41], shared_group = "ending.name", text = "Masaya Kinoshita" },   # confirmed (shmuplations.com interview)
     # おさる ("monkey", a nickname, after a red crossed mark that goes with it) and the roles
     { region = [152, 0, 199, 47], shared_group = "ending.role", text = "\"Osaru\", Fast Calculation\nMap Data Display" },
 ] }
 0x3ad = { align = "left", parts = [  # 菊池正行 / ソフト / 運転特性・演出 / 広報・雑務MER
-    { region = [3, 3, 145, 41], shared_group = "ending.name", text = "Masayuki Kikuchi" },
+    { region = [3, 3, 145, 41], shared_group = "ending.name", text = "Masayuki Kikuchi" },   # 菊地 正行: confirmed (shmuplations.com interview)
     { region = [156, 3, 60, 21], shared_group = "ending.role", text = "Software" },
     { region = [219, 2, 132, 44], shared_group = "ending.role", text = "Train Handling, Effects\nPR, Odd Jobs, MER" },   # MER: Latin in the art, meaning unknown; kept
 ] }
@@ -548,7 +548,7 @@ name = "English"
     { region = [159, 4, 104, 22], shared_group = "ending.role", text = "Design" },
 ] }
 0x3b7 = { align = "left", parts = [  # 古川典裕 / サウンド / 作曲
-    { region = [3, 3, 144, 41], shared_group = "ending.name", text = "Norihiro Furukawa" },
+    { region = [3, 3, 144, 41], shared_group = "ending.name", text = "Norihiro Furukawa" },   # confirmed (sound composer of Densha de GO!, exotica.org.uk)
     { region = [154, 5, 108, 22], shared_group = "ending.role", text = "Sound" },
     { region = [268, 15, 83, 22], shared_group = "ending.role", text = "Music" },
 ] }
@@ -569,7 +569,7 @@ name = "English"
 ] }
 0x3c6 = { align = "left", parts = [  # 菊池正行・山路哲由 / 音声, 400×48 (the ・ between the names stays)
     { region = [3, 3, 148, 41], shared_group = "ending.name", text = "Masayuki Kikuchi" },
-    { region = [178, 3, 146, 41], shared_group = "ending.name", text = "Tetsuyoshi Yamaji" },   # 哲由: reading? (Tetsuyoshi; also Tetsuyuki, Akiyoshi)
+    { region = [178, 3, 146, 41], shared_group = "ending.name", text = "Tetsuyoshi Yamaji" },   # 哲由: reading? (Tetsuyoshi; also Tetsuyuki, Akiyoshi; shmuplations.com's interview gives "Tetsuyu Yamaro", unconfirmed)
     { region = [337, 12, 62, 24], shared_group = "ending.role", text = "Voice" },
 ] }
 0x3c3 = { align = "left", parts = [  # 企画・資料協力 / 村樫泰雄 阿部和政, 288×64
