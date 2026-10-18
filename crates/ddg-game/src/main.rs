@@ -419,7 +419,8 @@ struct HudView {
 }
 
 impl HudView {
-    fn load(data: &scene::GameData, locale: &locale::LocaleConfig) -> Result<Self> {
+    /// `upscale`: the `hud_upscale` setting (xBRZ-shaped sprite art), applied as `App`/`Play` do.
+    fn load(data: &scene::GameData, locale: &locale::LocaleConfig, upscale: bool) -> Result<Self> {
         use ddg_formats::cg;
         use ddg_render::sprites::{SpriteBank, SpriteLayer};
         let exe_bytes = data.exe()?;
@@ -430,6 +431,7 @@ impl HudView {
             cg::parse_tbl(&data.read("tbl.rom")?)?,
         );
         locale::install(locale, &exe, &mut bank)?;
+        bank.set_upscale(upscale);
         let mut layer = SpriteLayer {
             scale: locale.ui_scale,
             ..SpriteLayer::default()
@@ -793,7 +795,11 @@ fn run_main() -> Result<()> {
         let out = opts.out.clone().context("shot needs --out <file.ppm>")?;
         let units = (start + opts.at_m / METRES_PER_UNIT).clamp(limits.0, limits.1);
         let mut hud = if opts.hud {
-            Some(HudView::load(&data, &opts.locale)?)
+            Some(HudView::load(
+                &data,
+                &opts.locale,
+                opts.settings.hud_upscale,
+            )?)
         } else {
             None
         };
@@ -820,7 +826,11 @@ fn run_main() -> Result<()> {
     }
 
     let hud = if opts.hud {
-        Some(HudView::load(&data, &opts.locale)?)
+        Some(HudView::load(
+            &data,
+            &opts.locale,
+            opts.settings.hud_upscale,
+        )?)
     } else {
         None
     };
@@ -865,4 +875,26 @@ fn main() -> Result<()> {
         win_console::fatal(e, log.as_deref());
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The viewer's HUD preview honours `hud_upscale` as the game does.
+    #[test]
+    fn hud_view_applies_hud_upscale() {
+        let Ok(data) = scene::GameData::from_env() else {
+            eprintln!("skipped: DDG_DATA_DIR not set");
+            return;
+        };
+        let locale = locale::LocaleConfig::default();
+        for on in [false, true] {
+            let mut h = HudView::load(&data, &locale, on).unwrap();
+            h.fit((2560, 1440)).unwrap();
+            h.tick(80.0, false);
+            assert_eq!(h.bank.upscale(), on);
+            assert_eq!(h.bank.upscale_builds() > 0, on);
+        }
+    }
 }
