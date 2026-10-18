@@ -420,7 +420,7 @@ mod tests {
         let get = |f: Option<&PortConfig>, e: &[(&str, &str)], a: &[&str]| {
             layered(f, env(e), &mut args(a)).unwrap().0.audio_resampler
         };
-        assert_eq!(get(None, &[], &[]), Interpolation::Linear);
+        assert_eq!(get(None, &[], &[]), Interpolation::Sinc);
         assert_eq!(get(Some(&file), &[], &[]), Interpolation::Sinc);
         let var = [("DDG_AUDIO_RESAMPLER", "nearest")];
         assert_eq!(get(Some(&file), &var, &[]), Interpolation::Nearest);
@@ -428,7 +428,7 @@ mod tests {
         assert_eq!(get(Some(&file), &var, &flag), Interpolation::Linear);
         // A bad value in the file loses only that setting.
         let bad = PortConfig::parse("audio_resampler = \"cubic\"\n").unwrap();
-        assert_eq!(get(Some(&bad), &[], &[]), Interpolation::Linear);
+        assert_eq!(get(Some(&bad), &[], &[]), Interpolation::Sinc);
         assert!(layered(None, env(&[]), &mut args(&["--audio-resampler", "x"])).is_err());
         let l = locks(env(&var), &args(&["--audio-resampler"]));
         assert_eq!(

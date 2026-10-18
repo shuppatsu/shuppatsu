@@ -106,8 +106,8 @@ options:
                            2x (default), 3x, max 1280 m; scenery and track are built out to it
   --audio-resampler <linear|nearest|sinc>
                            how each sound is resampled to the device rate (env
-                           DDG_AUDIO_RESAMPLER): linear (default), nearest, or sinc = band-limited
-                           (no aliasing or images; the original had DirectSound's own)
+                           DDG_AUDIO_RESAMPLER): sinc (default) = band-limited, no aliasing or
+                           images; linear or nearest = the candidates for DirectSound's own
 
 switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml key <name> with
   _ for -, env DDG_<NAME> = 1/0. Off is the original's behaviour. [default]

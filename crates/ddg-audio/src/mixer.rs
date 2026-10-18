@@ -64,12 +64,13 @@ pub enum Command {
 pub enum Interpolation {
     /// Sample-and-hold.
     Nearest,
-    /// Linear between neighbouring source samples (default).
-    #[default]
+    /// Linear between neighbouring source samples (the arcade default of [`MixerConfig`]).
     Linear,
     /// Band-limited: a 32-tap Kaiser-windowed sinc ([`crate::sinc`]) whose cutoff follows the
     /// pitch when a voice plays faster than the output rate. No images or aliasing, reads
-    /// across loop seams, zero-padded at the ends of one-shots.
+    /// across loop seams, zero-padded at the ends of one-shots. The port's default (the user's
+    /// decision, docs/settings.md).
+    #[default]
     Sinc,
 }
 
