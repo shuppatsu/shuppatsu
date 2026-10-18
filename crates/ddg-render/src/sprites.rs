@@ -13,6 +13,7 @@ use std::sync::{Arc, Mutex};
 pub mod hires;
 #[cfg(test)]
 mod hires_tests;
+pub mod legend;
 mod paper;
 pub mod xbrz;
 
@@ -140,6 +141,13 @@ pub enum WidgetKind {
     /// Text in the rectangle at canvas resolution, uniformly scaled, in the bank's label font
     /// ([`SpriteBank::set_label_font`]), styled by [`TextStyle`].
     Text { text: String, style: TextStyle },
+    /// A line of controller glyphs and text ([`legend`]), laid out at canvas resolution in the
+    /// label font: `style.paint` colours the text, `style.cap` sizes it (glyphs are
+    /// [`legend::GLYPH_PER_CAP`] times taller), `style.align` places the line.
+    Legend {
+        parts: Vec<legend::LegendPart>,
+        style: TextStyle,
+    },
 }
 
 /// How a [`WidgetKind::Text`] is drawn.
@@ -191,6 +199,9 @@ pub struct SpriteBank {
     labels: Option<LabelFont>,
     /// The font of display-role labels ([`TextStyle::font`]); `None` uses `labels`.
     display_labels: Option<LabelFont>,
+    /// The font of [`WidgetKind::Legend`] (controller glyphs and their words), independent of
+    /// the language: hints are drawn in Japanese too, where `labels` is mostly absent.
+    legend_font: Option<LabelFont>,
     /// Enhancement `wide_menus`: backdrops continued sideways on a wide canvas, by tilemap id
     /// ([`SpriteBank::set_wide_fill`], [`SpriteBank::set_wide_paper`]).
     wide_fill: Vec<(u16, WideFill)>,
@@ -267,6 +278,7 @@ impl SpriteBank {
             text: None,
             labels: None,
             display_labels: None,
+            legend_font: None,
             wide_fill: Vec::new(),
             paper: Mutex::default(),
             upscale: false,
@@ -437,6 +449,12 @@ impl SpriteBank {
     }
 
     /// The label font of `role`: the display font falls back to the body font.
+    /// Installs (or with `None` removes) the font of [`WidgetKind::Legend`]; without one
+    /// legends use the body label font.
+    pub fn set_legend_font(&mut self, font: Option<LabelFont>) {
+        self.legend_font = font;
+    }
+
     fn label_font(&self, role: FontRole) -> Option<&LabelFont> {
         match role {
             FontRole::Display => self.display_labels.as_ref().or(self.labels.as_ref()),
@@ -1017,6 +1035,31 @@ impl SpriteLayer {
                 };
                 resample_sprite(&src, &colours, z, (cx, cy), [x0, y0, x1, y1], c, canvas);
             }
+            WidgetKind::Legend { parts, style } => {
+                let Some(font) = bank.legend_font.as_ref().or(bank.label_font(style.font)) else {
+                    return;
+                };
+                // Glyphs carry their own colours; the words take the paint (white without it).
+                let [r, g, b, _] =
+                    palette(style.paint.palette).map_or([0xff; 4], |p| p.rgba(style.paint.index));
+                // A backdrop paint outside the palettes is near-black.
+                let backdrop = style.backdrop.map(|p| {
+                    let [r, g, b, _] = palette(p.palette).map_or([0x14; 4], |q| q.rgba(p.index));
+                    [r, g, b]
+                });
+                let cap = style.cap.map_or(f32::MAX, |v| v * s);
+                legend::draw_legend(
+                    parts,
+                    cap,
+                    style.align,
+                    [r, g, b],
+                    backdrop,
+                    font,
+                    [x0, y0, x1, y1],
+                    c,
+                    canvas,
+                );
+            }
             WidgetKind::Text { text, style } => {
                 let paint = style.paint;
                 let (Some(pal), Some(font)) = (palette(paint.palette), bank.label_font(style.font))
@@ -1322,6 +1365,7 @@ mod tests {
             text: None,
             labels: None,
             display_labels: None,
+            legend_font: None,
             wide_fill: Vec::new(),
             paper: Mutex::default(),
             upscale: false,
@@ -1790,6 +1834,46 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn legend_widgets_use_the_legend_font_and_their_own_colours() {
+        use crate::text::tests::BoxGlyphs;
+        let mut b = bank(1);
+        let mut l = SpriteLayer::default();
+        let glyph = legend::Glyph {
+            shape: legend::GlyphShape::Round,
+            label: String::new(),
+            fill: [10, 200, 30],
+            ink: [255; 3],
+        };
+        let parts = vec![legend::LegendPart::Glyph(glyph)];
+        let mut style = TextStyle::plain(
+            Paint {
+                palette: 9,
+                index: 0,
+            },
+            Some(8.0),
+        );
+        style.align = Align::Left;
+        l.add_widget(
+            0,
+            [100.0, 100.0, 60.0, 20.0],
+            WidgetKind::Legend {
+                parts: parts.clone(),
+                style,
+            },
+        );
+        let mut c = vec![0; CANVAS_W * CANVAS_H * 4];
+        // No font at all: nothing.
+        l.compose(&b, &mut c);
+        assert!(c.iter().all(|&v| v == 0));
+        // The legend font, with no palette in slot 9: the glyph keeps its own colour.
+        b.set_legend_font(Some(LabelFont::new(Box::new(BoxGlyphs))));
+        l.compose(&b, &mut c);
+        // A 14-pixel disc (8 × 1.75) from x = 100, centred on y = 110.
+        assert_eq!(pixel(&c, 107, 110), [10, 200, 30, 255]);
+        assert_eq!(pixel(&c, 130, 110)[3], 0);
     }
 
     #[test]
