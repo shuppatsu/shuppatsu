@@ -536,7 +536,7 @@ Not catalogued, on purpose:
   key/pad glyphs (0x4a6, 0x503), the name-entry symbol wheel (its katakana are input symbols),
   `〜` 0x30d.
 * Text baked into pictures where replacing it would damage the art: the E3 coupling animation
-  0x163–0x166, the EF63 shock meter 0x2da and the tiny 車内信号 label in hint picture 0x13e.
+  0x163–0x166 and the EF63 shock meter 0x2da.
   The vertical route diagrams of the pre-departure screen (0x31e–0x325, 0x329, 0x32a…) keep
   their kanji and get romaji under them ("Route board" above).
 * Arcade-only, unreachable on PC: insert-coin texts 0x253, 0x254.
