@@ -195,12 +195,35 @@ keyboard modes, 4 to 6 controller modes:
 | 6 | two-handle controller (Densha de GO! controller), calibrated | |
 
 In every mode: **Space** horn, **Enter** ATS confirm and menu confirm, **Esc** pause and
-cancel, arrows in the menus. Holding **Shift** lets the keyboard drive the menus in a
-controller mode. Unlike the original, the keyboard's horn and ATS confirm also work in
-controller modes (setting `keyboard_with_controller`).
+cancel, arrows in the menus.
 
-**Gamepads** (anything SDL/gilrs knows): South (A / ✕) is ATS and menu confirm, East (B / ○)
-horn and cancel, Start pause. The left stick or d-pad drives the levers in mode 4 and 5.
+**Keyboard and controller together** (setting `hybrid_input`, on by default): the keyboard
+and a gamepad both work in every mode, like a modern PC game. Plug a pad in at any time; in
+a keyboard mode it works straight away with the Xbox layout below, and the on-screen button
+hints switch to Xbox glyphs as soon as you touch it (back to the keys when you type). Both
+devices step the same handles, and pressing the same direction on both counts once. With a
+real lever (modes 5 and 6), the last device used wins: a key press takes over until you
+move the lever. Turn `hybrid_input` off for the original's one-device behaviour; then
+`keyboard_with_controller` decides whether the keyboard's horn and ATS confirm still work in
+controller modes, and holding **Shift** lets the keyboard drive the menus there.
+
+**Gamepads** (anything SDL/gilrs knows), with `hybrid_input` (Xbox names; A = South):
+
+| Button | Driving | Menus |
+|---|---|---|
+| D-pad or left stick ↓ / ↑ | power notch up / down | cursor down / up |
+| D-pad or left stick → / ← | brake apply / release (one press past B8 = emergency) | right / left |
+| RT / RB | power notch up / down | — |
+| LT / LB | brake apply / release | — |
+| A | Pro-mode panel, ATS confirm | confirm |
+| B or View | — | cancel / back |
+| X | horn | — |
+| Y | — | automatic run (route select, the R key) |
+| Menu | pause | resume (pause menu) |
+
+Without `hybrid_input` a pad only works in mode 4 and 5: South (A / ✕) is ATS and menu
+confirm, East (B / ○) horn and cancel (one button, as the original's binding table has it),
+Start pause, and the left stick or d-pad drives the levers.
 
 **Densha de GO! controllers**:
 

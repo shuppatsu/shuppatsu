@@ -377,14 +377,14 @@ repeated inline. It is kept as a constant in `input::repeat_pulse`.
 | Choice | Original | Port | Why |
 |---|---|---|---|
 | Unplugged mid-run | GetDeviceState fails twice, so the stale word is kept, edges included | levers hold, buttons release | a stale "pressed" edge would re-fire every tick |
-| Keyboard alongside a controller (**decided port behaviour**, on by default, setting `keyboard_with_controller`, docs/settings.md) | modes 4–6: only Esc (pause + cancel), Enter (menu confirm 0x1000) and R reach the game; Space and the driving A bit 0x100000 are dropped, so the keyboard cannot horn or confirm ATS while driving (§6) | the keyboard's Space (horn 0x100) and Enter (A 0x100000 + menu confirm) also pass, OR-ed with the pad's buttons before the edges are taken (one edge while either holds); the levers still come only from the controller; Shift override and the unplug rule above unchanged (`Joystick::poll`; test `gamepad::tests::keyboard_drives_buttons_alongside_a_mode_4_pad`) | user decision: the keyboard always works |
+| Keyboard alongside a controller (**decided port behaviour**, on by default, setting `keyboard_with_controller`, docs/settings.md) | modes 4–6: only Esc (pause + cancel), Enter (menu confirm 0x1000) and R reach the game; Space and the driving A bit 0x100000 are dropped, so the keyboard cannot horn or confirm ATS while driving (§6) | the keyboard's Space (horn 0x100) and Enter (A 0x100000 + menu confirm) also pass, OR-ed with the pad's buttons before the edges are taken (one edge while either holds); the levers still come only from the controller; Shift override and the unplug rule above unchanged (`Joystick::poll`; test `gamepad::tests::keyboard_drives_buttons_alongside_a_mode_4_pad`) | user decision: the keyboard always works. Applies with `hybrid_input` off; on, the whole keyboard counts (§10.6) |
 | Calibration file location | current directory | caller passes the path (`--joystick-dat`) | no writes into the install dir |
 | gilrs filters | DirectInput, no dead zone | gilrs default filters off (no dead zone or jitter filter) | keeps the thresholds meaningful |
 | FF ramp effect | created, never started (§1 0x434940 has no callers) | not implemented | dead code in the original |
 
 ### 10.4 Modern controllers (enhancements, all opt-in)
 
-**Generic gamepad (`PadProfile::Generic`)**: produces a `DIJOYSTATE`-like `JoyState`:
+**Generic gamepad (`PadProfile::Generic`)**, with `hybrid_input` off (on, a pad in modes 0–4 uses the Xbox layout of §10.6): produces a `DIJOYSTATE`-like `JoyState`:
 - X/Y come from the left stick, scaled to ±1000. +Y is stick **back**, as in DirectInput, so back means power+
   in mode 4 and the power side in mode 5, like the arcade one-handle lever. The d-pad (buttons or
   hat axes) overrides the stick with ±1000.
@@ -424,3 +424,126 @@ one-handle mode (not implemented, open), and the button mapping for the combinat
 `ddg-game pad monitor|calibrate|learn [--mode 4..6] [--joystick-dat F] [--combo F]`.
 `monitor` prints notch and word changes (Enter = station-start reset). `calibrate` runs the
 ADJUSTMENT sequence with Enter as the confirm and writes `joystick.dat`. `learn` records a combination table.
+
+### 10.6 Hybrid input (setting `hybrid_input`, on by default; enhancement)
+
+The original reads one device, the one the options select (`control_mode`, §4). With
+`hybrid_input` the keyboard and a gamepad are both live in every control mode. Off gives the
+original's one-device behaviour exactly, with `keyboard_with_controller` (§10.3) as before;
+on supersedes `keyboard_with_controller` (the whole keyboard counts), so old configs keep
+working. Implementation: `crates/ddg-game/src/hybrid.rs` (pure pieces) and
+`gamepad::Controls::poll_hybrid`. Port behaviour, so no confidence level applies; the tests are
+named below.
+
+**Devices.** The keyboard keeps its selected mode (0–3); in the controller modes it uses mode
+0's keys. A gamepad is opened in every mode (none in headless runs, which stay deterministic)
+and followed through hot-plugging. In modes 0–4 it is read in the Xbox layout. In modes 5/6
+(or with a learned combination table) the selected handle decoder (§4.4–4.5, the
+`Joystick`) reads it, and its buttons follow that mode's binding row, as they do with
+`hybrid_input` off. The decoder needs its device at start, as `input_init` does. Without one,
+the mode falls back to keyboard mode 0 and a pad connected later is read in the Xbox layout.
+
+**Xbox layout** (`hybrid::modern_pad`; test `hybrid::tests::xbox_mapping`):
+
+| Pad | Driving | Menus |
+|---|---|---|
+| D-pad / left stick ↓ ↑ (past half travel, like mode 4's ±500) | power + / − | cursor down / up |
+| D-pad / left stick → ← | brake + / − | right / left |
+| RT / RB | power + / − | — |
+| LT / LB | brake + / − | — |
+| A | A bit 0x100000 (Pro-mode panel, ATS confirm) | menu confirm 0x1000 |
+| B, View | — | cancel 0x2000 |
+| X | horn 0x100 | — |
+| Y | R 0x4000, press frame only, like the keyboard's | — |
+| Menu | pause 0x800000 | pause |
+
+This replaces the older generic mapping, which put horn and cancel on one button because the
+binding rows of modes 4–6 share them. B is back in Xbox convention, so the horn moved to X.
+The d-pad wins over the stick on its axis. In mode 3 (one handle) the brake directions fold
+onto the handle: brake+ goes toward the brake side, brake− toward power.
+
+**Buttons** are OR-ed per tick before the edges are taken, so a button gives one edge while
+either device holds it, and the release comes when both let go. The menu cursor pulses are
+made again from the merged word, with one hold counter per direction (`hybrid::MenuRepeat`),
+so a key and the d-pad held together give one press and one repeat train (§4.2). Tests:
+`gamepad::tests::hybrid_buttons_are_ored_before_the_edges`, `hybrid::tests::menu_pulses_once_across_devices`.
+
+**Stepped levers: no double steps.** Each lever direction is one virtual key, held while any
+stepped device holds it: the keyboard's key, the pad's d-pad, its stick or its shoulder button
+(`input::LeverHolds`, `Keyboard::poll_with`). The repeat rule (press, then frames 9, 12, 15,
+…; brake press to EB, repeat to B8) runs on that one counter. Two devices pressed in the same
+tick step once, and a second device joining a hold continues it instead of pressing again.
+Mode 2's digits and numpad are absolute (a digit holds a notch). The pad steps the handles
+with the two-handle rules there, and the digits take the power notch back when the set of
+held digits changes. With no pad this is the original's mode 2. Tests:
+`gamepad::tests::hybrid_two_devices_never_double_step` and
+`gamepad::tests::hybrid_pad_on_the_one_handle_and_direct_modes`.
+
+**Absolute handles: last used wins** (`hybrid::LeverArbiter`). In modes 5/6 the decoder keeps
+decoding the handle every tick, gates and EB debounce included. A key or pad step that changes
+a notch takes that handle over and records the handle's raw reading as the anchor: Y for the
+mascon, X for the brake, Y for both in mode 5, or the learned notch for a combination pad.
+The notch then steps from where it was. When the reading moves more than the deadband from
+the anchor, the handle takes the notch back and the notch snaps to the handle's decoded
+position. The deadband is `HANDLE_DEADBAND` = 50 of ±1000: above a resting pot's jitter and
+below the 40–250 units between two calibrated notches. For a combination pad any change in
+the learned notch counts. Mode 6's rules stay in force while the handle is in control: EB
+still needs the sixth poll after the snap, and outside a gate the handle holds. Mode 5's one
+axis hands both notches over together. Station start (0x4332c0) gives both handles back to
+the handle at once, matching the analog modes' "the handle stays authoritative". The pause
+menu's restore sets the notches, and an owning handle overrides them on the next poll, as in
+the original. Tests: `hybrid::tests::last_used_wins_with_deadband_and_snap`,
+`handle_keeps_its_debounce_after_the_snap`, `one_axis_hands_over_both_notches`,
+`learned_notches_take_over_on_any_change`, `gamepad::tests::hybrid_handle_last_used_wins`.
+
+**Hot-plug.** gilrs connect and disconnect events re-pick the pad at any time. While unplugged
+the pad adds nothing. Its buttons release once, with no stale edges (the §10.3 unplug rule),
+and a handle holds its notch. Test `gamepad::tests::hybrid_unplug_and_hint_device`.
+
+**Unchanged.** The Shift override has nothing left to do, because the keyboard always counts.
+The calibration screen (ADJUSTMENT) and `ddg-game pad` read the selected device on purpose.
+In mode 6 the calibration screen samples the handle decoder's pad as before, and the
+`pad` tool forces `hybrid_input` off.
+
+**Hints follow the last device used** (`hybrid::HintTracker`, `glyphs::Hint`):
+
+- A key press switches the hints to the keyboard. A pad button edge, or an axis moved more
+  than 0.25 of its range from where it last stood (`HINT_AXIS_DEADBAND`), switches them to the
+  pad. Stick noise, drift and a stick resting off centre never flip the hints. Unplugging
+  returns them to the keyboard. They start on the pad in modes 4–6 when its pad is connected,
+  otherwise on the keyboard. Test `hybrid::tests::hint_device_switches_on_first_input_only`.
+- Keyboard: the original's keyboard art, in every mode (the original shows its pad or lever
+  art in modes 4–6 whatever is pressed).
+- Pad in modes 0–4: Xbox-style glyphs drawn in code (`ddg-render` `sprites::legend`,
+  `WidgetKind::Legend`), with no image assets. A, B, X and Y are round buttons in green, red,
+  blue and yellow with their letters. LB/RB/LT/RT/Menu/View are rounded keys with their names.
+  The d-pad is a cross with the arms in use lit, and the left stick is a ring with "L". All are
+  sized from the legend text's cap height (1.75×) and use the bundled font in every language.
+- Pad in modes 5/6: the original's lever and controller art. The handles are physical,
+  usually a real Densha de GO! controller, and Xbox glyphs would name the wrong buttons.
+- Where they appear:
+  - **Menu headers** (title, options, controls, port settings and the route
+    select, 0x42a820 and 0x436210): the cursor-key, Esc and Enter pictures become the d-pad,
+    B and A glyphs in their places, and the 選択 / キャンセル / 決定 labels stay. On the
+    route select's train level, the R key becomes Y.
+  - **Records**: tbl 0x545 becomes "(A) Next (B) Back to menu".
+  - **Name entry**: the 0x486184 art becomes "Select" with the d-pad's ◀ ▶ and "Confirm"
+    with A.
+  - **Port settings**: the change legend becomes ◀ ▶ Change, (A) Toggle, (B) Back.
+  - **Controls page**: in modes 0–4, a panel with the Xbox mapping replaces the mode's
+    picture, because the pad works in all of them.
+  - **Pause dialogs**: a boxed line over the dialog reads d-pad Select, (A) Confirm,
+    (Menu) Resume. The original's dialogs have no legend, so the keyboard adds none either.
+- **Japanese.** The glyphs and their layout are the same. The words come from the `[ui]`
+  strings of `locales/ja.toml` where the legend is port text (選択, 決定, 再開, the panel
+  lines). Where the legend is original art, the keyboard keeps the art, and the pad swaps only
+  the key pictures for glyphs and keeps the art labels. The attract "PUSH ENTER KEY" art and
+  the "Press START" overlay are left as they are: START is the arcade's word for menu
+  confirm.
+- Headless shots have no pad. `--hint-device pad|keyboard`, or `DDG_HINT_DEVICE`, fixes the
+  device. Shots: `out/explain/hybrid_input/` (contact sheet `contact_sheet.png`).
+
+**Needs hardware.** Everything above has been checked with fed samples and headless shots
+only. Still to check on real devices: the gilrs button names for an actual Xbox pad (LT/RT
+reported as `LeftTrigger2`/`RightTrigger2` past gilrs' press threshold), stick signs per
+backend, the deadbands against a real stick and a real lever, and hot-plug timing.
