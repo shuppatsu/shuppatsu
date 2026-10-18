@@ -12,8 +12,9 @@
 //! the title picture 0x4037f0), 0x404e10 (the Komachi-movie check), 0x40e450 (picks the demo
 //! route), 0x40e4b0 (demo drive on it), 0x40e6c0 (assets of stage 5, instant), 0x403f40 ×4
 //! (photos), 0x403da0 (a poster), 0x40e6e0 (the stage-5 lesson demo). The demo drives are run
-//! by the owner ([`AttractStep::Demo`]); the cold-start opening is not built yet and the title
-//! picture follows at once. The Komachi movie is postponed (decision D2).
+//! by the owner ([`AttractStep::Demo`]), and so are the cold-start opening
+//! ([`AttractStep::Opening`]) and the Komachi movie ([`AttractStep::KomachiMovie`], played by
+//! `crate::movie` once every select stage has a clear mark).
 
 use super::snd;
 use crate::screens::{MenuInput, Sfx};
@@ -265,13 +266,15 @@ enum Phase {
     Demo(usize),
     /// The owner runs the opening; the title picture of item n follows.
     Opening(usize),
+    /// The owner plays the Komachi movie of item n.
+    Movie(usize),
 }
 
 /// What the attract tick asks of its owner.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttractStep {
     Running,
-    /// Item 3's check passed: the Komachi movie would play now (postponed, D2).
+    /// Item 3's check passed: play the Komachi movie, then call [`Attract::movie_done`].
     KomachiMovie,
     /// Go to the title menu.
     Title,
@@ -338,6 +341,23 @@ impl Attract {
         }
     }
 
+    /// The movie asked for by [`AttractStep::KomachiMovie`] has ended. At its end the item
+    /// ends and the walk goes on (0x404e10 clears `0x855ff8 & 4`); skipped with the confirm
+    /// edge (0x428f00 sets `0x855ffc |= 0x10` and leaves the item running), the walk sees that
+    /// same edge as START at once and restarts at the title picture, like any item aborted
+    /// by START (0x402700).
+    pub fn movie_done(&mut self, skipped: bool, l: &mut SpriteLayer) {
+        if let Phase::Movie(i) = self.phase {
+            if skipped {
+                self.abort(l);
+                // `0x855ffc & 0x10`: the restarted title shows the picture, no opening.
+                self.skip_opening = true;
+            } else {
+                self.phase = Phase::Item(i + 1);
+            }
+        }
+    }
+
     pub fn demo_done(&mut self, start: bool) {
         if let Phase::Demo(next) = self.phase {
             self.phase = if start {
@@ -366,7 +386,7 @@ impl Attract {
         sfx: &mut Vec<Sfx>,
     ) -> AttractStep {
         self.fades.retain_mut(|f| f.tick(l));
-        let mut step = AttractStep::Running;
+        let step = AttractStep::Running;
         match self.phase.clone() {
             Phase::Leaving(n) => {
                 if n <= 1 {
@@ -388,7 +408,7 @@ impl Attract {
                 };
                 step
             }
-            Phase::Demo(_) | Phase::Opening(_) => step,
+            Phase::Demo(_) | Phase::Opening(_) | Phase::Movie(_) => step,
             Phase::Picture(c) => {
                 if input.confirm {
                     sfx.push(Sfx::Play(snd::START));
@@ -513,7 +533,10 @@ impl Attract {
                         self.phase = Phase::Demo(i + 1);
                         return AttractStep::Demo { kind, stage };
                     }
-                    ITEM_RANKING_MOVIE if env.komachi => step = AttractStep::KomachiMovie,
+                    ITEM_RANKING_MOVIE if env.komachi => {
+                        self.phase = Phase::Movie(i);
+                        return AttractStep::KomachiMovie;
+                    }
                     _ => {}
                 }
                 // Instant items: the item ends at once; this tick is the Task_Tick after it.
@@ -760,5 +783,61 @@ mod tests {
         f.tick(&mut l);
         assert_eq!(l.palettes[0x17].as_ref(), Some(&target));
         assert!(!f.tick(&mut l));
+    }
+
+    /// Item 3 with every stage cleared: the movie, then the walk goes on (its end) or
+    /// restarts at the title picture (a skip).
+    #[test]
+    fn the_movie_item_plays_and_skips_like_the_original() {
+        let t = tables();
+        let env = AttractEnv {
+            komachi: true,
+            difficulty: 0,
+        };
+        let mut l = SpriteLayer::default();
+        let mut sfx = vec![];
+        let none = MenuInput::NONE;
+        let to_movie = |a: &mut Attract, l: &mut SpriteLayer, sfx: &mut Vec<Sfx>| {
+            for _ in 0..400 {
+                if a.tick(&none, &t, env, l, sfx) == AttractStep::KomachiMovie {
+                    return;
+                }
+            }
+            panic!("no movie");
+        };
+        // Natural end: the demo route item, then its drive.
+        let mut a = Attract::new(true, AttractCounters::default());
+        to_movie(&mut a, &mut l, &mut sfx);
+        assert_eq!(
+            a.tick(&none, &t, env, &mut l, &mut sfx),
+            AttractStep::Running
+        );
+        a.movie_done(false, &mut l);
+        let walk = a.counters.walk;
+        let mut step = AttractStep::Running;
+        for _ in 0..3 {
+            step = a.tick(&none, &t, env, &mut l, &mut sfx);
+            if step != AttractStep::Running {
+                break;
+            }
+        }
+        assert!(matches!(step, AttractStep::Demo { .. }), "{step:?}");
+        assert_eq!(a.counters.walk, walk);
+        // Skipped: the walk counts on and the title picture comes back.
+        let mut a = Attract::new(true, AttractCounters::default());
+        to_movie(&mut a, &mut l, &mut sfx);
+        let walk = a.counters.walk;
+        a.movie_done(true, &mut l);
+        assert_eq!(a.counters.walk, walk + 1);
+        for _ in 0..ABORT_TICKS + 1 {
+            a.tick(&none, &t, env, &mut l, &mut sfx);
+        }
+        assert!(a.showing_title());
+        // Without the clear marks there is no movie.
+        let mut a = Attract::new(true, AttractCounters::default());
+        for _ in 0..400 {
+            let s = a.tick(&none, &t, AttractEnv::default(), &mut l, &mut sfx);
+            assert_ne!(s, AttractStep::KomachiMovie);
+        }
     }
 }

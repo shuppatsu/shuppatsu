@@ -58,6 +58,9 @@ pub struct PortConfig {
     /// `linear`, `nearest` or `sinc` (`--audio-resampler`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio_resampler: Option<String>,
+    /// `smooth`, `sharp` or `nearest` (`--movie-scaling`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub movie_scaling: Option<String>,
     /// A fixed canvas multiple, 1..=4 (`--ui-scale`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ui_scale: Option<i64>,
@@ -134,6 +137,12 @@ impl PortConfig {
             match ddg_audio::Interpolation::parse(v) {
                 Some(m) => cfg.audio_resampler = m,
                 None => warn("audio_resampler", "\"linear\", \"nearest\" or \"sinc\""),
+            }
+        }
+        if let Some(v) = &self.movie_scaling {
+            match crate::movie::MovieScaling::parse(v) {
+                Some(m) => cfg.movie_scaling = m,
+                None => warn("movie_scaling", "\"smooth\", \"sharp\" or \"nearest\""),
             }
         }
         if let Some(n) = self.ui_scale {
@@ -344,6 +353,7 @@ const VALUE_FLAGS: &[(&str, &str)] = &[
     ("--texture-pack", "texture_pack"),
     ("--draw-distance", "draw_distance"),
     ("--audio-resampler", "audio_resampler"),
+    ("--movie-scaling", "movie_scaling"),
 ];
 
 /// Every key of docs/settings.md: the values, then the switches.
@@ -411,6 +421,24 @@ mod tests {
         let d = std::env::temp_dir().join(format!("ddg-config-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    #[test]
+    fn movie_scaling_layers() {
+        use crate::movie::MovieScaling;
+        let file = PortConfig::parse("movie_scaling = \"nearest\"\n").unwrap();
+        let get = |f: Option<&PortConfig>, e: &[(&str, &str)], a: &[&str]| {
+            layered(f, env(e), &mut args(a)).unwrap().0.movie_scaling
+        };
+        assert_eq!(get(None, &[], &[]), MovieScaling::Smooth);
+        assert_eq!(get(Some(&file), &[], &[]), MovieScaling::Nearest);
+        let var = [("DDG_MOVIE_SCALING", "sharp")];
+        assert_eq!(get(Some(&file), &var, &[]), MovieScaling::Sharp);
+        let flag = ["--movie-scaling", "smooth"];
+        assert_eq!(get(Some(&file), &var, &flag), MovieScaling::Smooth);
+        let bad = PortConfig::parse("movie_scaling = \"bicubic\"\n").unwrap();
+        assert_eq!(get(Some(&bad), &[], &[]), MovieScaling::Smooth);
+        assert!(layered(None, env(&[]), &mut args(&["--movie-scaling", "x"])).is_err());
     }
 
     #[test]
@@ -544,6 +572,8 @@ mod tests {
         ("save_timed_out_names", true),
         ("keyboard_with_controller", true),
         ("exit_no_to_menu", true),
+        ("movie_true_aspect", true),
+        ("movie_in_menu", true),
     ];
 
     #[test]
@@ -587,6 +617,7 @@ mod tests {
             "texture_pack",
             "draw_distance",
             "audio_resampler",
+            "movie_scaling",
         ]) {
             assert!(rows.contains(k), "{k} is not in docs/settings.md");
         }
@@ -609,6 +640,7 @@ mod tests {
                     "texture_pack",
                     "draw_distance",
                     "audio_resampler",
+                    "movie_scaling",
                 ]
                 .contains(r);
             assert!(known, "docs/settings.md lists {r}, which is no setting");

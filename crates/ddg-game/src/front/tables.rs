@@ -231,6 +231,17 @@ impl<T: Copy> Legends<T> {
 }
 
 impl FrontTables {
+    /// The sixth title label, LOVE特急こまち (the Komachi movie). The exe has no descriptor for
+    /// it (0x47c778 holds five), but it is on the sheet right under the fifth, in the same
+    /// 32×6-tile cell: rows 0, 6, 12, 18, 24, then 30 (tbl 0x513 is 36 rows high).
+    pub fn movie_item(&self) -> TextDesc {
+        let last = self.title_items[TITLE_ITEM_COUNT - 1];
+        TextDesc {
+            row: last.row + last.h,
+            ..last
+        }
+    }
+
     pub fn read(exe: &Exe<'_>) -> Result<Self> {
         let mode_i16 = |va: u32| -> Result<i16> {
             let r = exe.reader_at(va, 4 * RES_MODES, WHAT)?;
@@ -406,6 +417,12 @@ mod tests {
             t.title_items.map(|d| d.row),
             [0, 6, 12, 18, 24],
             "title rows"
+        );
+        let m = t.movie_item();
+        assert_eq!(
+            (m.tbl, m.col, m.row, m.w, m.h),
+            (0x513, 0, 30, -1, 6),
+            "the movie label"
         );
         // §4: option values.
         assert_eq!(t.option_values(1), &[6, 7, 8, 9]);

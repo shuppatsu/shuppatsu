@@ -60,6 +60,8 @@ pub struct Env {
     pub force_feedback: bool,
     /// DirectSound opened (`0x816ae8`).
     pub sound_device: bool,
+    /// Setting `movie_in_menu` (port): the title menu shows its sixth item, the movie.
+    pub movie_in_menu: bool,
 }
 
 impl Default for Env {
@@ -70,6 +72,7 @@ impl Default for Env {
             joystick: false,
             force_feedback: false,
             sound_device: true,
+            movie_in_menu: false,
         }
     }
 }

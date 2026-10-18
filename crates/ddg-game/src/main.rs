@@ -23,6 +23,7 @@ mod identity;
 mod input;
 mod label_audit;
 mod locale;
+mod movie;
 mod navigator;
 mod play;
 mod popups;
@@ -108,6 +109,9 @@ options:
                            how each sound is resampled to the device rate (env
                            DDG_AUDIO_RESAMPLER): sinc (default) = band-limited, no aliasing or
                            images; linear or nearest = the candidates for DirectSound's own
+  --movie-scaling <smooth|sharp|nearest>
+                           the Komachi movie's filter (env DDG_MOVIE_SCALING): smooth =
+                           bilinear (default), sharp = sharp bilinear like the UI, nearest
 
 switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml key <name> with
   _ for -, env DDG_<NAME> = 1/0. Off is the original's behaviour. [default]
@@ -145,6 +149,8 @@ switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml
   --keyboard-with-controller
                            keyboard horn and ATS confirm in controller modes [on]
   --exit-no-to-menu        exit dialog No returns to the title menu, not attract [on]
+  --movie-true-aspect      the Komachi movie at its 2.03:1 display aspect, not 2.22:1 [on]
+  --movie-in-menu          the Komachi movie as item 6 of the title menu [on]
 
 settings file: $XDG_CONFIG_HOME/ddg/config.toml (~/.config/ddg; %APPDATA%\\ddg on Windows),
   keys lang, hud_layout, ui_scaling, ui_scale, font, display_font, texture_pack and the

@@ -709,6 +709,9 @@ pub struct LocaleConfig {
     /// `--audio-resampler` / `DDG_AUDIO_RESAMPLER` (`audio_resampler`: how each voice is resampled
     /// to the device rate; `sinc` is an enhancement, docs/settings.md).
     pub audio_resampler: ddg_audio::Interpolation,
+    /// `--movie-scaling` / `DDG_MOVIE_SCALING` (`movie_scaling`: the Komachi movie's filter,
+    /// docs/re/movie.md).
+    pub movie_scaling: crate::movie::MovieScaling,
 }
 
 impl Default for LocaleConfig {
@@ -726,6 +729,7 @@ impl Default for LocaleConfig {
             texture_pack: None,
             draw_distance: Default::default(),
             audio_resampler: Default::default(),
+            movie_scaling: Default::default(),
         }
     }
 }
@@ -750,7 +754,7 @@ impl LocaleConfig {
     }
 
     /// `DDG_LANG`, `DDG_FONT`, `DDG_DISPLAY_FONT`, `DDG_LOCALE_DIR`, `DDG_TEXTURE_PACK`,
-    /// `DDG_UI_SCALE`, `DDG_HUD_LAYOUT`, `DDG_UI_SCALING`, `DDG_DRAW_DISTANCE`, `DDG_AUDIO_RESAMPLER` over what is set (the defaults or
+    /// `DDG_UI_SCALE`, `DDG_HUD_LAYOUT`, `DDG_UI_SCALING`, `DDG_DRAW_DISTANCE`, `DDG_AUDIO_RESAMPLER`, `DDG_MOVIE_SCALING` over what is set (the defaults or
     /// `config.toml`; unknown values are ignored with a warning).
     pub fn apply_env(&mut self) {
         self.apply_vars(|k| std::env::var_os(k));
@@ -801,6 +805,12 @@ impl LocaleConfig {
             match ddg_audio::Interpolation::parse(&v.to_string_lossy()) {
                 Some(m) => c.audio_resampler = m,
                 None => eprintln!("DDG_AUDIO_RESAMPLER: expected linear, nearest or sinc"),
+            }
+        }
+        if let Some(v) = var("DDG_MOVIE_SCALING") {
+            match crate::movie::MovieScaling::parse(&v.to_string_lossy()) {
+                Some(m) => c.movie_scaling = m,
+                None => eprintln!("DDG_MOVIE_SCALING: expected smooth, sharp or nearest"),
             }
         }
         c.ui_scale = c.ui_scale_fixed.unwrap_or(1);
@@ -856,6 +866,11 @@ impl LocaleConfig {
                     let v = it.next().unwrap_or_default();
                     self.audio_resampler = ddg_audio::Interpolation::parse(&v)
                         .context("--audio-resampler needs linear, nearest or sinc")?;
+                }
+                "--movie-scaling" => {
+                    let v = it.next().unwrap_or_default();
+                    self.movie_scaling = crate::movie::MovieScaling::parse(&v)
+                        .context("--movie-scaling needs smooth, sharp or nearest")?;
                 }
                 _ => rest.push(a),
             }

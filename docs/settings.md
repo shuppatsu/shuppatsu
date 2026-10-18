@@ -62,11 +62,11 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
   options screens are open.
 * **Groups**: Language & text (`lang`, `one_line_captions`, `staff_kanji`, `landmark_names`, `board_names`,
   `subtitles`, `font`, `display_font`); Display (`hud_layout`, `ui_scaling`, `ui_scale`,
-  `wide_menus`, `hud_upscale`, `interpolate`, `vsync`, `fullscreen`); 3D & effects (`wide_visibility`, `square_pixels`,
+  `wide_menus`, `hud_upscale`, `interpolate`, `vsync`, `fullscreen`, `movie_scaling`, `movie_true_aspect`); 3D & effects (`wide_visibility`, `square_pixels`,
   `stable_track_variants`, `texture_filtering`, `anisotropic`, `msaa`, `ground_variation`,
   `ground_detiling`, `texture_pack`, `fog`, `wide_weather`, `wide_coupling_band`, `far_traffic`, `max_lod`,
   `early_activation`, `draw_distance`, `distance_fade`, `fine_depth`); Sound (`audio_resampler`); Saves & controls (`save_on_change`,
-  `save_timed_out_names`, `keyboard_with_controller`, `exit_no_to_menu`). All 38 keys of
+  `save_timed_out_names`, `keyboard_with_controller`, `exit_no_to_menu`, `movie_in_menu`). All 41 keys of
   the table below.
 * **Keys**: up/down move (no wrap, repeat on hold), left/right step the value (switches flip,
   `ui_scale` runs Auto, 1×…4×, the others wrap), Enter (confirm) steps it on, Esc (cancel)
@@ -79,7 +79,8 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
 * **When it applies** (the status line): *Applies now*: `lang` (the locale is installed again:
   sprite text, header art and these strings switch at once), `ui_scaling`, `ui_scale`,
   `wide_menus` (the canvas is refitted), `hud_upscale` (the canvas is composed every frame), `fullscreen`, `save_on_change`, `keyboard_with_controller` (the
-  input is rebuilt), `exit_no_to_menu`, `audio_resampler` (sent to the audio thread, heard from the next
+  input is rebuilt), `exit_no_to_menu`, `movie_in_menu`, `movie_scaling` and `movie_true_aspect` (read when the movie
+  starts), `audio_resampler` (sent to the audio thread, heard from the next
   device buffer). *Applies from the next stage*: everything a run reads
   when it starts (the HUD layout, interpolation, the 3D and caption switches,
   `save_timed_out_names`). *Applies after a restart*: `vsync` (the surface's present mode is
@@ -135,7 +136,10 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
 | `save_timed_out_names` | on | `--[no-]save-timed-out-names` | a name entry that times out is shown but never packed (`Ranking_ToEeprom` 0x41e670 skipped): lost at exit | saved like a completed name (menus.md §14.1). Test `screens::ranking::tests::timeout_without_the_setting_is_not_committed` |
 | `keyboard_with_controller` | on | `--[no-]keyboard-with-controller` | in controller modes 4–6 only Esc, Enter (menu confirm) and R reach the game | the keyboard's horn (Space) and A / ATS confirm (Enter) work too; the levers stay the controller's (input.md §10.3). Test `gamepad::tests::keyboard_buttons_off_is_the_original_mask` |
 | `exit_no_to_menu` | on | `--[no-]exit-no-to-menu` | the exit dialog's いいえ restarts attract at the title picture | the title menu again, cursor on ゲーム終了 (menus.md §14.1). Test `app::tests::exit_no_without_the_setting_goes_to_attract` |
+| `movie_in_menu` | on | `--[no-]movie-in-menu` | the title menu's sixth label, LOVE特急こまち (the Komachi movie), has no descriptor and no cursor position: the movie plays only in attract, once every select stage has a clear mark (menus.md §2–§3) | the label (the sheet's cell under the fifth) as the menu's last row, after 専用コントローラー設定 in control mode 6; choosing it stops the BGM, plays the movie and comes back on that row with the BGM, as the original's unreachable case 5 of 0x42a1c0 would. The art's number stays "6", so without mode 6 the rows read 1–4, 6. English: "Komachi Movie" over the big title, LOVE特急こまち as the subtitle. Off: the original's rows exactly. Test `front::title::tests::the_movie_row_follows_the_setting` |
+| `movie_true_aspect` | on | `--[no-]movie-true-aspect` | the movie stretch-blitted to 640×288 (twice the 320×144 picture, 2.22:1), the stream's sample aspect 200:219 ignored (0x428f00, movie.md §5) | the picture at the display aspect the stream codes, 2.03:1: the same height and centre (584×288 on the 640×480 design with `hud_layout original`), or the largest 2.03:1 rectangle in the window with `enhanced` |
 | `audio_resampler` | `sinc` | `--audio-resampler <linear\|nearest\|sinc>` | every voice (8-bit effects at 9–44.1 kHz, pitch-shifted live; 44.1 kHz music) resampled by the Windows 9x DirectSound software mixer into a 22.05 kHz 8-bit primary buffer, nearest or linear: not known (audio-text.md §1, open question 8) | how each voice reaches the device rate: `linear` interpolation or `nearest` (sample-and-hold), the two candidates for the original, neither imitating its 22.05 kHz primary; `sinc` (default, the user's decision) is band-limited: a 32-tap Kaiser-windowed sinc whose cutoff follows the pitch, reading across loop seams, with images and aliases below −70 dB (on the 10 kHz voice lines linear leaves images at 5–10 kHz about 45 dB down, nearest about 24 dB; linear also dulls the top of each sample's band, −5 dB at 80 % of its Nyquist frequency, where sinc stays flat to 74 %), about 1.5 % of a core for 10 voices at 48 kHz (audio-text.md §9) |
+| `movie_scaling` | `smooth` | `--movie-scaling <smooth\|sharp\|nearest>` | a DirectDraw stretch blit (`Blt`, no FX flags) of the 320×144 sample to 640×288: point-sampled by the HEL, filtered or not by the card's driver: not known (movie.md §5) | how the movie reaches its rectangle: `smooth` (default) = plain bilinear, suited to the low-resolution live-action picture; `sharp` = sharp bilinear like `ui_scaling smooth` (square pixels, blended edges); `nearest` = nearest neighbour. The rectangle itself follows `hud_layout` (original: the original's on the 640×480 design; enhanced: the window filled) and `movie_true_aspect` |
 
 Not settings: the window size (`--size`), `--mute`, the controller files (`--joystick-dat`,
 `--combo`) and the check aids (`--shot`, `--inputs`, `--speedometer`, `--ending`,

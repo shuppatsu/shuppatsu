@@ -291,6 +291,13 @@ impl Sound {
         self.flush();
     }
 
+    /// Plays a PCM stream beside the voices (the Komachi movie's soundtrack), or stops it.
+    pub fn play_stream(&self, stream: Option<std::sync::Arc<ddg_audio::PcmStream>>) {
+        if let Some(out) = &self.out {
+            out.set_stream(stream);
+        }
+    }
+
     /// Releases a looping sound code.
     pub fn release(&mut self, code: u16) {
         self.snd.release(code);

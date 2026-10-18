@@ -991,6 +991,9 @@ name = "English"
 2 = { parts = [{ region = [88, 7, 408, 65], shared_group = "title.items", font = "display", text = "Rankings" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "ランキングを見る" }] }
 3 = { parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", font = "display", text = "Quit Game" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "ゲーム終了" }] }
 4 = { parts = [{ region = [88, 8, 408, 66], shared_group = "title.items", font = "display", text = "Calibration" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "専用コントローラー設定" }] }   # input mode 6
+# The sixth label, LOVE特急こまち (the Komachi movie): no descriptor in the exe, the cell under
+# the fifth (FrontTables::movie_item); shown with setting `movie_in_menu`.
+komachi = { rect = [0, 30, -1, 6], parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", font = "display", text = "Komachi Movie" }, { region = [192, 75, 306, 16], align = "right", shared_group = "title.subtitles", text = "LOVE特急こまち" }] }
 
 # Options labels and values (0x47c584), selected colouring. Labels 192×32, values 240×32
 # (10–13 are 32×32). Labels 0–5 and the values shown in the list or on the control
@@ -1441,6 +1444,9 @@ distance_max = "Max (1280 m)"
 resampler_linear = "Linear"
 resampler_nearest = "Nearest"
 resampler_sinc = "High quality (sinc)"
+movie_smooth = "Smooth"
+movie_sharp = "Sharp"
+movie_nearest = "Nearest"
 status_now = "Applies now"
 status_stage = "Applies from the next stage"
 status_restart = "Applies after a restart"
@@ -1481,6 +1487,10 @@ vsync = "Vsync"
 vsync_desc = "Frames in step with the display; off: an uncapped frame rate"
 fullscreen = "Full screen"
 fullscreen_desc = "Borderless full screen; Alt+Enter or F11 switch at any time"
+movie_scaling = "Movie scaling"
+movie_scaling_desc = "How the Komachi movie is enlarged; smooth: bilinear, sharp: crisp like the menus"
+movie_true_aspect = "True movie shape"
+movie_true_aspect_desc = "The Komachi movie at its 2.03:1 shape (off: the original's 2.22:1 stretch)"
 interpolate = "Smooth motion"
 interpolate_desc = "Movement drawn between the 30 Hz ticks at the display's rate"
 wide_visibility = "Wide scenery range"
@@ -1529,3 +1539,5 @@ keyboard_with_controller = "Keyboard with controller"
 keyboard_with_controller_desc = "Horn and A / ATS confirm keys also work in controller modes"
 exit_no_to_menu = "Exit \"No\" to menu"
 exit_no_to_menu_desc = "\"No\" in the exit dialog returns to the title menu, not the attract"
+movie_in_menu = "Movie in the menu"
+movie_in_menu_desc = "The Komachi movie as the title menu's sixth item, LOVE特急こまち"

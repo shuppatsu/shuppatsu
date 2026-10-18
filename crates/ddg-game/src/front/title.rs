@@ -4,7 +4,10 @@
 //! Items: アーケードモード, ゲーム設定, ランキングを見る, ゲーム終了 and, with the DDG
 //! controller (control mode 6) only, 専用コントローラー設定. The sixth label on the sheet,
 //! LOVE特急こまち (the Komachi movie), has no descriptor and no cursor position: the cursor
-//! maximum is 3 or 4, so the menu cannot reach it (the dispatch in 0x42a1c0 still has a case 5).
+//! maximum is 3 or 4, so the menu cannot reach it (the dispatch in 0x42a1c0 still has a case 5:
+//! BGM off, the movie, BGM on, the menu again on that item). Setting `movie_in_menu` (port)
+//! adds it as the last row with its own label from the sheet ([`FrontTables::movie_item`]); off,
+//! the menu is the original's.
 
 use super::tables::FrontTables;
 use super::{Env, PAL_MENU, ScrollList, snd};
@@ -35,20 +38,34 @@ pub enum TitleChoice {
     Exit,
     /// 4: 専用コントローラー設定 → calibration (control mode 6 only).
     Calibrate,
+    /// 5: LOVE特急こまち → the Komachi movie (setting `movie_in_menu` only).
+    Movie,
     /// −2: cancel → `Game_MainFlow` shows the attract title again.
     Back,
 }
 
 impl TitleChoice {
-    fn from_index(i: i32) -> Self {
+    fn from_item(i: usize) -> Self {
         match i {
             0 => Self::Arcade,
             1 => Self::Options,
             2 => Self::Ranking,
             3 => Self::Exit,
-            _ => Self::Calibrate,
+            4 => Self::Calibrate,
+            _ => Self::Movie,
         }
     }
+}
+
+/// The label index (0x513 sheet row / 6) of the movie item.
+const MOVIE_ITEM: usize = 5;
+
+/// The items shown, by label index: 1–4, 5 with the DDG controller (mode 6), and 6 (the
+/// movie) with setting `movie_in_menu`.
+fn items(env: &Env) -> impl Iterator<Item = usize> {
+    (0..4)
+        .chain((env.control_mode == 6).then_some(4))
+        .chain(env.movie_in_menu.then_some(MOVIE_ITEM))
 }
 
 #[derive(Debug, Clone)]
@@ -70,9 +87,15 @@ impl TitleMenu {
         }
     }
 
-    /// The last cursor index: four items, five with the DDG controller (mode 6).
+    /// The last cursor index: four items, five with the DDG controller (mode 6), one more with
+    /// setting `movie_in_menu`.
     pub fn last(env: &Env) -> i32 {
-        if env.control_mode == 6 { 4 } else { 3 }
+        items(env).count() as i32 - 1
+    }
+
+    /// The cursor position of the movie item (the menu comes back on it after the movie).
+    pub fn movie_cursor(env: &Env) -> i32 {
+        items(env).position(|i| i == MOVIE_ITEM).unwrap_or(0) as i32
     }
 
     #[cfg(test)]
@@ -94,7 +117,8 @@ impl TitleMenu {
             self.blink -= 1;
             if self.blink == 0 {
                 sfx.push(Sfx::Stop(snd::DECIDE));
-                return Some(TitleChoice::from_index(self.list.cursor));
+                let item = items(env).nth(self.list.cursor as usize).unwrap_or(0);
+                return Some(TitleChoice::from_item(item));
             }
         } else if self.list.distance() != 0 {
             self.list.approach(env.analog);
@@ -115,7 +139,12 @@ impl TitleMenu {
     fn draw(&self, env: &Env, t: &FrontTables, l: &mut SpriteLayer) {
         super::draw_menu_header(l, t, env, HEADER_PAGE);
         let last = Self::last(env);
-        for (i, &d) in t.title_items.iter().take(last as usize + 1).enumerate() {
+        for (i, item) in items(env).enumerate() {
+            let d = t
+                .title_items
+                .get(item)
+                .copied()
+                .unwrap_or_else(|| t.movie_item());
             let y = ITEM_Y + ROW_I * i as i32 + self.list.scroll;
             super::text(
                 l,
@@ -210,5 +239,51 @@ mod tests {
         let (r, _) = run(&mut m, &env, press(|i| i.confirm = true));
         assert_eq!(r, None);
         assert_eq!(m.blink, 0, "confirm ignored while scrolling");
+    }
+
+    /// Setting `movie_in_menu`: the movie is the last row (after the calibration item in
+    /// mode 6), its label the sheet's sixth; off, the original's rows.
+    #[test]
+    fn the_movie_row_follows_the_setting() {
+        let t = super::super::tests_support::tables();
+        let base = Env::default();
+        assert_eq!(TitleMenu::last(&base), 3);
+        let movie = Env {
+            movie_in_menu: true,
+            ..base
+        };
+        assert_eq!(TitleMenu::last(&movie), 4);
+        assert_eq!(TitleMenu::movie_cursor(&movie), 4);
+        let mode6 = Env {
+            control_mode: 6,
+            ..movie
+        };
+        assert_eq!(TitleMenu::last(&mode6), 5);
+        assert_eq!(TitleMenu::movie_cursor(&mode6), 5);
+        let mut m = TitleMenu::new(TitleMenu::movie_cursor(&movie), 0);
+        let mut l = SpriteLayer::default();
+        let mut sfx = Vec::new();
+        let mut choice = None;
+        for i in 0..40 {
+            let input = press(|k| k.confirm = i == 0);
+            choice = choice.or(m.tick(&input, &movie, &t, &mut l, &mut sfx));
+        }
+        assert_eq!(choice, Some(TitleChoice::Movie));
+        // The row shows the derived label.
+        let slot = &l.slots[SLOT_ITEMS + 4];
+        let d = t.movie_item();
+        assert_eq!((slot.tilemap, slot.row), (d.tbl, d.row));
+        // Mode 6 without the setting: the calibration item last, as the original.
+        let orig6 = Env {
+            control_mode: 6,
+            ..base
+        };
+        let mut m = TitleMenu::new(4, 0);
+        let mut choice = None;
+        for i in 0..40 {
+            let input = press(|k| k.confirm = i == 0);
+            choice = choice.or(m.tick(&input, &orig6, &t, &mut l, &mut sfx));
+        }
+        assert_eq!(choice, Some(TitleChoice::Calibrate));
     }
 }

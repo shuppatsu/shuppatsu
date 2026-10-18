@@ -21,6 +21,7 @@ use super::tables::FrontTables;
 use super::{Env, PAL_MENU, snd};
 use crate::config::{Lock, Locks};
 use crate::locale::LocaleConfig;
+use crate::movie::MovieScaling;
 use crate::presentation::HudLayout;
 use crate::scene::DrawDistance;
 use crate::screens::{MenuInput, Sfx};
@@ -78,6 +79,8 @@ pub enum Kind {
     DrawDistance,
     /// `audio_resampler`: one of [`Interpolation::ALL`].
     Resampler,
+    /// `movie_scaling`: one of [`MovieScaling::ALL`].
+    MovieScaling,
 }
 
 /// When a change takes effect, seen from the menus (the only place the screen is reached).
@@ -135,6 +138,8 @@ pub const ITEMS: &[Item] = {
         switch("interpolate", Display, NextStage),
         switch("vsync", Display, Restart),
         switch("fullscreen", Display, Now),
+        item("movie_scaling", Display, Kind::MovieScaling, Now),
+        switch("movie_true_aspect", Display, Now),
         switch("wide_visibility", Effects, NextStage),
         switch("square_pixels", Effects, NextStage),
         switch("stable_track_variants", Effects, NextStage),
@@ -158,6 +163,7 @@ pub const ITEMS: &[Item] = {
         switch("save_timed_out_names", Saves, NextStage),
         switch("keyboard_with_controller", Saves, Now),
         switch("exit_no_to_menu", Saves, Now),
+        switch("movie_in_menu", Saves, Now),
     ]
 };
 
@@ -244,6 +250,11 @@ impl Item {
                 let i = all.iter().position(|m| *m == cfg.audio_resampler);
                 cfg.audio_resampler = all[cycle(i.unwrap_or(0), dir, all.len())];
             }
+            Kind::MovieScaling => {
+                let all = MovieScaling::ALL;
+                let i = all.iter().position(|m| *m == cfg.movie_scaling);
+                cfg.movie_scaling = all[cycle(i.unwrap_or(0), dir, all.len())];
+            }
         }
     }
 
@@ -267,6 +278,7 @@ impl Item {
             Kind::Level => s.level(self.key).map(|v| Value::Integer(i64::from(v))),
             Kind::DrawDistance => Some(Value::String(cfg.draw_distance.name().to_owned())),
             Kind::Resampler => Some(Value::String(cfg.audio_resampler.name().to_owned())),
+            Kind::MovieScaling => Some(Value::String(cfg.movie_scaling.name().to_owned())),
         }
     }
 
@@ -341,6 +353,13 @@ impl Item {
                     Interpolation::Sinc => "resampler_sinc",
                 })
                 .to_owned(),
+            Kind::MovieScaling => ui
+                .get(match cfg.movie_scaling {
+                    MovieScaling::Smooth => "movie_smooth",
+                    MovieScaling::Sharp => "movie_sharp",
+                    MovieScaling::Nearest => "movie_nearest",
+                })
+                .to_owned(),
         }
     }
 }
@@ -372,6 +391,9 @@ const UI_IDS: &[&str] = &[
     "resampler_linear",
     "resampler_nearest",
     "resampler_sinc",
+    "movie_smooth",
+    "movie_sharp",
+    "movie_nearest",
     "status_now",
     "status_stage",
     "status_restart",

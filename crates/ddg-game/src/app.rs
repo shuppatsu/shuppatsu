@@ -26,6 +26,7 @@ use crate::front::tables::FrontTables;
 use crate::front::title::{TitleChoice, TitleMenu, komachi_unlocked};
 use crate::front::{Env, snd};
 use crate::gamepad::{Controls, JoyState, PadOptions, PadProfile, PadSource};
+use crate::movie::MoviePlayer;
 use crate::play::{self, Play, PlayOptions, Shared};
 use crate::save::Save;
 use crate::scene::GameData;
@@ -124,8 +125,23 @@ enum Screen {
     Board(DepartureBoard, Chosen),
     Wait(i32, Next),
     Play(Box<Play>),
+    /// The Komachi movie (0x429110), from attract or the title menu.
+    Movie(Box<MovieScreen>),
     /// Exit confirmed: the window closes (`DestroyWindow` → `WM_QUIT`).
     Quit,
+}
+
+/// Where the movie was started from, and so where it returns to.
+enum MovieFrom {
+    /// Attract item 3 (0x404e10), waiting for [`Attract::movie_done`].
+    Attract(Attract),
+    /// The title menu's sixth item (setting `movie_in_menu`; 0x42a1c0 case 5).
+    Title,
+}
+
+struct MovieScreen {
+    player: MoviePlayer,
+    from: MovieFrom,
 }
 
 /// Exe tables of the front end, read once.
@@ -154,6 +170,8 @@ pub struct App {
     attract_counters: AttractCounters,
     /// Attract waiting for its demo drive (the run in [`Screen::Play`]) to end.
     demo_attract: Option<Attract>,
+    /// The movie's picture on the GPU (made on its first frame).
+    movie_overlay: Option<ddg_render::overlay::Overlay>,
     /// The stage intro is the run in [`Screen::Play`]; the departure board of this choice
     /// follows it.
     intro_chosen: Option<Chosen>,
@@ -282,6 +300,7 @@ impl App {
             replay: false,
             attract_counters: AttractCounters::default(),
             demo_attract: None,
+            movie_overlay: None,
             intro_chosen: None,
             down: [false; 256],
             menu_input: MenuInput::NONE,
@@ -314,6 +333,7 @@ impl App {
             // without an FF device (`0x816838 == 0`).
             force_feedback: false,
             sound_device: r.sound.is_some() || self.opts.mute,
+            movie_in_menu: self.opts.settings.movie_in_menu,
         }
     }
 
@@ -422,6 +442,90 @@ impl App {
         Ok(())
     }
 
+    /// Starts the Komachi movie: the sprites cleared (black around the picture; the original
+    /// blits over whatever the back buffer held, black in attract), the soundtrack on the
+    /// device. Without the file the movie counts as played to its end.
+    fn start_movie(&mut self, from: MovieFrom) -> Screen {
+        let r = self.res.as_mut().expect("resources");
+        crate::front::clear_all(&mut r.layer);
+        match MoviePlayer::open(r.data.data_dir()) {
+            Ok(mut player) => {
+                let mut sound = false;
+                if let (Some(snd), Some(rate)) = (r.sound.as_mut(), player.audio_rate())
+                    && snd.has_device()
+                {
+                    let stream = ddg_audio::PcmStream::new(rate);
+                    player.attach(std::sync::Arc::clone(&stream));
+                    snd.play_stream(Some(stream));
+                    sound = true;
+                }
+                player.update();
+                eprintln!(
+                    "movie: Komachi.DAT, {}",
+                    if sound {
+                        "with sound"
+                    } else {
+                        "silent (no sound device)"
+                    }
+                );
+                Screen::Movie(Box::new(MovieScreen { player, from }))
+            }
+            Err(e) => {
+                eprintln!("movie: {e:#}");
+                let mut sfx = Vec::new();
+                let s = self.end_movie(from, false, &mut sfx);
+                self.play_sfx(&sfx);
+                s
+            }
+        }
+    }
+
+    /// The movie ended (`skipped` by the confirm edge): the soundtrack stops, attract goes on
+    /// ([`Attract::movie_done`]) or the title menu comes back on the movie item with its BGM
+    /// (0x42a1c0 case 5).
+    fn end_movie(&mut self, from: MovieFrom, skipped: bool, sfx: &mut Vec<Sfx>) -> Screen {
+        let env = self.env();
+        let r = self.res.as_mut().expect("resources");
+        if let Some(s) = r.sound.as_ref() {
+            s.play_stream(None);
+        }
+        self.movie_overlay = None;
+        eprintln!("movie: {}", if skipped { "skipped" } else { "ended" });
+        match from {
+            MovieFrom::Attract(mut a) => {
+                a.movie_done(skipped, &mut r.layer);
+                Screen::Attract(a)
+            }
+            MovieFrom::Title => {
+                sfx.push(Sfx::Play(snd::BGM_MENU));
+                Screen::Title(TitleMenu::new(
+                    TitleMenu::movie_cursor(&env),
+                    self.defs.cursor_x,
+                ))
+            }
+        }
+    }
+
+    /// Where the movie goes in a `window`-sized target: the original's rectangle on the
+    /// presented 640×480 design (`hud_layout original`) or the window filled (`enhanced`), at
+    /// the stream's display aspect (`movie_true_aspect`) or the original's 2:1 doubling.
+    fn movie_rect(&self, player: &MoviePlayer, window: (u32, u32)) -> [f32; 4] {
+        let canvas = self.canvas_size();
+        let design = ddg_render::overlay::design_rect(ddg_render::overlay::present_rect(
+            window.0,
+            window.1,
+            canvas,
+            self.opts.locale.ui_scaling,
+        ));
+        let dar = if self.opts.settings.movie_true_aspect {
+            player.display_aspect()
+        } else {
+            crate::movie::ORIGINAL_RECT[2] / crate::movie::ORIGINAL_RECT[3]
+        };
+        let enhanced = self.opts.locale.hud_layout == crate::presentation::HudLayout::Enhanced;
+        crate::movie::movie_rect(window, design, enhanced, dar)
+    }
+
     fn start_play(&mut self, chosen: Chosen) -> Result<Play> {
         let mut shared = self.res.take().expect("resources");
         let o = shared.save.eeprom.options();
@@ -466,6 +570,8 @@ impl App {
         let env = self.env();
         let mut next: Option<Next> = None;
         let mut demo: Option<(Option<AttractDemo>, usize)> = None;
+        let mut movie: Option<MovieFrom> = None;
+        let mut movie_ended: Option<(MovieFrom, bool)> = None;
         let mut set_option: Option<(usize, u8)> = None;
         let mut calibrated = None;
         let mut language = None;
@@ -519,8 +625,8 @@ impl App {
                         Screen::Attract(a)
                     }
                     AttractStep::KomachiMovie => {
-                        eprintln!("attract: the Komachi movie would play here (postponed, D2)");
-                        Screen::Attract(a)
+                        movie = Some(MovieFrom::Attract(a));
+                        Screen::Quit
                     }
                     AttractStep::Title => {
                         crate::front::clear_all(&mut r.layer);
@@ -564,6 +670,12 @@ impl App {
                         }
                         TitleChoice::Calibrate => {
                             Screen::Calibrate(CalibrationScreen::new(t, &mut r.layer))
+                        }
+                        TitleChoice::Movie => {
+                            // 0x42a1c0 case 5: the menu BGM stops for the movie.
+                            sfx.push(Sfx::Stop(snd::BGM_MENU));
+                            movie = Some(MovieFrom::Title);
+                            Screen::Quit
                         }
                         TitleChoice::Back => {
                             sfx.push(Sfx::Stop(snd::BGM_MENU));
@@ -739,8 +851,26 @@ impl App {
                     Screen::Wait(n - 1, then)
                 }
             }
+            Screen::Movie(mut m) => {
+                // 0x428f00 polls the input every sample: the confirm edge skips.
+                let skipped = input.confirm;
+                m.player.advance(TICK.as_secs_f64());
+                m.player.update();
+                if skipped || m.player.finished() {
+                    movie_ended = Some((m.from, skipped));
+                    Screen::Quit
+                } else {
+                    Screen::Movie(m)
+                }
+            }
             s @ (Screen::Play(_) | Screen::Quit) => s,
         };
+        if let Some(from) = movie {
+            self.screen = self.start_movie(from);
+        }
+        if let Some((from, skipped)) = movie_ended {
+            self.screen = self.end_movie(from, skipped, &mut sfx);
+        }
         if let Some((item, v)) = set_option {
             self.apply(item, v, &mut sfx)?;
         }
@@ -1051,6 +1181,24 @@ impl App {
         }
         match &self.screen {
             Screen::Play(p) => p.shot(out)?,
+            Screen::Movie(m) => {
+                let rect = self.movie_rect(&m.player, self.opts.size);
+                let scaling = self.opts.locale.movie_scaling;
+                crate::shot::render_to_ppm_with(
+                    self.opts.size,
+                    |device, queue, view, format| {
+                        crate::shot::clear_black(device, queue, view);
+                        let mut o = ddg_render::overlay::Overlay::new(device, format);
+                        o.resize(device, m.player.size());
+                        o.upload(queue, m.player.rgba());
+                        scaling.configure(&mut o);
+                        o.render(device, queue, view, rect);
+                    },
+                    None,
+                    out,
+                )?;
+                eprintln!("movie picture {:?}", m.player.shown());
+            }
             _ => {
                 let size = self.canvas_size();
                 let hud = Some((self.canvas.as_slice(), size));
@@ -1078,6 +1226,16 @@ impl App {
             }
         }
         self.fit_front()?;
+        // The movie: the picture for the clock, and where it goes.
+        let new_picture = match &mut self.screen {
+            Screen::Movie(m) => m.player.update(),
+            _ => false,
+        };
+        let movie_rect = match (&self.screen, self.res.as_ref().and_then(|r| r.gpu.as_ref())) {
+            (Screen::Movie(m), Some(g)) => Some(self.movie_rect(&m.player, g.size())),
+            _ => None,
+        };
+        let movie_scaling = self.opts.locale.movie_scaling;
         let mut dirty = std::mem::take(&mut self.canvas_dirty);
         let size = self.canvas_size();
         let Some(gpu) = self.res.as_mut().and_then(|r| r.gpu.as_mut()) else {
@@ -1091,6 +1249,26 @@ impl App {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         crate::shot::clear_black(&gpu.device, &gpu.queue, &view);
+        if let (Screen::Movie(m), Some(rect)) = (&self.screen, movie_rect) {
+            // Black around the picture, nothing of the canvas.
+            let mut fresh = false;
+            let o = self.movie_overlay.get_or_insert_with(|| {
+                fresh = true;
+                let mut o = ddg_render::overlay::Overlay::new(&gpu.device, gpu.config.format);
+                o.resize(&gpu.device, m.player.size());
+                o
+            });
+            if (fresh || new_picture) && !m.player.rgba().is_empty() {
+                o.upload(&gpu.queue, m.player.rgba());
+            }
+            movie_scaling.configure(o);
+            if !m.player.rgba().is_empty() {
+                o.render(&gpu.device, &gpu.queue, &view, rect);
+            }
+            gpu.window.pre_present_notify();
+            gpu.queue.present(frame);
+            return Ok(());
+        }
         // A run may have left the overlay at its wide size.
         dirty |= gpu.overlay.resize(&gpu.device, size);
         if dirty {
