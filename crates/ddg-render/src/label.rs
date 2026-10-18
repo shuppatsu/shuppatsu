@@ -74,6 +74,32 @@ impl LabelFont {
             .map(|l| l.chars().map(|c| g.advance(c, px)).sum::<f32>())
             .fold(0.0, f32::max)
     }
+
+    /// The ink of the one-line `text` with capitals `cap` high: `(top, bottom)` relative to
+    /// the baseline (y down, so `top` is negative), in the unit of `cap`. A caller placing a
+    /// line by its baseline needs it, because a text widget centres the ink in its rectangle.
+    pub fn ink(&self, text: &str, cap: f32) -> (f32, f32) {
+        let g = &*self.glyphs;
+        let reference = 100.0;
+        let h_ref = g.glyph('H', reference).height as f32;
+        if h_ref <= 0.0 {
+            return (0.0, 0.0);
+        }
+        let (mut top, mut bottom) = (f32::MAX, f32::MIN);
+        for ch in text.chars() {
+            let gl = g.glyph(ch, reference);
+            if gl.height == 0 {
+                continue;
+            }
+            top = top.min(-((gl.ymin + gl.height as i32) as f32));
+            bottom = bottom.max(-(gl.ymin as f32));
+        }
+        if top > bottom {
+            return (0.0, 0.0);
+        }
+        let k = cap / h_ref;
+        (top * k, bottom * k)
+    }
 }
 
 #[cfg(test)]
@@ -95,5 +121,17 @@ mod tests {
             &a,
             &f.mask("Tokyo", 120, 24, None, Align::Center, false)
         ));
+    }
+
+    /// Box glyphs 72 rows tall at the reference size, one row below the baseline: the ink
+    /// is the H box itself, scaled to `cap`.
+    #[test]
+    fn ink_is_relative_to_the_baseline() {
+        let f = LabelFont::new(Box::new(BoxGlyphs));
+        let (t, b) = f.ink("Tokyo", 10.0);
+        assert!((t + 710.0 / 72.0).abs() < 1e-4, "{t}");
+        assert!((b - 10.0 / 72.0).abs() < 1e-4, "{b}");
+        assert!((b - t - 10.0).abs() < 1e-4);
+        assert_eq!(f.ink(" ", 10.0), (0.0, 0.0));
     }
 }

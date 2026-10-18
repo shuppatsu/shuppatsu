@@ -450,6 +450,14 @@ impl SpriteBank {
         Some(self.labels.as_ref()?.width(text, cap))
     }
 
+    /// [`SpriteBank::label_width`] in the font of `role`, with the ink of the (one-line) text
+    /// relative to its baseline: `(width, top, bottom)` ([`LabelFont::ink`]).
+    pub fn label_extent(&self, text: &str, cap: f32, role: FontRole) -> Option<(f32, f32, f32)> {
+        let f = self.label_font(role)?;
+        let (top, bottom) = f.ink(text, cap);
+        Some((f.width(text, cap), top, bottom))
+    }
+
     /// The palette indices of a whole tilemap: `(width, height, pixels)` in art pixels.
     pub fn art(&self, tbl: u16) -> Option<(usize, usize, Vec<u8>)> {
         let map = self.tilemaps.get(usize::from(tbl))?;
