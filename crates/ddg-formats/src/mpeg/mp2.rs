@@ -521,6 +521,11 @@ impl Mp2Stream {
         Header::parse(&self.data[at..])
     }
 
+    /// The PTS of the first frame, if its packet carried one.
+    pub fn first_pts(&self) -> Option<u64> {
+        pts_for(&self.pts, None, self.find_sync(0)?)
+    }
+
     pub fn rewind(&mut self) {
         self.pos = 0;
         self.last_offset = None;
