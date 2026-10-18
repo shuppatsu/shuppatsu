@@ -152,6 +152,13 @@ pub const ALLOW: &[Allow] = &[
               x 5–6 out would leave a stroke of 満 beside the English",
     },
     Allow {
+        keys: &["tbl 0x13e"],
+        part: 1,
+        class: "border",
+        why: "not a frame: the tops of 内, 信 and 号 (rows 4–6) touch the balloon's white inside \
+              at row 3, the band having no top edge of its own, and pass for part of the frame",
+    },
+    Allow {
         keys: &["tbl 0x24e"],
         part: 0,
         class: "border",

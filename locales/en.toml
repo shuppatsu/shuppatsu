@@ -133,7 +133,7 @@ name = "English"
 0x13c = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "Don't use the\nemergency brake." }                         # id 7
 0x13d = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints3", text = "A repeater relays the main\nsignal where it can't\nbe seen directly." } # id 8
 # id 9 (0x13e) is a picture of the lamp: only its two labels.
-0x13e = { region = [142, 31, 76, 19], text = "cab signal" }  # 知らせ灯 arrow label (named after the HUD panel 車内信号 0x54e/0x54f it sits in) (灯 reaches row 49, measured); the tiny 車内信号 lamp label stays (text fills its band)
+0x13e = { parts = [{ region = [142, 31, 76, 19], text = "cab signal" }, { region = [65, 4, 61, 14], backdrop = "solid", text = "Cab Signal" }] }  # 知らせ灯 arrow label (named after the HUD panel 車内信号 0x54e/0x54f it sits in) (灯 reaches row 49, measured); the lamp's 車内信号 label band (x 65–125, y 4–17 inside the panel border at x 63–64/126, measured), as 0x54e/0x54f
 0x13f = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints3", text = "Handling error:\nbrake and power\nare both on." }          # id 0xa
 0x140 = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints", text = "The horn is the\nfoot pedal." }                            # id 0xb
 0x141 = { region = [14, 2, 210, 60], backdrop = "solid", shared_group = "navigator.hints3", text = "A blinking limit sign is\nadvance notice.\nSlow down now." } # id 0xc
