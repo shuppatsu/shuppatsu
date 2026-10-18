@@ -449,7 +449,13 @@ impl CabHud {
                 .game_over_ticks
                 .is_some_and(|n| n + 1 == TIME_UP_AFTER_TICKS),
         };
+        // `NaviAnim` (0x410cb0) does nothing while `0x84c0f8 == 1`: no reactions (nor the
+        // obstacle's emergency-stop signal) under the coupling minigame's bottom band.
+        let band = self.coupling.bottom_band();
         for call in crate::navigator::calls(&navi_tick, &self.navi_tables) {
+            if band && call != crate::navigator::Call::Clear {
+                continue;
+            }
             self.navigator
                 .apply(call, &self.navi_tables, &mut |e| navi_draw(layer, e));
         }

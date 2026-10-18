@@ -207,6 +207,19 @@ impl Coupling {
         self.phase == CouplingPhase::Running
     }
 
+    /// `0x84c0f8 = 1` (docs/re/hud.md §3.16): set right after the slots are placed (intro tick
+    /// 10), cleared at the cleanup or before the 100-tick wait of a too-weak coupling. While it
+    /// is set the render task draws the black bottom band, `Cab_Overlay` hides the
+    /// speedometer and `NaviAnim` (0x410cb0) does nothing.
+    pub fn bottom_band(&self) -> bool {
+        match self.phase {
+            CouplingPhase::Intro(t) => t > SETUP_TICK,
+            CouplingPhase::Running => true,
+            CouplingPhase::Outro(r, _) => r != CouplingResult::TooWeak,
+            CouplingPhase::Done(_) => false,
+        }
+    }
+
     pub fn result(&self) -> Option<CouplingResult> {
         match self.phase {
             CouplingPhase::Done(r) => Some(r),
@@ -391,9 +404,12 @@ mod tests {
     fn skip_intro(c: &mut Coupling) {
         for _ in 0..INTRO_TICKS {
             assert!(!c.driving());
+            let placed = matches!(c.phase, CouplingPhase::Intro(t) if t > SETUP_TICK);
+            assert_eq!(c.bottom_band(), placed);
             c.step(&input(0.0, 40.0, false));
         }
         assert!(c.driving());
+        assert!(c.bottom_band());
     }
 
     fn finish(c: &mut Coupling) -> (CouplingResult, u32, Option<i32>) {
@@ -451,6 +467,10 @@ mod tests {
         skip_intro(&mut c);
         let t = c.step(&input(0.2, 0.0, false));
         assert_eq!(t.hint, Some((WEAK_HINT, WEAK_HINT_TICKS)));
+        assert!(
+            !c.bottom_band(),
+            "a too-weak coupling clears 0x84c0f8 at once"
+        );
         assert_eq!(c.result(), None);
         assert_eq!(finish(&mut c).0, CouplingResult::TooWeak);
     }

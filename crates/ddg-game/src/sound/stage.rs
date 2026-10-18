@@ -252,6 +252,8 @@ pub struct Snap {
     pub stats: [i32; STAT_COUNT],
     pub continues: i32,
     pub remaining_s: i32,
+    /// The coupling minigame's `0x84c0f8 = 1` ([`ddg_engine::coupling::Coupling::bottom_band`]).
+    pub bottom_band: bool,
 }
 
 impl Default for Snap {
@@ -293,6 +295,7 @@ impl Default for Snap {
             stats: [0; STAT_COUNT],
             continues: 0,
             remaining_s: 60,
+            bottom_band: false,
         }
     }
 }
@@ -341,6 +344,10 @@ impl Snap {
             stats: r.stats,
             continues: r.continues,
             remaining_s: r.remaining_s,
+            bottom_band: r
+                .coupling
+                .as_ref()
+                .is_some_and(|c| r.phase == Phase::Coupling && c.bottom_band()),
         }
     }
 
@@ -645,6 +652,10 @@ impl StageSound {
             }
         };
         for call in crate::navigator::calls(&navi_tick, &self.tables.navi) {
+            // `NaviAnim` does nothing under the coupling minigame's bottom band (cab.rs).
+            if b.bottom_band && call != crate::navigator::Call::Clear {
+                continue;
+            }
             self.navi.apply(call, &self.tables.navi, &mut navi_sound);
         }
         self.navi.update(&self.tables.navi, &mut navi_sound);
