@@ -250,6 +250,42 @@ impl PauseMenu {
         &self.slots
     }
 
+    /// `hybrid_input` with a gamepad (port only; the original's dialogs have no legend): a
+    /// glyph line over the open dialog (under it the subtitles go): the d-pad selects, A
+    /// confirms, Menu resumes.
+    pub fn draw_pad_legend(
+        &self,
+        layer: &mut ddg_render::sprites::SpriteLayer,
+        h: &super::PadHints,
+    ) {
+        use crate::glyphs::{Btn, DPAD_UD, Line, UNPALETTED};
+        use ddg_render::text::Align;
+        if matches!(self.state, State::Closing(..)) {
+            return;
+        }
+        let (x, y) = self.frame_origin();
+        let (w, _) = self.def().frame_size;
+        let width = f32::from(w).max(320.0);
+        let left = f32::from(x) + (f32::from(w) - width) / 2.0;
+        Line::new()
+            .btn(DPAD_UD)
+            .text(&h.select)
+            .gap(1.5)
+            .btn(Btn::A)
+            .text(&h.confirm)
+            .gap(1.5)
+            .btn(Btn::Menu)
+            .text(&h.resume)
+            .draw_boxed(
+                layer,
+                LAYER,
+                [left, f32::from(y) - 32.0, width, 26.0],
+                UNPALETTED,
+                11.0,
+                Align::Center,
+            );
+    }
+
     #[cfg(test)]
     pub fn cursor(&self) -> i32 {
         self.cursor

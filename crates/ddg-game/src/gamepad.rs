@@ -12,9 +12,13 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 use ddg_formats::exe::Exe;
 
+use crate::hybrid::{
+    HANDLE_DEADBAND, HandleTick, HintDevice, HintTracker, LeverArbiter, MenuRepeat, modern_pad,
+    pad_buttons,
+};
 use crate::input::{
     BINDING_STRIDE, BINDINGS_VA, BUTTON_SLOTS, Bindings, ButtonState, ButtonWord, EB, Keyboard,
-    MAX_POWER, UNBOUND, bits, held_word, repeat_pulse,
+    LeverHolds, MAX_POWER, UNBOUND, bits, held_word, repeat_pulse,
 };
 
 /// Axis range set with `DIPROP_RANGE` on X and Y (0x433d60): −1000..=1000.
@@ -558,9 +562,21 @@ pub struct GenericInputs {
     pub dpad_right: bool,
     /// Bottom face button (A / Cross): the A and menu-confirm role.
     pub south: bool,
-    /// Right face button (B / Circle): horn and cancel.
+    /// Right face button (B / Circle): horn and cancel (cancel only with `hybrid_input`).
     pub east: bool,
+    /// Start / Menu: pause.
     pub start: bool,
+    /// The rest are read by the Xbox-layout mapping of `hybrid_input` only
+    /// ([`crate::hybrid::modern_pad`]): left face button (X / Square), the horn.
+    pub west: bool,
+    /// Top face button (Y / Triangle): the R key.
+    pub north: bool,
+    pub lb: bool,
+    pub rb: bool,
+    pub lt: bool,
+    pub rt: bool,
+    /// Back / View.
+    pub select: bool,
 }
 
 fn axis(v: f32) -> i32 {
@@ -845,6 +861,12 @@ impl PadSource {
 
     /// This tick's state for a joystick whose binding row is `row`; `None` with no pad.
     pub fn sample(&mut self, row: &[u8; BINDING_STRIDE]) -> Option<JoyState> {
+        self.read(row).map(|(s, _)| s)
+    }
+
+    /// This tick's state for `row` and the pad's inputs as they are (for the Xbox-layout
+    /// mapping and the hint device); `None` with no pad.
+    pub fn read(&mut self, row: &[u8; BINDING_STRIDE]) -> Option<(JoyState, GenericInputs)> {
         let raw = match &self.profile {
             PadProfile::Combo(_) => Some(self.raw_inputs()?),
             PadProfile::Generic => {
@@ -867,6 +889,13 @@ impl PadSource {
             south: pressed(Button::South),
             east: pressed(Button::East),
             start: pressed(Button::Start),
+            west: pressed(Button::West),
+            north: pressed(Button::North),
+            lb: pressed(Button::LeftTrigger),
+            rb: pressed(Button::RightTrigger),
+            lt: pressed(Button::LeftTrigger2),
+            rt: pressed(Button::RightTrigger2),
+            select: pressed(Button::Select),
         };
         let state = match (&self.profile, raw) {
             (PadProfile::Combo(table), Some(raw)) => {
@@ -896,7 +925,7 @@ impl PadSource {
             }
             _ => generic_state(&inputs, row),
         };
-        Some(state)
+        Some((state, inputs))
     }
 }
 
@@ -908,8 +937,16 @@ pub struct PadOptions {
     /// A learned combination table (`ddg-combo 1` text); selects the combination profile.
     pub combo_table: Option<PathBuf>,
     /// Setting `keyboard_with_controller` (default on): the keyboard's horn and A button work
-    /// in the controller modes too ([`Joystick::keyboard_buttons`]).
+    /// in the controller modes too ([`Joystick::keyboard_buttons`]). With `hybrid_input` on
+    /// the whole keyboard works anyway, so this one only matters with it off.
     pub keyboard_with_controller: bool,
+    /// Setting `hybrid_input` (default on): keyboard and controller both live in every
+    /// control mode (input.md §10.6); off = the original's one selected device.
+    pub hybrid_input: bool,
+    /// Open no gamepad at all (headless runs stay deterministic).
+    pub no_pad: bool,
+    /// Fixed hint device (`--hint-device`, `DDG_HINT_DEVICE`; headless shots have no pad).
+    pub hint_device: Option<HintDevice>,
 }
 
 impl Default for PadOptions {
@@ -918,6 +955,9 @@ impl Default for PadOptions {
             joystick_dat: None,
             combo_table: None,
             keyboard_with_controller: true,
+            hybrid_input: true,
+            no_pad: false,
+            hint_device: None,
         }
     }
 }
@@ -925,64 +965,167 @@ impl Default for PadOptions {
 /// Keyboard plus optional joystick, polled once per tick (0x4333d0).
 pub struct Controls {
     keyboard: Keyboard,
+    /// `hybrid_input` off: the selected joystick mode with its pad (the original's one
+    /// device).
     joystick: Option<(Joystick, PadSource)>,
+    /// `hybrid_input` on.
+    hybrid: Option<Hybrid>,
+    hint_override: Option<HintDevice>,
+}
+
+/// The state of `hybrid_input` (input.md §10.6). The keyboard's notches are the shared ones:
+/// the pad's lever directions step them through [`Keyboard::poll_with`], and a physical
+/// handle sets them through the [`LeverArbiter`].
+struct Hybrid {
+    /// Any gamepad, followed through hot-plugging; `None` without gilrs or headless.
+    pad: Option<PadSource>,
+    /// Modes 5/6 (or a learned combination controller): the selected decoder for the pad's
+    /// handles; its buttons follow its binding row. Otherwise the pad is read in the Xbox
+    /// layout ([`crate::hybrid::modern_pad`]).
+    analog: Option<(Joystick, LeverArbiter)>,
+    /// Mode 4's row: where [`PadSource::read`] places the buttons of a state that the Xbox
+    /// mapping does not use.
+    row: [u8; BINDING_STRIDE],
+    menu: MenuRepeat,
+    prev_held: u32,
+    /// Y on the previous poll (its R bit is a press-frame bit).
+    prev_north: bool,
+    hint: HintTracker,
 }
 
 impl Controls {
     /// `mode` is the control mode 0..=6. Joystick modes fall back to keyboard mode 0 when no
     /// gamepad is connected, as `input_init` does.
     pub fn new(exe: &Exe<'_>, mode: usize, opts: &PadOptions) -> Result<Self> {
+        if opts.hybrid_input {
+            return Self::new_hybrid(exe, mode, opts);
+        }
         let bindings = Bindings::read(exe)?;
         if mode <= 3 {
             let keyboard = Keyboard::new(&bindings, mode).context("keyboard mode")?;
             return Ok(Self {
                 keyboard,
                 joystick: None,
+                hybrid: None,
+                hint_override: None,
             });
         }
-        let mut joy_mode = JoyMode::from_index(mode).context("control modes are 0..=6")?;
-        let profile = match &opts.combo_table {
-            Some(path) => {
-                let text = std::fs::read_to_string(path)
-                    .with_context(|| format!("reading {}", path.display()))?;
-                joy_mode = JoyMode::TwoHandle;
-                PadProfile::Combo(ComboTable::parse(&text)?)
-            }
-            None => PadProfile::Generic,
-        };
+        let (joy_mode, profile) = Self::profile(mode, opts)?;
         // The keyboard still supplies its word (and Shift override) in joystick modes; its
         // own levers are unused there.
         let keyboard = Keyboard::new(&bindings, 0).context("keyboard mode 0")?;
-        let pad = PadSource::open(profile).filter(PadSource::connected);
+        let pad = if opts.no_pad {
+            None
+        } else {
+            PadSource::open(profile).filter(PadSource::connected)
+        };
         let Some(pad) = pad else {
             eprintln!("no gamepad: control mode {mode} falls back to keyboard mode 0");
             return Ok(Self {
                 keyboard,
                 joystick: None,
+                hybrid: None,
+                hint_override: None,
             });
         };
         let tables = JoyTables::read(exe)?;
+        Ok(Self {
+            keyboard,
+            joystick: Some((
+                Joystick {
+                    keyboard_buttons: opts.keyboard_with_controller,
+                    ..Joystick::new(&tables, joy_mode, Self::calibration(&tables, opts))
+                },
+                pad,
+            )),
+            hybrid: None,
+            hint_override: None,
+        })
+    }
+
+    /// The joystick mode and pad profile for a joystick `mode` (a combination table forces
+    /// mode 6).
+    fn profile(mode: usize, opts: &PadOptions) -> Result<(JoyMode, PadProfile)> {
+        let joy_mode = JoyMode::from_index(mode).context("control modes are 0..=6")?;
+        Ok(match &opts.combo_table {
+            Some(path) => {
+                let text = std::fs::read_to_string(path)
+                    .with_context(|| format!("reading {}", path.display()))?;
+                (
+                    JoyMode::TwoHandle,
+                    PadProfile::Combo(ComboTable::parse(&text)?),
+                )
+            }
+            None => (joy_mode, PadProfile::Generic),
+        })
+    }
+
+    fn calibration(tables: &JoyTables, opts: &PadOptions) -> Calibration {
         let mut cal = tables.default_calibration;
         if let Some(path) = &opts.joystick_dat
             && let Ok(bytes) = std::fs::read(path)
         {
             cal.overlay(&bytes);
         }
-        Ok(Self {
+        cal
+    }
+
+    fn new_hybrid(exe: &Exe<'_>, mode: usize, opts: &PadOptions) -> Result<Self> {
+        let bindings = Bindings::read(exe)?;
+        let tables = JoyTables::read(exe)?;
+        let (joy_mode, profile) = if mode <= 3 {
+            (None, PadProfile::Generic)
+        } else {
+            let (m, p) = Self::profile(mode, opts)?;
+            (Some(m), p)
+        };
+        let pad = if opts.no_pad {
+            None
+        } else {
+            PadSource::open(profile)
+        };
+        let connected = pad.as_ref().is_some_and(PadSource::connected);
+        // The handle decoder of the analog modes needs its device now, as `input_init` does;
+        // any pad connected later is read in the Xbox layout.
+        let joy_mode = joy_mode.filter(|_| connected);
+        if mode > 3 && joy_mode.is_none() {
+            eprintln!("no gamepad: control mode {mode} falls back to keyboard mode 0");
+        }
+        let keyboard =
+            Keyboard::new(&bindings, if mode <= 3 { mode } else { 0 }).context("keyboard mode")?;
+        let analog = joy_mode.filter(|m| m.is_analog()).map(|m| {
+            let joy = Joystick::new(&tables, m, Self::calibration(&tables, opts));
+            (joy, LeverArbiter::new(m == JoyMode::OneHandle))
+        });
+        let device = if joy_mode.is_some() {
+            HintDevice::Pad
+        } else {
+            HintDevice::Keyboard
+        };
+        let mut controls = Self {
             keyboard,
-            joystick: Some((
-                Joystick {
-                    keyboard_buttons: opts.keyboard_with_controller,
-                    ..Joystick::new(&tables, joy_mode, cal)
-                },
+            joystick: None,
+            hybrid: Some(Hybrid {
                 pad,
-            )),
-        })
+                analog,
+                row: *tables.row(JoyMode::Digital),
+                menu: MenuRepeat::default(),
+                prev_held: 0,
+                prev_north: false,
+                hint: HintTracker::new(device),
+            }),
+            hint_override: opts.hint_device,
+        };
+        controls.reset_levers();
+        Ok(controls)
     }
 
     /// One poll. `down(dik)` is the keyboard state; `shift_allowed` is the original's gate for
     /// the Shift override: not driving, or paused (`(0x855ff8 & 2) == 0 || (0x855ffc & 4)`).
     pub fn poll(&mut self, down: impl Fn(u8) -> bool, shift_allowed: bool) -> ButtonState {
+        if self.hybrid.is_some() {
+            return self.poll_hybrid(down);
+        }
         let kb = self.keyboard.poll(down);
         let shift = shift_allowed && self.keyboard.shift_held();
         let Some((joy, pad)) = self.joystick.as_mut() else {
@@ -1004,6 +1147,82 @@ impl Controls {
         }
     }
 
+    /// `hybrid_input`: both devices every tick. Buttons are OR-ed before the edges are taken;
+    /// stepped levers share one repeat counter per direction; a physical handle and the steps
+    /// hand the notches to each other, last used wins. The Shift override has nothing left to
+    /// do (the keyboard always counts).
+    fn poll_hybrid(&mut self, down: impl Fn(u8) -> bool) -> ButtonState {
+        let h = self.hybrid.as_mut().expect("hybrid");
+        let row = match &h.analog {
+            Some((joy, _)) => *joy.row(),
+            None => h.row,
+        };
+        let sample = h.pad.as_mut().and_then(|p| p.read(&row));
+        self.tick_hybrid(down, sample)
+    }
+
+    /// [`Controls::poll_hybrid`] with the pad's sample of this tick (`None`: no pad).
+    fn tick_hybrid(
+        &mut self,
+        down: impl Fn(u8) -> bool,
+        sample: Option<(JoyState, GenericInputs)>,
+    ) -> ButtonState {
+        let h = self.hybrid.as_mut().expect("hybrid");
+        let mut pad_word = 0;
+        let mut levers = LeverHolds::NONE;
+        let mut readings = [None, None];
+        let mut deadband = HANDLE_DEADBAND;
+        match (&mut h.analog, &sample) {
+            (None, Some((_, inputs))) => {
+                (pad_word, levers) = modern_pad(inputs);
+                if inputs.north && !h.prev_north {
+                    pad_word |= bits::KEY_R;
+                }
+            }
+            (Some((joy, _)), Some((state, _))) => {
+                pad_word = joy.poll(state, 0).word.held;
+                readings = match (state.notches, joy.mode()) {
+                    (Some(n), _) => {
+                        deadband = 0;
+                        [n.power.map(i32::from), n.brake.map(i32::from)]
+                    }
+                    (None, JoyMode::OneHandle) => [Some(state.y); 2],
+                    (None, _) => [Some(state.y), Some(state.x)],
+                };
+            }
+            // Unplugged: the pad adds nothing (its buttons release once, no stale edges) and
+            // a handle holds its notch.
+            (_, None) => {}
+        }
+        h.prev_north = sample.as_ref().is_some_and(|(_, i)| i.north);
+
+        let before = [self.keyboard.power, self.keyboard.brake];
+        let kb = self.keyboard.poll_with(down, levers);
+        if let Some((joy, arbiter)) = &mut h.analog {
+            let stepped = [self.keyboard.power, self.keyboard.brake];
+            let handle = [joy.power, joy.brake];
+            let ticks = [0, 1].map(|i| HandleTick {
+                before: before[i],
+                stepped: stepped[i],
+                handle: handle[i],
+                reading: readings[i],
+            });
+            [self.keyboard.power, self.keyboard.brake] = arbiter.tick(ticks, deadband);
+        }
+
+        let held = h.menu.merge(&[kb.word.held, pad_word]);
+        let word = ButtonWord::new(h.prev_held, held);
+        h.prev_held = held;
+        let pad_view = sample
+            .as_ref()
+            .map(|(_, i)| (pad_buttons(i), [i.left_x, i.left_y]));
+        h.hint.update(
+            self.keyboard.any_pressed(),
+            pad_view.as_ref().map(|(b, a)| (*b, &a[..])),
+        );
+        ButtonState::from_word(word)
+    }
+
     pub fn power(&self) -> u8 {
         match &self.joystick {
             Some((j, _)) => j.power,
@@ -1018,8 +1237,19 @@ impl Controls {
         }
     }
 
-    /// Run or station start: P0/EB in the digital modes (0x4332c0).
+    /// Run or station start: P0/EB in the digital modes (0x4332c0). With `hybrid_input` and a
+    /// handle, the handle is authoritative again, as in the analog modes.
     pub fn reset_levers(&mut self) {
+        if let Some(h) = self.hybrid.as_mut() {
+            match h.analog.as_mut() {
+                Some((joy, arbiter)) => {
+                    arbiter.hand_back();
+                    (self.keyboard.power, self.keyboard.brake) = (joy.power, joy.brake);
+                }
+                None => self.keyboard.reset_levers(),
+            }
+            return;
+        }
         match self.joystick.as_mut() {
             Some((j, _)) => j.reset_levers(),
             None => self.keyboard.reset_levers(),
@@ -1035,9 +1265,13 @@ impl Controls {
         }
     }
 
-    /// The active joystick mode, if a joystick drives the levers.
+    /// The active joystick mode, if a joystick drives the levers (with `hybrid_input`: the
+    /// analog handle decoder of modes 5/6).
     pub fn joy_mode(&self) -> Option<JoyMode> {
-        self.joystick.as_ref().map(|(j, _)| j.mode())
+        match &self.hybrid {
+            Some(h) => h.analog.as_ref().map(|(j, _)| j.mode()),
+            None => self.joystick.as_ref().map(|(j, _)| j.mode()),
+        }
     }
 
     /// Mode 5/6: the levers are physical (pause-menu cursor follows the mascon, 0x42b930).
@@ -1047,7 +1281,29 @@ impl Controls {
 
     /// Raw joystick state and raw inputs for the calibration and learning screens.
     pub fn pad_mut(&mut self) -> Option<(&mut Joystick, &mut PadSource)> {
-        self.joystick.as_mut().map(|(j, p)| (j, p))
+        match &mut self.hybrid {
+            Some(h) => match (&mut h.analog, &mut h.pad) {
+                (Some((j, _)), Some(p)) => Some((j, p)),
+                _ => None,
+            },
+            None => self.joystick.as_mut().map(|(j, p)| (j, p)),
+        }
+    }
+
+    /// The device the on-screen hints show (`hybrid_input` only; `None` = the original's
+    /// legends for the selected control mode).
+    pub fn hint_device(&self) -> Option<HintDevice> {
+        let h = self.hybrid.as_ref()?;
+        Some(self.hint_override.unwrap_or(h.hint.device))
+    }
+
+    /// A gamepad is connected now (`hybrid_input` follows hot-plugging; otherwise the
+    /// selected joystick mode's pad).
+    pub fn pad_connected(&self) -> bool {
+        match &self.hybrid {
+            Some(h) => h.pad.as_ref().is_some_and(PadSource::connected),
+            None => self.joystick.is_some(),
+        }
     }
 }
 
@@ -1058,7 +1314,11 @@ pub fn run_tool(exe: &Exe<'_>, args: &[String]) -> Result<()> {
     let mut it = args.iter();
     let action = it.next().context(USAGE)?.clone();
     let mut mode = 6;
-    let mut opts = PadOptions::default();
+    // The tool watches the selected device alone (the original's one-device model).
+    let mut opts = PadOptions {
+        hybrid_input: false,
+        ..PadOptions::default()
+    };
     while let Some(a) = it.next() {
         let mut value = || it.next().with_context(|| format!("{a} needs a value"));
         match a.as_str() {
@@ -1180,6 +1440,7 @@ pub fn run_tool(exe: &Exe<'_>, args: &[String]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::input::tests::{DIK_RETURN, DIK_SPACE};
 
     fn thresholds() -> Thresholds {
         // The values input.md §4.3–4.5 documents for 0x4341c0.
@@ -1636,6 +1897,261 @@ mod tests {
         assert!(ComboTable::parse("junk").is_err());
         assert_eq!(raw_axis(5, 0.7), Some(RAW_AXIS_POS | 5));
         assert_eq!(raw_axis(5, -0.2), None);
+    }
+
+    // --- hybrid_input (input.md §10.6) --------------------------------------------------
+
+    const DIK_DOWN: u8 = 0xd0;
+    const DIK_UP: u8 = 0xc8;
+
+    /// Controls with `hybrid_input` on, keyboard mode `kb_mode`, an optional handle decoder
+    /// and no real pad (the tests feed the samples).
+    fn hybrid(kb_mode: usize, analog: Option<JoyMode>) -> Controls {
+        use crate::input::tests::bindings;
+        let t = tables();
+        let mut c = Controls {
+            keyboard: Keyboard::new(&bindings(), kb_mode).unwrap(),
+            joystick: None,
+            hybrid: Some(Hybrid {
+                pad: None,
+                analog: analog.map(|m| {
+                    let j = Joystick::new(&t, m, t.default_calibration);
+                    (j, LeverArbiter::new(m == JoyMode::OneHandle))
+                }),
+                row: *t.row(JoyMode::Digital),
+                menu: MenuRepeat::default(),
+                prev_held: 0,
+                prev_north: false,
+                hint: HintTracker::new(HintDevice::Keyboard),
+            }),
+            hint_override: None,
+        };
+        c.reset_levers();
+        c
+    }
+
+    fn xpad(f: impl FnOnce(&mut GenericInputs)) -> Option<(JoyState, GenericInputs)> {
+        let mut i = GenericInputs::default();
+        f(&mut i);
+        Some((generic_state(&i, tables().row(JoyMode::Digital)), i))
+    }
+
+    fn handle(x: i32, y: i32) -> Option<(JoyState, GenericInputs)> {
+        Some((axes(x, y), GenericInputs::default()))
+    }
+
+    fn keys(codes: &[u8]) -> impl Fn(u8) -> bool + '_ {
+        move |c| codes.contains(&c)
+    }
+
+    #[test]
+    fn hybrid_buttons_are_ored_before_the_edges() {
+        let mut c = hybrid(0, None);
+        let idle = xpad(|_| {});
+        // Keyboard Space, then the pad's X joins: one horn edge, held while either holds.
+        let b = c.tick_hybrid(keys(&[DIK_SPACE]), idle);
+        assert!(b.horn_pressed && b.horn_held);
+        let b = c.tick_hybrid(keys(&[DIK_SPACE]), xpad(|i| i.west = true));
+        assert!(b.horn_held && !b.horn_pressed);
+        let b = c.tick_hybrid(keys(&[]), xpad(|i| i.west = true));
+        assert!(b.horn_held && !b.horn_pressed && b.word.released == 0);
+        let b = c.tick_hybrid(keys(&[]), idle);
+        assert!(!b.horn_held && b.word.released & bits::HORN != 0);
+        // Pad A and keyboard Enter in the same tick: one confirm edge, one menu-confirm edge.
+        let b = c.tick_hybrid(keys(&[DIK_RETURN]), xpad(|i| i.south = true));
+        assert!(b.confirm_pressed && b.menu_confirm_pressed);
+        let b = c.tick_hybrid(keys(&[]), xpad(|i| i.south = true));
+        assert!(!b.confirm_pressed && !b.menu_confirm_pressed);
+        // Pad B cancels, Menu pauses, Y is R on the press frame only.
+        c.tick_hybrid(keys(&[]), idle);
+        let b = c.tick_hybrid(keys(&[]), xpad(|i| i.east = true));
+        assert!(b.cancel_pressed && !b.horn_held && !b.pause_pressed);
+        let b = c.tick_hybrid(keys(&[]), xpad(|i| i.start = true));
+        assert!(b.pause_pressed && !b.cancel_pressed);
+        let r: Vec<bool> = (0..3)
+            .map(|_| {
+                c.tick_hybrid(keys(&[]), xpad(|i| i.north = true)).word.held & bits::KEY_R != 0
+            })
+            .collect();
+        assert_eq!(r, [true, false, false]);
+        // Menu cursor: the keyboard's ↑ and the pad's d-pad ↑ make one pulse train.
+        c.tick_hybrid(keys(&[]), idle);
+        let mut pulses = Vec::new();
+        for t in 1..=12 {
+            let k: &[u8] = if t <= 4 { &[DIK_UP] } else { &[] };
+            let p = xpad(|i| i.dpad_up = t >= 2);
+            if c.tick_hybrid(keys(k), p).word.pressed & bits::UP_PULSE != 0 {
+                pulses.push(t);
+            }
+        }
+        assert_eq!(pulses, [1, 9, 12]);
+    }
+
+    #[test]
+    fn hybrid_two_devices_never_double_step() {
+        let mut c = hybrid(0, None);
+        c.keyboard.brake = 0;
+        // Keyboard ↓ (power+ in mode 0) and the pad's d-pad ↓ in the same tick: one step.
+        c.tick_hybrid(keys(&[DIK_DOWN]), xpad(|i| i.dpad_down = true));
+        assert_eq!(c.power(), 1);
+        // RT, d-pad ↓ and the key together, held: still one virtual key (steps on 1, 9, 12).
+        for _ in 1..12 {
+            c.tick_hybrid(
+                keys(&[DIK_DOWN]),
+                xpad(|i| {
+                    i.dpad_down = true;
+                    i.rt = true;
+                }),
+            );
+        }
+        assert_eq!(c.power(), 3);
+        // Staggered: the key from tick 1, the pad joining on tick 3 and holding on after the
+        // key is let go is one hold, not a second press.
+        c.tick_hybrid(keys(&[]), xpad(|_| {}));
+        c.keyboard.power = 0;
+        for t in 1..=12 {
+            let k: &[u8] = if t <= 5 { &[DIK_DOWN] } else { &[] };
+            c.tick_hybrid(keys(k), xpad(|i| i.rt = t >= 3));
+        }
+        assert_eq!(c.power(), 3);
+        // Brake: LT and → together reach EB on the press only; the repeat stops at B8.
+        c.tick_hybrid(keys(&[]), xpad(|_| {}));
+        for _ in 0..60 {
+            c.tick_hybrid(
+                keys(&[]),
+                xpad(|i| {
+                    i.lt = true;
+                    i.dpad_right = true;
+                }),
+            );
+        }
+        assert_eq!(c.brake(), 8);
+        c.tick_hybrid(keys(&[]), xpad(|_| {}));
+        c.tick_hybrid(keys(&[0xcd]), xpad(|i| i.lt = true));
+        assert_eq!(c.brake(), EB);
+        // Either device steps alone too.
+        c.tick_hybrid(keys(&[]), xpad(|_| {}));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.lb = true));
+        c.tick_hybrid(keys(&[]), xpad(|_| {}));
+        c.tick_hybrid(keys(&[0xcb]), xpad(|_| {}));
+        assert_eq!(c.brake(), 7);
+    }
+
+    #[test]
+    fn hybrid_pad_on_the_one_handle_and_direct_modes() {
+        // Mode 3: the pad's brake+ moves the one handle toward the brake side.
+        let mut c = hybrid(3, None);
+        c.keyboard.brake = 0;
+        c.tick_hybrid(keys(&[]), xpad(|i| i.rt = true));
+        c.tick_hybrid(keys(&[]), xpad(|_| {}));
+        assert_eq!((c.power(), c.brake()), (1, 0));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.lt = true));
+        c.tick_hybrid(keys(&[]), xpad(|_| {}));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.lt = true));
+        assert_eq!((c.power(), c.brake()), (0, 1));
+        // Mode 2: the pad steps the power notch; the digits take it back when they change.
+        let mut c = hybrid(2, None);
+        c.tick_hybrid(keys(&[]), xpad(|i| i.rt = true));
+        c.tick_hybrid(keys(&[]), xpad(|_| {}));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.rt = true));
+        assert_eq!(c.power(), 2);
+        c.tick_hybrid(keys(&[]), xpad(|_| {}));
+        assert_eq!(c.power(), 2, "no digit held is not a change");
+        c.tick_hybrid(keys(&[0x05]), xpad(|_| {}));
+        assert_eq!(c.power(), 4);
+        c.tick_hybrid(keys(&[]), xpad(|_| {}));
+        assert_eq!(c.power(), 0, "letting the digit go is N, as the original");
+    }
+
+    #[test]
+    fn hybrid_handle_last_used_wins() {
+        // Mode 6 handle at P2 (y = -310) and B0.
+        let mut c = hybrid(0, Some(JoyMode::TwoHandle));
+        c.tick_hybrid(keys(&[]), handle(0, -310));
+        assert_eq!((c.power(), c.brake()), (2, 0));
+        // Keyboard ↓ steps from the handle's notch and takes over.
+        c.tick_hybrid(keys(&[DIK_DOWN]), handle(0, -310));
+        assert_eq!(c.power(), 3);
+        // Jitter inside the deadband: the stepped notch stays.
+        for y in [-330, -290, -355, -265] {
+            c.tick_hybrid(keys(&[]), handle(0, y));
+            assert_eq!(c.power(), 3, "y = {y}");
+        }
+        // The handle moves past the deadband: the notch snaps to it.
+        c.tick_hybrid(keys(&[]), handle(0, -102));
+        assert_eq!(c.power(), 1);
+        // Brake: a key step, then the handle pulled to B8 (a snap) and on to EB: EB only
+        // after the debounce.
+        c.tick_hybrid(keys(&[0xcd]), handle(0, -102));
+        assert_eq!(c.brake(), 1);
+        c.tick_hybrid(keys(&[]), handle(392, -102));
+        assert_eq!(c.brake(), 8);
+        let seen: Vec<u8> = (0..7)
+            .map(|_| {
+                c.tick_hybrid(keys(&[]), handle(426, -102));
+                c.brake()
+            })
+            .collect();
+        assert_eq!(seen, [8, 8, 8, 8, 8, 9, 9]);
+        // Station start: the handle is authoritative again, at once.
+        c.tick_hybrid(keys(&[0xcb]), handle(426, -102));
+        assert_eq!(c.brake(), 8);
+        c.reset_levers();
+        assert_eq!(c.brake(), EB);
+        // A pad's stepped levers are not a handle: no takeover by stick noise in mode 4.
+        let mut c = hybrid(0, None);
+        c.tick_hybrid(keys(&[DIK_UP]), xpad(|i| i.left_x = 0.3));
+        assert_eq!((c.power(), c.brake()), (0, EB));
+    }
+
+    #[test]
+    fn hybrid_unplug_and_hint_device() {
+        let mut c = hybrid(0, None);
+        assert_eq!(c.hint_device(), Some(HintDevice::Keyboard));
+        let b = c.tick_hybrid(keys(&[]), xpad(|i| i.south = true));
+        assert!(b.confirm_pressed);
+        assert_eq!(c.hint_device(), Some(HintDevice::Pad));
+        // Unplugged with A held: one release, no stale edges; hints back to the keyboard.
+        let b = c.tick_hybrid(keys(&[]), None);
+        assert_eq!(b.word.pressed, 0);
+        assert_ne!(b.word.released & bits::A, 0);
+        assert_eq!(c.tick_hybrid(keys(&[]), None).word, ButtonWord::default());
+        assert_eq!(c.hint_device(), Some(HintDevice::Keyboard));
+        // Plugged in again with the stick resting off centre: no switch until it is used.
+        c.tick_hybrid(keys(&[]), xpad(|i| i.left_x = 0.2));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.left_x = 0.3));
+        assert_eq!(c.hint_device(), Some(HintDevice::Keyboard));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.left_x = 0.8));
+        assert_eq!(c.hint_device(), Some(HintDevice::Pad));
+        c.tick_hybrid(keys(&[DIK_RETURN]), xpad(|i| i.left_x = 0.8));
+        assert_eq!(c.hint_device(), Some(HintDevice::Keyboard));
+        // The override (headless shots) wins.
+        c.hint_override = Some(HintDevice::Pad);
+        assert_eq!(c.hint_device(), Some(HintDevice::Pad));
+    }
+
+    /// `hybrid_input` off keeps the original's one device: no hint device, and the keyboard
+    /// poll with no other device is the plain poll.
+    #[test]
+    fn hybrid_off_is_the_old_path() {
+        use crate::input::tests::bindings;
+        let c = Controls {
+            keyboard: Keyboard::new(&bindings(), 0).unwrap(),
+            joystick: None,
+            hybrid: None,
+            hint_override: Some(HintDevice::Pad),
+        };
+        assert_eq!(c.hint_device(), None);
+        let mut a = Keyboard::new(&bindings(), 0).unwrap();
+        let mut b = a.clone();
+        a.brake = 0;
+        b.brake = 0;
+        for t in 0..40u8 {
+            let k = [DIK_DOWN, 0xcd, DIK_SPACE][usize::from(t / 14)];
+            let down = |c: u8| c == k && t % 17 != 0;
+            assert_eq!(a.poll(down), b.poll_with(down, LeverHolds::NONE));
+            assert_eq!((a.power, a.brake), (b.power, b.brake));
+        }
     }
 
     #[test]

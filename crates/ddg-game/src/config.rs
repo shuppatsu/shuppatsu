@@ -570,6 +570,7 @@ mod tests {
         ("subtitles", true),
         ("save_on_change", true),
         ("save_timed_out_names", true),
+        ("hybrid_input", true),
         ("keyboard_with_controller", true),
         ("exit_no_to_menu", true),
         ("movie_in_menu", true),
@@ -586,6 +587,7 @@ mod tests {
         }
         // The other layers' defaults agree with the switches.
         assert!(crate::gamepad::PadOptions::default().keyboard_with_controller);
+        assert!(crate::gamepad::PadOptions::default().hybrid_input);
         assert!(
             crate::save::Save::new(
                 crate::save::Eeprom::from_bytes([0; crate::save::EEPROM_LEN]),

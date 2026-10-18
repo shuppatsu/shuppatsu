@@ -20,6 +20,7 @@
 use super::tables::FrontTables;
 use super::{Env, PAL_MENU, snd};
 use crate::config::{Lock, Locks};
+use crate::glyphs::{self, Btn, Hint, Line};
 use crate::locale::LocaleConfig;
 use crate::movie::MovieScaling;
 use crate::presentation::HudLayout;
@@ -160,6 +161,7 @@ pub const ITEMS: &[Item] = {
         item("audio_resampler", Sound, Kind::Resampler, Now),
         switch("save_on_change", Saves, Now),
         switch("save_timed_out_names", Saves, NextStage),
+        switch("hybrid_input", Saves, Now),
         switch("keyboard_with_controller", Saves, Now),
         switch("exit_no_to_menu", Saves, Now),
         switch("movie_in_menu", Saves, Now),
@@ -402,6 +404,26 @@ const UI_IDS: &[&str] = &[
     "legend_keys",
     "legend_pad",
     "legend_levers",
+    "hint_select",
+    "hint_confirm",
+    "hint_cancel",
+    "hint_back",
+    "hint_change",
+    "hint_toggle",
+    "hint_next",
+    "hint_back_to_menu",
+    "hint_resume",
+    "pad_title",
+    "pad_power_dpad",
+    "pad_power_shoulders",
+    "pad_brake_dpad",
+    "pad_brake_shoulders",
+    "pad_a",
+    "pad_x",
+    "pad_b",
+    "pad_menu",
+    "pad_y",
+    "pad_note",
 ];
 
 /// Whether `k` is a string ID of the `[ui]` section.
@@ -779,10 +801,31 @@ impl PortSettings {
             PANEL_CAP,
             Align::Left,
         );
-        let legend = match env.control_mode {
-            4 => "legend_pad",
-            5 | 6 => "legend_levers",
-            _ => "legend_keys",
+        let legend = match env.hint {
+            Hint::Pad => "legend_pad",
+            Hint::Levers => "legend_levers",
+            Hint::Keys => "legend_keys",
+            Hint::Glyphs => {
+                // `hybrid_input` with a gamepad: the same line with the Xbox glyphs.
+                Line::new()
+                    .btn(glyphs::DPAD_LR)
+                    .text(ui.get("hint_change"))
+                    .gap(2.0)
+                    .btn(Btn::A)
+                    .text(ui.get("hint_toggle"))
+                    .gap(2.0)
+                    .btn(Btn::B)
+                    .text(ui.get("hint_back"))
+                    .draw(
+                        l,
+                        LAYER,
+                        [x0 + BOX_X + 12.0, y0 + PANEL_Y + 50.0, BOX_W - 24.0, 24.0],
+                        look.dim,
+                        LEGEND_CAP,
+                        Align::Center,
+                    );
+                return;
+            }
         };
         line(
             l,

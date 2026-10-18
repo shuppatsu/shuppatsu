@@ -29,7 +29,7 @@ use super::report::{ReportCard, ReportDefs};
 use super::result::{ResultDefs, ResultInput, StationResultScreen};
 use super::run_end::{RunEndBanner, RunEndDefs, RunEndInput};
 use super::tables::ScreenTables;
-use super::{MenuInput, Sfx};
+use super::{MenuInput, PadHints, Sfx};
 use crate::save::Table;
 use ddg_engine::drive::DrivePhase;
 use ddg_engine::rules::StationOutcome;
@@ -162,6 +162,10 @@ pub struct StageFlow {
     state: State,
     /// Slots written by the last draw.
     drawn: Vec<usize>,
+    /// `hybrid_input` with a gamepad: the words of the glyph legends, set by the run each tick.
+    pub pad_hints: Option<PadHints>,
+    /// The widget count before the last draw added its legend (frozen ticks redraw it).
+    widget_mark: Option<usize>,
 }
 
 impl StageFlow {
@@ -169,6 +173,8 @@ impl StageFlow {
         Self {
             defs,
             drawn: Vec::new(),
+            pad_hints: None,
+            widget_mark: None,
             state: State::Run {
                 arrived: 0,
                 game_over: 0,
@@ -444,6 +450,9 @@ impl StageFlow {
     /// Clears the slots the last [`StageFlow::draw`] wrote (screens end or change slots).
     /// Call before the HUD writes its slots.
     pub fn clear_drawn(&mut self, layer: &mut SpriteLayer) {
+        if let Some(n) = self.widget_mark.take() {
+            layer.widgets.truncate(n);
+        }
         for i in self.drawn.drain(..) {
             if let Some(s) = layer.slots.get_mut(i) {
                 *s = Slot::CLEAR;
@@ -453,6 +462,14 @@ impl StageFlow {
 
     /// Draws the active screen over the HUD.
     pub fn draw(&mut self, layer: &mut SpriteLayer) {
+        self.widget_mark = Some(layer.widgets.len());
+        if let Some(h) = &self.pad_hints {
+            match &self.state {
+                State::Paused(m) => m.draw_pad_legend(layer, h),
+                State::Ranking { entry, .. } => entry.draw_pad_legend(layer, h),
+                _ => {}
+            }
+        }
         let slots = match &self.state {
             State::Paused(m) => m.slots(),
             State::Result(s) => s.slots(),
@@ -461,6 +478,13 @@ impl StageFlow {
             State::RunEnd(b) => b.slots(),
             State::Ranking { entry, .. } => {
                 entry.draw(layer);
+                if self.pad_hints.is_some()
+                    && let Some(i) = entry.legend_slot()
+                    && let Some(s) = layer.slots.get_mut(i)
+                {
+                    // The glyph legend replaces the keyboard art.
+                    *s = Slot::CLEAR;
+                }
                 self.drawn = entry.slots().indices().collect();
                 return;
             }

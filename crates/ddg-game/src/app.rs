@@ -20,7 +20,7 @@ use crate::front::language::{Language, LanguageScreen, Look};
 use crate::front::options::{self, ControlPage, ListResult, OptionsList, SetEffect, ValuePage};
 use crate::front::port_settings::{self, PortSettings, UiText};
 use crate::front::prerun::{DepartureBoard, LeverCheck};
-use crate::front::records::{Records, RecordsStep};
+use crate::front::records::{self, Records, RecordsStep};
 use crate::front::route_select::{Chosen, RouteResult, RouteSelect};
 use crate::front::tables::FrontTables;
 use crate::front::title::{TitleChoice, TitleMenu, komachi_unlocked};
@@ -257,7 +257,15 @@ impl App {
         };
         let canvas = layer.new_canvas();
         crate::hud::Hud::install_palettes(&exe, &mut layer)?;
-        let front = FrontTables::read(&exe)?;
+        let mut front = FrontTables::read(&exe)?;
+        front.map_rows = front
+            .legend_maps()
+            .into_iter()
+            .filter_map(|m| {
+                let rows = map_size(&bank, usize::try_from(m).ok()?).1 / TILE_PX;
+                Some((m, i8::try_from(rows).ok()?))
+            })
+            .collect();
         crate::front::mark_backdrops(&mut bank, &front);
         let screens = ScreenTables::read(&exe)?;
         let cursor_x = crate::front::cursor_x(&front, map_size(&bank, TBL_CURSOR).0);
@@ -325,10 +333,14 @@ impl App {
         let Some(r) = self.res.as_ref() else {
             return Env::default();
         };
+        let control_mode = r.save.eeprom.options().control_mode;
         Env {
-            control_mode: r.save.eeprom.options().control_mode,
+            control_mode,
             analog: r.controls.is_analog(),
-            joystick: self.joystick,
+            // `hybrid_input` follows hot-plugging: a pad connected later offers the joystick
+            // modes too.
+            joystick: self.joystick || r.controls.pad_connected(),
+            hint: crate::glyphs::Hint::new(control_mode, r.controls.hint_device()),
             // No force feedback is implemented: the vibration item stays hidden, as on a PC
             // without an FF device (`0x816838 == 0`).
             force_feedback: false,
@@ -725,7 +737,12 @@ impl App {
                 }
             }
             Screen::Control(mut p) => match p.tick(&input, &env, t, &mut r.layer, &mut sfx) {
-                None => Screen::Control(p),
+                None => {
+                    if p.shows_pad_panel(&env) {
+                        options::draw_pad_panel(&mut r.layer, t, &self.defs.port, &self.ui);
+                    }
+                    Screen::Control(p)
+                }
                 Some(v) => {
                     options::destroy(&mut r.layer);
                     set_option = v.map(|v| (options::item::CONTROL, v));
@@ -761,10 +778,18 @@ impl App {
                 }
             }
             Screen::Records(mut rec) => {
-                let pad_legend = env.analog || env.control_mode == 4;
+                let legend = match env.hint {
+                    crate::glyphs::Hint::Keys => records::Legend::Keys,
+                    crate::glyphs::Hint::Pad | crate::glyphs::Hint::Levers => records::Legend::Pad,
+                    crate::glyphs::Hint::Glyphs => records::Legend::Glyphs {
+                        next: self.ui.get("hint_next"),
+                        back: self.ui.get("hint_back_to_menu"),
+                        paint: self.defs.port.bright,
+                    },
+                };
                 let step = rec.tick(
                     &input,
-                    pad_legend,
+                    &legend,
                     &screens.ranking,
                     &r.save.rankings,
                     &mut r.layer,
@@ -1037,8 +1062,9 @@ impl App {
                     snd.set_resampler(m);
                 }
             }
-            "keyboard_with_controller" => {
+            "keyboard_with_controller" | "hybrid_input" => {
                 self.opts.pad.keyboard_with_controller = s.keyboard_with_controller;
+                self.opts.pad.hybrid_input = s.hybrid_input;
                 let mode = self.res().save.eeprom.options().control_mode;
                 self.rebuild_controls(mode)?;
             }

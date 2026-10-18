@@ -16,9 +16,11 @@ mod departure_hud;
 mod desktop;
 mod front;
 mod gamepad;
+mod glyphs;
 mod gpu_backend;
 mod hints;
 mod hud;
+mod hybrid;
 mod identity;
 mod input;
 mod label_audit;
@@ -112,6 +114,9 @@ options:
   --movie-scaling <smooth|sharp|nearest>
                            the Komachi movie's filter (env DDG_MOVIE_SCALING): smooth =
                            bilinear (default), sharp = sharp bilinear like the UI, nearest
+  --hint-device <pad|keyboard>
+                           the button hints shown with hybrid input, fixed (env
+                           DDG_HINT_DEVICE; headless shots have no pad to follow)
 
 switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml key <name> with
   _ for -, env DDG_<NAME> = 1/0. Off is the original's behaviour. [default]
@@ -146,8 +151,11 @@ switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml
   --subtitles              translation: English subtitles for the Japanese voices [on]
   --save-on-change         eeprom.dat written after every change, not only at exit [on]
   --save-timed-out-names   a timed-out name entry is saved [on]
+  --hybrid-input           keyboard and controller at once in every control mode, hints
+                           follow the last device used [on]
   --keyboard-with-controller
-                           keyboard horn and ATS confirm in controller modes [on]
+                           hybrid input off: keyboard horn and ATS confirm in controller
+                           modes [on]
   --exit-no-to-menu        exit dialog No returns to the title menu, not attract [on]
   --movie-in-menu          the Komachi movie as item 6 of the title menu [on]
 
@@ -158,6 +166,9 @@ settings file: $XDG_CONFIG_HOME/ddg/config.toml (~/.config/ddg; %APPDATA%\\ddg o
 
 play keys (mode 0): Down/Up power +/-, Right/Left brake +/- (one more press past B8 = EB),
   Space horn, Enter ATS confirm / panel / menu confirm, Esc pause / cancel, Up/Down menu cursor
+pad (hybrid input, Xbox layout): d-pad or left stick down/up power +/-, right/left brake +/-,
+  RT/RB power +/-, LT/LB brake +/-, A ATS confirm / panel / confirm, B or View cancel, X horn,
+  Y R (auto run), Menu pause
 view keys: Space pause, Up/Down speed, Left/Right jump 100 m, L track lines, F fog, Esc quit";
 
 /// The original's fixed tick (timeSetEvent(33, …) at 0x436f30).
@@ -199,10 +210,7 @@ fn parse_play_args() -> Result<play::PlayOptions> {
         difficulty_from_save: true,
         station: 0,
         control_mode: 0,
-        pad: gamepad::PadOptions {
-            keyboard_with_controller: settings.keyboard_with_controller,
-            ..Default::default()
-        },
+        pad: pad_options(&settings, headless)?,
         size: (1280, 800),
         settings,
         mute: false,
@@ -230,6 +238,9 @@ fn parse_play_args() -> Result<play::PlayOptions> {
             "--ending" => opts.ending = Some(value("full or plain")? == "full"),
             "--intro" => opts.intro = true,
             "--keys" => opts.control_mode = value("a mode")?.parse()?,
+            "--hint-device" => {
+                opts.pad.hint_device = Some(hint_device(&value("pad or keyboard")?)?)
+            }
             "--joystick-dat" => opts.pad.joystick_dat = Some(value("a file")?.into()),
             "--combo" => opts.pad.combo_table = Some(value("a file")?.into()),
             "--mute" => opts.mute = true,
@@ -268,10 +279,7 @@ fn parse_app_args() -> Result<app::AppOptions> {
         size: (1280, 800),
         settings,
         mute: false,
-        pad: gamepad::PadOptions {
-            keyboard_with_controller: settings.keyboard_with_controller,
-            ..Default::default()
-        },
+        pad: pad_options(&settings, headless)?,
         inputs: None,
         shot: None,
         locale,
@@ -285,6 +293,9 @@ fn parse_app_args() -> Result<app::AppOptions> {
         };
         match a.as_str() {
             "--joystick-dat" => opts.pad.joystick_dat = Some(value("a file")?.into()),
+            "--hint-device" => {
+                opts.pad.hint_device = Some(hint_device(&value("pad or keyboard")?)?)
+            }
             "--combo" => opts.pad.combo_table = Some(value("a file")?.into()),
             "--mute" => opts.mute = true,
             "--inputs" => opts.inputs = Some(value("a file")?.into()),
@@ -886,6 +897,26 @@ fn main() -> Result<()> {
         win_console::fatal(e, log.as_deref());
     }
     result
+}
+
+/// The input options from the settings: headless runs open no gamepad (they stay
+/// deterministic); `DDG_HINT_DEVICE` fixes the hint device (`--hint-device` overrides it).
+fn pad_options(settings: &settings::Settings, headless: bool) -> Result<gamepad::PadOptions> {
+    let hint = match std::env::var("DDG_HINT_DEVICE") {
+        Ok(v) if !v.is_empty() => Some(hint_device(&v)?),
+        _ => None,
+    };
+    Ok(gamepad::PadOptions {
+        keyboard_with_controller: settings.keyboard_with_controller,
+        hybrid_input: settings.hybrid_input,
+        no_pad: headless,
+        hint_device: hint,
+        ..Default::default()
+    })
+}
+
+fn hint_device(v: &str) -> Result<hybrid::HintDevice> {
+    hybrid::HintDevice::parse(v).with_context(|| format!("hint device {v:?}: pad or keyboard"))
 }
 
 #[cfg(test)]

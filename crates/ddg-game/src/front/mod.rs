@@ -19,6 +19,7 @@ pub mod route_select;
 pub mod tables;
 pub mod title;
 
+use crate::glyphs::{self, Btn, Hint};
 use crate::screens::tables::{Placement, TextDesc};
 use ddg_render::sprites::{Slot, SpriteLayer};
 use tables::{FrontTables, Legends};
@@ -62,6 +63,9 @@ pub struct Env {
     pub sound_device: bool,
     /// Setting `movie_in_menu` (port): the title menu shows its sixth item, the movie.
     pub movie_in_menu: bool,
+    /// The button legends: the original's for the control mode, or with `hybrid_input` those of
+    /// the last device used ([`Hint::new`]).
+    pub hint: Hint,
 }
 
 impl Default for Env {
@@ -73,6 +77,7 @@ impl Default for Env {
             force_feedback: false,
             sound_device: true,
             movie_in_menu: false,
+            hint: Hint::Keys,
         }
     }
 }
@@ -283,12 +288,42 @@ pub fn mark_backdrops(bank: &mut ddg_render::sprites::SpriteBank, t: &FrontTable
     }
 }
 
-/// The legend set for the control mode: keyboard modes, the pad (mode 4) or the levers (5/6).
-fn legend_set(l: &Legends<TextDesc>, mode: u8) -> (TextDesc, TextDesc, TextDesc) {
-    match mode {
-        4 => (l.word_pad, l.upper_pad, l.lower_pad),
-        5 | 6 => (l.word_lever, l.upper_pad, l.lower_pad),
-        _ => (l.word_keys, l.upper_keys, l.lower_keys),
+/// The legend set for the hints: keyboard modes, the pad (mode 4) or the levers (5/6); the
+/// glyphs replace the keyboard set's pictures ([`legend_glyphs`]).
+fn legend_set(l: &Legends<TextDesc>, hint: Hint) -> (TextDesc, TextDesc, TextDesc) {
+    match hint {
+        Hint::Pad => (l.word_pad, l.upper_pad, l.lower_pad),
+        Hint::Levers => (l.word_lever, l.upper_pad, l.lower_pad),
+        Hint::Keys | Hint::Glyphs => (l.word_keys, l.upper_keys, l.lower_keys),
+    }
+}
+
+/// The centre and side of a text slot's picture, in original pixels.
+fn picture_box(t: &FrontTables, d: TextDesc, x: i16, y: i16) -> ((f32, f32), f32) {
+    let tile = ddg_formats::cg::TILE_SIZE as f32;
+    let (w, h) = (f32::from(d.w) * tile, f32::from(t.picture_rows(d)) * tile);
+    ((f32::from(x) + w / 2.0, f32::from(y) + h / 2.0), w.min(h))
+}
+
+/// `hybrid_input` with a gamepad (input.md §10.6): the key pictures of a menu legend (the
+/// cursor keys, Esc, Enter) become the d-pad, B and A glyphs in their places; the labels
+/// (選択 / キャンセル / 決定, or their translation) stay. `at` are the three pictures with
+/// their slot positions.
+fn legend_glyphs(
+    l: &mut SpriteLayer,
+    t: &FrontTables,
+    layer: u8,
+    at: [(usize, TextDesc, i16, i16); 3],
+) {
+    for ((slot, d, x, y), b) in at.into_iter().zip([glyphs::DPAD_UD, Btn::B, Btn::A]) {
+        hide(l, slot);
+        let (c, side) = picture_box(t, d, x, y);
+        let size = if matches!(b, Btn::DPad(_)) {
+            side * 1.1
+        } else {
+            side * 0.85
+        };
+        glyphs::draw_glyph(l, layer, b, c, size);
     }
 }
 
@@ -310,10 +345,22 @@ pub fn draw_menu_header(l: &mut SpriteLayer, t: &FrontTables, env: &Env, page: u
     if let Some(&d) = t.header_text.get(page) {
         text(l, slot::TITLE, d, x0 + 0x60, 0x20, PAL_MENU, layer);
     }
-    let (word, upper, lower) = legend_set(&t.title_legends, env.control_mode);
+    let (word, upper, lower) = legend_set(&t.title_legends, env.hint);
     text(l, slot::WORD, word, x0 + 0x180, 0x20, PAL_MENU, layer);
     text(l, slot::UPPER, upper, x0 + 0x250, 0x20, PAL_MENU, layer);
     text(l, slot::LOWER, lower, x0 + 0x250, 0x40, PAL_MENU, layer);
+    if env.hint == Hint::Glyphs {
+        legend_glyphs(
+            l,
+            t,
+            layer,
+            [
+                (slot::WORD, word, x0 + 0x180, 0x20),
+                (slot::UPPER, upper, x0 + 0x250, 0x20),
+                (slot::LOWER, lower, x0 + 0x250, 0x40),
+            ],
+        );
+    }
     put(
         l,
         slot::LEGEND_FRAME,
@@ -365,7 +412,7 @@ pub fn draw_route_header(l: &mut SpriteLayer, t: &FrontTables, env: &Env, level:
     if let Some(&d) = t.route_titles.get(level.min(1)) {
         text(l, slot::TITLE, d, x0 + 0x60, 0x20, PAL_MENU, layer);
     }
-    let (word, upper, lower) = legend_set(&t.route_legends, env.control_mode);
+    let (word, upper, lower) = legend_set(&t.route_legends, env.hint);
     text(l, slot::WORD, word, x0 + 0x180, 0x20, PAL_MENU, layer);
     text(
         l,
@@ -394,6 +441,18 @@ pub fn draw_route_header(l: &mut SpriteLayer, t: &FrontTables, env: &Env, level:
         PAL_MENU,
         layer,
     );
+    if env.hint == Hint::Glyphs {
+        legend_glyphs(
+            l,
+            t,
+            layer,
+            [
+                (slot::WORD, word, x0 + 0x180, 0x20),
+                (slot::UPPER, upper, x0 + 0x250, 0x20 + dy),
+                (slot::LOWER, lower, x0 + 0x250, 0x40 + dy),
+            ],
+        );
+    }
     let lg = &t.route_legends;
     text(
         l,
@@ -433,6 +492,12 @@ pub fn draw_route_header(l: &mut SpriteLayer, t: &FrontTables, env: &Env, level:
             PAL_LABEL,
             0,
         );
+        if env.hint == Hint::Glyphs {
+            // R (the automatic run) is Y on the pad.
+            hide(l, slot::R_KEY);
+            let (c, side) = picture_box(t, t.route_r_key, x0 + 0x250, 0x10);
+            glyphs::draw_glyph(l, 0, Btn::Y, c, side * 0.85);
+        }
     } else {
         hide(l, slot::R_KEY);
         hide(l, slot::R_LABEL);
@@ -600,6 +665,7 @@ pub mod tests_support {
             &[2, 2, 2, 2],
         ];
         FrontTables {
+            map_rows: Vec::new(),
             origin: (0, 0),
             header_tbl: [0x516; HEADER_PAGES],
             header_text: [d; HEADER_PAGES],

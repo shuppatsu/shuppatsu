@@ -139,6 +139,10 @@ pub struct SelectStage {
 #[derive(Debug, Clone)]
 pub struct FrontTables {
     pub origin: (i16, i16),
+    /// Tilemap heights in tiles (`(tbl, rows)`), for the legend pictures whose descriptor
+    /// takes the whole map height (`h <= 0`); filled from the sprite bank by the app
+    /// ([`FrontTables::picture_rows`]).
+    pub map_rows: Vec<(i16, i8)>,
     pub header_tbl: [i16; HEADER_PAGES],
     pub header_text: [TextDesc; HEADER_PAGES],
     pub title_legends: Legends<TextDesc>,
@@ -231,6 +235,30 @@ impl<T: Copy> Legends<T> {
 }
 
 impl FrontTables {
+    /// The height in tiles of the picture `d` cuts: its own, or its map's.
+    pub fn picture_rows(&self, d: TextDesc) -> i8 {
+        if d.h > 0 {
+            return d.h;
+        }
+        self.map_rows
+            .iter()
+            .find(|&&(t, _)| t == d.tbl)
+            .map_or(2, |&(_, r)| r - d.row)
+    }
+
+    /// The legend pictures' tilemaps (title, options and route-select headers).
+    pub fn legend_maps(&self) -> Vec<i16> {
+        let l = |g: &Legends<TextDesc>| [g.word_keys.tbl, g.upper_keys.tbl, g.lower_keys.tbl];
+        let mut v: Vec<i16> = l(&self.title_legends)
+            .into_iter()
+            .chain(l(&self.route_legends))
+            .chain([self.route_r_key.tbl])
+            .collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+
     /// The sixth title label, LOVE特急こまち (the Komachi movie). The exe has no descriptor for
     /// it (0x47c778 holds five), but it is on the sheet right under the fifth, in the same
     /// 32×6-tile cell: rows 0, 6, 12, 18, 24, then 30 (tbl 0x513 is 36 rows high).
@@ -351,6 +379,7 @@ impl FrontTables {
         }
         let t = Self {
             origin: (mode_i16(ORIGIN_X)?, mode_i16(ORIGIN_Y)?),
+            map_rows: Vec::new(),
             header_tbl,
             header_text: descs(exe, HEADER_TEXT)?,
             title_legends: TITLE_LEGENDS.map(|va| desc(exe, va))?,

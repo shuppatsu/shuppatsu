@@ -6,10 +6,27 @@
 //! until confirm turns the page; cancel leaves. In attract it turns pages every 200 ticks.
 
 use super::snd;
+use crate::glyphs::{Btn, Line};
 use crate::save::Table;
 use crate::screens::ranking::RankingTables;
 use crate::screens::{MenuInput, Sfx};
-use ddg_render::sprites::SpriteLayer;
+use ddg_render::sprites::{Paint, SpriteLayer};
+use ddg_render::text::Align;
+
+/// The records legend.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Legend<'a> {
+    /// tbl 0x545: [Enter] 次に進む [Esc] メニューに戻る.
+    Keys,
+    /// tbl 0x546: the pad buttons (modes 4–6).
+    Pad,
+    /// `hybrid_input` with a gamepad: (A) and (B) glyphs with these words in `paint`.
+    Glyphs {
+        next: &'a str,
+        back: &'a str,
+        paint: Paint,
+    },
+}
 
 /// `0x8500b0`: written once by `Ranking_FromEeprom` 0x41e520 as the immediate 0x3f9da (routes 1,
 /// 3, 4, 6–8, 11–17: one route per ranking table); read by this viewer and the attract
@@ -143,12 +160,13 @@ impl Records {
         self.route
     }
 
-    /// One tick of 0x41f910. `pad_legend` is the analog-lever or pad (mode 4) case of the
-    /// legend. `rankings` are the unpacked tables (`0x84fca0` / `0x84fc00`).
+    /// One tick of 0x41f910. `legend` picks the legend: the keyboard art, the pad / lever art
+    /// (modes 4–6), or with `hybrid_input` and a gamepad the glyph line ([`Legend::Glyphs`]).
+    /// `rankings` are the unpacked tables (`0x84fca0` / `0x84fc00`).
     pub fn tick(
         &mut self,
         input: &MenuInput,
-        pad_legend: bool,
+        legend: &Legend<'_>,
         t: &RankingTables,
         rankings: &[Table],
         l: &mut SpriteLayer,
@@ -171,20 +189,23 @@ impl Records {
                 self.leaving = true;
                 return RecordsStep::Running;
             }
-            let legend = if pad_legend {
-                TBL_LEGEND_PAD
-            } else {
-                TBL_LEGEND_KEYS
+            let tbl = match legend {
+                Legend::Keys => TBL_LEGEND_KEYS,
+                Legend::Pad => TBL_LEGEND_PAD,
+                Legend::Glyphs { .. } => -1,
             };
-            super::put(
-                l,
-                SLOT_LEGEND,
-                legend,
-                LEGEND_POS.0,
-                LEGEND_POS.1,
-                PAL,
-                LAYER,
-            );
+            super::put(l, SLOT_LEGEND, tbl, LEGEND_POS.0, LEGEND_POS.1, PAL, LAYER);
+            if let Legend::Glyphs { next, back, paint } = legend {
+                // The art's two entries, (A) and (B) in its place (384×32 at (128, 432)).
+                let (x, y) = (f32::from(LEGEND_POS.0), f32::from(LEGEND_POS.1));
+                Line::new()
+                    .btn(Btn::A)
+                    .text(next)
+                    .gap(2.5)
+                    .btn(Btn::B)
+                    .text(back)
+                    .draw(l, LAYER, [x, y, 384.0, 32.0], *paint, 15.0, Align::Left);
+            }
         }
         if self.slide < SLIDE_STEPS {
             super::move_to(l, SLOT_HEADER_A, (self.slide * 8 - 0xb0) as i16, HEADER_Y);
@@ -296,12 +317,19 @@ mod tests {
         let mut sfx = vec![];
         let mut r = Records::new(&t, true, &mut l).unwrap();
         for _ in 0..400 {
-            r.tick(&MenuInput::NONE, false, &t, &rankings, &mut l, &mut sfx);
+            r.tick(
+                &MenuInput::NONE,
+                &Legend::Keys,
+                &t,
+                &rankings,
+                &mut l,
+                &mut sfx,
+            );
         }
         assert_eq!((r.route(), r.counter), (1, HOLD));
         r.tick(
             &press(|i| i.confirm = true),
-            false,
+            &Legend::Keys,
             &t,
             &rankings,
             &mut l,
@@ -310,7 +338,7 @@ mod tests {
         assert_eq!(r.route(), 3, "confirm at the hold turns the page");
         r.tick(
             &press(|i| i.confirm = true),
-            false,
+            &Legend::Keys,
             &t,
             &rankings,
             &mut l,
@@ -319,14 +347,21 @@ mod tests {
         assert_eq!(r.counter, HOLD, "confirm while filling reveals everything");
         let step = r.tick(
             &press(|i| i.cancel = true),
-            false,
+            &Legend::Keys,
             &t,
             &rankings,
             &mut l,
             &mut sfx,
         );
         assert_eq!(step, RecordsStep::Running);
-        let step = r.tick(&MenuInput::NONE, false, &t, &rankings, &mut l, &mut sfx);
+        let step = r.tick(
+            &MenuInput::NONE,
+            &Legend::Keys,
+            &t,
+            &rankings,
+            &mut l,
+            &mut sfx,
+        );
         assert_eq!(step, RecordsStep::Done, "the tick after the cancel");
         assert_eq!(
             sfx,
@@ -346,8 +381,14 @@ mod tests {
         let mut sfx = vec![];
         let mut r = Records::new(&t, false, &mut l).unwrap();
         let mut ticks = 0;
-        while r.tick(&MenuInput::NONE, false, &t, &rankings, &mut l, &mut sfx)
-            == RecordsStep::Running
+        while r.tick(
+            &MenuInput::NONE,
+            &Legend::Keys,
+            &t,
+            &rankings,
+            &mut l,
+            &mut sfx,
+        ) == RecordsStep::Running
         {
             ticks += 1;
         }

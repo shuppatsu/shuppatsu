@@ -5,6 +5,7 @@
 
 use super::tables::FrontTables;
 use super::{Env, PAL_MENU, snd};
+use crate::glyphs::{Btn, Hint};
 use crate::save::Eeprom;
 use crate::screens::{MenuInput, Sfx};
 use ddg_render::sprites::SpriteLayer;
@@ -241,6 +242,13 @@ impl ControlPage {
         }
     }
 
+    /// `hybrid_input` with a gamepad on a keyboard mode or mode 4: the page shows the pad's
+    /// Xbox-layout mapping ([`draw_pad_panel`]), which works in all of them, instead of the
+    /// mode's picture. The analog modes 5/6 keep their handle pictures.
+    pub fn shows_pad_panel(&self, env: &Env) -> bool {
+        env.hint == Hint::Glyphs && (0..=4).contains(&self.cursor)
+    }
+
     pub fn tick(
         &mut self,
         input: &MenuInput,
@@ -305,6 +313,12 @@ impl ControlPage {
         let put = |l: &mut SpriteLayer, slot, (tbl, x, y): (i16, i16, i16)| {
             super::put(l, slot, tbl, x0 + x, y0 + y, PAL_MENU, LAYER);
         };
+        if self.shows_pad_panel(env) {
+            // `hybrid_input` with a gamepad: the app draws the Xbox mapping instead.
+            super::hide(l, SLOT_PICTURE);
+            super::hide(l, SLOT_PICTURE_2);
+            return;
+        }
         match usize::try_from(self.cursor) {
             Ok(m @ 0..=5) => {
                 put(l, SLOT_PICTURE_2, CONTROL_SECOND[m]);
@@ -407,6 +421,71 @@ impl ValuePage {
             );
         }
     }
+}
+
+/// The controls page with a gamepad (`hybrid_input`, input.md §10.6): the Xbox-layout mapping
+/// as glyph rows on a dark panel where the mode's picture was, words from the `[ui]`
+/// catalogue in the page's language.
+pub fn draw_pad_panel(
+    l: &mut SpriteLayer,
+    t: &FrontTables,
+    look: &super::port_settings::Look,
+    ui: &super::port_settings::UiText,
+) {
+    use crate::glyphs::{DPAD_LR, DPAD_UD, Line};
+    use ddg_render::sprites::{TextStyle, WidgetKind};
+    use ddg_render::text::Align;
+    let (x0, y0) = (f32::from(t.origin.0), f32::from(t.origin.1));
+    let (x, y, w, h) = (x0 + 276.0, y0 + 138.0, 348.0, 304.0);
+    l.add_widget(LAYER, [x, y, w, h], WidgetKind::Fill(look.panel));
+    let mut title = TextStyle::plain(look.gold, Some(13.0));
+    title.align = Align::Left;
+    l.add_styled_text(
+        LAYER,
+        [x + 12.0, y + 6.0, w - 24.0, 24.0],
+        ui.get("pad_title"),
+        title,
+    );
+    let rows: [(&[Btn], &str); 9] = [
+        (&[DPAD_UD, Btn::LStick], "pad_power_dpad"),
+        (&[Btn::Rt, Btn::Rb], "pad_power_shoulders"),
+        (&[DPAD_LR, Btn::LStick], "pad_brake_dpad"),
+        (&[Btn::Lt, Btn::Lb], "pad_brake_shoulders"),
+        (&[Btn::A], "pad_a"),
+        (&[Btn::X], "pad_x"),
+        (&[Btn::B, Btn::View], "pad_b"),
+        (&[Btn::Y], "pad_y"),
+        (&[Btn::Menu], "pad_menu"),
+    ];
+    const ROW: f32 = 27.0;
+    for (n, (btns, key)) in rows.into_iter().enumerate() {
+        let ry = y + 32.0 + ROW * n as f32;
+        // The glyphs in a fixed column, so the words line up.
+        let mut glyphs = Line::new();
+        for &b in btns {
+            glyphs = glyphs.btn(b);
+        }
+        glyphs.draw(
+            l,
+            LAYER,
+            [x + 10.0, ry, 76.0, ROW],
+            look.bright,
+            12.0,
+            Align::Left,
+        );
+        let mut s = TextStyle::plain(look.bright, Some(12.0));
+        s.align = Align::Left;
+        l.add_styled_text(LAYER, [x + 90.0, ry, w - 100.0, ROW], ui.get(key), s);
+    }
+    let mut note = TextStyle::plain(look.dim, Some(10.0));
+    note.align = Align::Left;
+    let ny = y + 32.0 + ROW * 9.0 + 2.0;
+    l.add_styled_text(
+        LAYER,
+        [x + 12.0, ny, w - 24.0, 22.0],
+        ui.get("pad_note"),
+        note,
+    );
 }
 
 #[cfg(test)]

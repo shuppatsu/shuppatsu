@@ -210,6 +210,36 @@ impl KeyboardMode {
     }
 }
 
+/// Lever directions another stepped device holds this tick (setting `hybrid_input`: the
+/// modern pad's d-pad, stick and shoulder buttons). Each is merged with the keyboard's own key
+/// for that direction into one virtual key, held while either holds it, so the repeat rules
+/// run once per direction however many devices press it (input.md §10.6).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LeverHolds {
+    pub power_up: bool,
+    pub power_down: bool,
+    pub brake_up: bool,
+    pub brake_down: bool,
+}
+
+impl LeverHolds {
+    pub const NONE: Self = Self {
+        power_up: false,
+        power_down: false,
+        brake_up: false,
+        brake_down: false,
+    };
+
+    fn array(self) -> [bool; 4] {
+        [
+            self.power_up,
+            self.power_down,
+            self.brake_up,
+            self.brake_down,
+        ]
+    }
+}
+
 /// Per-tick keyboard state: hold counters per scan code and the two notch handles.
 #[derive(Clone, Debug)]
 pub struct Keyboard {
@@ -217,6 +247,14 @@ pub struct Keyboard {
     keys: LeverKeys,
     /// Frames each key has been held (0x829b00), saturating.
     held: [u16; 256],
+    /// Frames each lever direction (power+, power−, brake+, brake−) has been held: the lever
+    /// key's own counter, or with [`LeverHolds`] the merged virtual key's.
+    lever_held: [u16; 4],
+    /// Mode 2 with [`LeverHolds`]: another device stepped the power notch since the digits
+    /// last changed, so the digits don't overwrite it (they are an absolute device).
+    power_stepped: bool,
+    /// Mode 2: the digits held on the previous poll (bit n = digit n + 1).
+    prev_digits: u8,
     buttons: [u8; BUTTON_SLOTS],
     /// Held word of the previous poll, for the edges.
     prev_word: u32,
@@ -260,6 +298,9 @@ impl Keyboard {
             mode: KeyboardMode::from_index(mode)?,
             keys: bindings.modes[mode],
             held: [0; 256],
+            lever_held: [0; 4],
+            power_stepped: false,
+            prev_digits: 0,
             buttons: bindings.keyboard_buttons,
             prev_word: 0,
             power: 0,
@@ -272,6 +313,11 @@ impl Keyboard {
         self.held[0x2a] > 0 || self.held[0x36] > 0
     }
 
+    /// Whether any key went down on the last poll (the hint device follows it).
+    pub fn any_pressed(&self) -> bool {
+        self.held.contains(&1)
+    }
+
     /// Run or station start in a digital mode (0x4332c0): P0, EB.
     pub fn reset_levers(&mut self) {
         self.power = 0;
@@ -281,8 +327,39 @@ impl Keyboard {
     /// One poll: `down(dik)` says whether a key is down now. Updates the hold counters, the
     /// handles and returns the button edges.
     pub fn poll(&mut self, down: impl Fn(u8) -> bool) -> ButtonState {
+        self.poll_with(down, LeverHolds::NONE)
+    }
+
+    /// [`Keyboard::poll`] with lever directions another stepped device holds (setting
+    /// `hybrid_input`). With [`LeverHolds::NONE`] this is exactly the original's poll.
+    ///
+    /// Modes 0/1 merge each direction with its key. Mode 3 (one handle) folds the brake
+    /// directions onto the handle: brake+ toward the brake side (power−), brake− toward power.
+    /// Mode 2's digits and numpad are absolute: the other device steps the handles with the
+    /// two-handle rules, and the digits take the power notch back when they change.
+    pub fn poll_with(&mut self, down: impl Fn(u8) -> bool, extra: LeverHolds) -> ButtonState {
         for (code, count) in self.held.iter_mut().enumerate() {
             *count = if down(code as u8) {
+                count.saturating_add(1)
+            } else {
+                0
+            };
+        }
+        let extra = match self.mode {
+            KeyboardMode::OneHandle => LeverHolds {
+                power_up: extra.power_up || extra.brake_down,
+                power_down: extra.power_down || extra.brake_up,
+                brake_up: false,
+                brake_down: false,
+            },
+            _ => extra,
+        };
+        let k = self.keys;
+        let keys = [k.power_up, k.power_down, k.brake_up, k.brake_down];
+        for ((count, key), more) in self.lever_held.iter_mut().zip(keys).zip(extra.array()) {
+            // Mode 2's row keys are not levers: only the other device steps there.
+            let own = self.mode != KeyboardMode::Direct && key != UNBOUND && down(key);
+            *count = if own || more {
                 count.saturating_add(1)
             } else {
                 0
@@ -307,9 +384,10 @@ impl Keyboard {
         }
     }
 
-    /// A step on the press frame, then on frames 9, 12, 15, … (input.md §4.2).
-    fn step(&self, code: u8) -> Step {
-        match self.count(code) {
+    /// A step of lever direction `dir` (power+, power−, brake+, brake−) on the press frame,
+    /// then on frames 9, 12, 15, … (input.md §4.2).
+    fn step(&self, dir: usize) -> Step {
+        match self.lever_held[dir] {
             1 => Step::Press,
             n if n > 8 && n % 3 == 0 => Step::Repeat,
             _ => Step::None,
@@ -317,29 +395,46 @@ impl Keyboard {
     }
 
     fn two_handle(&mut self) {
-        let k = self.keys;
-        if self.step(k.power_up) != Step::None {
+        if self.step(POWER_UP) != Step::None {
             self.power = (self.power + 1).min(MAX_POWER);
         }
-        if self.step(k.power_down) != Step::None {
+        if self.step(POWER_DOWN) != Step::None {
             self.power = self.power.saturating_sub(1);
         }
-        match self.step(k.brake_up) {
+        match self.step(BRAKE_UP) {
             Step::Press => self.brake = (self.brake + 1).min(EB),
             Step::Repeat if self.brake < REPEAT_BRAKE_MAX => self.brake += 1,
             _ => {}
         }
-        if self.step(k.brake_down) != Step::None {
+        if self.step(BRAKE_DOWN) != Step::None {
             self.brake = self.brake.saturating_sub(1);
         }
     }
 
     fn direct(&mut self) {
-        // The lowest held digit wins; none held is N.
-        self.power = DIK_DIGITS
+        // Another device's steps (hybrid only; without them the counters stay 0).
+        let before = self.power;
+        self.two_handle();
+        if self.power != before {
+            self.power_stepped = true;
+        }
+        let digits = DIK_DIGITS
             .iter()
-            .position(|&d| self.count(d) > 0)
-            .map_or(0, |i| i as u8 + 1);
+            .enumerate()
+            .filter(|&(_, &d)| self.count(d) > 0)
+            .fold(0u8, |m, (i, _)| m | 1 << i);
+        if digits != self.prev_digits {
+            self.power_stepped = false;
+        }
+        self.prev_digits = digits;
+        if !self.power_stepped {
+            // The lowest held digit wins; none held is N.
+            self.power = if digits == 0 {
+                0
+            } else {
+                digits.trailing_zeros() as u8 + 1
+            };
+        }
         for (notch, &code) in DIK_NUMPAD.iter().enumerate() {
             if self.count(code) == 1 {
                 self.brake = if notch == 9 {
@@ -352,8 +447,7 @@ impl Keyboard {
     }
 
     fn one_handle(&mut self) {
-        let k = self.keys;
-        match self.step(k.power_up) {
+        match self.step(POWER_UP) {
             Step::None => {}
             step => {
                 if self.brake > 0 {
@@ -365,7 +459,7 @@ impl Keyboard {
                 }
             }
         }
-        match self.step(k.power_down) {
+        match self.step(POWER_DOWN) {
             Step::None => {}
             step => {
                 if self.power > 0 {
@@ -380,6 +474,12 @@ impl Keyboard {
         }
     }
 }
+
+/// Lever directions, indices of [`Keyboard::lever_held`].
+const POWER_UP: usize = 0;
+const POWER_DOWN: usize = 1;
+const BRAKE_UP: usize = 2;
+const BRAKE_DOWN: usize = 3;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Step {

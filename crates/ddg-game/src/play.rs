@@ -157,6 +157,10 @@ pub fn load_bank(
         ddg_formats::cg::parse_tbl(&data.read("tbl.rom")?)?,
     );
     crate::locale::install(locale, exe, &mut bank)?;
+    // Controller hints (`hybrid_input`) in every language.
+    bank.set_legend_font(Some(ddg_render::label::LabelFont::new(Box::new(
+        crate::locale::bundled_font()?,
+    ))));
     Ok(bank)
 }
 
@@ -321,6 +325,15 @@ impl Play {
                 })
         }));
 
+        let ui = crate::front::port_settings::UiText::load(
+            &opts.locale.lang,
+            opts.locale.dir.as_deref(),
+        );
+        let pad_words = crate::screens::PadHints {
+            select: ui.get("hint_select").to_owned(),
+            confirm: ui.get("hint_confirm").to_owned(),
+            resume: ui.get("hint_resume").to_owned(),
+        };
         let subtitles = start_subtitles(&opts, &bank, &data, &exe, &mut sound)?;
         if let Some(s) = sound.as_mut() {
             s.begin_stage(&exe, &drive)?;
@@ -348,6 +361,7 @@ impl Play {
             down: [false; 256],
             cab,
             flow,
+            pad_words,
             layer,
             bank,
             canvas,
@@ -750,6 +764,8 @@ pub struct Play {
     down: [bool; 256],
     cab: CabHud,
     flow: StageFlow,
+    /// The words of the stage flow's glyph legends (`hybrid_input` with a gamepad).
+    pad_words: crate::screens::PadHints,
     layer: SpriteLayer,
     bank: SpriteBank,
     canvas: Vec<u8>,
@@ -1022,6 +1038,11 @@ impl Play {
             .controls
             .is_analog()
             .then(|| (self.controls.power(), self.controls.brake()));
+        let hint = crate::glyphs::Hint::new(
+            u8::try_from(self.opts.control_mode).unwrap_or(0),
+            self.controls.hint_device(),
+        );
+        self.flow.pad_hints = (hint == crate::glyphs::Hint::Glyphs).then(|| self.pad_words.clone());
         self.menu_input = MenuInput::from_word(&buttons.word, levers);
         self.latched = DriverInput {
             power: self.controls.power(),

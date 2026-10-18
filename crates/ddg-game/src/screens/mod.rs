@@ -19,6 +19,15 @@ use ddg_render::sprites::{Slot, SpriteLayer};
 use std::collections::BTreeMap;
 use tables::{Placement, TextDesc};
 
+/// `hybrid_input` with a gamepad (input.md §10.6): the words beside the Xbox glyphs on the stage
+/// flow's screens (the `[ui]` strings of the language).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PadHints {
+    pub select: String,
+    pub confirm: String,
+    pub resume: String,
+}
+
 /// Button edges of one tick (the pressed word `0x48c42c`, input.md §6).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct MenuInput {

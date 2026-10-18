@@ -714,6 +714,35 @@ impl NameEntry {
         (self.page == Page::Ranking).then_some(super::RANKING_GREY)
     }
 
+    /// The slot of the entry legend while the entry shows (`None` on the page).
+    pub fn legend_slot(&self) -> Option<usize> {
+        (self.page == Page::Entry).then_some(SLOT_LEGEND)
+    }
+
+    /// `hybrid_input` with a gamepad: the entry legend as glyph lines in the art's place
+    /// (176×64 at (408, 60)): "Select" with the d-pad's ◀ ▶, "Confirm" with A.
+    pub fn draw_pad_legend(&self, layer: &mut SpriteLayer, h: &super::PadHints) {
+        use crate::glyphs::{Btn, DPAD_LR, Line, UNPALETTED};
+        use ddg_render::text::Align;
+        if self.page != Page::Entry {
+            return;
+        }
+        let (x, y) = (f32::from(LEGEND_POS.0), f32::from(LEGEND_POS.1));
+        for (row, (word, b)) in [(&h.select, DPAD_LR), (&h.confirm, Btn::A)]
+            .into_iter()
+            .enumerate()
+        {
+            Line::new().text(word).gap(0.5).btn(b).draw(
+                layer,
+                LAYER,
+                [x, y + 32.0 * row as f32, 176.0, 32.0],
+                UNPALETTED,
+                14.0,
+                Align::Left,
+            );
+        }
+    }
+
     /// The slots, plus the page's side bars (draw callback 0x41fc60, page only).
     pub fn draw(&self, layer: &mut SpriteLayer) {
         self.slots.draw(layer);

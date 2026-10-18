@@ -165,8 +165,15 @@ settings! {
     /// A name entry that times out is saved like a completed one (menus.md §14.1); off = the
     /// original's: shown, never written.
     save_timed_out_names = true;
-    /// In controller modes the keyboard's horn (Space) and A / ATS confirm (Enter) work too
-    /// (input.md §10.3); off = only Esc, Enter as menu confirm and R, as the original.
+    /// Keyboard and controller both live in every control mode, like a modern PC game: buttons
+    /// OR-ed, stepped levers sharing one repeat per direction, a physical handle and the steps
+    /// last-used-wins, a pad usable in the keyboard modes in the Xbox layout, and hints that
+    /// follow the last device used (input.md §10.6). Supersedes `keyboard_with_controller`
+    /// while on. Off = the original's one device chosen in the options.
+    hybrid_input = true;
+    /// With `hybrid_input` off: in controller modes the keyboard's horn (Space) and A / ATS
+    /// confirm (Enter) work too (input.md §10.3); off = only Esc, Enter as menu confirm and R,
+    /// as the original.
     keyboard_with_controller = true;
     /// The exit dialog's いいえ returns to the title menu on ゲーム終了 (menus.md §14.1); off =
     /// attract from the title picture, as the original.
