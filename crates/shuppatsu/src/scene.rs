@@ -13,6 +13,7 @@ use shuppatsu_formats::{
 use shuppatsu_render::{Camera, FrameGeometry, PartLibrary};
 use std::path::PathBuf;
 
+#[derive(Clone)]
 pub struct GameData {
     data: PathBuf,
     bin: PathBuf,

@@ -329,6 +329,16 @@ impl Play {
             wide,
         )?;
         let canvas = shuppatsu_render::sprites::Composer::blank(layer.canvas_size());
+        // The route scene loads on its own thread while the cab is set up (both take tens of ms
+        // at a stage start).
+        let scene_job = {
+            let (data, com) = (data.clone(), drive.com_name().to_owned());
+            let (vis, what) = (
+                visibility(&opts),
+                (opts.settings, geometry(&opts), opts.stage),
+            );
+            std::thread::spawn(move || load_scene_for(&data, &com, vis, what))
+        };
         Hud::install_palettes(&exe, &mut layer)?;
         // The horn hint names the B button with a joystick in modes 5–6 (`FUN_00433270`).
         let mut cab = CabHud::new(&exe, opts.stage, matches!(opts.control_mode, 5 | 6))?;
@@ -398,7 +408,9 @@ impl Play {
             s.begin_stage(&exe, &drive)?;
         }
         let visibility = visibility(&opts);
-        let scene = load_scene(&data, drive.com_name(), visibility, &opts)?;
+        let scene = scene_job
+            .join()
+            .map_err(|_| anyhow::anyhow!("the scene loader panicked"))??;
         let script = load_script(opts.inputs.as_deref())?;
         let mut controls = controls;
         if let Some(h) = script.hint {
@@ -750,16 +762,28 @@ fn load_scene(
     visibility: Visibility,
     opts: &PlayOptions,
 ) -> Result<RouteScene> {
+    load_scene_for(
+        data,
+        com,
+        visibility,
+        (opts.settings, geometry(opts), opts.stage),
+    )
+}
+
+/// [`load_scene`] from what it needs of the options (settings, geometry, stage): owned, so a
+/// run can load its scene on another thread while it sets up the cab.
+fn load_scene_for(
+    data: &GameData,
+    com: &str,
+    visibility: Visibility,
+    (settings, geometry, stage): (crate::settings::Settings, crate::scene::Geometry, usize),
+) -> Result<RouteScene> {
     let t = Instant::now();
     let mut scene = RouteScene::load(data, com, visibility)?;
-    scene.stable_track_variants = opts.settings.stable_track_variants;
-    let geometry = geometry(opts);
+    scene.stable_track_variants = settings.stable_track_variants;
     scene.set_geometry(geometry);
-    scene.traffic_reach = opts
-        .settings
-        .far_traffic
-        .then_some(f64::from(geometry.far()));
-    crate::traffic::load_stage_trains(&mut scene, data, opts.stage)?;
+    scene.traffic_reach = settings.far_traffic.then_some(f64::from(geometry.far()));
+    crate::traffic::load_stage_trains(&mut scene, data, stage)?;
     eprintln!("{com}: loaded in {:.2?}", t.elapsed());
     Ok(scene)
 }
