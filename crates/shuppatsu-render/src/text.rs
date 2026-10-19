@@ -1128,8 +1128,40 @@ fn plain_colours(art: &impl Fn(usize, usize) -> u8, w: usize, h: usize) -> Optio
             .max_by_key(|&i| c[usize::from(i)])
     };
     let fill = commonest(&inner, 0)?;
-    Some((fill, commonest(&rim, fill).unwrap_or(fill)))
+    let other = commonest(&rim, fill).unwrap_or(fill);
+    // A drop shadow (the options' labels and values: the strokes cast a dark copy three
+    // pixels down and right) can outnumber thin antialiased strokes' interior (オン, オフ),
+    // which picked the shadow as the fill. Lettering seen from its shadow lies up and left;
+    // an outline surrounds its fill on every side.
+    let behind = |c: u8| {
+        let d = SHADOW_PROBE;
+        let (mut up_left, mut down_right, mut n) = (0u32, 0u32, 0u32);
+        for y in d..h.saturating_sub(d) {
+            for x in d..w.saturating_sub(d) {
+                if art(x, y) == c {
+                    n += 1;
+                    up_left += u32::from(art(x - d, y - d) != 0);
+                    down_right += u32::from(art(x + d, y + d) != 0);
+                }
+            }
+        }
+        (f64::from(up_left) - f64::from(down_right)) / f64::from(n.max(1))
+    };
+    let (bf, bo) = (behind(fill), behind(other));
+    if other != fill && bf >= SHADOW_BIAS && bo <= 0.0 {
+        // The strokes: the commonest interior colour after the shadow (the rim's commonest is
+        // often an antialiasing shade).
+        return Some((commonest(&inner, fill).unwrap_or(other), fill));
+    }
+    Some((fill, other))
 }
+
+/// [`plain_colours`]: the diagonal step (art pixels) at which a colour's neighbours are compared,
+/// and the share of its pixels with more lettering up-left than down-right that marks it as a
+/// drop shadow. Measured over en.toml: the shadows of the options' katakana score 0.52–0.54,
+/// everything else 0.29 at most (OK!! of the stop-point banner), most under 0.05.
+const SHADOW_PROBE: usize = 2;
+const SHADOW_BIAS: f64 = 0.4;
 
 /// Calls `f` with the index of every pixel of a `w × h` mask within `r` pixels (a square) of a
 /// pixel whose coverage is at least `min`.
@@ -1261,6 +1293,35 @@ pub(crate) mod tests {
                 coverage: vec![255; width * height],
             }
         }
+    }
+
+    #[test]
+    fn plain_colours_tell_a_shadow_from_the_strokes() {
+        // Strokes in 5, three pixels wide; their shadow in 9 three pixels down and right,
+        // dilated so it has more interior pixels than the strokes (thin antialiased katakana).
+        let (w, h) = (16, 36);
+        let mut art = vec![0u8; w * h];
+        for y in 7..33 {
+            for x in 7..11 {
+                art[y * w + x] = 9;
+            }
+        }
+        for y in 4..30 {
+            for x in 4..7 {
+                art[y * w + x] = 5;
+            }
+        }
+        let at = |x: usize, y: usize| art[y * w + x];
+        assert_eq!(plain_colours(&at, w, h), Some((5, 9)));
+        // An outline around its fill stays the outline.
+        let mut ring = vec![0u8; w * h];
+        for y in 4..30 {
+            for x in 4..12 {
+                let edge = y == 4 || y == 29 || x == 4 || x == 11;
+                ring[y * w + x] = if edge { 9 } else { 5 };
+            }
+        }
+        assert_eq!(plain_colours(&|x, y| ring[y * w + x], w, h), Some((5, 9)));
     }
 
     #[test]

@@ -62,10 +62,11 @@ sprite's role, a short Japanese label for identification and the pixel size (dec
 labels stay, as a translator's reference, the same practice as docs/re).
 
 Colours always come from the slot's palette: a part stores palette *indices* picked from the
-original art (the dominant colour for plain text and the second for its outline; for boxes the
-backdrop's 2×2 pattern and the lettering's colour), so the palette swaps the game uses for
-colour variants (white/yellow/red digits and labels, highlighted menu items) recolour the text
-too.
+original art (for plain text the commonest colour inside the strokes and the second for its
+outline, where a drop shadow that outnumbers thin strokes is told from them by lying down and
+right of them, オン / オフ in the options; for boxes the backdrop's 2×2 pattern and the
+lettering's colour), so the palette swaps the game uses for colour variants (white/yellow/red
+digits and labels, highlighted menu items) recolour the text too.
 
 Rules: `ja` is the identity (no overrides). Any sprite that is not in the catalogue, or is shown
 through a sub-rectangle the catalogue does not name, draws the original art. A catalogue that
