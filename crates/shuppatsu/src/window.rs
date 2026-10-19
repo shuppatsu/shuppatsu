@@ -21,6 +21,14 @@ pub struct Gpu {
     alt: bool,
     /// The mouse pointer over the window ([`Cursor`]).
     cursor: Cursor,
+    /// Issue marks (marks.rs): the next presented frame is written here as a PNG.
+    pub capture: Option<std::path::PathBuf>,
+    /// The surface can be copied from (`COPY_SRC`), for [`Gpu::capture`].
+    copyable: bool,
+    /// A short message in the window's top-right corner and when it goes ([`Gpu::show_toast`]).
+    toast: Option<(Overlay, std::time::Instant)>,
+    /// Screenshots being written, finished before the program ends.
+    writes: Vec<std::thread::JoinHandle<()>>,
 }
 
 /// The mouse pointer over the game window. The game never reads the mouse, so the pointer is
@@ -103,6 +111,11 @@ impl Gpu {
         if let Some(f) = caps.formats.iter().find(|f| f.is_srgb()) {
             config.format = *f;
         }
+        // Issue marks read the presented frame back.
+        let copyable = caps.usages.contains(wgpu::TextureUsages::COPY_SRC);
+        if copyable {
+            config.usage |= wgpu::TextureUsages::COPY_SRC;
+        }
         surface.configure(&device, &config);
         let renderer = Renderer::new(&device, config.format);
         let overlay = Overlay::with_scale(&device, config.format, ui_scale);
@@ -120,6 +133,10 @@ impl Gpu {
             overlay,
             alt: false,
             cursor: Cursor::default(),
+            capture: None,
+            copyable,
+            toast: None,
+            writes: Vec::new(),
         })
     }
 
@@ -221,6 +238,77 @@ impl Gpu {
 
     pub fn size(&self) -> (u32, u32) {
         (self.config.width, self.config.height)
+    }
+
+    /// Presents `frame`. A frame asked for by [`Gpu::capture`] is read back first and written
+    /// as a PNG on a thread of its own; the toast ([`Gpu::show_toast`]) is drawn over the
+    /// frame after that, so screenshots never show it.
+    pub fn present(&mut self, frame: wgpu::SurfaceTexture) {
+        if let Some(path) = self.capture.take() {
+            self.save_frame(&frame.texture, path);
+        }
+        self.draw_toast(&frame.texture);
+        self.window.pre_present_notify();
+        self.queue.present(frame);
+    }
+
+    fn save_frame(&mut self, texture: &wgpu::Texture, path: std::path::PathBuf) {
+        if !self.copyable {
+            eprintln!("mark: this display surface cannot be read back; no screenshot");
+            return;
+        }
+        let image = match crate::shot::read_rgba(&self.device, &self.queue, texture) {
+            Ok(i) => i,
+            Err(e) => {
+                eprintln!("mark: no screenshot: {e:#}");
+                return;
+            }
+        };
+        self.writes.retain(|h| !h.is_finished());
+        self.writes.push(std::thread::spawn(move || {
+            let png = crate::desktop::encode_png(&image);
+            if let Err(e) = std::fs::write(&path, png) {
+                eprintln!("mark: writing {}: {e}", path.display());
+            }
+        }));
+    }
+
+    /// Shows `image` (premultiplied RGBA) in the window's top-right corner for `seconds`.
+    pub fn show_toast(&mut self, image: &shuppatsu_render::rgba::RgbaImage, seconds: f32) {
+        let mut o = Overlay::new(&self.device, self.config.format);
+        o.resize(&self.device, (image.width as usize, image.height as usize));
+        o.upload(&self.queue, &image.rgba);
+        o.scaling = shuppatsu_render::overlay::UiScaling::Nearest;
+        let until = std::time::Instant::now() + std::time::Duration::from_secs_f32(seconds);
+        self.toast = Some((o, until));
+    }
+
+    fn draw_toast(&mut self, texture: &wgpu::Texture) {
+        if self
+            .toast
+            .as_ref()
+            .is_some_and(|(_, until)| std::time::Instant::now() >= *until)
+        {
+            self.toast = None;
+        }
+        let Some((o, _)) = &self.toast else {
+            return;
+        };
+        let (w, h) = o.size();
+        let margin = (self.config.height / 60).max(4);
+        let x = self.config.width.saturating_sub(w + margin);
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let rect = [x as f32, margin as f32, w as f32, h as f32];
+        o.render(&self.device, &self.queue, &view, rect);
+    }
+}
+
+impl Drop for Gpu {
+    /// Screenshots still being written are finished first.
+    fn drop(&mut self) {
+        for h in self.writes.drain(..) {
+            let _ = h.join();
+        }
     }
 }
 

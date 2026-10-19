@@ -1,3 +1,7 @@
+//! Records the git commit the game is built from (`SHUPPATSU_GIT_REV`, empty when unknown;
+//! a value set in the environment wins, as package builds have no `.git`) for issue marks
+//! (src/marks.rs).
+//!
 //! Windows (GNU toolchain) only: compiles `shuppatsu.rc` (the exe icon,
 //! `assets/logo/gen/shuppatsu.ico`) with MinGW's `windres` and links the resource object into
 //! the executable. Skipped with a warning when `windres` is missing or fails; the game then
@@ -6,8 +10,30 @@
 use std::path::PathBuf;
 use std::process::Command;
 
+fn git(args: &[&str]) -> Option<String> {
+    let out = Command::new("git").args(args).output().ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).trim().to_owned())
+}
+
+/// `SHUPPATSU_GIT_REV`, and a rebuild when a commit or checkout moves HEAD.
+fn git_rev() {
+    println!("cargo:rerun-if-env-changed=SHUPPATSU_GIT_REV");
+    let rev = std::env::var("SHUPPATSU_GIT_REV")
+        .ok()
+        .or_else(|| git(&["rev-parse", "--short=12", "HEAD"]))
+        .unwrap_or_default();
+    println!("cargo:rustc-env=SHUPPATSU_GIT_REV={rev}");
+    if let Some(dir) = git(&["rev-parse", "--absolute-git-dir"]) {
+        println!("cargo:rerun-if-changed={dir}/HEAD");
+        println!("cargo:rerun-if-changed={dir}/logs/HEAD");
+    }
+}
+
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
+    git_rev();
     let var = |k: &str| std::env::var(k).unwrap_or_default();
     if var("CARGO_CFG_TARGET_OS") != "windows" {
         return;

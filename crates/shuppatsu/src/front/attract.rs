@@ -328,8 +328,7 @@ impl Attract {
         matches!(self.phase, Phase::Picture(_))
     }
 
-    /// What attract shows, for the app's START harness.
-    #[cfg(test)]
+    /// What attract shows, for the app's START harness and issue marks.
     pub fn shown(&self) -> &'static str {
         match self.phase {
             Phase::Picture(_) => "picture",

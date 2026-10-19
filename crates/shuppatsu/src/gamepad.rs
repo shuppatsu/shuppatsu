@@ -583,6 +583,11 @@ pub struct GenericInputs {
     pub select: bool,
 }
 
+/// What a gamepad gives one poll: the DirectInput state for the joystick decoder and the
+/// inputs as they are (the Xbox-layout mapping and the hint device read those). Recorded and
+/// replayed by input scripts ([`crate::script`]).
+pub type PadSample = (JoyState, GenericInputs);
+
 fn axis(v: f32) -> i32 {
     ((v.clamp(-1.0, 1.0) * AXIS_MAX as f32).round()) as i32
 }
@@ -1172,6 +1177,9 @@ pub struct PadOptions {
     pub no_pad: bool,
     /// Fixed hint device (`--hint-device`, `SHUPPATSU_HINT_DEVICE`; headless shots have no pad).
     pub hint_device: Option<HintDevice>,
+    /// The pad comes from an input script ([`Controls::feed_pad`]) instead of a device, and
+    /// is connected at the start (`Some(true)`) or not. `hybrid_input` only.
+    pub scripted_pad: Option<bool>,
 }
 
 impl Default for PadOptions {
@@ -1183,6 +1191,7 @@ impl Default for PadOptions {
             hybrid_input: true,
             no_pad: false,
             hint_device: None,
+            scripted_pad: None,
         }
     }
 }
@@ -1196,6 +1205,10 @@ pub struct Controls {
     /// `hybrid_input` on.
     hybrid: Option<Hybrid>,
     hint_override: Option<HintDevice>,
+    /// [`PadOptions::scripted_pad`]: the sample the next poll reads instead of the device.
+    scripted: Option<Option<PadSample>>,
+    /// The pad sample the last poll read (`hybrid_input`), for the input log.
+    last_pad: Option<PadSample>,
 }
 
 /// The state of `hybrid_input` (input.md §10.6). The keyboard's notches are the shared ones:
@@ -1235,13 +1248,16 @@ impl Controls {
                 joystick: None,
                 hybrid: None,
                 hint_override: None,
+                scripted: None,
+                last_pad: None,
             });
         }
         let (joy_mode, profile) = Self::profile(mode, opts)?;
         // The keyboard still supplies its word (and Shift override) in joystick modes; its
         // own levers are unused there.
         let keyboard = Keyboard::new(&bindings, 0).context("keyboard mode 0")?;
-        let pad = if opts.no_pad {
+        // A scripted pad drives the hybrid input only.
+        let pad = if opts.no_pad || opts.scripted_pad.is_some() {
             None
         } else {
             PadSource::open(profile).filter(PadSource::connected)
@@ -1253,6 +1269,8 @@ impl Controls {
                 joystick: None,
                 hybrid: None,
                 hint_override: None,
+                scripted: None,
+                last_pad: None,
             });
         };
         let tables = JoyTables::read(exe)?;
@@ -1267,6 +1285,8 @@ impl Controls {
             )),
             hybrid: None,
             hint_override: None,
+            scripted: None,
+            last_pad: None,
         })
     }
 
@@ -1306,12 +1326,14 @@ impl Controls {
             let (m, p) = Self::profile(mode, opts)?;
             (Some(m), p)
         };
-        let pad = if opts.no_pad {
+        let pad = if opts.no_pad || opts.scripted_pad.is_some() {
             None
         } else {
             PadSource::open(profile)
         };
-        let connected = pad.as_ref().is_some_and(PadSource::connected);
+        let connected = opts
+            .scripted_pad
+            .unwrap_or_else(|| pad.as_ref().is_some_and(PadSource::connected));
         // The handle decoder of the analog modes needs its device now, as `input_init` does;
         // any pad connected later is read in the Xbox layout.
         let joy_mode = joy_mode.filter(|_| connected);
@@ -1343,6 +1365,9 @@ impl Controls {
                 hint: HintTracker::new(device),
             }),
             hint_override: opts.hint_device,
+            // Before the first scripted poll: connected and at rest, or not.
+            scripted: opts.scripted_pad.map(|on| on.then(PadSample::default)),
+            last_pad: None,
         };
         controls.reset_levers();
         Ok(controls)
@@ -1385,8 +1410,33 @@ impl Controls {
             Some((joy, _)) => *joy.row(),
             None => h.row,
         };
-        let sample = h.pad.as_mut().and_then(|p| p.read(&row));
+        let sample = match self.scripted {
+            Some(s) => s,
+            None => h.pad.as_mut().and_then(|p| p.read(&row)),
+        };
+        self.last_pad = sample;
         self.tick_hybrid(down, sample)
+    }
+
+    /// The pad sample the next poll reads ([`PadOptions::scripted_pad`]; `None`: no pad).
+    pub fn feed_pad(&mut self, sample: Option<PadSample>) {
+        if self.scripted.is_some() {
+            self.scripted = Some(sample);
+        }
+    }
+
+    /// The pad sample the last poll read (`hybrid_input`; `None`: no pad, or the original's
+    /// one-device input, whose pad is not recorded).
+    pub fn last_pad(&self) -> Option<PadSample> {
+        self.last_pad
+    }
+
+    /// The device the hints follow from now on, until the next key or pad use (a replayed
+    /// run starts where the session was).
+    pub fn set_hint_device(&mut self, device: HintDevice) {
+        if let Some(h) = self.hybrid.as_mut() {
+            h.hint.device = device;
+        }
     }
 
     /// [`Controls::poll_hybrid`] with the pad's sample of this tick (`None`: no pad).
@@ -1537,6 +1587,9 @@ impl Controls {
     /// A gamepad is connected now (`hybrid_input` follows hot-plugging; otherwise the
     /// selected joystick mode's pad).
     pub fn pad_connected(&self) -> bool {
+        if let Some(s) = self.scripted {
+            return s.is_some();
+        }
         match &self.hybrid {
             Some(h) => h.pad.as_ref().is_some_and(PadSource::connected),
             None => self.joystick.is_some(),
@@ -2316,6 +2369,8 @@ mod tests {
                 hint: HintTracker::new(HintDevice::Keyboard),
             }),
             hint_override: None,
+            scripted: None,
+            last_pad: None,
         };
         c.reset_levers();
         c
@@ -2737,6 +2792,8 @@ mod tests {
             joystick: None,
             hybrid: None,
             hint_override: Some(HintDevice::Pad),
+            scripted: None,
+            last_pad: None,
         };
         assert_eq!(c.hint_device(), None);
         let mut a = Keyboard::new(&bindings(), 0).unwrap();

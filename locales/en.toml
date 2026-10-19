@@ -1491,6 +1491,8 @@ hint_toggle = "Toggle"
 hint_next = "Next"
 hint_back_to_menu = "Back to menu"
 hint_resume = "Resume"
+# The toast of an issue mark (F12, docs/marks.md); {n} is its number.
+mark_saved = "Mark {n} saved"
 # The controls page with a gamepad: the Xbox-layout mapping instead of the mode's picture.
 pad_title = "Controller (Xbox layout)"
 pad_power_dpad = "Power: ▼ notch up, ▲ notch down"

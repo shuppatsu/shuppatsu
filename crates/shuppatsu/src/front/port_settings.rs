@@ -414,6 +414,8 @@ const UI_IDS: &[&str] = &[
     "hint_next",
     "hint_back_to_menu",
     "hint_resume",
+    // The toast of an issue mark (marks.rs).
+    "mark_saved",
     "pad_title",
     "pad_power_dpad",
     "pad_power_shoulders",

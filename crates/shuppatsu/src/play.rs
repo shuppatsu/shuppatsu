@@ -20,6 +20,7 @@ use crate::screens::ranking::RankingRequest;
 use crate::screens::result::ResultInput;
 use crate::screens::tables::ScreenTables;
 use crate::screens::{MenuInput, Sfx};
+use crate::script::{InputLog, Script, parse_script};
 use crate::window::Gpu;
 use anyhow::{Context, Result};
 use shuppatsu_engine::coupling::CouplingEvent;
@@ -34,6 +35,7 @@ use shuppatsu_formats::stages::StageTables;
 use shuppatsu_render::FrameGeometry;
 use shuppatsu_render::camera::ORIGINAL_STRETCH;
 use shuppatsu_render::sprites::{Anchor, SLOT_COUNT, Slot, SpriteBank, SpriteLayer};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 mod bonus;
@@ -41,6 +43,7 @@ mod cab_mask;
 mod demo;
 mod ending;
 mod intro;
+pub(crate) mod mark;
 mod opening;
 mod staff_roll;
 pub use intro::has_stage_intro;
@@ -78,11 +81,15 @@ pub struct PlayOptions {
     /// The port's switches (docs/settings.md).
     pub settings: crate::settings::Settings,
     pub mute: bool,
-    /// Scripted inputs: `tick notch brake` lines (the oracle's format, drive ticks), held from
-    /// each tick on, and `key <tick>[-<last>] <enter|esc|space|up|down|left|right>` lines: the
-    /// key is down for the poll at the end of play tick `tick` (through `last`; play ticks also
-    /// count paused ticks).
+    /// Scripted inputs ([`crate::script`]): `tick notch brake` lines (the oracle's format,
+    /// drive ticks), held from each tick on, `key <tick>[-<last>] <name>` lines (the key is
+    /// down for the poll at the end of play tick `tick`, through `last`; play ticks also count
+    /// paused ticks) and `pad` lines.
     pub inputs: Option<std::path::PathBuf>,
+    /// Check aid (issue marks): the save to start from, read only (`--save`).
+    pub save_file: Option<std::path::PathBuf>,
+    /// Check aid (issue marks): the global tick counter at the start (`--global-tick`).
+    pub global_tick: Option<u32>,
     /// Headless: run this many play ticks, render one frame with the HUD to a PPM and exit.
     pub shot: Option<(u64, std::path::PathBuf)>,
     /// Overrides the save's speedometer option (0 none, 1 analog, 2 digital).
@@ -143,6 +150,32 @@ pub struct Shared {
     /// The sound device, without a stage (`Sound::open_device`).
     pub sound: Option<crate::sound::Sound>,
     pub gpu: Option<Gpu>,
+    /// What every poll of the session read, for issue marks ([`crate::marks`]).
+    pub log: InputLog,
+}
+
+/// The input script of `opts.inputs` (none: empty).
+pub fn load_script(inputs: Option<&std::path::Path>) -> Result<Script> {
+    match inputs {
+        Some(p) => {
+            parse_script(&std::fs::read_to_string(p).with_context(|| p.display().to_string())?)
+        }
+        None => Ok(Script::default()),
+    }
+}
+
+/// The save of a run or session: the user's (`path`), or with a check aid's `--save` that
+/// file, read and never written.
+pub fn open_save(exe: &Exe<'_>, path: Option<PathBuf>, file: Option<&Path>) -> Result<Save> {
+    let Some(file) = file else {
+        return Save::open(exe, path);
+    };
+    let bytes = std::fs::read(file).with_context(|| file.display().to_string())?;
+    let defaults = crate::save::Eeprom::defaults(exe)?;
+    Ok(Save::new(
+        crate::save::Eeprom::load(&bytes, &defaults),
+        None,
+    ))
 }
 
 /// Loads the sprite bank (`cg.rom` + `tbl.rom`) with the locale's text overrides, and the
@@ -180,7 +213,7 @@ pub fn run(mut opts: PlayOptions) -> Result<()> {
     } else {
         crate::save::default_path()
     };
-    let mut save = Save::open(&exe, save_path)?;
+    let mut save = open_save(&exe, save_path, opts.save_file.as_deref())?;
     if opts.difficulty_from_save {
         opts.difficulty = usize::from(save.eeprom.difficulty());
     }
@@ -188,7 +221,14 @@ pub fn run(mut opts: PlayOptions) -> Result<()> {
     if let Some(p) = save.path() {
         eprintln!("save: {}", p.display());
     }
+    // A script with `pad` lines is the gamepad (a recorded session, docs/marks.md).
+    let script = load_script(opts.inputs.as_deref())?;
+    if script.has_pad() {
+        opts.pad.scripted_pad = Some(script.pad_at(0).is_some());
+    }
     let controls = Controls::new(&exe, opts.control_mode, &opts.pad)?;
+    let mut log = InputLog::default();
+    log.start(controls.pad_connected());
     let (bank, _) = load_bank(&data, &exe, &opts.locale)?;
     let sound = if opts.shot.is_some() || opts.mute {
         None
@@ -203,8 +243,13 @@ pub fn run(mut opts: PlayOptions) -> Result<()> {
         controls,
         sound,
         gpu: None,
+        log,
     };
+    let global_tick = opts.global_tick;
     let mut app = Play::new(shared, opts)?;
+    if let Some(t) = global_tick {
+        app.set_global_tick(t);
+    }
     if let Some(full) = app.opts.ending {
         app.start_ending(Some(full))?;
     }
@@ -242,7 +287,15 @@ impl Play {
             controls,
             mut sound,
             gpu,
+            log,
         } = shared;
+        let start = RunStart {
+            eeprom: save.eeprom.bytes().to_vec(),
+            global_tick: 0,
+            hint: controls.hint_device(),
+            locale: opts.locale.clone(),
+            settings: opts.settings,
+        };
         // Enhancement `texture_pack` (docs/texture-packs.md): read when the stage loads.
         data.texture_pack = opts.locale.texture_pack.clone();
         bank.set_upscale(opts.settings.hud_upscale);
@@ -345,12 +398,12 @@ impl Play {
         }
         let visibility = visibility(&opts);
         let scene = load_scene(&data, drive.com_name(), visibility, &opts)?;
-        let script = match &opts.inputs {
-            Some(p) => {
-                parse_script(&std::fs::read_to_string(p).with_context(|| p.display().to_string())?)?
-            }
-            None => Script::default(),
-        };
+        let script = load_script(opts.inputs.as_deref())?;
+        let mut controls = controls;
+        if let Some(h) = script.hint {
+            controls.set_hint_device(h);
+        }
+        let mark_text = ui.get("mark_saved").to_owned();
         let now = Instant::now();
         let mut play = Play {
             scene_com: drive.com(),
@@ -400,6 +453,11 @@ impl Play {
             opening: None,
             intro: None,
             subtitles,
+            log,
+            tick_base: None,
+            start,
+            mark: None,
+            mark_text,
             opts,
         };
         play.configure_gpu();
@@ -434,6 +492,7 @@ impl Play {
             controls: self.controls,
             sound,
             gpu: self.gpu,
+            log: self.log,
         }
     }
 
@@ -473,11 +532,28 @@ impl Play {
     /// menus included); the drive advances it from there.
     pub fn set_global_tick(&mut self, tick: u32) {
         self.drive.set_global_tick(tick);
+        self.start.global_tick = tick;
+    }
+
+    /// Under the front end: the app tick before this run's first, so its polls are logged in
+    /// app ticks ([`InputLog`]).
+    pub fn set_tick_base(&mut self, tick: u64) {
+        self.tick_base = Some(tick);
     }
 
     /// Play ticks so far (every tick of the run, paused, demo and ending ones included).
     pub fn ticks(&self) -> u64 {
         self.ticks
+    }
+
+    /// The pad sample the next poll reads, from the front end's script (headless).
+    pub fn feed_pad(&mut self, sample: Option<crate::gamepad::PadSample>) {
+        self.controls.feed_pad(sample);
+    }
+
+    /// The session's input log.
+    pub fn log(&self) -> &InputLog {
+        &self.log
     }
 
     /// One tick, for headless drivers.
@@ -686,58 +762,16 @@ fn load_scene(
     Ok(scene)
 }
 
-/// Scripted inputs (see [`PlayOptions::inputs`]).
-#[derive(Debug, Default)]
-pub struct Script {
-    /// `(drive tick, notch, brake)`, sorted.
-    pub notches: Vec<(u64, u8, u8)>,
-    /// `(play tick, DIK code)`.
-    pub keys: Vec<(u64, u8)>,
-}
-
-/// DirectInput codes of the script's key names.
-fn script_key(name: &str) -> Option<u8> {
-    Some(match name {
-        "enter" => 0x1c,
-        "esc" => 0x01,
-        "space" => 0x39,
-        "up" => 0xc8,
-        "down" => 0xd0,
-        "left" => 0xcb,
-        "right" => 0xcd,
-        "r" => 0x13,
-        _ => return None,
-    })
-}
-
-/// Parses the input script (`#` comments).
-pub fn parse_script(text: &str) -> Result<Script> {
-    let mut s = Script::default();
-    for (n, line) in text.lines().enumerate() {
-        let line = line.split('#').next().unwrap_or("").trim();
-        if line.is_empty() {
-            continue;
-        }
-        let v: Vec<&str> = line.split_whitespace().collect();
-        match v[..] {
-            ["key", t, k] => {
-                let code =
-                    script_key(k).with_context(|| format!("line {}: unknown key {k}", n + 1))?;
-                // `key <from>-<to> name` holds the key over a range of ticks.
-                let (from, to) = t.split_once('-').unwrap_or((t, t));
-                for tick in from.parse::<u64>()?..=to.parse()? {
-                    s.keys.push((tick, code));
-                }
-            }
-            [t, p, b] => s.notches.push((t.parse()?, p.parse()?, b.parse()?)),
-            _ => anyhow::bail!(
-                "line {}: expected `tick notch brake` or `key tick name`",
-                n + 1
-            ),
-        }
-    }
-    s.notches.sort_by_key(|s| s.0);
-    Ok(s)
+/// What a run started from, for replaying it alone from an issue mark ([`crate::marks`]).
+struct RunStart {
+    /// The save as it was.
+    eeprom: Vec<u8>,
+    /// The global tick counter `0x84c494`.
+    global_tick: u32,
+    /// The device the hints followed.
+    hint: Option<crate::hybrid::HintDevice>,
+    locale: crate::locale::LocaleConfig,
+    settings: crate::settings::Settings,
 }
 
 /// Track units from the main-line origin.
@@ -829,6 +863,15 @@ pub struct Play {
     intro: Option<intro::Intro>,
     /// Setting `subtitles`: the voice lines in the translation (`subtitles.rs`).
     subtitles: Option<crate::subtitles::Subtitles>,
+    /// What every poll read (issue marks).
+    log: InputLog,
+    /// [`Play::set_tick_base`]: the log counts app ticks under the front end.
+    tick_base: Option<u64>,
+    start: RunStart,
+    /// `shuppatsu play`: an issue mark waiting for its frame.
+    mark: Option<crate::marks::Pending>,
+    /// The toast of a mark, `{n}` for its number.
+    mark_text: String,
 }
 
 impl Play {
@@ -1036,15 +1079,22 @@ impl Play {
 
     /// Polls the controls and latches the next tick's driver input and menu edges.
     fn poll(&mut self) -> ButtonState {
-        let down = self.down;
         let tick = self.ticks;
-        let keys = &self.script.keys;
+        let mut down = self.script.down_at(tick);
+        for (d, &held) in down.iter_mut().zip(&self.down) {
+            *d |= held;
+        }
+        if self.script.has_pad() {
+            self.controls.feed_pad(self.script.pad_at(tick));
+        }
         // The Shift override is allowed outside driving or while paused (input.md §6).
         let shift_allowed = self.drive.phase() != DrivePhase::Driving || self.flow.paused();
-        let buttons = self.controls.poll(
-            |c| down[usize::from(c)] || keys.iter().any(|&(t, k)| t == tick && k == c),
-            shift_allowed,
-        );
+        let buttons = self.controls.poll(|c| down[usize::from(c)], shift_allowed);
+        // Issue marks: what this poll read, in the session's ticks.
+        let label = self.tick_base.unwrap_or(0) + tick;
+        if self.log.record(label, &down, self.controls.last_pad()) {
+            crate::marks::request();
+        }
         // Analog-lever modes: dialog cursors follow the power notch (menus.md §1.4), the
         // name-entry wheel the brake notch.
         let levers = self
@@ -1458,8 +1508,7 @@ impl Play {
             &view,
             gpu.overlay.rect(width, height),
         );
-        gpu.window.pre_present_notify();
-        gpu.queue.present(frame);
+        gpu.present(frame);
 
         if now - self.title_at >= Duration::from_millis(500) {
             let (frames, worst) = std::mem::take(&mut self.title_frames);
@@ -1552,13 +1601,21 @@ impl ApplicationHandler for Play {
             }
             return;
         }
+        // F12: an issue mark (taken at the next frame).
+        if crate::marks::key_event(&event) {
+            return;
+        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => {
+                if crate::marks::take_request() && self.mark.is_none() {
+                    self.mark = crate::marks::begin(self.gpu.as_mut());
+                }
                 if let Err(e) = self.redraw() {
                     self.fail(event_loop, e);
                     return;
                 }
+                self.finish_mark();
                 if self.leave {
                     event_loop.exit();
                     return;
@@ -1627,6 +1684,8 @@ mod tests {
             settings: crate::settings::Settings::default(),
             mute: true,
             inputs: None,
+            save_file: None,
+            global_tick: None,
             shot: None,
             speedometer: None,
             variant: false,
@@ -1642,6 +1701,7 @@ mod tests {
             sound: None,
             gpu: None,
             data,
+            log: InputLog::default(),
         };
         let mut play = Play::new(shared, opts).unwrap();
         play.script.keys = keys;

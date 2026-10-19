@@ -28,10 +28,10 @@ use crate::front::{Env, snd};
 use crate::gamepad::{Controls, JoyState, PadOptions, PadProfile, PadSource};
 use crate::movie::MoviePlayer;
 use crate::play::{self, Play, PlayOptions, Shared};
-use crate::save::Save;
 use crate::scene::GameData;
 use crate::screens::tables::ScreenTables;
 use crate::screens::{MenuInput, Sfx};
+use crate::script::{InputLog, Script};
 use crate::window::{Gpu, Toggle};
 use anyhow::{Context, Result};
 use shuppatsu_engine::demo::DemoKind;
@@ -44,6 +44,8 @@ use winit::event::{ElementState, KeyEvent, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::PhysicalKey;
 use winit::window::WindowId;
+
+mod mark;
 
 /// The original's fixed tick (timeSetEvent(33, …) at 0x436f30).
 const TICK: Duration = Duration::from_millis(33);
@@ -83,8 +85,10 @@ pub struct AppOptions {
     pub settings: crate::settings::Settings,
     pub mute: bool,
     pub pad: PadOptions,
-    /// Scripted keys, `key <tick>[-<last>] <name>` (app ticks, the run's included).
+    /// Scripted inputs ([`crate::script`]; app ticks, the runs' included).
     pub inputs: Option<PathBuf>,
+    /// Check aid (issue marks): the save to start from, read only (`--save`).
+    pub save_file: Option<PathBuf>,
     /// Headless: run this many app ticks, render one frame to a PPM and exit.
     pub shot: Option<(u64, PathBuf)>,
     pub locale: crate::locale::LocaleConfig,
@@ -177,13 +181,24 @@ pub struct App {
     intro_chosen: Option<Chosen>,
     down: [bool; 256],
     menu_input: MenuInput,
-    script: play::Script,
+    script: Script,
     canvas: Vec<u8>,
     canvas_dirty: bool,
     ticks: u64,
     accumulator: Duration,
     last_frame: Instant,
     error: Option<anyhow::Error>,
+    /// An issue mark waiting for its frame ([`crate::marks`]).
+    mark: Option<crate::marks::Pending>,
+    /// What the session started from, for replaying it from an issue mark.
+    boot: Boot,
+}
+
+/// The save and settings a session started with.
+struct Boot {
+    eeprom: Vec<u8>,
+    locale: crate::locale::LocaleConfig,
+    settings: crate::settings::Settings,
 }
 
 fn map_size(bank: &shuppatsu_render::sprites::SpriteBank, tbl: usize) -> (i16, i16) {
@@ -212,7 +227,7 @@ fn joystick_dat(opts: &PadOptions) -> Option<PathBuf> {
 }
 
 impl App {
-    pub fn new(opts: AppOptions) -> Result<Self> {
+    pub fn new(mut opts: AppOptions) -> Result<Self> {
         let data = GameData::from_env()?;
         let exe_bytes = data.exe()?;
         let exe = Exe::parse(&exe_bytes)?;
@@ -222,14 +237,29 @@ impl App {
         } else {
             crate::save::default_path()
         };
-        let mut save = Save::open(&exe, save_path)?;
+        let mut save = play::open_save(&exe, save_path, opts.save_file.as_deref())?;
         save.save_on_change = opts.settings.save_on_change;
         if let Some(p) = save.path() {
             eprintln!("save: {}", p.display());
         }
-        // `0x8298a4`: a joystick is attached (never in headless runs, to stay deterministic).
-        let joystick =
-            !headless && PadSource::open(PadProfile::Generic).is_some_and(|p| p.connected());
+        let boot = Boot {
+            eeprom: save.eeprom.bytes().to_vec(),
+            locale: opts.locale.clone(),
+            settings: opts.settings,
+        };
+        // A script with `pad` lines is the gamepad (a recorded session, docs/marks.md).
+        let script = play::load_script(opts.inputs.as_deref())?;
+        if script.has_pad() {
+            opts.pad.scripted_pad = Some(script.pad_at(0).is_some());
+        }
+        // `0x8298a4`: a joystick is attached (never in headless runs, to stay deterministic,
+        // unless the script has one).
+        let joystick = match opts.pad.scripted_pad {
+            Some(on) => on,
+            None => {
+                !headless && PadSource::open(PadProfile::Generic).is_some_and(|p| p.connected())
+            }
+        };
         // 0x434ed0: a joystick mode without a joystick falls back to mode 0.
         if save.eeprom.options().control_mode > 3 && !joystick {
             save.eeprom.set_option(options::item::CONTROL, 0);
@@ -278,12 +308,8 @@ impl App {
             screens,
             attract: AttractTables::read(&exe)?,
         };
-        let script = match &opts.inputs {
-            Some(p) => play::parse_script(
-                &std::fs::read_to_string(p).with_context(|| p.display().to_string())?,
-            )?,
-            None => play::Script::default(),
-        };
+        let mut log = InputLog::default();
+        log.start(joystick);
         let now = Instant::now();
         let mut app = Self {
             defs,
@@ -295,6 +321,7 @@ impl App {
                 controls,
                 sound,
                 gpu: None,
+                log,
             }),
             // Boot: `Game_MainFlow` starts with attract (`0x855ffc & 0x40` clear).
             screen: if opts.first_run {
@@ -318,6 +345,8 @@ impl App {
             accumulator: Duration::ZERO,
             last_frame: now,
             error: None,
+            mark: None,
+            boot,
             opts,
         };
         app.fit_front()?;
@@ -365,15 +394,21 @@ impl App {
     /// The input poll at the end of `Task_Tick`: the next tick's edges.
     fn poll(&mut self) {
         let tick = self.ticks;
-        let down = self.down;
-        let keys = &self.script.keys;
+        let mut down = self.script.down_at(tick);
+        for (d, &held) in down.iter_mut().zip(&self.down) {
+            *d |= held;
+        }
         let Some(r) = self.res.as_mut() else {
             return;
         };
-        let b = r.controls.poll(
-            |c| down[usize::from(c)] || keys.iter().any(|&(t, k)| t == tick && k == c),
-            true,
-        );
+        if self.script.has_pad() {
+            r.controls.feed_pad(self.script.pad_at(tick));
+        }
+        let b = r.controls.poll(|c| down[usize::from(c)], true);
+        // Issue marks: what this poll read.
+        if r.log.record(tick, &down, r.controls.last_pad()) {
+            crate::marks::request();
+        }
         let levers = r
             .controls
             .is_analog()
@@ -563,6 +598,8 @@ impl App {
             settings: self.opts.settings,
             mute: self.opts.mute,
             inputs: None,
+            save_file: None,
+            global_tick: None,
             shot: None,
             speedometer: None,
             variant: chosen.variant,
@@ -582,6 +619,8 @@ impl App {
         play.set_down(self.down);
         // 0x84c494 counts every tick since boot, menus included.
         play.set_global_tick(self.ticks as u32);
+        // The run's polls are logged in app ticks.
+        play.set_tick_base(self.ticks);
         Ok(play)
     }
 
@@ -1106,16 +1145,17 @@ impl App {
     fn step_play(&mut self) -> Result<()> {
         self.ticks += 1;
         let tick = self.ticks;
-        let mut down = self.down;
-        for &(t, k) in &self.script.keys {
-            if t == tick {
-                down[usize::from(k)] = true;
-            }
+        let mut down = self.script.down_at(tick);
+        for (d, &held) in down.iter_mut().zip(&self.down) {
+            *d |= held;
         }
         let Screen::Play(p) = &mut self.screen else {
             return Ok(());
         };
         p.set_down(down);
+        if self.script.has_pad() {
+            p.feed_pad(self.script.pad_at(tick));
+        }
         p.step()?;
         self.after_play()
     }
@@ -1251,7 +1291,7 @@ impl App {
     fn redraw(&mut self) -> Result<()> {
         if let Screen::Play(p) = &mut self.screen {
             // The run's ticks are app ticks too, as in the headless loop ([`App::step_play`]):
-            // the global tick of later runs counts them (0x84c494 counts every tick since boot).
+            // the global tick of later runs and the input log count them.
             let before = p.ticks();
             p.redraw()?;
             self.ticks += p.ticks() - before;
@@ -1312,8 +1352,7 @@ impl App {
             if !m.player.rgba().is_empty() {
                 o.render(&gpu.device, &gpu.queue, &view, rect);
             }
-            gpu.window.pre_present_notify();
-            gpu.queue.present(frame);
+            gpu.present(frame);
             m.player.trace_present(upload, now.elapsed());
             return Ok(());
         }
@@ -1329,8 +1368,7 @@ impl App {
             &view,
             gpu.overlay.rect(width, height),
         );
-        gpu.window.pre_present_notify();
-        gpu.queue.present(frame);
+        gpu.present(frame);
         Ok(())
     }
 
@@ -1402,6 +1440,10 @@ impl ApplicationHandler for App {
         if self.fullscreen_key(&event) {
             return;
         }
+        // F12: an issue mark (taken at the next frame).
+        if crate::marks::key_event(&event) {
+            return;
+        }
         match &event {
             WindowEvent::CloseRequested => return self.exit(event_loop),
             WindowEvent::Focused(false) => self.down = [false; 256],
@@ -1432,10 +1474,14 @@ impl ApplicationHandler for App {
             return;
         }
         if matches!(event, WindowEvent::RedrawRequested) {
+            if crate::marks::take_request() && self.mark.is_none() {
+                self.mark = crate::marks::begin(self.gpu_mut());
+            }
             if let Err(e) = self.redraw() {
                 self.error = Some(e);
                 return self.exit(event_loop);
             }
+            self.finish_mark();
             if self.quitting() {
                 return self.exit(event_loop);
             }
@@ -1526,6 +1572,7 @@ mod tests {
             mute: true,
             pad: PadOptions::default(),
             inputs: None,
+            save_file: None,
             shot: Some((0, std::env::temp_dir().join("shuppatsu-unused.ppm"))),
             locale: crate::locale::LocaleConfig::default(),
             locks: crate::config::Locks::default(),
@@ -1582,6 +1629,7 @@ mod tests {
             mute: true,
             pad: PadOptions::default(),
             inputs: None,
+            save_file: None,
             shot: Some((0, std::env::temp_dir().join("shuppatsu-unused.ppm"))),
             locale: crate::locale::LocaleConfig::default(),
             locks: crate::config::Locks::default(),

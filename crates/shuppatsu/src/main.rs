@@ -26,6 +26,7 @@ mod input;
 mod label_audit;
 mod locale;
 mod logo;
+mod marks;
 mod movie;
 mod navigator;
 mod play;
@@ -35,6 +36,7 @@ mod result_view;
 mod save;
 mod scene;
 mod screens;
+mod script;
 mod settings;
 mod shot;
 mod slots;
@@ -63,10 +65,11 @@ use winit::window::WindowId;
 
 const USAGE: &str = "\
 usage: shuppatsu [options] [--joystick-dat <file>] [--combo <file>] [--mute]
-                [--inputs <script>] [--shot <ticks>:<file.ppm>]
+                [--inputs <script>] [--shot <ticks>:<file.ppm>] [--save <eeprom.dat>]
        shuppatsu play <stage 0..19> [--difficulty <0..3, default: the save's>] [--station <n>] [--keys <0..6>] [options]
                      [--joystick-dat <file>] [--combo <file>]
                      [--inputs <script>] [--shot <ticks>:<file.ppm>] [--speedometer <0|1|2>]
+                     [--save <eeprom.dat>] [--global-tick <n>]
        shuppatsu view <route.com> [options]
        shuppatsu shot <route.com> --at <metres> --out <file.ppm> [options]
        shuppatsu pad <monitor|calibrate|learn> [--mode <4..6>] [--joystick-dat <file>] [--combo <file>]
@@ -118,6 +121,9 @@ options:
   --hint-device <pad|keyboard>
                            the button hints shown with hybrid input, fixed (env
                            SHUPPATSU_HINT_DEVICE; headless shots have no pad to follow)
+  --inputs <script>        scripted keys, notches and gamepad (docs/marks.md, \"Input scripts\")
+  --save <eeprom.dat>      start from this save, read only (an issue mark's replay)
+  --global-tick <n>        play: the global tick counter at the start (an issue mark's replay)
 
 switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml key <name> with
   _ for -, env SHUPPATSU_<NAME> = 1/0. Off is the original's behaviour. [default]
@@ -172,6 +178,8 @@ play keys (mode 0): Down/Up power +/-, Right/Left brake +/- (one more press past
 pad (hybrid input, Xbox layout): d-pad or left stick down/up power +/-, d-pad right/left or
   right stick up/down brake +/-, LT/LB power +/-, RT/RB brake +/-, A ATS confirm / panel /
   confirm, B or View cancel, X horn, Y R (auto run), Menu pause
+issue mark (docs/marks.md): F12, or View + Y held for a second, saves the frame, the state
+  and the inputs so far under $XDG_DATA_HOME/shuppatsu/marks (%APPDATA%\\shuppatsu\\marks)
 view keys: Space pause, Up/Down speed, Left/Right jump 100 m, L track lines, F fog, Esc quit";
 
 /// The original's fixed tick (timeSetEvent(33, …) at 0x436f30).
@@ -218,6 +226,8 @@ fn parse_play_args() -> Result<play::PlayOptions> {
         settings,
         mute: false,
         inputs: None,
+        save_file: None,
+        global_tick: None,
         shot: None,
         speedometer: None,
         variant: false,
@@ -249,6 +259,8 @@ fn parse_play_args() -> Result<play::PlayOptions> {
             "--mute" => opts.mute = true,
             "--speedometer" => opts.speedometer = Some(value("0, 1 or 2")?.parse()?),
             "--inputs" => opts.inputs = Some(value("a file")?.into()),
+            "--save" => opts.save_file = Some(value("a file")?.into()),
+            "--global-tick" => opts.global_tick = Some(value("a number")?.parse()?),
             "--shot" => {
                 let s = value("TICKS:FILE")?;
                 let (t, f) = s.split_once(':').context("--shot needs TICKS:FILE")?;
@@ -284,6 +296,7 @@ fn parse_app_args() -> Result<app::AppOptions> {
         mute: false,
         pad: pad_options(&settings, headless)?,
         inputs: None,
+        save_file: None,
         shot: None,
         locale,
     };
@@ -302,6 +315,7 @@ fn parse_app_args() -> Result<app::AppOptions> {
             "--combo" => opts.pad.combo_table = Some(value("a file")?.into()),
             "--mute" => opts.mute = true,
             "--inputs" => opts.inputs = Some(value("a file")?.into()),
+            "--save" => opts.save_file = Some(value("a file")?.into()),
             "--shot" => {
                 let s = value("TICKS:FILE")?;
                 let (t, f) = s.split_once(':').context("--shot needs TICKS:FILE")?;
