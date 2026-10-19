@@ -446,13 +446,13 @@ pub fn draw_pad_panel(
         ui.get("pad_title"),
         title,
     );
-    // The stick rows follow `hybrid::STICK_PULL_IS_MORE` (pulled toward you = more).
+    // The stick rows follow `hybrid::STICK_PULL_IS_MORE` / `BRAKE_PULL_IS_MORE`.
     let rows: [(&[Btn], &str); 10] = [
         (&[DPAD_UD, Btn::LStick], "pad_power_dpad"),
-        (&[Btn::Rt, Btn::Rb], "pad_power_shoulders"),
+        (&[Btn::Lt, Btn::Lb], "pad_power_shoulders"),
         (&[DPAD_LR], "pad_brake_dpad"),
         (&[Btn::RStick], "pad_brake_stick"),
-        (&[Btn::Lt, Btn::Lb], "pad_brake_shoulders"),
+        (&[Btn::Rt, Btn::Rb], "pad_brake_shoulders"),
         (&[Btn::A], "pad_a"),
         (&[Btn::X], "pad_x"),
         (&[Btn::B, Btn::View], "pad_b"),

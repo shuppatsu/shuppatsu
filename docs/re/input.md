@@ -455,9 +455,9 @@ the mode falls back to keyboard mode 0 and a pad connected later is read in the 
 | D-pad → ← | brake + / − (past B8 = EB) | right / left |
 | Left stick ↓ ↑ (past half travel, like mode 4's ±500) | power + / − | cursor down / up |
 | Left stick → ← | — | right / left |
-| Right stick ↓ ↑ | brake + / − (past B8 = EB) | — |
-| RT / RB | power + / − | — |
-| LT / LB | brake + / − | — |
+| Right stick ↑ ↓ | brake + / − (past B8 = EB) | — |
+| LT / LB | power + / − | — |
+| RT / RB | brake + / − | — |
 | A | A bit 0x100000 (Pro-mode panel, ATS confirm) | menu confirm 0x1000 |
 | B, View | — | cancel 0x2000 |
 | X | horn 0x100 | — |
@@ -469,12 +469,19 @@ stepped like the d-pad: the sticks centre themselves, so a stick past half trave
 (`STICK_STEP` = 0.5) holds that lever direction and steps one notch, holding it repeats with
 the original's repeat rule, and it lets go below `STICK_RELEASE` = 0.35 (hysteresis, so a
 stick resting near half travel never chatters into extra steps; a stick resting a few percent
-off centre, like the measured 34354 of 0..65535, holds nothing). Direction: pulled toward the
-player (down) is more, for both sticks, matching the d-pad (↓ = power +, keyboard mode 0) and
-the arcade one-handle lever pulled back; one constant, `hybrid::STICK_PULL_IS_MORE`, flips
-both sticks (the controls-page strings `pad_power_dpad` / `pad_brake_stick` then need the
-arrows swapped). The left stick's → ← are menu directions only; the right stick never moves
-the menu cursor.
+off centre, like the measured 34354 of 0..65535, holds nothing). Direction: the left stick
+pulled toward the player (down) is more power, matching the d-pad (↓ = power +, keyboard mode
+0) and the arcade one-handle lever pulled back (`hybrid::STICK_PULL_IS_MORE`); the right stick
+pushed away (up) applies the brake and pulled back releases it, the user's preference after
+testing a real pad (`hybrid::BRAKE_PULL_IS_MORE` = false). Flipping either constant needs the
+arrows of `pad_power_dpad` / `pad_brake_stick` swapped too. The left stick's → ← are menu
+directions only; the right stick never moves the menu cursor.
+
+**Shoulders.** The left side is power and the right side brake, as the sticks: LT power +, LB
+power −, RT brake + (apply), RB brake − (release), so the trigger is always "more" and the
+bumper "less" (the user's choice after testing a real pad; earlier builds had power on the
+right and brake on the left). The controls page rows `pad_power_shoulders` /
+`pad_brake_shoulders` show the LT LB and RT RB glyphs (`front::options`).
 
 **Triggers.** LT/RT are analog: pressed at `TRIGGER_PRESS` = 0.5 of their travel, released
 below `TRIGGER_RELEASE` = 0.35 (test `hybrid::tests::stick_and_trigger_hysteresis`).
@@ -507,7 +514,7 @@ On Linux, a Microsoft pad without an SDL mapping has X and Y swapped back. Unsee
 at rest. With these, the user's pad reads correctly in a live `pad monitor` run (LT/RT 0..1, right
 stick, X = horn, Y = R). What was wrong before: the triggers were read as `is_pressed`
 of `LeftTrigger2`/`RightTrigger2`, which on this pad are dead digital codes, and LB/RB step
-power − / brake −, which do nothing at P0/B0, so all four looked dead.
+the "less" directions (power − / brake −), which do nothing at P0/B0, so all four looked dead.
 
 This replaces the older generic mapping, which put horn and cancel on one button because the
 binding rows of modes 4–6 share them. B is back in Xbox convention, so the horn moved to X.

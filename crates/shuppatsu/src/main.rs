@@ -168,9 +168,9 @@ settings file: $XDG_CONFIG_HOME/shuppatsu/config.toml (~/.config/shuppatsu; %APP
 
 play keys (mode 0): Down/Up power +/-, Right/Left brake +/- (one more press past B8 = EB),
   Space horn, Enter ATS confirm / panel / menu confirm, Esc pause / cancel, Up/Down menu cursor
-pad (hybrid input, Xbox layout): d-pad or left stick down/up power +/-, right/left brake +/-,
-  RT/RB power +/-, LT/LB brake +/-, A ATS confirm / panel / confirm, B or View cancel, X horn,
-  Y R (auto run), Menu pause
+pad (hybrid input, Xbox layout): d-pad or left stick down/up power +/-, d-pad right/left or
+  right stick up/down brake +/-, LT/LB power +/-, RT/RB brake +/-, A ATS confirm / panel /
+  confirm, B or View cancel, X horn, Y R (auto run), Menu pause
 view keys: Space pause, Up/Down speed, Left/Right jump 100 m, L track lines, F fog, Esc quit";
 
 /// The original's fixed tick (timeSetEvent(33, …) at 0x436f30).

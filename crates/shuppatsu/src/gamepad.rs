@@ -2385,13 +2385,13 @@ mod tests {
         // Keyboard ↓ (power+ in mode 0) and the pad's d-pad ↓ in the same tick: one step.
         c.tick_hybrid(keys(&[DIK_DOWN]), xpad(|i| i.dpad_down = true));
         assert_eq!(c.power(), 1);
-        // RT, d-pad ↓ and the key together, held: still one virtual key (steps on 1, 9, 12).
+        // LT, d-pad ↓ and the key together, held: still one virtual key (steps on 1, 9, 12).
         for _ in 1..12 {
             c.tick_hybrid(
                 keys(&[DIK_DOWN]),
                 xpad(|i| {
                     i.dpad_down = true;
-                    i.rt = 1.0;
+                    i.lt = 1.0;
                 }),
             );
         }
@@ -2402,27 +2402,27 @@ mod tests {
         c.keyboard.power = 0;
         for t in 1..=12 {
             let k: &[u8] = if t <= 5 { &[DIK_DOWN] } else { &[] };
-            c.tick_hybrid(keys(k), xpad(|i| i.rt = if t >= 3 { 1.0 } else { 0.0 }));
+            c.tick_hybrid(keys(k), xpad(|i| i.lt = if t >= 3 { 1.0 } else { 0.0 }));
         }
         assert_eq!(c.power(), 3);
-        // Brake: LT and → together reach EB on the press only; the repeat stops at B8.
+        // Brake: RT and → together reach EB on the press only; the repeat stops at B8.
         c.tick_hybrid(keys(&[]), xpad(|_| {}));
         for _ in 0..60 {
             c.tick_hybrid(
                 keys(&[]),
                 xpad(|i| {
-                    i.lt = 1.0;
+                    i.rt = 1.0;
                     i.dpad_right = true;
                 }),
             );
         }
         assert_eq!(c.brake(), 8);
         c.tick_hybrid(keys(&[]), xpad(|_| {}));
-        c.tick_hybrid(keys(&[0xcd]), xpad(|i| i.lt = 1.0));
+        c.tick_hybrid(keys(&[0xcd]), xpad(|i| i.rt = 1.0));
         assert_eq!(c.brake(), EB);
         // Either device steps alone too.
         c.tick_hybrid(keys(&[]), xpad(|_| {}));
-        c.tick_hybrid(keys(&[]), xpad(|i| i.lb = true));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.rb = true));
         c.tick_hybrid(keys(&[]), xpad(|_| {}));
         c.tick_hybrid(keys(&[0xcb]), xpad(|_| {}));
         assert_eq!(c.brake(), 7);
@@ -2580,7 +2580,7 @@ mod tests {
 
     #[test]
     fn hybrid_sticks_and_dpad_never_double_step() {
-        use crate::hybrid::tests::PULL;
+        use crate::hybrid::tests::{BRAKE_PULL, PULL};
         let mut c = hybrid(0, None);
         c.keyboard.brake = 0;
         // D-pad ↓ and the left stick pulled in the same tick: one power step; held together
@@ -2616,17 +2616,17 @@ mod tests {
                 keys(&[]),
                 xpad(|i| {
                     i.dpad_right = y == 1.0;
-                    i.right_y = y * PULL;
+                    i.right_y = y * BRAKE_PULL;
                 }),
             );
         }
         assert_eq!(c.brake(), 1);
         // Released and pulled again: the next step. Pushed up: release.
         c.tick_hybrid(keys(&[]), xpad(|_| {}));
-        c.tick_hybrid(keys(&[]), xpad(|i| i.right_y = 0.9 * PULL));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.right_y = 0.9 * BRAKE_PULL));
         assert_eq!(c.brake(), 2);
         c.tick_hybrid(keys(&[]), xpad(|_| {}));
-        c.tick_hybrid(keys(&[]), xpad(|i| i.right_y = -0.9 * PULL));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.right_y = -0.9 * BRAKE_PULL));
         assert_eq!(c.brake(), 1);
         // The left stick's → is not the brake any more.
         c.tick_hybrid(keys(&[]), xpad(|_| {}));
@@ -2639,18 +2639,18 @@ mod tests {
         // Mode 3: the pad's brake+ moves the one handle toward the brake side.
         let mut c = hybrid(3, None);
         c.keyboard.brake = 0;
-        c.tick_hybrid(keys(&[]), xpad(|i| i.rt = 1.0));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.lt = 1.0));
         c.tick_hybrid(keys(&[]), xpad(|_| {}));
         assert_eq!((c.power(), c.brake()), (1, 0));
-        c.tick_hybrid(keys(&[]), xpad(|i| i.lt = 1.0));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.rt = 1.0));
         c.tick_hybrid(keys(&[]), xpad(|_| {}));
-        c.tick_hybrid(keys(&[]), xpad(|i| i.lt = 1.0));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.rt = 1.0));
         assert_eq!((c.power(), c.brake()), (0, 1));
         // Mode 2: the pad steps the power notch; the digits take it back when they change.
         let mut c = hybrid(2, None);
-        c.tick_hybrid(keys(&[]), xpad(|i| i.rt = 1.0));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.lt = 1.0));
         c.tick_hybrid(keys(&[]), xpad(|_| {}));
-        c.tick_hybrid(keys(&[]), xpad(|i| i.rt = 1.0));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.lt = 1.0));
         assert_eq!(c.power(), 2);
         c.tick_hybrid(keys(&[]), xpad(|_| {}));
         assert_eq!(c.power(), 2, "no digit held is not a change");

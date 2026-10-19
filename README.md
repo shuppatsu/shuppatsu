@@ -267,18 +267,20 @@ handle); the in-game controls page shows each.
 | D-pad → / ← | brake apply / release (past B8 = emergency) | left / right |
 | Left stick ↓ / ↑ | power notch up / down | cursor |
 | Left stick → / ← | | left / right |
-| Right stick ↓ / ↑ | brake apply / release (past B8 = emergency) | |
-| RT / RB | power notch up / down | |
-| LT / LB | brake apply / release | |
+| Right stick ↑ / ↓ | brake apply / release (past B8 = emergency) | |
+| LT / LB | power notch up / down | |
+| RT / RB | brake apply / release | |
 | A | ATS confirm, Pro-mode panel | confirm |
 | B or View | | cancel / back |
 | X | horn | |
 | Y | | automatic run (route select) |
 | Menu | pause | resume |
 
-The sticks step like the d-pad: push past half way for one notch, hold to repeat. Pulling a
-stick toward you is more (power or brake). The triggers count from half way. Pressing the
-same direction on two inputs or devices counts once. Pads can be plugged in at any time.
+The sticks step like the d-pad: push past half way for one notch, hold to repeat. Pulling the
+left stick toward you is more power; pushing the right stick away is more brake. The left
+shoulders are power and the right ones brake: the trigger is more, the bumper less. The
+triggers count from half way. Pressing the same direction on two inputs or devices counts
+once. Pads can be plugged in at any time.
 
 **Densha de GO! controllers:**
 
