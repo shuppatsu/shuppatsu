@@ -8,17 +8,19 @@ settings live only in the port's `config.toml`.
 
 ## Where a setting comes from
 
-* `config.toml` in the user's config dir, next to `eeprom.dat`: `$XDG_CONFIG_HOME/ddg/`
-  (default `~/.config/ddg/`), `%APPDATA%\ddg\` on Windows. Every key is optional.
-* The environment: `DDG_<KEY>` in capitals (`DDG_WIDE_WEATHER=0`); switches take `1`/`0`,
+* `config.toml` in the user's config dir, next to `eeprom.dat`: `$XDG_CONFIG_HOME/shuppatsu/`
+  (default `~/.config/shuppatsu/`), `%APPDATA%\shuppatsu\` on Windows. Every key is optional.
+  On the first start after the rename, an old `ddg` folder in the same place is copied to the
+  new one (only when the new one does not exist yet); the old folder is kept.
+* The environment: `SHUPPATSU_<KEY>` in capitals (`SHUPPATSU_WIDE_WEATHER=0`); switches take `1`/`0`,
   `true`/`false`, `on`/`off`; the two levels (`msaa`, `anisotropic`) take one of their steps
-  (`DDG_MSAA=4`) or `off` (= 1).
+  (`SHUPPATSU_MSAA=4`) or `off` (= 1).
 * The command line: a switch is `--<key>` (on) / `--no-<key>` (off), with `-` for `_`
   (`--no-wide-weather`); the older names are kept as aliases (`--original-visibility`,
   `--original-weather`, `--original-traffic`, `--uncapped`). The last flag of a pair wins. A
   level is `--msaa 4` or `--msaa=4`, `--no-msaa` for off; in `config.toml` `msaa = 4`.
-* Precedence: flag > environment > `config.toml` > default. The front end (`ddg-game`),
-  `ddg-game play` and `ddg-game view` read the file; headless runs (`--shot`, the `shot`
+* Precedence: flag > environment > `config.toml` > default. The front end (`shuppatsu`),
+  `shuppatsu play` and `shuppatsu view` read the file; headless runs (`--shot`, the `shot`
   subcommand) never do, so checks stay reproducible with the defaults, the environment and
   the flags.
 * A file that does not parse is reported and ignored; a bad value (`fog = 3`,
@@ -34,9 +36,9 @@ wide_weather = false      # rain and snow only in the 4:3 area, as the original
 save_on_change = false    # eeprom.dat written only at exit, as the original
 ```
 
-Code: `crates/ddg-game/src/settings.rs` (`Settings`: the switches, their env variables and
-flags), `crates/ddg-game/src/config.rs` (`PortConfig`, `layered`) and `LocaleConfig` in
-`crates/ddg-game/src/locale.rs` (language, fonts, layout, scaling). `main.rs` builds both once
+Code: `crates/shuppatsu/src/settings.rs` (`Settings`: the switches, their env variables and
+flags), `crates/shuppatsu/src/config.rs` (`PortConfig`, `layered`) and `LocaleConfig` in
+`crates/shuppatsu/src/locale.rs` (language, fonts, layout, scaling). `main.rs` builds both once
 and passes them down in the options (`AppOptions`, `PlayOptions`, the viewer's `Options`; the
 keyboard switch in `PadOptions`, the save switch on `Save`); there are no globals. Tests:
 `config::tests` (every key from the file, the environment and both flags; the precedence; the
@@ -50,7 +52,7 @@ and the six options rows (positions, values, value pages, `Options_Set`) stay ex
 original's; only moving the cursor below 距離メーター reaches the new row. With the analog
 levers (control modes 5/6) the options cursor follows the power notch P0–P5 and cannot reach
 a seventh row, so there the horn opens it (the original reads no horn on that page).
-Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
+Code: `crates/shuppatsu/src/front/port_settings.rs` (screen, items, values),
 `App::apply_port_setting` in `app.rs`, `config::store` / `config::locks`.
 
 * **Look**: the options page's header bar, menu backdrop and button legend (0x42a820 page 8)
@@ -85,14 +87,14 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
   when it starts (the HUD layout, interpolation, the 3D and caption switches,
   `save_timed_out_names`). *Applies after a restart*: `vsync` (the surface's present mode is
   chosen when the window opens).
-* **Locked**: a setting given by a flag or a `DDG_*` variable (they override the file) shows
+* **Locked**: a setting given by a flag or a `SHUPPATSU_*` variable (they override the file) shows
   its value dimmed, without the ◀ ▶, and *Locked: set by --no-fog on the command line* /
-  *Locked: set by the environment variable DDG_FOG*; changing it only plays the cancel sound.
+  *Locked: set by the environment variable SHUPPATSU_FOG*; changing it only plays the cancel sound.
   `font`, `display_font` and `texture_pack` are paths: shown, changed only in `config.toml`.
 * Tests: `front::port_settings::tests` (navigation, scrolling, levers, value cycling, locks,
   the `config.toml` round trip of every key, both catalogues complete, drawing),
   `front::options::tests::port_settings_row`, `app::tests::port_settings_apply_live`
-  (needs `DDG_DATA_DIR`).
+  (needs `SHUPPATSU_DATA_DIR`).
 
 ## Settings
 
@@ -112,7 +114,7 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
 | `msaa` | 1 (off) | `--msaa <1\|2\|4\|8>`, `--no-msaa` | aliased polygon edges and colour-keyed cut-outs (wires, fences, trees) | the 3D pass multisampled N× and resolved (the HUD and 2D layers are not); the colour-keyed cut-outs use alpha to coverage from a sharpened bilinear key, so their edges are smoothed too. A count the GPU lacks falls back to the next lower one (renderer.md §14.3) |
 | `ground_variation` | off | `--[no-]ground-variation` | ground textures repeat with an even brightness | ground surfaces (fields, snow, gravel and verge strips, ground slabs; not track, platforms, buildings, trains or signs) get a soft world-space brightness (mostly ±6 %, at most ±15 %) and warm/cool tint (±4 %) variation over 5–25 m, procedural in the shader (renderer.md §14.1–14.2) |
 | `ground_detiling` | off | `--[no-]ground-detiling` | ground textures tile in a visible regular grid | the same ground surfaces sampled with per-region offsets and mirrors (blended at the region edges, keyed on world position), only along the axes where the texture repeats and wraps seamlessly, always inside its atlas rect (renderer.md §14.1, §14.5) |
-| `texture_pack` | unset | `--texture-pack <dir>` | the textures of `tex*.rom` | replacement 3D texture pages (area and train `tex*.rom`) from a pack directory, any whole multiple of the original size; a page the pack lacks keeps the original; sampling stays nearest unless `texture_filtering` (docs/texture-packs.md; packs made with `ddg-tools upscale-textures`) |
+| `texture_pack` | unset | `--texture-pack <dir>` | the textures of `tex*.rom` | replacement 3D texture pages (area and train `tex*.rom`) from a pack directory, any whole multiple of the original size; a page the pack lacks keeps the original; sampling stays nearest unless `texture_filtering` (docs/texture-packs.md; packs made with `shuppatsu-tools upscale-textures`) |
 | `fog` | on | `--[no-]fog` | the snow fog only with DengoSetting's FOGENABLE, which a fresh install lacks: no fog | the snow fog while it snows (`snow_fog`, renderer.md §13.9). `view --fog` is fog everywhere, a separate viewer option (off) |
 | `wide_weather` | on | `--[no-]wide-weather`, `--original-weather` | raindrops and snow in the 4:3 area only (x 0..496) | over the whole visible width; at 4:3 identical to the original (renderer.md §13.9). Test `weather::tests::wide_weather_off_is_the_original_area` |
 | `wide_coupling_band` | on | `--[no-]wide-coupling-band` | the coupling minigame's black band under its panel (virtual rows 268..400) only across the 4:3 width of the original's screen; the view goes on beside it on a wide window | the band across the whole visible width, so the bottom of the screen is black edge to edge under the centred panel; at 4:3 identical to the original (hud.md §3.16) |
@@ -124,7 +126,7 @@ Code: `crates/ddg-game/src/front/port_settings.rs` (screen, items, values),
 | `fine_depth` | on | `--[no-]fine-depth` | the 16-bit Z buffer: depth steps grow with the square of the distance (3 m at 320 m, 12 m at 640 m with `draw_distance`), so distant surfaces close together flicker | depth in steps of a constant 0.07 % of the distance (22 cm at 320 m, 87 cm at 1280 m). Either way the steps are whole and ties go to the later part in the original's draw order, so coplanar track and ground layers (crossovers, grass over the ballast's edge) show the later one drawn without z-fighting (renderer.md §6.1) |
 | `interpolate` | on | `--[no-]interpolate` | everything moves at the 30 Hz tick | the camera along the track, AI trains, wiper, snow scroll and speedometer needle placed between the last two ticks at the display's rate (renderer.md §13.9); off: every frame shows the last tick |
 | `vsync` | on | `--[no-]vsync`, `--uncapped` | — (DirectDraw flip) | presents with vsync (FIFO); off: uncapped |
-| `fullscreen` | off | `--[no-]fullscreen`; Alt+Enter / F11 at any time | full screen at 640×480 (DirectDraw exclusive; windowed only with `-debug`, renderer.md §3) | borderless full screen on the window's monitor at its own resolution; off: a window. Alt+Enter and F11 switch it in every window (menus, play, view) and write the new state to `config.toml`, unless a flag or `DDG_FULLSCREEN` fixed it for the run |
+| `fullscreen` | off | `--[no-]fullscreen`; Alt+Enter / F11 at any time | full screen at 640×480 (DirectDraw exclusive; windowed only with `-debug`, renderer.md §3) | borderless full screen on the window's monitor at its own resolution; off: a window. Alt+Enter and F11 switch it in every window (menus, play, view) and write the new state to `config.toml`, unless a flag or `SHUPPATSU_FULLSCREEN` fixed it for the run |
 | `wide_menus` | on | `--[no-]wide-menus` | the 640×480 menus and attract title picture centred over black | on a wide window the menu backdrops continue to the edges (their tile pattern repeated) and so does the attract title picture tbl 0x410 (paper synthesised from its plain edges, blended in at the seams), never stretched; at 4:3 pixel-identical (menus.md §14) |
 | `hud_upscale` | off | `--[no-]hud-upscale` | blocks of whole pixels: each art pixel of the HUD and menu sprites an N×N square at the canvas multiple | xBRZ-shaped edges: at canvas multiples 2–4 each tilemap is enlarged as one image with index-preserving xBRZ (no new colours, no seams at tile borders), still drawn through the palette, so palette swaps, the animated speed readout, the route strip and fades are intact; other multiples, the rect layer, paper fills and translated text unchanged (docs/texture-packs.md, "HUD sprites") |
 | `one_line_captions` | on | `--[no-]one-line-captions` | — (Japanese sprites) | with a translation: station captions and banners as one line of text instead of three sprites translated one by one (localisation.md) |

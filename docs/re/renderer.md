@@ -400,8 +400,8 @@ Draw lists are the 9 task lists at `0x84c180..0x84c1ec`; each task's draw callba
 ## 13. Weather and cab effects in the driving view
 
 Source: disassembly of 0x424740–0x425232 (the Ghidra output loses the x87 operands of these
-functions), 0x40e370 / 0x40e3d0, and the callers named below. Port: `ddg-game/src/weather.rs`
-(state and quads), `ddg-render/src/effects.rs` + `Renderer::effects` (the pass).
+functions), 0x40e370 / 0x40e3d0, and the callers named below. Port: `shuppatsu/src/weather.rs`
+(state and quads), `shuppatsu-render/src/effects.rs` + `Renderer::effects` (the pass).
 
 ### 13.1 Who creates what — confirmed (code)
 
@@ -545,7 +545,7 @@ render task's border quads (0x425680), the viewer camera preset (0x41c3c0) and t
 
 ### 13.9 Port enhancements (decided, on by default)
 
-Each has its setting in docs/settings.md (`config.toml` key, `DDG_<KEY>`, `--<key>` /
+Each has its setting in docs/settings.md (`config.toml` key, `SHUPPATSU_<KEY>`, `--<key>` /
 `--no-<key>`).
 
 Presentation only: the weather state, its RNG for the original area, the rules and every trace
@@ -586,10 +586,10 @@ The original's world pass is nearest sampling without mipmaps, colour-key transp
 antialiasing (§6, §9). Four settings change only how the 3D pass shades; each is off by
 default, and with all four off the frame is the same as before they existed (headless shots of
 the three comparison views below are byte-identical to the build before them). Settings in
-docs/settings.md; code in `crates/ddg-render/src/shader.wgsl`, `gpu.rs` and `ground.rs`.
+docs/settings.md; code in `crates/shuppatsu-render/src/shader.wgsl`, `gpu.rs` and `ground.rs`.
 Comparison sheet: `out/explain/gfx/shading/` (not committed: derived from game data).
 
-### 14.1 Which surfaces are ground (`ddg_render::ground`)
+### 14.1 Which surfaces are ground (`shuppatsu_render::ground`)
 
 The original has no ground flag: terrain is ordinary part groups. The port marks it per vertex
 (`Vertex::surface`), from what the scene composer knows and from the geometry:

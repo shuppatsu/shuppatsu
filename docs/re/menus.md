@@ -5,7 +5,7 @@ route/stage select, the pre-run screens, pause, the station result, continue/gam
 report card, ranking and name entry, the bonus game, attract, and where the save data lives.
 Sources: the Ghidra decomp in `re/decomp/dengo3k/`, task-update functions that Ghidra left as labels
 (decompiled separately by a headless script into `re/decomp/dengo3k_labs/<addr>.c`), `objdump` of
-`BIN/dengo3k.exe`, and contact sheets of the `tbl.rom` maps (`ddg-tools export tilemaps`, palette 4)
+`BIN/dengo3k.exe`, and contact sheets of the `tbl.rom` maps (`shuppatsu-tools export tilemaps`, palette 4)
 to identify the art. VA = file offset + 0x400000 for `.rdata`/`.data`.
 
 Confidence: **confirmed** = read from code or bytes; **likely** = strong inference; **guess** =
@@ -303,7 +303,7 @@ whatever the option. The option itself is not the cause: the default image byte 
 speed meter 1, distance meter 2 = m, sound 0 = on), and nothing but the options page writes
 0x856354. The port: `Hud::stage_run` (false in `CabHud::demo_setup`) gates the overlay; the
 headless and fresh-install runs take their options from that default image (`save.rs`), a
-demo from the save like a run (`--speedometer` overrides only `ddg-game play`). The cold-start
+demo from the save like a run (`--speedometer` overrides only `shuppatsu play`). The cold-start
 opening has bit 2 clear as well, so it shows no dial either (the port draws none there).
 
 ### 2.5 Photos and poster — confirmed
@@ -325,7 +325,7 @@ the last tick an exact copy); the title call 0x1024 at tick 100; the item ends a
 
 * BGM 0x19e starts (0x42ff20). Header and legends: `0x42a820(0)`.
 * Items: descriptors 0x47c778 on tbl 0x513 (palette 0x18), slot 0x93+i at
-  (x0 + 20, 0x8e + 106·i − scroll). Five items are drawn when input mode is 6 (the DDG controller),
+  (x0 + 20, 0x8e + 106·i − scroll). Five items are drawn when input mode is 6 (the Densha de GO! controller),
   four otherwise. **confirmed**
 
 | Index | Label (tbl 0x513 row) | Result → action |
@@ -571,7 +571,7 @@ Created after the arrival wait (rules.md §7.3 gives the deductions). Timing and
 
 * Skip: confirm or cancel pressed with the counter in 1..80 jumps to 80; pressed after 80 jumps
   to 120 (the check runs after the counter is incremented). **confirmed**
-* Correction (0x413f30, implemented in `crates/ddg-game/src/screens/result.rs`): the EB row's
+* Correction (0x413f30, implemented in `crates/shuppatsu/src/screens/result.rs`): the EB row's
   step sets the counter from 20 to **30** before drawing, so the "30" and "40" rows of the table
   above are counter values, reached on phase-B ticks 20 and 30; lesson stages jump straight to
   40 at tick 20. Without skipping the screen lasts 96 + 20 + 90 + 1 = **207 ticks** (lesson
@@ -626,7 +626,7 @@ Created after the arrival wait (rules.md §7.3 gives the deductions). Timing and
 
 ### 11.2 Ranking insert and name entry 0x41e8d0 — confirmed
 
-Implemented in `crates/ddg-game/src/screens/ranking.rs` (tables read from the exe) and wired by
+Implemented in `crates/shuppatsu/src/screens/ranking.rs` (tables read from the exe) and wired by
 `screens/flow.rs` / `play.rs`; headless shots of stage 1 (time-out run, value 70 → rank 6)
 show the art lining up with these positions. Compared with a Wine capture of the original
 (stage 1, train left standing until game over, `scripts/capture-original.sh` with a 200 s
@@ -866,14 +866,14 @@ sound 0; no clear marks). So a missing file (mirror still zero) or a foreign one
 defaults; a short file with the right magic keeps its partial bytes over zeros. The same ranking
 table is restored alone by 0x418e70 / 0x41e720 (debug/test-mode resets, callers 0x4021f3 and
 0x4223d2). The default tables are each sorted by score; table 3 (route 1) is 124, 113, 100, 90,
-77, 64, 54, 41, 28, 18 with name `E3系 `. `crates/ddg-game/src/save.rs` reads the image from the
+77, 64, 54, 41, 28, 18 with name `E3系 `. `crates/shuppatsu/src/save.rs` reads the image from the
 exe at runtime.
 
 The checksum words +0x20 and +0x330 are rewritten by 0x418930 after every pack; its sum routine
 0x425dc0 is `xor eax,eax; ret`, so both are always 0 on PC. **confirmed**
 
-Our port keeps the file byte-compatible and stores it at `$XDG_CONFIG_HOME/ddg/eeprom.dat`
-(else `~/.config/ddg/`, `%APPDATA%\ddg\` on Windows); headless shots use the defaults and never
+Our port keeps the file byte-compatible and stores it at `$XDG_CONFIG_HOME/shuppatsu/eeprom.dat`
+(else `~/.config/shuppatsu/`, `%APPDATA%\shuppatsu\` on Windows); headless shots use the defaults and never
 write. Besides the exit write, the port writes the file right after every change (§14.1).
 
 | File off | VA | Content |
@@ -910,13 +910,13 @@ are unpacked to `0x84fca0 + 0x50·table + 8·row` (4 name bytes + 4 decimal digi
 
 ## 14. The port's front end
 
-`ddg-game` with no subcommand (`crates/ddg-game/src/app.rs`) sequences `Game_MainFlow`: attract →
+`shuppatsu` with no subcommand (`crates/shuppatsu/src/app.rs`) sequences `Game_MainFlow`: attract →
 title menu → route select → lever check (modes 5/6) → stage intro (fly-by or chase,
-`play/intro.rs`, its own run) → departure board → the run (`crates/ddg-game/src/play.rs`,
+`play/intro.rs`, its own run) → departure board → the run (`crates/shuppatsu/src/play.rs`,
 built from the app's shared window, sprite bank, layer, save,
-input and sound device) → attract again. The screens are `crates/ddg-game/src/front/`, one state
+input and sound device) → attract again. The screens are `crates/shuppatsu/src/front/`, one state
 machine per task, with the exe tables read at runtime (`front/tables.rs`). Headless checks:
-`ddg-game --inputs <script> --shot <ticks>:<file.ppm>` (script keys as for `play`, plus `r`).
+`shuppatsu --inputs <script> --shot <ticks>:<file.ppm>` (script keys as for `play`, plus `r`).
 
 Faithful (code reading, unit-tested, art lined up in headless shots; not compared with the
 running original): the title menu (list scroll, clamps, 30-tick blink, sounds, five items with
@@ -943,10 +943,10 @@ Approximated or left out:
   outside the inset x 64–576 is masked black to the window edges and the canvas bars reach the
   edges of a wide canvas, so every shape shows the 4:3 picture (compared frame by frame with a
   Wine capture of the original at 640×480).
-* The ending (`play/ending.rs`) and the bonus game (`ddg_engine::bonus`, `play/bonus.rs`) run in
+* The ending (`play/ending.rs`) and the bonus game (`shuppatsu_engine::bonus`, `play/bonus.rs`) run in
   the end-of-run flow and between stations. Approximated: the registry ending bits, the bonus
   game's force feedback and motor-pitch sounds, the bonus aspect 1.28; the bonus game is not
-  recorded for replays (`REPLAY.DAT` is not implemented). `ddg-game play <stage> --ending
+  recorded for replays (`REPLAY.DAT` is not implemented). `shuppatsu play <stage> --ending
   full|plain` starts with the ending to check it.
 * Replays (`REPLAY.DAT`) are not implemented: R toggles the flag, no row ever shows the 自動運転
   mark, and leaving the select switches the flag off (what 0x436640 does without a replay).

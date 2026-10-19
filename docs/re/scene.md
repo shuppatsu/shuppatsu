@@ -3,8 +3,8 @@
 Scope: what the driving view draws each frame and where. That covers the rail and track-side
 models built from the `.COM` draw buckets, the in-cab camera, how scenery and track runs are
 picked for drawing (and whether that depends on the 4:3 view), and the sky/ground background.
-Addresses are VAs in `dengo3k.exe` (3000-bandai). Code: `crates/ddg-formats/src/scene.rs`.
-Data tests: `crates/ddg-formats/tests/data_scene.rs`.
+Addresses are VAs in `dengo3k.exe` (3000-bandai). Code: `crates/shuppatsu-formats/src/scene.rs`.
+Data tests: `crates/shuppatsu-formats/tests/data_scene.rs`.
 
 Confidence: **confirmed** = read from the code and checked against all data where that applies,
 **likely** = one source or strong inference, **guess** = needs an experiment (oracle or Wine
@@ -546,7 +546,7 @@ width it returns exactly the 3 original tiles.
 `scene::background()` returns the per-frame plan. `BackgroundTables` holds the tables;
 `sky_quads`, `ground_quad`, `extra_quad` turn them into `TexQuad2d` / `FlatQuad2d`.
 
-## 7. API (`ddg_formats::scene`)
+## 7. API (`shuppatsu_formats::scene`)
 
 - `SceneTables::read(&exe, max_run_kind)`: every table above (rails, kinds, bands, eye
   heights, tunnel plugs, animated parts, background).
@@ -575,8 +575,8 @@ width it returns exactly the 3 original tiles.
 
 At each station stop the result screen (menus.md §9) does not keep the cab view. It shows a
 **replay of the last 4 s of the approach in a small platform set at the world origin**, in two
-viewports. Code: `ddg_engine::stop_replay`, `ddg_formats::result_camera`,
-`crates/ddg-game/src/result_view.rs`.
+viewports. Code: `shuppatsu_engine::stop_replay`, `shuppatsu_formats::result_camera`,
+`crates/shuppatsu/src/result_view.rs`.
 
 ### 8.1 What is drawn — confirmed (code) / confirmed (port screenshots look right; no Wine comparison yet)
 
@@ -760,7 +760,7 @@ The same frame (0x40eed0, `|= 0x20000`, caption, sound 0x197, closing) with: 0x4
 the trace), then the player's own train
 `0x406960(engine index + 6 + k[stage], mode 1, 100 km/h, 0, 0x4596e0[stage] | 0x1000, 1)`,
 BGM 0x197 and the card. k is a stack table built in 0x408f40's prologue (0x408f40..0x408fe0,
-read with `ddg_formats::code::stack_table`): 0x55 for stages 0–2 and 17–19, 0x20 for 3–4,
+read with `shuppatsu_formats::code::stack_table`): 0x55 for stages 0–2 and 17–19, 0x20 for 3–4,
 0x10 for 5–6, 0x90 / 0x86 / 0x96 for 7 / 8 / 9, 0x9a for 10–11, 0x6e, 0x6b for 12, 13, 0x7b for
 14–15, 0xa7 for 16 (stage 0: 91 points ahead, stage 9: 156). The model row is the stage's
 train (0x4596e0: 11 for stage 0, 42 for stage 9); 0x1000 runs it forwards with the row's second
@@ -785,10 +785,10 @@ the stage 0 and 9 captures match the port's placement to the pixel)
 What it looks like: the driving view at the station, the train's tail standing just ahead under
 the card, running away with the camera at its heels, then drawing off as the camera slows.
 
-### 9.3 Port (`crates/ddg-game/src/play/intro.rs`)
+### 9.3 Port (`crates/shuppatsu/src/play/intro.rs`)
 
 The front end runs the intro as its own `Play` (like the attract opening) between the 16 loading
-ticks and the 4 before the board; `ddg-game play <stage> --intro` plays it alone. The rows come
+ticks and the 4 before the board; `shuppatsu play <stage> --intro` plays it alone. The rows come
 from the exe; the camera is `Drive::ending_place` / `ending_tick` / `ending_kill`, the fly-by's
 train the normal spawner, the chase's `Drive::ending_place_train` (`Traffic::place_train`, the
 0x406960 port). Compared frame by frame with the original (fly-by: stages 1 and 13; chase:

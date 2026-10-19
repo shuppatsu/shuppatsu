@@ -1,13 +1,17 @@
-# densha: Densha de GO! 2 Kōsoku-hen 3000-bandai, native
+# Shuppatsu
 
-A native, open-source reimplementation of the Windows version of **Densha de GO! 2
-Kōsoku-hen 3000-bandai** (電車でGO！２ 高速編 ３０００番台), written from scratch in Rust for
-Linux and Windows. It plays the original game from **your own disc**: the routes, models,
-textures, sounds, music and the original's own tables are read from the disc's files at
-runtime.
+**Shuppatsu** (出発): an open-source engine for playing **Densha de GO! 2 Kōsoku-hen
+3000-bandai** (電車でGO！２ 高速編 ３０００番台) from your own disc, written from scratch in Rust
+for Linux and Windows. The routes, models, textures, sounds, music and the original's own
+tables are read from the disc's files at runtime.
 
 It is a new engine. It is not an emulator, not a wrapper around the original exe and not a
-patch, and it needs neither Windows nor Wine on Linux. **No game files are included.**
+patch, and it needs neither Windows nor Wine on Linux. **No game files are included.** It is an
+unofficial fan project, not affiliated with the game's publishers (see [Legal](#legal)).
+
+*About the name:* 出発 (*shuppatsu*, "departure") is the first word of 出発進行
+(*shuppatsu shinkō*), the call a Japanese driver makes when the starting signal clears. The
+project uses its own name rather than the game's so that it carries no one else's trademark.
 
 <!-- Screenshots: images of the running game are derived from game data, so they are not
      committed to this repository (see "Legal"). Link to externally hosted ones here. -->
@@ -140,7 +144,7 @@ nix develop                                  # or install bchunk, p7zip and unsh
 scripts/extract-disc.sh /path/to/dengo3k.cue # also .mdf, .bin or .iso; for MDF/MDS pass the .mdf
 ```
 
-It writes to `data/extracted` in the current directory (or `$DDG_DATA_DIR`).
+It writes to `data/extracted` in the current directory (or `$SHUPPATSU_DATA_DIR`).
 
 **On Windows without the script:** install the game from your disc as usual and copy the
 installed folder (`C:\Program Files\TAITO\DENGO3K`, holding `BIN` and `DATA`). The engine reads
@@ -166,35 +170,35 @@ sha256sum data/extracted/install/Program_Executable_Files/BIN/dengo3k.exe
 # a5a555efe3ee8089d2d60268f58e4c72fc673a0b3adf5a1e8cfa1bf039c9353c
 ```
 
-`ddg-tools check` confirms that every file is read or known (`0 failed, 0 unknown`), and
-`ddg-tools manifest` lists your files' hashes to compare with
+`shuppatsu-tools check` confirms that every file is read or known (`0 failed, 0 unknown`), and
+`shuppatsu-tools manifest` lists your files' hashes to compare with
 [`data-manifest/3000-bandai.toml`](data-manifest/3000-bandai.toml):
 
 ```sh
-DDG_DATA_DIR=data/extracted ddg-tools check
-ddg-tools manifest data/extracted 3000-bandai > mine.toml
+SHUPPATSU_DATA_DIR=data/extracted shuppatsu-tools check
+shuppatsu-tools manifest data/extracted 3000-bandai > mine.toml
 diff <(grep -E '^(path|sha256)' mine.toml) <(grep -E '^(path|sha256)' data-manifest/3000-bandai.toml)
 ```
 
 ### 4. Install and run
 
-**Windows (release zip):** unzip `ddg-windows.zip` anywhere, put your extracted data in a
-folder named `data` next to `ddg-game.exe`, and start `ddg-game.exe`.
+**Windows (release zip):** unzip `shuppatsu-windows.zip` anywhere, put your extracted data in a
+folder named `data` next to `shuppatsu.exe`, and start `shuppatsu.exe`.
 
 ```
-ddg-game\
-  ddg-game.exe
+shuppatsu\
+  shuppatsu.exe
   data\                  ← your extracted disc (holding install\), or an installed game folder
 ```
 
-There is no console window; the log goes to `%APPDATA%\ddg\ddg-game.log` (or start with
+There is no console window; the log goes to `%APPDATA%\shuppatsu\shuppatsu.log` (or start with
 `--console`). The taskbar icon comes from your `dengo3k.exe`.
 
 **Linux with Nix:**
 
 ```sh
-nix run github:<owner>/densha                # or `nix run .` in a checkout
-nix profile install github:<owner>/densha    # installs ddg-game with a desktop entry
+nix run github:shuppatsu/shuppatsu                # or `nix run .` in a checkout
+nix profile install github:shuppatsu/shuppatsu    # installs shuppatsu with a desktop entry
 ```
 
 On NixOS it works as is. On other distributions, Nix's Vulkan loader may not find your GPU
@@ -207,7 +211,7 @@ provided yet.
 
 **Where the game looks for your data**, first match wins:
 
-1. the `DDG_DATA_DIR` environment variable;
+1. the `SHUPPATSU_DATA_DIR` environment variable;
 2. `--data <dir>` on the command line;
 3. a folder `data/extracted` or `data` next to the executable;
 4. a folder `data/extracted` or `data` in the current directory;
@@ -221,14 +225,14 @@ The game asks for the language once: **English** or **日本語** (the original,
 choice is saved; `--lang` overrides it for one run, and removing the `lang` line from
 `config.toml` brings the question back.
 
-Useful command-line options (`ddg-game --help` lists them all):
+Useful command-line options (`shuppatsu --help` lists them all):
 
 ```sh
-ddg-game --size 2560x1600         # window size (default 1280x800)
-ddg-game --fullscreen             # borderless full screen (Alt+Enter / F11 toggle it)
-ddg-game --lang en                # language for this run
-ddg-game play 0                   # straight into a stage (0..19), skipping the menus
-ddg-game install-desktop          # Linux: desktop entry with the game's own icon
+shuppatsu --size 2560x1600         # window size (default 1280x800)
+shuppatsu --fullscreen             # borderless full screen (Alt+Enter / F11 toggle it)
+shuppatsu --lang en                # language for this run
+shuppatsu play 0                   # straight into a stage (0..19), skipping the menus
+shuppatsu install-desktop          # Linux: desktop entry with the game's own icon
 ```
 
 ## Controls
@@ -275,24 +279,31 @@ Pressing the same direction on both devices counts once. Pads can be plugged in 
   Teach the game once and pass the file when playing:
 
   ```sh
-  ddg-game pad learn --combo ~/.config/ddg/combo.txt
-  ddg-game --combo ~/.config/ddg/combo.txt
+  shuppatsu pad learn --combo ~/.config/shuppatsu/combo.txt
+  shuppatsu --combo ~/.config/shuppatsu/combo.txt
   ```
 
 * With a real lever, the last device used wins: a key or pad press takes over until you move
-  the lever again. `ddg-game pad monitor` shows what the game reads.
+  the lever again. `shuppatsu pad monitor` shows what the game reads.
 
 ## Settings
 
 Change settings on the in-game **Port Settings** screen (title menu → Game Settings → Port
 settings), or in `config.toml`:
 
-* Linux: `~/.config/ddg/config.toml` (`$XDG_CONFIG_HOME/ddg/`)
-* Windows: `%APPDATA%\ddg\config.toml`
+* Linux: `~/.config/shuppatsu/config.toml` (`$XDG_CONFIG_HOME/shuppatsu/`)
+* Windows: `%APPDATA%\shuppatsu\config.toml`
 
 The same folder holds your save (`eeprom.dat`, in the original's format). Every setting can
-also be given as an environment variable (`DDG_<KEY>`) or a flag (`--<key>` / `--no-<key>`).
+also be given as an environment variable (`SHUPPATSU_<KEY>`) or a flag (`--<key>` / `--no-<key>`).
 Flags win over the environment, which wins over the file.
+
+*Upgrading from a version before the rename* (when the project was called `densha` and the
+program `ddg-game`): on the first start the game copies the old `~/.config/ddg/` (or
+`%APPDATA%\ddg\`) folder to the new one and says so in the log; the old folder is left in
+place. Environment variables are now named `SHUPPATSU_*` (the names with the old prefix are no
+longer read). `shuppatsu install-desktop` replaces the old `ddg-game` desktop entry, and
+`nix profile` users reinstall from `github:shuppatsu/shuppatsu`.
 
 ```toml
 lang = "en"
@@ -336,7 +347,7 @@ detail.
 | `msaa` | off | Anti-aliasing (2, 4 or 8 samples) for smooth edges on wires, rails and fences. |
 | `ground_variation` | off | Subtle large-scale light and colour variation on fields, snow and ballast, so they don't look uniform. |
 | `ground_detiling` | off | Hides the visible grid of repeating ground textures. |
-| `texture_pack` | unset | A folder of upscaled textures made with `ddg-tools upscale-textures` from your own disc ([docs/texture-packs.md](docs/texture-packs.md)). |
+| `texture_pack` | unset | A folder of upscaled textures made with `shuppatsu-tools upscale-textures` from your own disc ([docs/texture-packs.md](docs/texture-packs.md)). |
 | `fog` | on | The snow fog, as the original's own fog option. |
 | `wide_weather` | on | Rain and snow over the whole width. Off: the original's 4:3 area. |
 | `far_traffic` | on | Other trains drawn out to the far plane. Off: up to 150 m, as the original. |
@@ -381,7 +392,7 @@ detail.
   run the Nix package through nixGL.
 * **No sound**: the game plays through ALSA on Linux (PipeWire and PulseAudio provide it).
   `--mute` starts silent.
-* **The controller does nothing**: check what arrives with `ddg-game pad monitor`. With
+* **The controller does nothing**: check what arrives with `shuppatsu pad monitor`. With
   `hybrid_input` off, choose a controller mode (4–6) in the options.
 * **A setting has no effect**: a bad value in `config.toml` is reported in the log and only
   that setting is ignored; a flag or environment variable overrides the file.
@@ -391,8 +402,8 @@ detail.
 
 ```sh
 nix develop                     # Rust, Vulkan, Wayland/X11, bchunk, 7z, Ghidra, Wine, mingw
-cargo build --release -p ddg-game
-target/release/ddg-game
+cargo build --release -p shuppatsu
+target/release/shuppatsu
 ```
 
 Without Nix you need a recent stable Rust toolchain and, on Linux, the ALSA and libudev
@@ -401,7 +412,7 @@ libxkbcommon. The Windows zip is cross-compiled from the dev shell with
 `scripts/package-windows.sh` ([docs/building.md](docs/building.md)).
 
 ```sh
-cargo test                      # data tests skip unless DDG_DATA_DIR is set
+cargo test                      # data tests skip unless SHUPPATSU_DATA_DIR is set
 cargo clippy --all-targets -- -D warnings
 cargo fmt
 nix build                       # the package
@@ -411,16 +422,16 @@ The workspace:
 
 | Crate | |
 |---|---|
-| `ddg-formats` | parsers for every original file format, and the MPEG-1 decoders |
-| `ddg-engine` | the deterministic simulation: physics, signals, timetable, scoring |
-| `ddg-render` | the wgpu renderer: route, scenery, cab, HUD, text |
-| `ddg-audio` | mixer, sound effects, music |
-| `ddg-game` | the program: window, input, menus, settings, localisation |
-| `ddg-tools` | inspection and export (`ddg-tools` lists the commands) |
-| `ddg-hook` | a 32-bit proxy DLL used only to measure the original under Wine |
+| `shuppatsu-formats` | parsers for every original file format, and the MPEG-1 decoders |
+| `shuppatsu-engine` | the deterministic simulation: physics, signals, timetable, scoring |
+| `shuppatsu-render` | the wgpu renderer: route, scenery, cab, HUD, text |
+| `shuppatsu-audio` | mixer, sound effects, music |
+| `shuppatsu` | the program: window, input, menus, settings, localisation |
+| `shuppatsu-tools` | inspection and export (`shuppatsu-tools` lists the commands) |
+| `shuppatsu-hook` | a 32-bit proxy DLL used only to measure the original under Wine |
 
-**How fidelity is checked.** `ddg-hook` runs inside the original game under Wine and logs its
-state every tick. `ddg-tools trace-replay` and the tests replay those recordings through the
+**How fidelity is checked.** `shuppatsu-hook` runs inside the original game under Wine and logs its
+state every tick. `shuppatsu-tools trace-replay` and the tests replay those recordings through the
 new engine from the logged inputs alone and compare every value. The reverse-engineering notes,
 each claim with its evidence and confidence, are in [docs/re/](docs/re/); the disc analysis is
 [docs/recon.md](docs/recon.md).
@@ -428,7 +439,7 @@ each claim with its evidence and confidence, are in [docs/re/](docs/re/); the di
 ### Contributing
 
 * **Bug reports**: describe what happened, attach the log (Linux: the terminal; Windows:
-  `%APPDATA%\ddg\ddg-game.log`) and, if useful, a screenshot. Reports from real Windows
+  `%APPDATA%\shuppatsu\shuppatsu.log`) and, if useful, a screenshot. Reports from real Windows
   machines, gamepads and Densha de GO! controllers are especially welcome.
 * **Translations**: the strings live in [`locales/`](locales/);
   [docs/localisation.md](docs/localisation.md) explains the format and how to add a language.

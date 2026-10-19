@@ -3,7 +3,7 @@
 Scope: how the player train's speed changes each tick (notches → forces → speed), how distance
 and track position advance, and how the stage clock runs. Signals, speed limits, ATS, penalties
 and scoring are covered in `rules.md`; this note only names the rule hooks that live inside the
-physics code. Implementation: `crates/ddg-engine/src/physics.rs`, `time.rs`.
+physics code. Implementation: `crates/shuppatsu-engine/src/physics.rs`, `time.rs`.
 
 Confidence: **confirmed** = read from the code (Ghidra plus `objdump` of the x87 sequences);
 **likely** = strong inference; **guess** = needs an oracle trace. Addresses are VAs in the
@@ -62,7 +62,7 @@ bit-exactness:
   through the force sum and the brake-deceleration readout. The force sum `T − R − R2 − Fb` is
   stored to task+0x44, and the gradient force is subtracted from the unrounded sum.
 
-`ddg-engine` computes in `f64` and rounds at exactly the original's stores. The CRT helpers
+`shuppatsu-engine` computes in `f64` and rounds at exactly the original's stores. The CRT helpers
 used here are `__ftol` (0x437b30, truncation), `floor` (0x437b57, CW 0x173f), `ceil` (0x437e0b,
 CW 0x1b3f) and `fmod` (0x437eea, `fprem`).
 
@@ -202,7 +202,7 @@ sequence), then: speed, acceleration, force, 0x850208, 0x84c40c, 0x84c41c, 0x84c
 
 * **Track position**: the in-cab camera task (0x41d160, scene.md §3) keeps a slot pointer and a
   fraction `t`; each tick `t += 0x850208` and **0x8500c8 −= 0x850208** (track units left to the
-  next stop). Engine index 0x8502a4 = slot − main-line base. `ddg_formats::scene::CabWalker`
+  next stop). Engine index 0x8502a4 = slot − main-line base. `shuppatsu_formats::scene::CabWalker`
   reproduces the walk.
 * **Distance to the stop** 0x85708c = `0x8500c8 × 10 + 0x85709c` (metres; 0x85709c is only ever
   set to 0). The integer 0x85722c is that rounded half away from zero (`fmod(|d|,1) ≥ 0.5`
@@ -314,15 +314,15 @@ poll. Row *k* therefore shows the state after tick *k*'s physics. The inputs of 
 from row *k* as well: the notches latched at the end of tick *k−1*, and the driving-loop
 globals (gradient, flags, ATC limit, overrun state, power cut, slippery, brake load, clock). The
 heading is the exception: the camera task writes it after the physics, so the physics of tick
-*k* sees the heading of row *k−1*. `ddg-tools trace-replay` (`crates/ddg-tools/src/trace.rs`)
+*k* sees the heading of row *k−1*. `shuppatsu-tools trace-replay` (`crates/shuppatsu-tools/src/trace.rs`)
 replays the trace with this alignment.
 
-## 8a. Whole-run replay: `ddg_engine::drive::Drive`
+## 8a. Whole-run replay: `shuppatsu_engine::drive::Drive`
 
-`Drive` (`crates/ddg-engine/src/drive.rs`) runs one stage from the route load to the end:
+`Drive` (`crates/shuppatsu-engine/src/drive.rs`) runs one stage from the route load to the end:
 rules, physics, the in-cab camera walk and every track-derived input (gradient, heading, units
-to the stop, sound class ahead, station passing, segment changes, odometer). `ddg-tools
-trace-replay <csv> --drive` (`crates/ddg-tools/src/trace/drive.rs`) feeds it only the logged
+to the stop, sound class ahead, station passing, segment changes, odometer). `shuppatsu-tools
+trace-replay <csv> --drive` (`crates/shuppatsu-tools/src/trace/drive.rs`) feeds it only the logged
 notches and buttons plus stage, difficulty and start station, and compares every column.
 
 **Result** (all floats bit for bit):
@@ -380,8 +380,8 @@ sequence, weather, the power-cut fade, the ATC trip.
 * Precision on real Windows (§2): Wine runs in double precision.
 * 0x857084 (brake load) is 0 in the rows checked; are other values used anywhere?
 * ~~Attract/demo mode 2 and the ending train~~: the replay mode (task+0x74 = 2, one input byte
-  per update from 0x467b20 / 0x46857c) is `ddg_engine::demo`; 0x4240d0 is the bonus game's
-  physics task (`ddg_engine::bonus`), not an ending train (menus.md §2.4, §12.1).
+  per update from 0x467b20 / 0x46857c) is `shuppatsu_engine::demo`; 0x4240d0 is the bonus game's
+  physics task (`shuppatsu_engine::bonus`), not an ending train (menus.md §2.4, §12.1).
 * Which settings value 0x829d10 holds (difficulty-like; stage tables are indexed by it).
 
 ## Decision: numeric reference (user, 2026-10-15)

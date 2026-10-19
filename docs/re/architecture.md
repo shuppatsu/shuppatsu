@@ -112,7 +112,7 @@ area (R1 Yamanote, R2 Akita, R3 Tōkaidō, R4 Hokuhoku, R5 Keihin, RC common), t
   polling once per tick (confirmed).
 - Power notch 0–5 (`0x829d00`), brake 0–10 (`0x829d04`; 9 = EB, 10 = unknown) (confirmed values).
 - **Seven control modes** (byte `0x856352`, stored in `eeprom.dat`): four keyboard layouts, a joystick
-  d-pad, a single analog axis with fixed thresholds, and two calibrated analog levers (the PC DDG
+  d-pad, a single analog axis with fixed thresholds, and two calibrated analog levers (the PC Densha de GO!
   controller via the game-port driver) (confirmed).
 - Calibration: the ADJUSTMENT screen writes `joystick.dat` (6 + 11 i32 positions) (confirmed).
 - Buttons are three active-low words (held / pressed / released) at `0x48c428..30` (confirmed).
@@ -149,7 +149,7 @@ Verified on the primary machine (2026-10-15):
 - `scripts/run-original.sh` runs the game under Wine 11.19 with code page 932. On Wayland it uses
   winewayland, which emulates the 640×480 mode switch. Under XWayland's winex11 the back buffer stays
   desktop-sized: wined3d then disables the 640×480 Z-buffer and skips frame clears (wrong z-order,
-  smearing). `DDG_WINE_DISPLAY=gamescope` gives a windowed run.
+  smearing). `SHUPPATSU_WINE_DISPLAY=gamescope` gives a windowed run.
 
 ## 9. Decisions for the user
 
@@ -159,8 +159,8 @@ Verified on the primary machine (2026-10-15):
   the vertical FOV and the same pixel shape are kept, and the view extends sideways.
 - **D2, the Komachi movie: DECIDED (user, 2026-10-18): our own decoders.** `komachi.dat` is an
   MPEG-1 program stream (320×144 video, Layer II 44.1 kHz stereo audio). It is decoded at
-  runtime by `ddg_formats::mpeg` (program stream, MPEG-1 video, MP2, written from ISO/IEC 11172;
-  no new dependency, nothing transcoded or stored) and played by `ddg-game` where the original
+  runtime by `shuppatsu_formats::mpeg` (program stream, MPEG-1 video, MP2, written from ISO/IEC 11172;
+  no new dependency, nothing transcoded or stored) and played by `shuppatsu` where the original
   plays it, plus the title menu with setting `movie_in_menu`. Format, design, the ffmpeg
   comparison (61.7 dB minimum PSNR, audio 86.8 dB SNR) and speed: movie.md.
 
@@ -176,8 +176,8 @@ Verified on the primary machine (2026-10-15):
 
 ## 11. Phase 2 status: formats (2026-10-15)
 
-Every file on the disc is either parsed by `ddg-formats` or documented as not needed:
-`ddg-tools check` → **399 files: 52 parsed, 347 documented, 0 failed, 0 unknown**
+Every file on the disc is either parsed by `shuppatsu-formats` or documented as not needed:
+`shuppatsu-tools check` → **399 files: 52 parsed, 347 documented, 0 failed, 0 unknown**
 (documented = DirectX 6 redistributable, InstallShield installer and runtime, controller driver,
 autorun launcher, README, and the Cd2 CD-check DLLs).
 
@@ -193,7 +193,7 @@ autorun launcher, README, and the Cd2 CD-check DLLs).
 | `traffic` | AI-train model table 0x457358 (car lists, LOD parts, spacing) | traffic.md |
 | `exe` | VA → bytes for tables in the user's exe | (code) |
 
-`ddg-tools export textures|tilemaps|audio|models|routes|all` writes PNG/WAV/glTF into `out/export`.
+`shuppatsu-tools export textures|tilemaps|audio|models|routes|all` writes PNG/WAV/glTF into `out/export`.
 Visually checked: texture pages, HUD tilemaps (palette slot 4), and a route with its placed scenery.
 
 Open (moved to later phases):
@@ -206,7 +206,7 @@ Open (moved to later phases):
 
 ## 12. Phase 3 status: viewer (2026-10-15) — complete
 
-`ddg-game view <route.com>` flies through any route; `ddg-game shot` renders headless frames.
+`shuppatsu view <route.com>` flies through any route; `shuppatsu shot` renders headless frames.
 Exit criterion met: all 15 routes render end to end (start/middle/end smoke test, 0 missing
 parts, 2–8k triangles per frame); 16:10 without edge pop-in (wide visibility); smooth at 180 Hz on
 the user's display.

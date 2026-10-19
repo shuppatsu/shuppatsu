@@ -1,4 +1,4 @@
-# Densha de GO! 2 Kōsoku-hen 3000-bandai — native Rust reimplementation
+# Shuppatsu — native Rust engine for Densha de GO! 2 Kōsoku-hen 3000-bandai
 
 ## Goal
 
@@ -21,7 +21,7 @@ Must-haves:
 1. **No game data in the repo, ever.** This covers assets, extracted files, disc images, executables,
    Ghidra projects and decompiler output. They live in gitignored dirs (`data/`, `re/`, `out/`, `wine/`).
    Committing file hashes (for variant detection) is fine.
-2. **Never download game files from the internet.** Use only what's at `$DDG_CUE` / `$DDG_DATA_DIR`.
+2. **Never download game files from the internet.** Use only what's at `$SHUPPATSU_CUE` / `$SHUPPATSU_DATA_DIR`.
 3. **Write fresh Rust; don't transliterate decompiler output.** Ghidra output is reference material
    in `re/`. Behaviour and constants get documented in `docs/re/`, and the implementation is new,
    idiomatic code.
@@ -32,8 +32,8 @@ Must-haves:
 
 ## Inputs
 
-- `DDG_CUE`: path to the user's bin/cue disc image.
-- `DDG_DATA_DIR`: extracted disc contents (default `./data/extracted`, gitignored).
+- `SHUPPATSU_CUE`: path to the user's bin/cue disc image.
+- `SHUPPATSU_DATA_DIR`: extracted disc contents (default `./data/extracted`, gitignored).
 - Disc variant (original vs 3000-bandai) is detected from file hashes and layout and recorded in
   `data-manifest/<variant>.toml` (hashes only).
 
@@ -53,19 +53,19 @@ Must-haves:
 
 ```
 crates/
-  ddg-formats/   parsers for every original file format; pure, no I/O beyond &[u8]
-  ddg-tools/     CLI: recon, inventory, dump, export (PNG/glTF to out/ for inspection)
-  ddg-engine/    deterministic simulation: train physics, signals, timetable, scoring
-                 (no graphics/audio deps; fixed tick; serialisable state for traces)
-  ddg-render/    wgpu renderer: route, scenery, cab, HUD, text
-  ddg-audio/     mixer, SFX, CD-audio tracks read from the bin
-  ddg-game/      the binary: winit loop, input, menus, config, localisation
-  ddg-hook/      i686 Windows DLL used only as a measurement oracle (see below)
+  shuppatsu-formats/   parsers for every original file format; pure, no I/O beyond &[u8]
+  shuppatsu-tools/     CLI `shuppatsu-tools`: recon, inventory, dump, export (PNG/glTF to out/ for inspection)
+  shuppatsu-engine/    deterministic simulation: train physics, signals, timetable, scoring
+                       (no graphics/audio deps; fixed tick; serialisable state for traces)
+  shuppatsu-render/    wgpu renderer: route, scenery, cab, HUD, text
+  shuppatsu-audio/     mixer, SFX, CD-audio tracks read from the bin
+  shuppatsu/           the game binary `shuppatsu`: winit loop, input, menus, config, localisation
+  shuppatsu-hook/      i686 Windows DLL used only as a measurement oracle (see below)
 docs/
-  recon.md       phase 0 report
-  re/            one note per subsystem/format
-locales/         en.toml, … (string IDs → translated text; Japanese source read from data at runtime)
-data-manifest/   per-variant file hashes
+  recon.md             phase 0 report
+  re/                  one note per subsystem/format
+locales/               en.toml, … (string IDs → translated text; Japanese source read from data at runtime)
+data-manifest/         per-variant file hashes
 ```
 
 Allowed dependencies: wgpu, winit, glam, bytemuck, gilrs, cpal, encoding_rs, pelite, thiserror,
@@ -84,13 +84,13 @@ dependencies are a goal.
 - Treat Shift-JIS everywhere: filenames, strings and text tables. Decode with encoding_rs.
 
 ### Oracle and differential testing
-- `ddg-hook` is a 32-bit proxy DLL (for whichever DLL recon shows the exe imports, e.g. ddraw/dinput/winmm),
+- `shuppatsu-hook` is a 32-bit proxy DLL (for whichever DLL recon shows the exe imports, e.g. ddraw/dinput/winmm),
   loaded into the original exe under Wine with `WINEDLLOVERRIDES`. It hooks game functions and logs
   per-tick state (position, speed, notch, brake, signal aspect, score/penalty, timers) to a trace file in `out/`.
-- Scripted inputs are replayed in both the original and `ddg-engine`, and the traces are compared.
+- Scripted inputs are replayed in both the original and `shuppatsu-engine`, and the traces are compared.
   Engine changes must keep the recorded traces matching within documented tolerances.
 - Trace files are derived from game data, so they stay in gitignored `out/traces/`. Committed tests
-  load them via `DDG_TRACE_DIR` and skip when it's absent.
+  load them via `SHUPPATSU_TRACE_DIR` and skip when it's absent.
 
 ### Fidelity vs enhancements
 - "Arcade" defaults reproduce the original exactly. Every enhancement (widescreen, interpolation,
@@ -114,25 +114,27 @@ without the user's go-ahead.
    **Exit:** recon.md answers every point above, or lists it as an open question.
 1. **Code map.** Ghidra analysis; locate the main loop and tick rate, the loaders, the renderer setup
    (resolution, FOV, projection), input, audio and text drawing. **Exit:** `docs/re/architecture.md`.
-2. **Formats.** Parsers in `ddg-formats` for containers, textures, models, route/track geometry,
-   scenery placement, signals, timetables and strings. `ddg-tools export` writes PNG/glTF to `out/`.
+2. **Formats.** Parsers in `shuppatsu-formats` for containers, textures, models, route/track geometry,
+   scenery placement, signals, timetables and strings. `shuppatsu-tools export` writes PNG/glTF to `out/`.
    **Exit:** every file on the disc is either parsed or documented as unknown.
 3. **Viewer.** A wgpu fly-through of a full route (track, scenery, stations) at arbitrary aspect ratio
    and framerate. **Exit:** one route renders end-to-end at 16:10, 120 Hz, without edge pop-in.
-4. **Simulation.** `ddg-engine` with the oracle hook and differential traces.
+4. **Simulation.** `shuppatsu-engine` with the oracle hook and differential traces.
    **Exit:** one route's traces match the original within tolerance.
-5. **Game.** Menus, cab view, HUD, scoring screens, audio, input (keyboard, gamepad, real DDG controllers),
+5. **Game.** Menus, cab view, HUD, scoring screens, audio, input (keyboard, gamepad, real Densha de GO! controllers),
    localisation. **Exit:** every route is playable start to finish in English.
 6. **Polish.** Config UI, Windows build, Nix package, README with the bring-your-own-disc instructions.
 
 ## Conventions
 
 - Rust 2024 edition. `cargo fmt`, `cargo clippy --all-targets -- -D warnings` and `cargo test` must pass.
-- Data-dependent tests read `DDG_DATA_DIR` / `DDG_TRACE_DIR` and skip cleanly when unset.
+- Data-dependent tests read `SHUPPATSU_DATA_DIR` / `SHUPPATSU_TRACE_DIR` and skip cleanly when unset.
 - Parse binary data with explicit offsets and little-endian reads. Never transmute file bytes.
-- `unsafe` only in `ddg-hook` and FFI, each block with a `// SAFETY:` comment.
+- `unsafe` only in `shuppatsu-hook` and FFI, each block with a `// SAFETY:` comment.
 - Libraries use thiserror; binaries use anyhow.
 - Make small commits with conventional commit messages.
+- The project, crates, binaries, window title and env vars are named Shuppatsu (`shuppatsu*`,
+  `SHUPPATSU_*`). The game's trademarked name appears only in descriptive prose about the original.
 
 ## Stop and ask when
 

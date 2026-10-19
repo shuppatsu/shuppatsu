@@ -24,7 +24,7 @@ Keyed by the sprite's identity in the original:
   tiles.
 * `[sheet.<tbl>]`: a label on a string sheet. Integer keys are descriptor indices into the
   sheet's table in the exe; the tables are listed with their addresses in `SHEETS`
-  (`crates/ddg-game/src/locale.rs`) and read from the user's exe at runtime. Named keys with an
+  (`crates/shuppatsu/src/locale.rs`) and read from the user's exe at runtime. Named keys with an
   explicit `rect` cover labels without a known descriptor (most screen headers, the
   replay mark).
 * `[station_plate]`: the English name of each vertical station plate, keyed by the plate's
@@ -35,7 +35,7 @@ Keyed by the sprite's identity in the original:
   name goes on a line under them ("Landmark captions" below).
 * `[ui]`: the port's own screens, which have no original art (the settings screen,
   settings.md "In the game"): string ID → text (`lang = "Language"`, `lang_desc = "…"`). The
-  IDs are listed by `known_ui_key` in `crates/ddg-game/src/front/port_settings.rs`; an
+  IDs are listed by `known_ui_key` in `crates/shuppatsu/src/front/port_settings.rs`; an
   unknown one is an error. `locales/ja.toml` holds only `[meta]` and `[ui]`: the Japanese of
   these strings, written for the port (`ja` stays the identity for every sprite). A string
   missing in a language falls back to English.
@@ -81,7 +81,7 @@ row of 通過駅, the 。 at the end of a navigator hint); a region reaching ont
 dither edge paints it over with the backdrop; and those border pixels count as lettering, so
 the English comes out at the size of the panel instead of the size of the kanji.
 
-`ddg_render::text_audit` finds these with the renderer's own reading of the art
+`shuppatsu_render::text_audit` finds these with the renderer's own reading of the art
 (`RegionScan`: the backdrop per 2×2 parity class from the region's edge, lettering = opaque and
 not backdrop). Per part it reports, in sprite pixels:
 
@@ -96,7 +96,7 @@ not backdrop). Per part it reports, in sprite pixels:
 | `backdrop` | the backdrop read from the edge is not the face (the edge lies on a frame), is striped, or is clear (lettering on transparency that `auto` took for a box) |
 | `sizing` | the renderer's ink box differs from the lettering's own (frame pixels or foreign art counted) |
 
-`ddg-game label-audit` runs it over every part of a catalogue (default `locales/en.toml`) and
+`shuppatsu label-audit` runs it over every part of a catalogue (default `locales/en.toml`) and
 writes `out/explain/label_audit/report.md` with a magnified crop per flagged part (the
 original with the region outlined in cyan and the findings dotted: red leftover, orange nearby,
 blue intruding art, yellow frame, magenta off-panel; next to it the English as drawn).
@@ -106,7 +106,7 @@ parts too, `--dump <tbl>` prints a tilemap's palette indices as text with rulers
 measuring a region), `--palette <n>`
 picks the crops' palette (default 4; art the palette draws in too few colours gets false
 colours). The data test `english_regions_fit_their_art` keeps the English catalogue at no
-findings outside `ALLOW` (`crates/ddg-game/src/label_audit.rs`), each allowance with its
+findings outside `ALLOW` (`crates/shuppatsu/src/label_audit.rs`), each allowance with its
 reason, and fails when an allowance is no longer needed. Measured bounds go in the catalogue's
 comments, as for the distance plates.
 
@@ -114,13 +114,13 @@ comments, as for the distance plates.
 
 | Setting | Env | Argument |
 |---|---|---|
-| Language (default `ja`) | `DDG_LANG` | `--lang <code>` |
-| Body font list (TTF/OTF, `:`-separated: primary, then fallbacks; default: the bundled M+ 2 Medium, which is also appended as the last fallback) | `DDG_FONT` | `--font <files>` |
-| Display font list (same form; default: the body list) | `DDG_DISPLAY_FONT` | `--display-font <files>` |
-| Extra catalogue directory | `DDG_LOCALE_DIR` | `--locale-dir <dir>` |
-| HUD layout: `original` (default) or `enhanced` | `DDG_HUD_LAYOUT` | `--hud-layout <layout>` |
-| Presentation: `smooth` (default), `integer`, `nearest` | `DDG_UI_SCALING` | `--ui-scaling <mode>` |
-| Fixed canvas multiple 1..4 (default: follows the window) | `DDG_UI_SCALE` | `--ui-scale <n>` |
+| Language (default `ja`) | `SHUPPATSU_LANG` | `--lang <code>` |
+| Body font list (TTF/OTF, `:`-separated: primary, then fallbacks; default: the bundled M+ 2 Medium, which is also appended as the last fallback) | `SHUPPATSU_FONT` | `--font <files>` |
+| Display font list (same form; default: the body list) | `SHUPPATSU_DISPLAY_FONT` | `--display-font <files>` |
+| Extra catalogue directory | `SHUPPATSU_LOCALE_DIR` | `--locale-dir <dir>` |
+| HUD layout: `original` (default) or `enhanced` | `SHUPPATSU_HUD_LAYOUT` | `--hud-layout <layout>` |
+| Presentation: `smooth` (default), `integer`, `nearest` | `SHUPPATSU_UI_SCALING` | `--ui-scaling <mode>` |
+| Fixed canvas multiple 1..4 (default: follows the window) | `SHUPPATSU_UI_SCALE` | `--ui-scale <n>` |
 
 These and every other port setting (one on/off switch per enhancement: `wide_weather`,
 `save_on_change`, `one_line_captions`, …) are listed in one table in [settings.md](settings.md),
@@ -128,8 +128,8 @@ with their defaults, flags and what the original does instead.
 
 ### Settings: `config.toml` and the first-run language screen
 
-The port's own settings live in `config.toml` next to `eeprom.dat`: `$XDG_CONFIG_HOME/ddg/`
-(default `~/.config/ddg/`), `%APPDATA%\ddg\` on Windows. `eeprom.dat` keeps the original's
+The port's own settings live in `config.toml` next to `eeprom.dat`: `$XDG_CONFIG_HOME/shuppatsu/`
+(default `~/.config/shuppatsu/`), `%APPDATA%\shuppatsu\` on Windows. `eeprom.dat` keeps the original's
 options byte for byte; `config.toml` holds only what the port adds. Every key is optional; the
 full list is [settings.md](settings.md):
 
@@ -144,7 +144,7 @@ fog = true                # the snow fog (renderer.md §13.9); false = as a fres
 wide_weather = true       # and the other switches of settings.md
 ```
 
-* Precedence: command-line flag > `DDG_*` environment variable > `config.toml` > built-in
+* Precedence: command-line flag > `SHUPPATSU_*` environment variable > `config.toml` > built-in
   default. Play, the front end and `view` read the file.
 * Headless runs (`--shot`, the `shot` subcommand) never read it, so checks stay reproducible:
   they use the defaults, the environment and the flags.
@@ -152,7 +152,7 @@ wide_weather = true       # and the other switches of settings.md
   not parse is reported and ignored (the defaults apply); a bad value (`hud_layout = "wide"`,
   `ui_scale = 9`) loses only that setting; a `lang` with no catalogue is dropped. The game never
   stops over the file.
-* First run: when no language comes from a flag, the environment or the file, `ddg-game`
+* First run: when no language comes from a flag, the environment or the file, `shuppatsu`
   (the front end) opens with a language screen before attract: "Language / 言語" over
   **English** and **日本語**, the title menu's cursor frame, up/down (or the power lever) and
   Enter / pad confirm, the menu move and decide sounds. The choice is installed at once (`en`,
@@ -162,13 +162,13 @@ wide_weather = true       # and the other switches of settings.md
 * Changing it later: `--lang en|ja` for one run, or edit `lang` in `config.toml` (removing the
   line brings the screen back). An options entry comes with the Phase 6 config UI.
 * Checking: the hidden flag `--first-run` forces the screen, also in headless shots
-  (`ddg-game --first-run --size 1280x800 --shot 12:out.ppm`); headless runs never write the file.
-* Code: `crates/ddg-game/src/config.rs` (`PortConfig`, `layered`, `store_lang`),
-  `crates/ddg-game/src/front/language.rs` (the screen, a pure state machine), `App::choose_language`.
+  (`shuppatsu --first-run --size 1280x800 --shot 12:out.ppm`); headless runs never write the file.
+* Code: `crates/shuppatsu/src/config.rs` (`PortConfig`, `layered`, `store_lang`),
+  `crates/shuppatsu/src/front/language.rs` (the screen, a pure state machine), `App::choose_language`.
 * `fog` (decided enhancement `snow_fog`, on by default): the fog that the original draws only
   while it snows and only with DengoSetting's FOGENABLE. `--no-fog` / `--fog` override it for
   one run; headless runs use the default (on). It is one of the switches of
-  [settings.md](settings.md), which all work this way (`DDG_<KEY>`, `--<key>` / `--no-<key>`).
+  [settings.md](settings.md), which all work this way (`SHUPPATSU_<KEY>`, `--<key>` / `--no-<key>`).
 
 The bundled M+ 2 Medium draws every catalogue unless `--font` names others (it stays the last
 fallback). Any TTF/OTF with Latin glyphs works as a primary font; DejaVu Sans Bold or Noto Sans
@@ -231,7 +231,7 @@ Decided by the user (enhancements). The 2D layer (sprites, HUD, menus, translate
 composed on the CPU into a canvas of 640×480 × the *canvas multiple* (`SpriteLayer::scale`),
 widened to the window's shape in the enhanced HUD while driving and, in every layout, on the
 menus (`wide_menus`, menus.md §14). Three settings, independent of
-each other (`crates/ddg-game/src/presentation.rs`, `crates/ddg-render/src/overlay.rs`):
+each other (`crates/shuppatsu/src/presentation.rs`, `crates/shuppatsu-render/src/overlay.rs`):
 
 * **Layout** (`hud_layout`). `original`: the original 4:3 layout, centred, at any resolution
   and multiple. `enhanced`: the driving HUD on a canvas of the window's shape with its groups at
@@ -270,17 +270,17 @@ Play, the front end, `view --hud` and the headless `--shot` paths all use the sa
 
 ## Code
 
-* `crates/ddg-render/src/text.rs`: `TextOverride`/`TextPart` (what to draw), `rasterise`
+* `crates/shuppatsu-render/src/text.rs`: `TextOverride`/`TextPart` (what to draw), `rasterise`
   (fontdue, fitted into a rectangle, never writes outside it), `TextOverlay::build` (renders
   every override against the bank's art once, at load), `GlyphSource` (fontdue or a test stub).
-* `crates/ddg-render/src/sprites.rs`: `SpriteBank::set_text` installs an overlay. While
+* `crates/shuppatsu-render/src/sprites.rs`: `SpriteBank::set_text` installs an overlay. While
   composing, a slot whose `(tbl, resolved sub-rect)` has an override skips the art pixels inside
   the replaced regions and draws the text instead. With no overlay, composing is unchanged.
-* `crates/ddg-render/src/text_audit.rs` and `crates/ddg-game/src/label_audit.rs`: the region
-  checker and `ddg-game label-audit` ("Checking the regions" above).
-* `crates/ddg-game/src/locale.rs`: catalogue parsing, sheet descriptors from the exe,
+* `crates/shuppatsu-render/src/text_audit.rs` and `crates/shuppatsu/src/label_audit.rs`: the region
+  checker and `shuppatsu label-audit` ("Checking the regions" above).
+* `crates/shuppatsu/src/locale.rs`: catalogue parsing, sheet descriptors from the exe,
   `Locale::lookup(tbl, sub_rect)`, `LocaleConfig` (env and arguments) and `install`.
-* Free text and widgets: `SpriteLayer::widgets` (`crates/ddg-render/src/sprites.rs`) hold
+* Free text and widgets: `SpriteLayer::widgets` (`crates/shuppatsu-render/src/sprites.rs`) hold
   port-only elements of enhancements: a fill, a down arrow, a tilemap clipped to a rectangle
   at any uniform scale (original pixels per art pixel; at a fractional number of canvas
   pixels per art pixel each canvas pixel is the area average of the art under it, the art
@@ -291,7 +291,7 @@ Play, the front end, `view --hud` and the headless `--shot` paths all use the sa
   palette colour, with capitals `cap` pixels high or as large as fits, uniformly scaled.
   Widgets are drawn after the slots of their layer, are cleared with the rect layer every
   tick, and are empty in the arcade default.
-  The text uses `crates/ddg-render/src/label.rs` (`LabelFont`: the language's font, installed
+  The text uses `crates/shuppatsu-render/src/label.rs` (`LabelFont`: the language's font, installed
   by `install` with `SpriteBank::set_label_font`, masks cached per string and size).
   `SpriteLayer::add_styled_text` takes a `TextStyle` with an alignment, an outline colour
   (one original pixel around the text) and a backdrop colour (a box behind the text), used by
@@ -313,7 +313,7 @@ Decided by the user (enhancement):
   script; only the HUD canvas is larger and, with `wide_hud`, the groups keep to the edges).
 * **A translation in the `enhanced` layout** (`LocaleConfig::active`: a language other than
   `ja` with a font): the plates are laid out horizontally
-  (`crates/ddg-game/src/hud/plates_en.rs`), kanji with the translated name under them. The
+  (`crates/shuppatsu/src/hud/plates_en.rs`), kanji with the translated name under them. The
   boxes grow on a wide canvas (enhancement `wide_hud`, hud.md §6.4). The vehicle picture's
   shift (below) belongs to this layout: with the vertical plates it stays where the layout
   table puts it.
@@ -383,7 +383,7 @@ word is fitted to its own box, so the long name comes out small and "Stn" / "Sto
 
 Decided by the user (enhancement, translations only; Japanese is unchanged): with a
 translation and a font, each caption or banner is **one line of text at one size** across the
-group's area, e.g. "Higashi-Kanagawa · Stop" ("Stn" is dropped). `crates/ddg-game/src/
+group's area, e.g. "Higashi-Kanagawa · Stop" ("Stn" is dropped). `crates/shuppatsu/src/
 captions.rs` (`OneLine`):
 
 * **Phrases** are `[caption]` in the catalogue, by kind: `depart_clear`, `depart_reduce`,
@@ -431,7 +431,7 @@ sprite each (tbl 0x222–0x23f, widths in the exe table 0x466a20).
 Decided by the user (enhancement, translations only; Japanese is unchanged): **Japanese on
 top, English below.** With a translation and a font, the original kanji plate is drawn
 exactly as in the original, and the `[landmark]` name is drawn on a small line directly under
-it (`crates/ddg-game/src/captions.rs`, `LandmarkLines`):
+it (`crates/shuppatsu/src/captions.rs`, `LandmarkLines`):
 
 * **Look.** The plate's colours are read from the art at load (`Look`: most of the sprite's
   edge is opaque, so its commonest edge colour is the plate, white; the commonest other
@@ -461,7 +461,7 @@ for stops, grey for stations passed).
 
 With a translation and a font (enhancement, translations only; Japanese is unchanged) the
 kanji stay and each station's romaji is drawn under its column
-(`crates/ddg-game/src/board_en.rs`):
+(`crates/shuppatsu/src/board_en.rs`):
 
 * **Columns from the art.** At load every diagram the strip tables name is scanned: the board
   is its commonest colour, rows and columns opaque almost throughout are its frame, the first
@@ -485,7 +485,7 @@ kanji stay and each station's romaji is drawn under its column
 
 ## Integration
 
-Nothing calls this yet. Three edits turn it on for `ddg-game play`:
+Nothing calls this yet. Three edits turn it on for `shuppatsu play`:
 
 1. `main.rs`, `parse_play_args`: take the locale options out of the argument list before the
    option loop, and keep them in the options (`PlayOptions` gets a
@@ -650,7 +650,7 @@ Decided for the roll:
   every role and header across the roll (`shared_group` `ending.name` / `ending.role`), so the
   cards read as one list; the longest name sets the name size, below the kanji's.
 
-Shots: `ddg-game play 1 --ending full --lang en|ja --size 2560x1440 --shot <tick>:<file>`, one
+Shots: `shuppatsu play 1 --ending full --lang en|ja --size 2560x1440 --shot <tick>:<file>`, one
 tick per credit (credit k ≥ 1 is up from tick 180 + 148 (k − 1) for 148 ticks), in
 out/explain/staff_roll/ (sprites) and out/explain/staff_roll_v2/ (text; `--no-one-line-captions`
 for the sprites); out/explain/staff_roll_kanji/ with the kanji (`--no-staff-kanji` for without).
@@ -696,10 +696,10 @@ Smaller open points:
 ## Subtitles (setting `subtitles`)
 
 Decided by the user: the spoken Japanese gets English subtitles, **on by default** with a
-translation (`subtitles = true`, `--[no-]subtitles`, `DDG_SUBTITLES`; never in Japanese, where
-`LocaleConfig::active` is false). Code: `crates/ddg-game/src/subtitles.rs`, the `[subtitle]`
-section of `locales/en.toml`, and the voice log of `ddg_audio::SoundSystem`
-(`set_voice_log`, `ddg_audio::voice`).
+translation (`subtitles = true`, `--[no-]subtitles`, `SHUPPATSU_SUBTITLES`; never in Japanese, where
+`LocaleConfig::active` is false). Code: `crates/shuppatsu/src/subtitles.rs`, the `[subtitle]`
+section of `locales/en.toml`, and the voice log of `shuppatsu_audio::SoundSystem`
+(`set_voice_log`, `shuppatsu_audio::voice`).
 
 **How a line's words are found.** Every `effect.rom` clip was transcribed locally with Whisper
 (large-v3-turbo and kotoba-whisper; out/stt, not in the repo: the transcripts are derived from

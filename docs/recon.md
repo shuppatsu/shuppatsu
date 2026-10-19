@@ -9,10 +9,10 @@ Generated artefacts (gitignored, regenerate with the commands below):
 ```sh
 nix develop
 scripts/extract-disc.sh data/disc/DENGO3K.mdf # -> data/extracted/{disc,install}
-cargo run -p ddg-tools -- inventory data/extracted/install
-cargo run -p ddg-tools -- pe data/extracted/install/Program_Executable_Files/BIN/dengo3k.exe
-cargo run -p ddg-tools -- strings <file> [--min N] [--jp]
-cargo run -p ddg-tools -- manifest data/extracted 3000-bandai
+cargo run -p shuppatsu-tools -- inventory data/extracted/install
+cargo run -p shuppatsu-tools -- pe data/extracted/install/Program_Executable_Files/BIN/dengo3k.exe
+cargo run -p shuppatsu-tools -- strings <file> [--min N] [--jp]
+cargo run -p shuppatsu-tools -- manifest data/extracted 3000-bandai
 ```
 
 ## 1. Source image
@@ -44,7 +44,7 @@ Disc (330 files, of which 295 are the DirectX 6 redistributable):
 | `AUTORUN.INF`, `Autorun.exe/.ini/.bmp` | launcher menu: install, readme, dxdiag, DirectX 6 setup | confirmed (file contents) |
 | `SETUP.EXE`, `_INST32I.EX_`, `_SETUP.DLL`, `_ISDEL.EXE`, `_sys1.cab`, `_user1.cab`, `setup.ins` … | InstallShield 5 installer | confirmed (cab magic `ISc(`, file set) |
 | `DATA1.CAB` | 166 MB InstallShield 5 cab with the whole game (57 files) | confirmed |
-| `DRIVER/` | separate InstallShield setup: driver for the official DDG controller | confirmed |
+| `DRIVER/` | separate InstallShield setup: driver for the official Densha de GO! controller | confirmed |
 | `DIRECTX6/` | DirectX 6.0/6.1 + DirectX Media redistributable | confirmed |
 
 Installed game (`DATA1.CAB`), 57 files, 223,675,314 B, all extracted (MD5-verified by unshield):
@@ -89,7 +89,7 @@ Imports of `dengo3k.exe` (confirmed, `out/recon/pe-dengo3k.txt`):
 |---|---|---|
 | `DDRAW.dll` | `DirectDrawCreate`, `DirectDrawEnumerateExA` | DirectDraw; Direct3D obtained via `QueryInterface` (likely; DX6-era Immediate Mode) |
 | `DSOUND.dll` | ordinal 1 (`DirectSoundCreate`) | sound |
-| `DINPUT.dll` | `DirectInputCreateA` | keyboard/joystick (the DDG controller appears as a DirectInput joystick) |
+| `DINPUT.dll` | `DirectInputCreateA` | keyboard/joystick (the Densha de GO! controller appears as a DirectInput joystick) |
 | `WINMM.dll` | `timeSetEvent`, `timeKillEvent`, `timeGetTime` | **multimedia timer**: likely drives the fixed tick; rate to be found in Phase 1 |
 | `ole32.dll` | `CoCreateInstance` … | DirectShow `amstream` for `Komachi.DAT` playback |
 | `ADVAPI32.dll` | `RegCreateKeyExA`, `RegQueryValueExA` | reads settings from the registry |
@@ -102,7 +102,7 @@ No `QueryPerformanceCounter` import (confirmed). No D3D DLL import, which fits D
 Resources in `dengo3k.exe`: two icons, an icon group, and one MFC string-table block. No dialogs,
 menus or bitmaps (confirmed). All UI art is in the data files.
 
-Icon (confirmed, decoded by `ddg_formats::icon`, data test `icon::tests::real_exe_icon`): group
+Icon (confirmed, decoded by `shuppatsu_formats::icon`, data test `icon::tests::real_exe_icon`): group
 `RT_GROUP_ICON` #101 (lang 0x411, 34 bytes) lists two classic DIB entries, no PNG entries:
 
 | `RT_ICON` | size | depth | bytes | layout |
@@ -110,11 +110,12 @@ Icon (confirmed, decoded by `ddg_formats::icon`, data test `icon::tests::real_ex
 | #1 | 32×32 | 4 bpp, 16-colour palette | 744 | 40 header + 64 palette + 512 XOR + 128 AND |
 | #2 | 16×16 | 4 bpp, 16-colour palette | 296 | 40 header + 64 palette + 128 XOR + 64 AND |
 
-The art is a train front over the text "DENGO!3K", transparent via the AND mask. `ddg-game` uses
+The art is a train front over the text "DENGO!3K", transparent via the AND mask. `shuppatsu` uses
 the 32×32 image as its window icon (X11 and Windows; Wayland ignores window icons) and sets the
-app id / `WM_CLASS` `ddg-game`. The opt-in `ddg-game install-desktop` writes it to
-`$XDG_DATA_HOME/icons/hicolor/<n>x<n>/apps/ddg-game.png` for n = 16, 32, 128, 256 (the larger two
-nearest-upscaled from 32×32) with a matching `applications/ddg-game.desktop`; the icon is read
+app id / `WM_CLASS` `shuppatsu` and the window title "Shuppatsu". The opt-in `shuppatsu install-desktop` writes it to
+`$XDG_DATA_HOME/icons/hicolor/<n>x<n>/apps/shuppatsu.png` for n = 16, 32, 128, 256 (the larger two
+nearest-upscaled from 32×32) with a matching `applications/shuppatsu.desktop` (and removes the
+`ddg-game` entry and icons from before the rename); the icon is read
 from the user's exe at install time and never shipped.
 
 ## 4. Notable strings (`dengo3k.exe`, Shift-JIS decoded)
@@ -162,7 +163,7 @@ analysed and is not bypassed.**
 | Runtime files | `BIN\dengo3k.ini`, `BIN\replay.dat` written by the game; replays are one file for all routes | `replay.dat`: confirmed (Readme); ini: likely |
 | Run-from-CD | nothing; CD needed only for the presence check | likely |
 | Requirements | DirectX 6+ (6.1 bundled and recommended; installer can run `DIRECTX6\DXSETUP.EXE`), about 120 MB virtual memory (Readme); DirectShow `amstream.dll` for the video | confirmed (disc contents, strings) |
-| Controller | official DDG controller on a **15-pin game port**, Win9x VxD `DGOC44.VXD` (+ `DGOC44.dll`, INF registers it as a DirectInput OEM joystick with 2 axes + buttons); readme: game port only, USB not supported | confirmed: `DRIVER/DATA1.CAB` |
+| Controller | official Densha de GO! controller on a **15-pin game port**, Win9x VxD `DGOC44.VXD` (+ `DGOC44.dll`, INF registers it as a DirectInput OEM joystick with 2 axes + buttons); readme: game port only, USB not supported | confirmed: `DRIVER/DATA1.CAB` |
 | Product version | 1.00 | confirmed: `DATA.TAG`, `_user1.cab` |
 | Credits | published by TAITO, sold by Unbalance, with JR East Planning (ジェイアール東日本企画); © TAITO 1996, 2000 | confirmed: Readme |
 

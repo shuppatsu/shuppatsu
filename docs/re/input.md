@@ -109,9 +109,9 @@ indexes every byte by mode.
 | 3 | keyboard | one-handle: ↓ = toward power, ↑ = toward brake | confirmed |
 | 4 | joystick, digital | stick as d-pad: Y+ = power+, Y− = power−, X+ = brake+, X− = brake− | confirmed |
 | 5 | joystick, analog one-handle | single Y axis: positive = power, negative = brake (fixed thresholds) | confirmed |
-| 6 | joystick, analog two-handle (DDG controller) | Y = mascon, X = brake, nearest calibrated position | confirmed |
+| 6 | joystick, analog two-handle (Densha de GO! controller) | Y = mascon, X = brake, nearest calibrated position | confirmed |
 
-The mode 6 = official DDG gameport controller pairing is **likely**: two axes match the INF, and only
+The mode 6 = official Densha de GO! gameport controller pairing is **likely**: two axes match the INF, and only
 mode 6 uses the calibration file.
 
 ### 4.1 Notch state
@@ -295,14 +295,14 @@ Implication for the reimplementation: power and brake are **integer notch indice
 decoding**. Analog calibration and repeat are never replayed. Replays are deterministic only if
 physics consumes the input at the same frame cadence.
 
-## 8. Notes for ddg-engine / ddg-game
+## 8. Notes for shuppatsu-engine / shuppatsu
 
 - Model input as `{power: 0..=5, brake: 0..=10, held/pressed/released: u32}` sampled once per sim
   frame. Apply the repeat rule (press, then every 3rd frame from frame 9) and the EB rules (no repeat
   into 9; mode 6 EB needs 6 frames).
 - Arcade-faithful keyboard defaults = mode 0. The binding table, thresholds and default calibration can
   be read from the exe at runtime (0x47c980, 0x48c434..0x48c477) instead of hardcoding them.
-- Real DDG controllers: the PC gameport version shows up as 2 axes. Modern USB DDG controllers
+- Real Densha de GO! controllers: the PC gameport version shows up as 2 axes. Modern USB Densha de GO! controllers
   (PS1/PS2 via adapter, or the 2000s USB TCPP) are **not** handled by this exe. Our engine
   will need its own decoders that output the same notch integers. The mode 6 nearest-point method and
   `joystick.dat` format are the faithful path for axis-style devices.
@@ -319,10 +319,10 @@ physics consumes the input at the same frame cadence.
 4. Frame rate (ms per poll) is outside this note.
 5. What does the J-key/0x829d16 path do, and should it be kept?
 
-## 10. Port notes (ddg-game)
+## 10. Port notes (shuppatsu)
 
-Implementation: `crates/ddg-game/src/input.rs` (keyboard, shared button word) and
-`crates/ddg-game/src/gamepad.rs` (joystick modes, calibration, modern controllers).
+Implementation: `crates/shuppatsu/src/input.rs` (keyboard, shared button word) and
+`crates/shuppatsu/src/gamepad.rs` (joystick modes, calibration, modern controllers).
 
 ### 10.1 What is read from the exe at runtime
 
@@ -392,7 +392,7 @@ repeated inline. It is kept as a constant in `input::repeat_pulse`.
   are the same in every mode: **South (A/✕) = A + menu confirm, East (B/○) = horn + cancel
   (shared, as in the original), Start = pause.**
 - In mode 6, a USB lever device that reports its handles as two plain axes (gameport-style) works
-  through the faithful nearest-calibrated path after `ddg-game pad calibrate`.
+  through the faithful nearest-calibrated path after `shuppatsu pad calibrate`.
 - Device choice: the first gamepad with force feedback, otherwise the first one (like 0x433d60).
   Hot-plug re-picks.
 
@@ -404,14 +404,14 @@ buttons/d-pad** rather than axes. The local research came up with:
 - No offline source gives the combination tables, so **no built-in table is shipped**. Any table
   written from memory would be unverified.
 
-Instead the port **learns** the table: `ddg-game pad learn --combo <file>` records the set of
+Instead the port **learns** the table: `shuppatsu pad learn --combo <file>` records the set of
 active raw inputs at P0..P5 (brake handle left alone) and at B0..EB (power handle left alone).
 Raw inputs are gilrs button codes, plus axis codes past ±0.5 for hat-style d-pads. An input
 belongs to a handle if it changes across that handle's positions. Inputs that never change are
 ignored. When decoding, an exact match on the handle's inputs gives the notch. An unknown pattern
 (mid-transition) holds the handle. The notches go through mode 6, so the EB debounce and the
 "analog lever" behaviour (no forced EB at station start, pause cursor follows the mascon) apply.
-The file format is text, starting with `ddg-combo 1`, then `power <n> <hex inputs…>` and `brake <n> …`.
+The file format is text, starting with `shuppatsu-combo 1` (files from before the rename start with `ddg-combo 1`, still read), then `power <n> <hex inputs…>` and `brake <n> …`.
 
 **Needs hardware**: everything in 10.4, and the generic mapping on a real pad (stick sign
 conventions per gilrs backend). It also needs: whether a USB one-handle controller (for example the Switch-era
@@ -421,7 +421,7 @@ one-handle mode (not implemented, open), and the button mapping for the combinat
 
 ### 10.5 Tools
 
-`ddg-game pad monitor|calibrate|learn [--mode 4..6] [--joystick-dat F] [--combo F]`.
+`shuppatsu pad monitor|calibrate|learn [--mode 4..6] [--joystick-dat F] [--combo F]`.
 `monitor` prints notch and word changes (Enter = station-start reset). `calibrate` runs the
 ADJUSTMENT sequence with Enter as the confirm and writes `joystick.dat`. `learn` records a combination table.
 
@@ -431,7 +431,7 @@ The original reads one device, the one the options select (`control_mode`, §4).
 `hybrid_input` the keyboard and a gamepad are both live in every control mode. Off gives the
 original's one-device behaviour exactly, with `keyboard_with_controller` (§10.3) as before;
 on supersedes `keyboard_with_controller` (the whole keyboard counts), so old configs keep
-working. Implementation: `crates/ddg-game/src/hybrid.rs` (pure pieces) and
+working. Implementation: `crates/shuppatsu/src/hybrid.rs` (pure pieces) and
 `gamepad::Controls::poll_hybrid`. Port behaviour, so no confidence level applies; the tests are
 named below.
 
@@ -501,7 +501,7 @@ the pad adds nothing. Its buttons release once, with no stale edges (the §10.3 
 and a handle holds its notch. Test `gamepad::tests::hybrid_unplug_and_hint_device`.
 
 **Unchanged.** The Shift override has nothing left to do, because the keyboard always counts.
-The calibration screen (ADJUSTMENT) and `ddg-game pad` read the selected device on purpose.
+The calibration screen (ADJUSTMENT) and `shuppatsu pad` read the selected device on purpose.
 In mode 6 the calibration screen samples the handle decoder's pad as before, and the
 `pad` tool forces `hybrid_input` off.
 
@@ -514,7 +514,7 @@ In mode 6 the calibration screen samples the handle decoder's pad as before, and
   otherwise on the keyboard. Test `hybrid::tests::hint_device_switches_on_first_input_only`.
 - Keyboard: the original's keyboard art, in every mode (the original shows its pad or lever
   art in modes 4–6 whatever is pressed).
-- Pad in modes 0–4: Xbox-style glyphs drawn in code (`ddg-render` `sprites::legend`,
+- Pad in modes 0–4: Xbox-style glyphs drawn in code (`shuppatsu-render` `sprites::legend`,
   `WidgetKind::Legend`), with no image assets. A, B, X and Y are round buttons in green, red,
   blue and yellow with their letters. LB/RB/LT/RT/Menu/View are rounded keys with their names.
   The d-pad is a cross with the arms in use lit, and the left stick is a ring with "L". All are
@@ -540,7 +540,7 @@ In mode 6 the calibration screen samples the handle decoder's pad as before, and
   the key pictures for glyphs and keeps the art labels. The attract "PUSH ENTER KEY" art and
   the "Press START" overlay are left as they are: START is the arcade's word for menu
   confirm.
-- Headless shots have no pad. `--hint-device pad|keyboard`, or `DDG_HINT_DEVICE`, fixes the
+- Headless shots have no pad. `--hint-device pad|keyboard`, or `SHUPPATSU_HINT_DEVICE`, fixes the
   device. Shots: `out/explain/hybrid_input/` (contact sheet `contact_sheet.png`).
 
 **Needs hardware.** Everything above has been checked with fed samples and headless shots

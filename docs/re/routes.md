@@ -1,8 +1,8 @@
 # Route data: `.COM` files and the exe stage tables
 
 Scope: the 15 `DATA\*.COM` route files ("RAIL DATA VER7.0") and the per-stage tables in
-`dengo3k.exe` (3000-bandai) that tie them together. Parsers: `ddg-formats::route` and
-`ddg-formats::stages`. Data tests: `crates/ddg-formats/tests/data.rs`
+`dengo3k.exe` (3000-bandai) that tie them together. Parsers: `shuppatsu-formats::route` and
+`shuppatsu-formats::stages`. Data tests: `crates/shuppatsu-formats/tests/data.rs`
 (`every_route_parses_completely`, `stage_tables_read_and_agree_with_routes`).
 
 Confidence levels: **confirmed** (code and data agree, or checked across all files),
@@ -88,7 +88,7 @@ not a route base height (scene.md §1, §3). **confirmed**
 At segment start (0x41cb00) the camera is placed up to 300 points (37.5 units, double at
 0x46a7b8) **behind** the stop point and catches up immediately, which pre-runs the activation
 lists (§5). **confirmed** (oracle: the engine index and `0x8500c8` match on every setup row of three
-traces, `ddg-tools trace-replay --drive`).
+traces, `shuppatsu-tools trace-replay --drive`).
 
 Units to the stop `0x8500c8`: set to `(index[s+1] − index[s]) × 0.125f` by 0x41c7b0, reduced by
 the per-tick advance in the camera task (0x41d181), and when a non-stop station is passed

@@ -1,7 +1,7 @@
 # The Komachi movie (`DATA/komachi.dat`)
 
 The bonus movie "LOVE特急こまち": an MPEG-1 program stream the original hands to DirectShow, and
-the port decodes with its own MPEG-1 video and Layer II audio decoders (`ddg_formats::mpeg`,
+the port decodes with its own MPEG-1 video and Layer II audio decoders (`shuppatsu_formats::mpeg`,
 decision D2 in architecture.md). Confidence tags: **confirmed** (code, data bytes or a
 measurement), **likely**, **guess**.
 
@@ -41,7 +41,7 @@ walk (0x402700) sees the same edge still in `0x48c42c` as START: one tick, the w
 movie lets the walk go on to item 4 (the demo route). The sprites are not cleared: the movie
 draws over the back buffer, black in attract (the title task's destroy cleared the sprites).
 
-## 2. The file — confirmed (decoded in full, `ddg-tools movie info`, ffprobe)
+## 2. The file — confirmed (decoded in full, `shuppatsu-tools movie info`, ffprobe)
 
 * 39,001,368 bytes. MPEG-1 system stream: 12-byte MPEG-1 pack headers, a system header, PES
   packets of video 0xe0 and audio 0xc0 with MPEG-1 PES headers, and padding 0xbe. Three program
@@ -56,7 +56,7 @@ draws over the back buffer, black in attract (the title task's destroy cleared t
   626/627 bytes, allocation table B.2b (30 subbands), 135.97 s. First PTS 60,752, the same as
   the video's.
 
-## 3. Decoder design (`crates/ddg-formats/src/mpeg/`)
+## 3. Decoder design (`crates/shuppatsu-formats/src/mpeg/`)
 
 Pure: `&[u8]` in, frames out; written from ISO/IEC 11172-1/-2/-3.
 
@@ -102,7 +102,7 @@ copies).
 ## 4. Validation against ffmpeg — confirmed (measured 2026-10-18)
 
 `scripts/movie-compare.sh [idct]` decodes the file with ffmpeg (dev only, `nix shell
-nixpkgs#ffmpeg`, never at runtime) into `out/movie/` and runs `ddg-tools movie compare`.
+nixpkgs#ffmpeg`, never at runtime) into `out/movie/` and runs `shuppatsu-tools movie compare`.
 Side-by-side PNGs (ours | ffmpeg | |difference| × 8): `out/explain/movie/vs_ffmpeg/`.
 
 **Video**, all 4075 frames, PSNR over Y + Cb + Cr:
@@ -122,20 +122,20 @@ samples identical. Unclipped, loud passages of the soundtrack exceed full scale 
 frame 1285); ffmpeg clips them to 16 bits, and so does the port's mixer (and, presumably, the
 original's renderer).
 
-## 5. Decode speed — confirmed (`ddg-tools movie info`, a current AMD laptop CPU, one thread)
+## 5. Decode speed — confirmed (`shuppatsu-tools movie info`, a current AMD laptop CPU, one thread)
 
 | Build | Video | Audio | Read + demux |
 |---|---|---|---|
 | release | 0.38 ms / frame, 88× real time | 926× real time | 39 + 10 ms |
 | debug | 5.55 ms / frame, 6.0× real time | 25.6× real time | — |
 
-## 6. Playback in the port (`crates/ddg-game/src/movie.rs`, `app.rs`)
+## 6. Playback in the port (`crates/shuppatsu/src/movie.rs`, `app.rs`)
 
 * **Where it is played**: attract item 3 once every select stage is cleared
   (`komachi_unlocked`, as 0x404cf0), and, with setting `movie_in_menu` (on), the title menu's
   sixth label as its last row (menus.md §3). Skip and end as §1; from the menu the BGM comes
   back and the cursor sits on the movie row (case 5).
-* **A/V sync**: the soundtrack is a `ddg_audio::PcmStream` mixed at unity gain and resampled to
+* **A/V sync**: the soundtrack is a `shuppatsu_audio::PcmStream` mixed at unity gain and resampled to
   the device rate by `audio_resampler`. The mixer counts the source frames played; that count
   over 44,100 is the clock, and picture *n* is shown from *n* · 1001/30000 s on (plus the
   audio-minus-video start offset, 0 here). A dry queue holds the sound and so the clock.

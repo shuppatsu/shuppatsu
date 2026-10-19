@@ -9,7 +9,7 @@ Sources: the Ghidra decomp in `re/decomp/dengo3k/`, plus `re/decomp/dengo3k_labs
 update functions Ghidra had left as `LAB_` labels, decompiled with a throwaway
 `DecompAt.java` script into a copy of the project). Constants were read from the exe bytes
 (VA − 0x400000 = file offset for `.rdata`/`.data`), and sprite art was identified by looking at
-`ddg-tools export tilemaps --palette N` output. Parsers: `crates/ddg-formats/src/hud.rs`.
+`shuppatsu-tools export tilemaps --palette N` output. Parsers: `crates/shuppatsu-formats/src/hud.rs`.
 
 Confidence: **confirmed** means read from code or bytes. **likely** means a strong inference.
 **guess** means it needs an experiment. Nothing here has been checked against the running game.
@@ -36,7 +36,7 @@ Correction (**confirmed**, callers of 0x4316b0): the reset is not per tick. It i
 from 0x430ec0 (init), 0x434a00 and 0x42a1c0 (screen transitions) and the debug path of
 `Task_Tick` 0x4253c0. A slot set with keep = 0 (e.g. the time-up banner, the ATS lamp) keeps
 its image until something changes it. The port's per-tick `SpriteLayer::reset_transient` would
-wipe such slots, so `ddg-game` (`slots.rs`) marks every slot it sets as kept.
+wipe such slots, so `shuppatsu` (`slots.rs`) marks every slot it sets as kept.
 
 Slot API (all **confirmed**): `0x4316e0(slot, tbl, x, y, pal, layer, keep)` sets everything;
 `0x431730(slot, desc*, x, y, pal, layer, keep)` takes a 6-byte descriptor `{u16 tbl, u8 col, row,
@@ -131,7 +131,7 @@ use distance mode.
 | `0x856c80` | (see above) also cleared at the end of 0x40a0a0 and after the arrival hold (0x4080d0) | |
 | `0x855ff8 & 0x400` | time-up popup running: time messages end, the departure task ends, and 0x4080d0 loops `Task_Tick` until it clears before the continue screen | 0x4158b0 / destructor 0x415a80 |
 
-Implementation: `crates/ddg-game/src/cab.rs` keeps these flags (`clock_freeze`,
+Implementation: `crates/shuppatsu/src/cab.rs` keeps these flags (`clock_freeze`,
 `panel_active`, `panel_on`, `clocks_visible`, `lamp_lit`, `speed_mode`, `atc_index`) and
 feeds them to `Hud::update` through `HudState`.
 
@@ -417,8 +417,8 @@ calls of the tick (main-loop.md §2). So:
 * **Same sprite**: there is no restart, and the running task keeps its own expiry. Once that
   task has ended, the same sprite can be shown again.
 
-`ddg_engine::rules::SignalHud` implements this model. The rules use it for the return value
-(0x40c010 skips the limit set-up on 0), and `ddg-game` popups use it for slot 0x60.
+`shuppatsu_engine::rules::SignalHud` implements this model. The rules use it for the return value
+(0x40c010 skips the limit set-up on 0), and `shuppatsu` popups use it for slot 0x60.
 
 **Call sites (`aspect, mode, ticks, distance`) — confirmed (code):**
 
@@ -480,7 +480,7 @@ Task model (0x411a00 / 0x411d40 / 0x411e00, **confirmed**; corrections to the bu
   previous tick): `≥ 10.0` up (once per state `0x856faa`), `≤ −10.0` down, `|g| ≤ 0.0001`
   counts `0x8570a0` and shows the level sign when it reaches 60. 0x40cf40 sets the counter to
   0x46 and the state to 0 per segment, so a level sign needs an up or down sign first.
-* Implemented in `ddg-game` `popups.rs`; tests `limit_sign_waits_six_updates_*`,
+* Implemented in `shuppatsu` `popups.rs`; tests `limit_sign_waits_six_updates_*`,
   `whistle_sign_ends_*`, `gradient_signs_follow_the_grade_force`.
 
 ### 3.11 Time messages (bonus / penalty popups) — confirmed
@@ -558,7 +558,7 @@ Details (**confirmed**, 0x411f20 / 0x4121d0 / 0x412250 / 0x40c4e0 / 0x40b780 / 0
 
 * While the ATS state `0x857206 ≥ 2` the whole call is skipped, including `Hint_Show(-1)`.
   The rules raise `RuleEvent::HintShown { id, ticks, distance_m, start_m }` / `HintHidden`
-  only for calls that are not skipped; `ddg-game` `hints.rs` draws them.
+  only for calls that are not skipped; `shuppatsu` `hints.rs` draws them.
 * A new hint while one is current sets the old one's `+0x48 = 0`, `+0x34 = 5`: it stays 5 more
   updates while the new one waits its own 5, a seamless handover. The destructor hides both
   slots whatever task it ends.
@@ -697,7 +697,7 @@ continue/game-over screens are in menus.md.
 `NaviAnim(n)` 0x410cb0 creates task 0x411080 (destructor 0x4111f0) in list 3. The "navigator"
 here is a passenger in a seat, drawn in slot 0x61 at (80, 145) (`Hud_Create` placement, layer 2),
 who reacts to rough driving. Animation 0 is the emergency-stop signal (特殊信号発光機) and draws
-in the signal's slot 0x60 instead. Port: `crates/ddg-game/src/navigator.rs` (model and
+in the signal's slot 0x60 instead. Port: `crates/shuppatsu/src/navigator.rs` (model and
 triggers), drawn by `cab.rs`, sounds by `sound/stage.rs`. Both use the same model.
 
 **Creation (0x410cb0, confirmed, code).** Nothing happens while `0x84c0f8 == 1` (open
@@ -810,8 +810,8 @@ hides the other. In the original recording (below) the EB reaction plays while t
 
 **Verification** (`out/explain/navigator/`, gitignored):
 * `compare_orig_left_port_right.png`: the original (Wine capture, stage 5 = set C,
-  `scripts/capture-original.sh navi5 0 0 hook_inputs.txt -` with `DDG_CAP_RECORD=60`) next to
-  the port (`ddg-game play 5 --inputs port_inputs.txt --size 640x480 --shot …`).
+  `scripts/capture-original.sh navi5 0 0 hook_inputs.txt -` with `SHUPPATSU_CAP_RECORD=60`) next to
+  the port (`shuppatsu play 5 --inputs port_inputs.txt --size 640x480 --shot …`).
 * EB: 0x212 for 20 ticks, then 0x217 and 0x218 (falling) for 4 each. The same frames sit at the
   same position with the same palette, at the same in-game clock second (05:56:24–25).
 * Notch slam: animation 6's alternating 0x217/0x214 gestures.
@@ -962,7 +962,7 @@ sprite or a rect-layer fan; it is the first thing the drive task draws:
   station-result replay (the drive task is killed, scene.md §8.1). The ending animates the same
   quad's y as its top letterbox bar. Render mode 2 of 0x425680 and the menu model view
   0x41c3c0 draw the same quad too.
-* **Port.** `Play::cab_mask` (`crates/ddg-game/src/play/cab_mask.rs`) adds it to the 3D band's
+* **Port.** `Play::cab_mask` (`crates/shuppatsu/src/play/cab_mask.rs`) adds it to the 3D band's
   effect quads before the weather overlay, from `BackgroundTables::mask_quad` (read from the
   exe). Measured on headless shots: black down to row 225 at 1280×960 (= 2 × 113), 187 at
   1280×800. **Widescreen:** the quad's left and right edges are moved to the visible Hor+ range,

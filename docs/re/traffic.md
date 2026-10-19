@@ -3,8 +3,8 @@
 Scope: the other trains (and road vehicles) that run past the player: where the game spawns
 them, which track they use, how they move, how they are drawn and heard, and what they have to
 do with the rules. Addresses are VAs in `dengo3k.exe` (3000-bandai). Code:
-`crates/ddg-formats/src/traffic.rs` (model table), `crates/ddg-engine/src/traffic.rs`
-(simulation, poses, sounds), `crates/ddg-game/src/traffic.rs` (drawing).
+`crates/shuppatsu-formats/src/traffic.rs` (model table), `crates/shuppatsu-engine/src/traffic.rs`
+(simulation, poses, sounds), `crates/shuppatsu/src/traffic.rs` (drawing).
 
 Confidence: **confirmed** = read from the code (and checked against the data where that
 applies), **likely** = strong inference, **guess** = needs an oracle recording.
@@ -251,19 +251,19 @@ the first tick under `f5 − 10` (the original needs one tick per earlier state)
 
 ## 8. The port
 
-- `ddg_formats::traffic::TrainModels` (in `StageTables`), `ddg_engine::traffic::Traffic`
+- `shuppatsu_formats::traffic::TrainModels` (in `StageTables`), `shuppatsu_engine::traffic::Traffic`
   driven by `Drive` (events in the loop body and the setup's priming call, car tasks and
   draw-step sounds every tick, clears as in §3), `Drive::traffic_poses`,
-  `Drive::traffic_sounds`; `ddg-game` draws them and `Sound::traffic` plays them.
+  `Drive::traffic_sounds`; `shuppatsu` draws them and `Sound::traffic` plays them.
 - The global tick counter 0x84c494 (`Drive::global_tick`) reseeds the random speed.
   **Approximation:** `rand` starts from the CRT seed 1 at each run; the original's sequence
   depends on every earlier `rand` call of the session (weather drops, effects), so random
   speeds differ.
-- `ddg-tools trace-replay --drive` stays exact on all three traces (no traffic state is in
+- `shuppatsu-tools trace-replay --drive` stays exact on all three traces (no traffic state is in
   them). `oracle/full.schema` now logs `traffic_cursor` (0x856d90), `traffic_state`
   (0x857216), `signal_model` (0x85744c) and the scripted train (0x857000 / 0x8570cc); the
   replay compares `traffic_state` and `signal_model` when present.
-- `ddg-game view` has no stage, timetable or rules, so it shows no traffic.
+- `shuppatsu view` has no stage, timetable or rules, so it shows no traffic.
 
 ## 9. Open questions
 

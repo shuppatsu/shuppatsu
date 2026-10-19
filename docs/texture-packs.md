@@ -3,13 +3,13 @@
 Enhancement `texture_pack` (docs/settings.md): replacement images for the 3D texture pages,
 loaded instead of the pages of `tex*.rom`. Unset (the default) draws the original textures.
 A pack is derived from the user's own game data (or drawn by hand): it lives outside the
-repository (`out/texpacks/`, `~/.cache/ddg`, …) and is never committed.
+repository (`out/texpacks/`, `~/.cache/shuppatsu`, …) and is never committed.
 
 ## Using a pack
 
 ```sh
-ddg-game --texture-pack out/texpacks/xbrz                # or DDG_TEXTURE_PACK=…
-ddg-game --texture-pack out/texpacks/xbrz --texture-filtering
+shuppatsu --texture-pack out/texpacks/xbrz                # or SHUPPATSU_TEXTURE_PACK=…
+shuppatsu --texture-pack out/texpacks/xbrz --texture-filtering
 ```
 
 or `texture_pack = "/path/to/pack"` in `config.toml`. The settings screen shows it under
@@ -23,8 +23,8 @@ shimmer less in the distance).
 
 ## Format
 
-Code: `crates/ddg-formats/src/texpack.rs` (format, QOI codec), `crates/ddg-game/src/texpack.rs`
-(loader), `GameData::add_textures` in `crates/ddg-game/src/scene.rs`.
+Code: `crates/shuppatsu-formats/src/texpack.rs` (format, QOI codec), `crates/shuppatsu/src/texpack.rs`
+(loader), `GameData::add_textures` in `crates/shuppatsu/src/scene.rs`.
 
 ```text
 <pack>/<tex file stem, lowercase>/page<NN>.qoi     texrc/page00.qoi, texr1/page17.qoi, textr2/page03.qoi
@@ -41,7 +41,7 @@ Code: `crates/ddg-formats/src/texpack.rs` (format, QOI codec), `crates/ddg-game/
 * **Stored row order**: the first row of the image is the first row of the page in
   `tex*.rom`, which is the bottom of the picture (tex.rs; the game uploads rows unchanged and
   its UVs address that layout). A pack page therefore looks upside down in a viewer
-  (`ddg-tools export textures` writes upright PNGs for looking at).
+  (`shuppatsu-tools export textures` writes upright PNGs for looking at).
 * **Size**: the original page's times a whole factor, the same on both axes (×1, ×2, ×3, ×4,
   …; `scale_of`). Pages of one pack may use different factors. UVs are normalised to the page
   (`TexRect::map_uv`), so nothing else changes: rects, wrapping and the 2D panorama and ground
@@ -49,20 +49,20 @@ Code: `crates/ddg-formats/src/texpack.rs` (format, QOI codec), `crates/ddg-game/
 * A page without a file keeps the original; a file that does not decode, or whose size is not
   a whole multiple, is reported on stderr and the original is kept.
 
-## Making a pack: `ddg-tools upscale-textures`
+## Making a pack: `shuppatsu-tools upscale-textures`
 
 ```sh
-ddg-tools upscale-textures --method xbrz --scale 4                      # out/texpacks/xbrz
+shuppatsu-tools upscale-textures --method xbrz --scale 4                      # out/texpacks/xbrz
 nix shell nixpkgs#realesrgan-ncnn-vulkan -c \
-  ddg-tools upscale-textures --method esrgan --model realesrgan-x4plus    # out/texpacks/esrgan-realesrgan-x4plus
-nix shell nixpkgs#waifu2x-converter-cpp -c ddg-tools upscale-textures --method waifu2x
+  shuppatsu-tools upscale-textures --method esrgan --model realesrgan-x4plus    # out/texpacks/esrgan-realesrgan-x4plus
+nix shell nixpkgs#waifu2x-converter-cpp -c shuppatsu-tools upscale-textures --method waifu2x
 ```
 
 Options: `--scale N` (default 4), `--out DIR` (default `out/texpacks/<method>`),
 `--model` (esrgan: `realesrgan-x4plus`, `realesrgan-x4plus-anime`, `realesr-animevideov3`),
 `--noise 0..3` (waifu2x denoise, default 1), `--mask smooth|nearest`, `--pad N` (default 2 for
 xbrz/nearest, 8 for the AI methods), `--only texr1,textr2`, `--tool PATH`, `--keep-work`.
-Code: `crates/ddg-tools/src/upscale.rs`, `crates/ddg-tools/src/xbrz.rs`.
+Code: `crates/shuppatsu-tools/src/upscale.rs`, `crates/shuppatsu-tools/src/xbrz.rs`.
 
 Methods:
 
@@ -93,12 +93,12 @@ Per page the tool:
 5. The padding is cut off and the region pasted at its scaled place; transparent texels keep
    their filled colour with alpha 0.
 
-Tests: `ddg_formats::texpack::tests` (QOI round trip, bad input, paths and factors),
-`texpack::tests` in ddg-game (a synthetic pack replaces pages, keeps UVs, rejects bad
+Tests: `shuppatsu_formats::texpack::tests` (QOI round trip, bad input, paths and factors),
+`texpack::tests` in shuppatsu (a synthetic pack replaces pages, keeps UVs, rejects bad
 sizes), `upscale::tests` (rect pixels, regions, padding without neighbour bleed, colour fill
-and alpha, mask smoothing) and `xbrz::tests` in ddg-tools.
+and alpha, mask smoothing) and `xbrz::tests` in shuppatsu-tools.
 
-## HUD sprites: comparison only (`ddg-tools upscale-sprites`)
+## HUD sprites: comparison only (`shuppatsu-tools upscale-sprites`)
 
 There is no runtime pack for the 2D sprites (`cg.rom` tiles, `tbl.rom` tilemaps, the exe's
 palettes; re/hud.md); the chosen method runs in the game instead (`hud_upscale`, below). This
@@ -106,10 +106,10 @@ tool writes contact sheets that compare upscalers on the HUD
 art, plus whole frames recomposed with each method, so a method can be chosen first:
 
 ```sh
-DDG_SHOT_LAYER=1 ddg-game play 0 --lang ja --hud-layout enhanced --size 2560x1440 \
+SHUPPATSU_SHOT_LAYER=1 shuppatsu play 0 --lang ja --hud-layout enhanced --size 2560x1440 \
     --shot 420:$PWD/out/explain/upscale_hud/frame/wide_t420.ppm   # also .world.ppm, .layer.txt
 nix shell nixpkgs#realesrgan-ncnn-vulkan nixpkgs#waifu2x-converter-cpp -c \
-  ddg-tools upscale-sprites --frame out/explain/upscale_hud/frame/wide_t420.layer.txt
+  shuppatsu-tools upscale-sprites --frame out/explain/upscale_hud/frame/wide_t420.layer.txt
 ```
 
 Output (default `out/explain/upscale_hud/`): `sheet_x2.png`, `sheet_x4.png` (a row per sprite
@@ -117,7 +117,7 @@ group, a column per method, 1:1), `rows/<group>_x{2,4}.png` (the same rows one f
 `zoom_x4.png` (crops magnified twice more), `frames/<shot>_<method>.png` (window size) and
 `<shot>_crops.png` (HUD corners at 1:1, the first row being the game's current output).
 
-* `DDG_SHOT_LAYER=1` (debug aid, `shot.rs`): a `play` shot also writes the frame without the
+* `SHUPPATSU_SHOT_LAYER=1` (debug aid, `shot.rs`): a `play` shot also writes the frame without the
   2D layer (`.world.ppm`) and the sprite layer as text (`.layer.txt`: canvas, visible slots in
   draw order with their anchor shifts, the palettes they use as stored, the rect-layer fans).
   The tool recomposes the canvas from it and presents it like the overlay (sharp bilinear,
@@ -162,8 +162,8 @@ entries, so it cannot be recoloured per entry.
 ### Runtime: the `hud_upscale` setting
 
 The chosen method runs in the game, with no pack: `xbrz-indexed`, computed on first use
-(`crates/ddg-render/src/sprites/hires.rs`, the scaler in `sprites/xbrz.rs`, which
-`ddg-tools` uses too). Off (default) keeps the original's blocks.
+(`crates/shuppatsu-render/src/sprites/hires.rs`, the scaler in `sprites/xbrz.rs`, which
+`shuppatsu-tools` uses too). Off (default) keeps the original's blocks.
 
 * **What is upscaled**: at canvas multiples 2, 3 and 4 (`ui_scale`, or the multiple the
   window height gives), each tilemap as one image, so edges crossing tile borders are one

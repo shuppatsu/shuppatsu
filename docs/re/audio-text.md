@@ -414,7 +414,7 @@ system renderer and does not pass through the DSound voices. **confirmed** (impo
 port decodes it with its own MPEG-1 video and Layer II decoders and plays the soundtrack as a
 PCM stream in the mixer (decision D2, movie.md).
 
-## 9. Reimplementation (`crates/ddg-audio`)
+## 9. Reimplementation (`crates/shuppatsu-audio`)
 
 - **No CD audio.** The disc has three Mode 1 data tracks and no CD-DA (recon.md §1), so all music
   comes from `bgm.rom`. `SoundBank::load` reads `effect.rom` and `bgm.rom` (117 MB) into memory
@@ -435,7 +435,7 @@ PCM stream in the mixer (decision D2, movie.md).
     Kaiser-windowed sinc (β 8, cutoff 0.9 of the band kept, 256 phases blended linearly; images
     and aliases below −70 dB), its cutoff scaled by 2^(−k/4) when a voice plays faster than the
     output rate, reading across loop seams and zero-padded at the ends of one-shots
-    (`ddg-audio/src/sinc.rs`). With no rate change (step exactly 1) it passes the samples through.
+    (`shuppatsu-audio/src/sinc.rs`). With no rate change (step exactly 1) it passes the samples through.
     Cost at 48 kHz with 10 voices, release build: nearest 0.3 %, linear 0.6 %, sinc 1.5 % of one
     core. The original also mixed into a 22.05 kHz primary (§1), which none of the modes imitate.
   - Out-of-range frequencies at play time are clamped instead of leaving a stuck silent voice (§2).
@@ -448,11 +448,11 @@ PCM stream in the mixer (decision D2, movie.md).
   `TurnoutClatter` §10.6. All are deterministic and covered by unit tests built from the
   formulas above. Differential checks against oracle logs of the 0x464–0x469 messages are still
   to do.
-- The in-stage mapping of §10 lives in the game crate (`crates/ddg-game/src/sound.rs` and
-  `sound/stage.rs`), because it reads `ddg_engine` state; see §10.10.
+- The in-stage mapping of §10 lives in the game crate (`crates/shuppatsu/src/sound.rs` and
+  `sound/stage.rs`), because it reads `shuppatsu_engine` state; see §10.10.
 - `AudioOutput` (cpal, default device and format, any channel count) owns the stream. It receives
   `Command`s over a channel and applies them at the start of each device buffer.
-- `ddg-tools play-sound <code> [--wav out/…]` plays a code or sequence live, or renders it to a WAV.
+- `shuppatsu-tools play-sound <code> [--wav out/…]` plays a code or sequence live, or renders it to a WAV.
 
 ## 10. In-stage sound events
 
@@ -671,7 +671,7 @@ continue and ranking sounds are in menus.md; they belong to the screens.
 
 ### 10.10 Reimplementation and approximations
 
-`crates/ddg-game/src/sound/stage.rs` (`StageSound`) maps the engine's `RuleEvent`s and state
+`crates/shuppatsu/src/sound/stage.rs` (`StageSound`) maps the engine's `RuleEvent`s and state
 changes (`Snap` before / after each tick) to the calls above; unit tests drive it with a
 recording `SoundSystem`, and a data test runs stage 0. Per-stage tables (station-name ids,
 departure jingle, navigator numbers and frame lists) are read from the exe; code immediates are
@@ -697,7 +697,7 @@ request.
 
 1. ~~Motor code source and the meaning of task+0x30~~: answered in §6.1/§6.3 (0x459e38; X = km/h ×
    39.84). Still to do: compare the motor/noise pitch and volume messages (0x467/0x468) against
-   ddg-hook traces.
+   shuppatsu-hook traces.
 2. Sequence-delay unit: 1/2 tick, ≈ 16.5 ms (likely, §5). Confirm with an oracle timestamp of
    two consecutive phrase starts.
 3. A full catalogue of which tbl.rom maps carry text, for translation.

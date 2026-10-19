@@ -7,8 +7,8 @@ Addresses are VAs in `dengo3k.exe` (3000-bandai; file offset = VA − 0x400000).
 Confidence tags follow loaders.md: **confirmed** = read from code *and* checked against all the
 data, **likely** = one source only, **guess** = inference.
 
-Parser: `crates/ddg-formats/src/part.rs` (`Part::parse`, `Part::parse_entry`, `TexRect::map_uv`).
-Data test: `every_part_parses_exactly` in `crates/ddg-formats/tests/data.rs`.
+Parser: `crates/shuppatsu-formats/src/part.rs` (`Part::parse`, `Part::parse_entry`, `TexRect::map_uv`).
+Data test: `every_part_parses_exactly` in `crates/shuppatsu-formats/tests/data.rs`.
 
 ## 1. Container recap
 

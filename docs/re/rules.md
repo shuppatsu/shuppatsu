@@ -2,8 +2,8 @@
 
 Scope: everything in the driving loop that is not train physics. Source: Ghidra decomp in
 `re/decomp/dengo3k/` and `objdump -d` of `BIN/dengo3k.exe` (3000-bandai), used where the decomp
-lost float expressions. Implementation: `crates/ddg-engine/src/rules.rs`. Tests:
-unit tests in that file and `crates/ddg-engine/tests/rules_data.rs` (needs `DDG_DATA_DIR`).
+lost float expressions. Implementation: `crates/shuppatsu-engine/src/rules.rs`. Tests:
+unit tests in that file and `crates/shuppatsu-engine/tests/rules_data.rs` (needs `SHUPPATSU_DATA_DIR`).
 
 Confidence: **confirmed** = read from code (and constants checked in the exe);
 **likely** = strong inference from code; **guess** = needs an oracle trace. Nothing here has been
@@ -432,7 +432,7 @@ after running into the forced-stop point (`0x8570b4`), and on stage 2 when it cl
   returns 0. A final `Task_Tick` follows; `0x85708c` / `0x85722c` are restored.
 * Maximum bonus 3 + 5 + 2 + 10 = 20 s.
 
-Port: `ddg_engine::coupling` (state machine), `Rules::stage_ending_at_stop`,
+Port: `shuppatsu_engine::coupling` (state machine), `Rules::stage_ending_at_stop`,
 `Rules::coupling_step`, `Rules::next_segment` / `enter_bonus_section`, `Phase::Coupling`
 (`Drive` keeps the physics driving while `Coupling::driving`), `Rules::vehicle_code` /
 `train_type` applied by `Drive::sync_train_type`, `Rules::full_ending`. The 0x8000000 /
@@ -596,7 +596,7 @@ Sum `0x856c88` (0–100). **Ranking value** (0x4080d0 → 0x41e8d0):
 | 0x856fe1[] | u8 | station marks |
 | 0x855ff8 | u32 | phase flags (0x200 driving, 0x800 pre-departure, 2 stage active) |
 
-Added for the rules replay (`ddg-tools trace-replay <csv> --rules`, `crates/ddg-tools/src/trace/rules.rs`):
+Added for the rules replay (`shuppatsu-tools trace-replay <csv> --rules`, `crates/shuppatsu-tools/src/trace/rules.rs`):
 `buttons_held` 0x48c428 u32, `buttons_pressed` 0x48c42c u32, `track_class_ahead` 0x857202 i16,
 `stat0`..`stat11` 0x857050.. i32, and `units_to_stop` 0x8500c8 f32 in rules.schema. The HUD
 transfer counter is not loggable (no global, not the physics task); the replay infers its phase
@@ -614,7 +614,7 @@ Hook points for event-level traces: 0x415080 (every time message: kind, seconds)
   readout). The pre-departure wait is ended by the departure task, not by the caller.
 * Outside the loops `Rules::segment_setup` (0x40b970 + the priming 0x40dad0 of a segment's setup
   tick) and `Rules::idle_tick` (train task + HUD only, for result/continue screens and loading
-  ticks) complete the tick model; `ddg_engine::drive::Drive` sequences them as 0x4080d0 does
+  ticks) complete the tick model; `shuppatsu_engine::drive::Drive` sequences them as 0x4080d0 does
   (physics.md §8a). The signal blocks are built in the setup, not by `finish_station` /
   `continue_run` (lazily on the first `step` for callers without a setup).
 * Red-signal / ATS recovery (`AfterHold::Resume`) keeps `0x200` set (`Rules::train_driving`)
@@ -673,7 +673,7 @@ Hook points for event-level traces: 0x415080 (every time message: kind, seconds)
 
 ## 14. Oracle replay (hilly-drive.csv)
 
-`ddg-tools trace-replay <csv> --rules` (`crates/ddg-tools/src/trace/rules.rs`) drives the engine
+`shuppatsu-tools trace-replay <csv> --rules` (`crates/shuppatsu-tools/src/trace/rules.rs`) drives the engine
 from the logged inputs (row k: notches, buttons, tunnel class; row k−1: speed, odometer,
 `units_to_stop × 10`) from the first row of each pre-departure wait, and compares 65 rule globals
 per tick (integers exactly, floats bit for bit). The HUD transfer phase is inferred from the first
