@@ -17,7 +17,8 @@ struct Section {
     raw_size: u32,
 }
 
-/// A parsed 32-bit PE image borrowing the file bytes.
+/// A parsed PE image borrowing the file bytes (32-bit; a 64-bit PE32+ image is mapped at base
+/// 0).
 #[derive(Debug, Clone)]
 pub struct Exe<'a> {
     data: &'a [u8],
@@ -46,15 +47,24 @@ impl<'a> Exe<'a> {
         let section_count = b.u16(pe + 6)? as usize;
         let optional_size = b.u16(pe + 20)? as usize;
         let optional = pe + 24;
-        if b.u16(optional)? != 0x10b {
-            return Err(FormatError::invalid("PE", "not a PE32 optional header"));
-        }
-        let image_base = b.u32(optional + 28)?;
-        // Data directories follow NumberOfRvaAndSizes (optional + 92); entry 2 is resources.
-        let dir_count = b.u32(optional + 92)?;
-        let resource_dir = if dir_count > 2 && optional_size >= 96 + 3 * 8 {
-            let rva = b.u32(optional + 96 + 2 * 8)?;
-            let size = b.u32(optional + 96 + 2 * 8 + 4)?;
+        // PE32 keeps its base. A PE32+ (64-bit) base does not fit this reader's 32-bit VAs, so
+        // such an image is mapped at 0: its VAs are RVAs (enough for its resources).
+        let (image_base, dirs) = match b.u16(optional)? {
+            0x10b => (b.u32(optional + 28)?, 92),
+            0x20b => (0, 108),
+            _ => {
+                return Err(FormatError::invalid(
+                    "PE",
+                    "not a PE32 or PE32+ optional header",
+                ));
+            }
+        };
+        // Data directories follow NumberOfRvaAndSizes; entry 2 is resources.
+        let dir_count = b.u32(optional + dirs)?;
+        let first = dirs + 4;
+        let resource_dir = if dir_count > 2 && optional_size >= first + 3 * 8 {
+            let rva = b.u32(optional + first + 2 * 8)?;
+            let size = b.u32(optional + first + 2 * 8 + 4)?;
             (rva != 0 && size != 0).then_some((rva, size))
         } else {
             None
@@ -271,6 +281,31 @@ mod tests {
         f[s + 20..s + 24].copy_from_slice(&0x200u32.to_le_bytes()); // raw offset
         f[0x200..0x204].copy_from_slice(&0xdead_beefu32.to_le_bytes());
         f
+    }
+
+    #[test]
+    fn pe32_plus_maps_at_zero() {
+        // The same image as a PE32+: a 0xf0-byte optional header and a 64-bit base.
+        let mut f = vec![0u8; 0x220];
+        f[0..2].copy_from_slice(b"MZ");
+        f[0x3c..0x40].copy_from_slice(&0x40u32.to_le_bytes());
+        f[0x40..0x44].copy_from_slice(b"PE\0\0");
+        f[0x46..0x48].copy_from_slice(&1u16.to_le_bytes());
+        f[0x54..0x56].copy_from_slice(&0xf0u16.to_le_bytes());
+        let opt = 0x58;
+        f[opt..opt + 2].copy_from_slice(&0x20bu16.to_le_bytes());
+        f[opt + 24..opt + 32].copy_from_slice(&0x1_4000_0000u64.to_le_bytes());
+        let s = opt + 0xf0;
+        f[s..s + 5].copy_from_slice(b".data");
+        f[s + 8..s + 12].copy_from_slice(&0x100u32.to_le_bytes());
+        f[s + 12..s + 16].copy_from_slice(&0x1000u32.to_le_bytes());
+        f[s + 16..s + 20].copy_from_slice(&0x10u32.to_le_bytes());
+        f[s + 20..s + 24].copy_from_slice(&0x210u32.to_le_bytes());
+        f[0x210..0x214].copy_from_slice(&0xdead_beefu32.to_le_bytes());
+        let exe = Exe::parse(&f).unwrap();
+        assert_eq!(exe.image_base(), 0);
+        assert_eq!(exe.u32_at(0x1000).unwrap(), 0xdead_beef);
+        assert!(exe.resources().unwrap().is_empty());
     }
 
     #[test]
