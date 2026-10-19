@@ -4,12 +4,12 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// `f` over `items` on all cores, results in the order of `items`.
-pub(crate) fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+pub fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
     par_map_min(items, 1, f)
 }
 
 /// [`par_map`] with at least `min` items per thread's share (cheap items: fewer threads).
-pub(crate) fn par_map_min<T: Sync, R: Send>(
+pub fn par_map_min<T: Sync, R: Send>(
     items: &[T],
     min: usize,
     f: impl Fn(&T) -> R + Sync,
@@ -47,7 +47,7 @@ pub(crate) fn par_map_min<T: Sync, R: Send>(
 }
 
 /// [`par_map_min`] over `0..n`.
-pub(crate) fn par_range<R: Send>(n: usize, min: usize, f: impl Fn(usize) -> R + Sync) -> Vec<R> {
+pub fn par_range<R: Send>(n: usize, min: usize, f: impl Fn(usize) -> R + Sync) -> Vec<R> {
     let idx: Vec<usize> = (0..n).collect();
     par_map_min(&idx, min, |&i| f(i))
 }

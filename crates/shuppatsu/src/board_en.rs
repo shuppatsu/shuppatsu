@@ -101,9 +101,11 @@ impl BoardNames {
         diagrams: impl IntoIterator<Item = u16>,
         names: &HashMap<usize, String>,
     ) -> Self {
-        let diagrams = diagrams
+        // Each diagram is read from its art on its own core (tens of ms in all on one).
+        let tbls: Vec<u16> = diagrams.into_iter().collect();
+        let diagrams = shuppatsu_render::par::par_map(&tbls, |&t| Some((t, Diagram::of(bank, t)?)))
             .into_iter()
-            .filter_map(|t| Some((t, Diagram::of(bank, t)?)))
+            .flatten()
             .collect();
         let names = names
             .iter()
