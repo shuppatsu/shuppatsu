@@ -233,7 +233,9 @@ and ends where the next begins. All are read at runtime from the user's exe by
 Segment lists (decoded): stages 0–2 akita1a@0, akita1b@8, akita1c@24; 3 akita2a; 4 akita2b;
 5–6 hokuho1a; 7–9 hokuho2a; 10 keihin1a@0, 1b@4, 1c@8; 11 keihin1c; 12–13 toukai2a@0,
 toukai1b@2; 14–15 toukai1a@0, toukai1b@2; 16 yamate1a@0, yamate1b@5; 17–19 akita1b@0,
-akita1c@16. `stage_select_segment` (0x408010) picks the last segment with `firstStation ≤
+akita1c@16. Stage 19 is a third 大曲 → 盛岡 run that no route-select group lists: 17's course
+events and 雫石 stop, 18's traffic events, its own timetable (12:08:24 departure, 18:06 to
+盛岡); menus.md §6.4. `stage_select_segment` (0x408010) picks the last segment with `firstStation ≤
 station` and passes `station − firstStation` as the index into that `.COM`'s stop list. The last
 station of one segment is the first of the next.
 

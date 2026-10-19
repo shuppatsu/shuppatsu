@@ -451,6 +451,9 @@ Two levels in one task (`+0x30` level, `+0x38` cursor, `+0x34` item count, `+0x4
   save format is unchanged. The Komachi unlock 0x404cf0 walks the group lists as a set of
   stages, which dedupe does not change. Shots: `out/explain/route_select/unique_{on,off}_{en,ja}_g4*.png`.
 
+* **Stage 19 is in no group.** Select stage 19 (route 19) is a complete third 大曲〜盛岡 こまち
+  run beside 17 (雫石停車) and 18 (雫石通過), and the original has no way to start it (§6.4).
+
 * **Train select** (header 電車選択: descriptor 0x48c58a): the stages of the chosen group, one
   106-px row each, drawn from the **stage table 0x4656ac** (21 × 32 bytes):
 
@@ -509,6 +512,55 @@ Two levels in one task (`+0x30` level, `+0x38` cursor, `+0x34` item count, `+0x4
   (0x4080d0). Route select shows it as the star tbl 0x54b with
   sub-row `(3 − mark)·2` (three star colours). The attract code 0x404cf0 also tests it
   (**guess**: to pick a demo stage the player has not cleared).
+
+### 6.4 Stage 19, the unlisted stage
+
+What it is (the exe's tables, read with the port's parsers and a stand-alone dump):
+
+* Stage table 0x4656ac entry 19 (at 0x465b0c): thumbnail 0x68 (E3), caption 0x268
+  秋田新幹線E3系, from 0x3da 大曲, to 0x3db 盛岡, type 0x3ea こまち, difficulty 2 (中級),
+  route 19. Entries 17 and 18 are byte for byte the same; only the 雫石 tag (select stages
+  0x11/0x12, §6.1) tells those two apart on the row, and 19 would get none. **confirmed**
+* Route data: area 2 (Akita), train-part set row 2, segments `akita1b.com@0, akita1c.com@16`
+  (as 17/18), 17 stations 大曲 → 盛岡. Course events 0x45fd1c = **stage 17's list** (40 records),
+  limit events 0x45ff08 (shared by 17–19), traffic events 0x46333c = **stage 18's list**, sound
+  table 0x459750 (all Akita stages). Every rule table (`[stage][difficulty]`, rules.md §2: margin,
+  stop tolerance, start time, penalties, bonuses, limit notice, block length 330 m, weather
+  never) is equal to 17's and 18's. Stage intro row 0x46594c[19] and departure board
+  `0x467040[19·20]` (8, 3, 7, 8) equal 17's and 18's; the intro is the chase (§7, the fly-by
+  list has 18 but not 17 or 19). Ranking table `0x46bbe8[19]` = 6, shared with 17 and 18; clear
+  mark byte `0x85635a[19]` (eeprom +0x34d) exists in the 20-byte array. **confirmed**
+* Its own timetable 0x45d7d4: it **stops at 雫石** (station 13, field 3 = 1, like 17), departs
+  大曲 at **12:08:24** (1 311 120 ticks; 17 at 14:50:24, 18 at 15:46:24) and is scheduled
+  **18:06** to 盛岡 (17: 16:21, 18: 15:01), so it is the slowest, most lenient of the three.
+  The cumulative positions, distances and thresholds equal 17's; the only other difference is
+  field 7 (station-result camera preset, rules.md §10) at 田沢湖: 0, where 17 and 18 have 1.
+  **confirmed** (table bytes)
+* The code knows route 19: `0x40d340` and `0x40d620` end the stage after station 15 (大釜) for
+  routes 0x11, 0x12 **and 0x13**, and `0x4124f0` (the station-result screen) sets the same
+  route-strip sprite (`0x436770(4, 0x55, 1, …)`) for all three. **confirmed** (decomp)
+* Is it a duplicate? Not byte-for-byte: it is 17's run (stops, course events) with 18's AI
+  trains, a midday departure and a looser schedule. **confirmed** (tables); what it was for
+  (a cut "easy" or daytime variant, or the stage meant for group 4) is **guess**.
+
+Whether the original can reach it — **no** (confirmed by code reading):
+
+* The route index `0x8570a4` has eight stores in the disassembly: the route select's destroy
+  0x436640 (0x436679 `stage[+0x1c]` of a 0x47cb74 entry, 0x436682 10 for stage 20, 0x4366fb
+  −1), the attract picker 0x40e450 (0x40e48b, routes 0–12 from `0x8500b0`), the lesson demo
+  (0x40e6f0, 5) and `Stage_Run` (0x40811e route 1 for the `0x816840 & 0x20` start; 0x408c0d
+  0x14 and 0x408c6d 10 around the variant's clear mark). The stage table is read only through
+  0x47cb74 entries (0x435510, 0x436640, 0x404cf0), and 19 is in none of them.
+* So not from the ending (only for difficulty > 3 stages, §12.2; 19 is 2), the bonus game
+  (§12.1), the attract demos (routes 0–12 and stage 5, §2.4), the records viewer (its pages stop
+  at route 17; 19 shares 17's table), or the EB + P3 title combination (0x435490 never reads its
+  argument, §6.2). No debug or cheat path stores 19. **confirmed** (disassembly)
+
+The port: `shuppatsu play 19` runs it (any difficulty, `--station`); shots at 大曲, 雫石 and
+大釜→盛岡 in `out/explain/stage19/`, with 17/18 beside it in `s17_s18_s19_compare.png`. The
+engine soak (`shuppatsu-engine` test `autopilot`, release, `--ignored`) clears stage 19 at
+difficulties 0 and 3 end to end: 16 of 16 stations, four stops (角館, 田沢湖, 雫石, 盛岡) and
+the 盛岡 coupling, like 17. It is not in the route select (it stays as the original's).
 
 ## 7. Pre-run screens
 
@@ -1074,7 +1126,9 @@ Evidence: unit tests `screens::ranking::tests::timeout_filters_and_commits`,
 
 1. ~~Group 4 of the line select~~: resolved, the original shows it as the port does (§6.1):
    four identical 秋田新幹線E3系 こまち 秋田〜新花巻 特級 rows (stage 2). Why the table repeats
-   stage 2, and why stage 19 (route 19) is in no group, stays unknown (likely a placeholder).
+   stage 2 stays unknown (likely a placeholder). Stage 19 is described in §6.4: a complete,
+   playable third 大曲〜盛岡 run that nothing in the original starts; why it was left out is
+   unknown.
 11. Who draws the lever-check arrows tbl 0x3b / 0x3c (§7), and what 0x40aa42 does with a clear
     mark of 3 at station 7 of the route-10 variant.
 2. ~~`0x855ae8`~~: resolved, the cached pixel width of tbl 0x504 (§1.3).
