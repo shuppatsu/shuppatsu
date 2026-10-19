@@ -33,7 +33,7 @@ use shuppatsu_formats::scene::{DRIVING_FOV_Y_DEG, TrackPos};
 use shuppatsu_formats::stages::StageTables;
 use shuppatsu_render::FrameGeometry;
 use shuppatsu_render::camera::ORIGINAL_STRETCH;
-use shuppatsu_render::sprites::{Anchor, Slot, SpriteBank, SpriteLayer};
+use shuppatsu_render::sprites::{Anchor, SLOT_COUNT, Slot, SpriteBank, SpriteLayer};
 use std::time::{Duration, Instant};
 
 mod bonus;
@@ -828,6 +828,8 @@ impl Play {
     /// One 33 ms tick: a frozen pause tick, or a simulation tick with the stage flow.
     fn tick(&mut self) -> Result<()> {
         // The driving HUD anchors its slots again in `update_hud`; everything else is centred.
+        // A pause tick runs no HUD, so it keeps the anchors of the frame it froze.
+        let frozen = self.layer.anchors;
         self.layer.centre_all();
         if self.demo.is_some() {
             return self.demo_tick();
@@ -851,7 +853,7 @@ impl Play {
                 self.end_pause(r)?;
             }
             self.play(&sfx);
-            self.draw_frozen();
+            self.draw_frozen(frozen);
             return Ok(());
         }
         if self.flow.try_pause(&input, self.drive.phase(), &mut sfx) {
@@ -861,7 +863,7 @@ impl Play {
             }
             self.poll();
             self.play(&sfx);
-            self.draw_frozen();
+            self.draw_frozen(frozen);
             return Ok(());
         }
 
@@ -1195,8 +1197,11 @@ impl Play {
         }
     }
 
-    /// A paused tick: only the render list runs (`0x855ffc & 4`); the dialog changes.
-    fn draw_frozen(&mut self) {
+    /// A paused tick: only the render list runs (`0x855ffc & 4`); the dialog changes. The HUD
+    /// keeps `anchors`, those of the last driving frame, so pausing moves nothing on a wide
+    /// canvas (`wide_hud`).
+    fn draw_frozen(&mut self, anchors: [Anchor; SLOT_COUNT]) {
+        self.layer.anchors = anchors;
         self.flow.clear_drawn(&mut self.layer);
         self.flow.draw(&mut self.layer);
         self.centre_screen();
@@ -1556,6 +1561,131 @@ impl ApplicationHandler for Play {
                 }
             }
             other => self.window_input(&other),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The bank out of [`load_bank`]'s result, alone or with the front tables beside it.
+    trait BankOf {
+        fn bank(self) -> SpriteBank;
+    }
+
+    impl BankOf for SpriteBank {
+        fn bank(self) -> SpriteBank {
+            self
+        }
+    }
+
+    impl<T> BankOf for (SpriteBank, T) {
+        fn bank(self) -> SpriteBank {
+            self.0
+        }
+    }
+
+    /// A headless run of stage 0 on a 16:9 window, in the HUD layout `hud_layout`, with the
+    /// script's `keys`. Needs `SHUPPATSU_DATA_DIR`.
+    fn headless_play(
+        lang: &str,
+        hud_layout: crate::presentation::HudLayout,
+        keys: Vec<(u64, u8)>,
+    ) -> Option<Play> {
+        if std::env::var_os("SHUPPATSU_DATA_DIR").is_none() {
+            eprintln!("skipped: SHUPPATSU_DATA_DIR not set");
+            return None;
+        }
+        let data = GameData::from_env().unwrap();
+        let exe_bytes = data.exe().unwrap();
+        let exe = Exe::parse(&exe_bytes).unwrap();
+        let locale = crate::locale::LocaleConfig {
+            lang: lang.to_owned(),
+            hud_layout,
+            ..Default::default()
+        };
+        let pad = PadOptions {
+            no_pad: true,
+            ..Default::default()
+        };
+        let opts = PlayOptions {
+            stage: 0,
+            difficulty: 0,
+            difficulty_from_save: false,
+            station: 0,
+            control_mode: 0,
+            pad: pad.clone(),
+            size: (2560, 1440),
+            settings: crate::settings::Settings::default(),
+            mute: true,
+            inputs: None,
+            shot: None,
+            speedometer: None,
+            variant: false,
+            ending: None,
+            intro: false,
+            locale,
+        };
+        let shared = Shared {
+            bank: load_bank(&data, &exe, &opts.locale).unwrap().bank(),
+            layer: SpriteLayer::default(),
+            save: Save::open(&exe, None).unwrap(),
+            controls: Controls::new(&exe, 0, &pad).unwrap(),
+            sound: None,
+            gpu: None,
+            data,
+        };
+        let mut play = Play::new(shared, opts).unwrap();
+        play.script.keys = keys;
+        Some(play)
+    }
+
+    /// Pausing moves nothing of the driving HUD (user report: on the wide canvas the left
+    /// and right groups jumped to their 4:3 places): every slot but the pause screen's own
+    /// is where the last driving frame put it, anchor shift included, and the HUD's fans
+    /// and widgets stay.
+    #[test]
+    fn pausing_keeps_the_hud_in_place() {
+        use crate::presentation::HudLayout;
+        for (lang, layout) in [
+            ("en", HudLayout::Enhanced),
+            ("ja", HudLayout::Enhanced),
+            ("en", HudLayout::Original),
+        ] {
+            let Some(mut play) = headless_play(lang, layout, vec![(300, 0x01)]) else {
+                return;
+            };
+            while play.ticks < 300 {
+                play.tick().unwrap();
+            }
+            assert!(!play.flow.paused(), "{lang} {layout:?}");
+            if layout == HudLayout::Enhanced {
+                assert!(play.layer.wide > 0, "a wide canvas");
+            }
+            let placed = |l: &SpriteLayer| -> Vec<(Slot, i32)> {
+                (0..SLOT_COUNT)
+                    .map(|i| (l.slots[i], l.anchor_shift(l.anchors[i])))
+                    .collect()
+            };
+            let driving = placed(&play.layer);
+            let (fans, widgets) = (play.layer.fans.clone(), play.layer.widgets.clone());
+            for _ in 0..20 {
+                play.tick().unwrap();
+                assert!(play.flow.paused(), "{lang} {layout:?}");
+                let paused = placed(&play.layer);
+                let drawn = play.flow.drawn();
+                for (i, (a, b)) in driving.iter().zip(&paused).enumerate() {
+                    if !drawn.contains(&i) {
+                        assert_eq!(a, b, "slot {i:#x} moved ({lang} {layout:?})");
+                    }
+                }
+                assert_eq!(play.layer.fans, fans, "{lang} {layout:?}");
+                assert!(
+                    play.layer.widgets.starts_with(&widgets),
+                    "{lang} {layout:?}"
+                );
+            }
         }
     }
 }

@@ -927,7 +927,8 @@ renderer.md §13, confirmed). None of the HUD elements in §3 use them, but the 
     `Centre`; the driving HUD sets its own, and the slots the stage flow's screens drew (pause,
     station result, continue) are put back to `Centre`. With the HUD hidden (report card,
     ranking, run end), in the ending, opening, bonus game and the front end everything is
-    centred.
+    centred. A pause tick runs no HUD task, so it keeps the anchors of the driving frame it
+    froze: pausing moves nothing of the HUD, only the pause screen and its legend are added.
   * The wider station plates of `wide_plates` (docs/localisation.md; a translation in
     the enhanced HUD layout) take part of the right group's extra room; the vehicle picture moves
     left with them, and only then, never closer than 4 px to the remaining time (the group
