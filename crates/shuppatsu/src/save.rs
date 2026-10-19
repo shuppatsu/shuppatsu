@@ -352,14 +352,52 @@ pub fn default_path() -> Option<PathBuf> {
     Some(config_dir()?.join("eeprom.dat"))
 }
 
-/// The port's directory for `eeprom.dat`, `joystick.dat` and `config.toml`: `%APPDATA%\shuppatsu`
-/// on Windows, else `$XDG_CONFIG_HOME/shuppatsu` or `~/.config/shuppatsu` (relative values are ignored).
+/// The config folder's name.
+const DIR_NAME: &str = "shuppatsu";
+/// Its name before the project was renamed; [`migrate`] copies it over once.
+const OLD_DIR_NAME: &str = "ddg";
+
+/// The port's directory for `eeprom.dat`, `joystick.dat` and `config.toml`:
+/// `%APPDATA%\shuppatsu` on Windows, else `$XDG_CONFIG_HOME/shuppatsu` or
+/// `~/.config/shuppatsu` (relative values are ignored). The first call copies the old `ddg`
+/// folder there if only that one exists ([`migrate`]).
 pub fn config_dir() -> Option<PathBuf> {
-    config_dir_in(|k| std::env::var_os(k))
+    static DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let dir = config_dir_in(|k| std::env::var_os(k))?;
+        match migrate(&dir) {
+            Ok(None) => Some(dir),
+            Ok(Some(note)) => {
+                eprintln!("{note}");
+                let _ = MIGRATION_NOTE.set(note);
+                Some(dir)
+            }
+            Err(e) => {
+                let old = dir.with_file_name(OLD_DIR_NAME);
+                eprintln!(
+                    "warning: could not copy {} to {} ({e:#}); using the old folder",
+                    old.display(),
+                    dir.display()
+                );
+                Some(old)
+            }
+        }
+    })
+    .clone()
+}
+
+static MIGRATION_NOTE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// What [`config_dir`] reported when it copied the old folder (the Windows log repeats it,
+/// since that first report may have gone to a missing stderr).
+#[cfg_attr(not(windows), allow(dead_code))]
+pub fn migration_note() -> Option<&'static str> {
+    MIGRATION_NOTE.get().map(String::as_str)
 }
 
 /// [`config_dir`] with the environment looked up by `env` (tests point `XDG_CONFIG_HOME` at a
-/// temporary directory without touching the process environment or the real home).
+/// temporary directory without touching the process environment or the real home). Pure: no
+/// migration.
 pub fn config_dir_in(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
     let absolute = |v: std::ffi::OsString| Some(PathBuf::from(v)).filter(|p| p.is_absolute());
     let dir = if cfg!(windows) {
@@ -369,7 +407,43 @@ pub fn config_dir_in(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option
             .and_then(absolute)
             .or_else(|| env("HOME").and_then(absolute).map(|h| h.join(".config")))?
     };
-    Some(dir.join("shuppatsu"))
+    Some(dir.join(DIR_NAME))
+}
+
+/// When `dir` does not exist but its old-named sibling (`ddg`, from before the rename) does,
+/// copies the old folder's contents to `dir` and returns a note saying so. The old folder is
+/// never changed or deleted. The copy goes to a temporary sibling first and is renamed into
+/// place, so an interrupted copy is redone on the next start.
+pub fn migrate(dir: &Path) -> Result<Option<String>> {
+    let old = dir.with_file_name(OLD_DIR_NAME);
+    if dir.exists() || !old.is_dir() {
+        return Ok(None);
+    }
+    let tmp = dir.with_file_name(format!("{DIR_NAME}.migrating"));
+    if tmp.exists() {
+        std::fs::remove_dir_all(&tmp).with_context(|| tmp.display().to_string())?;
+    }
+    copy_tree(&old, &tmp)?;
+    std::fs::rename(&tmp, dir).with_context(|| dir.display().to_string())?;
+    Ok(Some(format!(
+        "copied the settings and saves from {} to {} (the old folder is kept)",
+        old.display(),
+        dir.display()
+    )))
+}
+
+fn copy_tree(from: &Path, to: &Path) -> Result<()> {
+    std::fs::create_dir_all(to).with_context(|| to.display().to_string())?;
+    for entry in std::fs::read_dir(from).with_context(|| from.display().to_string())? {
+        let entry = entry?;
+        let (src, dst) = (entry.path(), to.join(entry.file_name()));
+        if entry.file_type()?.is_dir() {
+            copy_tree(&src, &dst)?;
+        } else {
+            std::fs::copy(&src, &dst).with_context(|| src.display().to_string())?;
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -444,6 +518,40 @@ mod tests {
         assert_eq!(again.rankings[0][0].score, 4321);
         assert_eq!(again.eeprom.clear_mark(7), 3);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn migrates_the_old_folder_once_and_keeps_it() {
+        let base = std::env::temp_dir().join(format!("shuppatsu-migrate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (old, new) = (base.join(OLD_DIR_NAME), base.join(DIR_NAME));
+        // Nothing to migrate.
+        std::fs::create_dir_all(&base).unwrap();
+        assert_eq!(migrate(&new).unwrap(), None);
+        assert!(!new.exists());
+        // The old folder is copied, files and subfolders, and left as it was.
+        std::fs::create_dir_all(old.join("sub")).unwrap();
+        std::fs::write(old.join("eeprom.dat"), [1, 2, 3]).unwrap();
+        std::fs::write(old.join("config.toml"), "lang = \"en\"\n").unwrap();
+        std::fs::write(old.join("sub").join("combo.txt"), "x").unwrap();
+        let note = migrate(&new).unwrap().expect("a note");
+        assert!(note.contains("kept"), "{note}");
+        assert_eq!(std::fs::read(new.join("eeprom.dat")).unwrap(), [1, 2, 3]);
+        assert_eq!(
+            std::fs::read_to_string(new.join("config.toml")).unwrap(),
+            "lang = \"en\"\n"
+        );
+        assert_eq!(
+            std::fs::read(new.join("sub").join("combo.txt")).unwrap(),
+            b"x"
+        );
+        assert_eq!(std::fs::read(old.join("eeprom.dat")).unwrap(), [1, 2, 3]);
+        assert!(!base.join(format!("{DIR_NAME}.migrating")).exists());
+        // Once the new folder exists it is never overwritten again.
+        std::fs::write(new.join("eeprom.dat"), [9]).unwrap();
+        assert_eq!(migrate(&new).unwrap(), None);
+        assert_eq!(std::fs::read(new.join("eeprom.dat")).unwrap(), [9]);
+        std::fs::remove_dir_all(&base).unwrap();
     }
 
     /// A fresh `$XDG_CONFIG_HOME` under the system temp dir (never the real home); the

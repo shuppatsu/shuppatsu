@@ -43,6 +43,10 @@ pub fn init(console: bool) -> Option<std::path::PathBuf> {
         ffi::SetStdHandle(ffi::STD_ERROR_HANDLE, err);
         ffi::SetStdHandle(ffi::STD_OUTPUT_HANDLE, out);
     }
+    // `config_dir` reported a copied `ddg` folder before stderr existed; repeat it here.
+    if let Some(note) = crate::save::migration_note() {
+        eprintln!("{note}");
+    }
     Some(path)
 }
 

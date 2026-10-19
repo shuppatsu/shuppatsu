@@ -643,7 +643,9 @@ pub struct ComboTable {
     pub brake: Vec<BTreeSet<RawInput>>,
 }
 
-const COMBO_HEADER: &str = "ddg-combo 1";
+const COMBO_HEADER: &str = "shuppatsu-combo 1";
+/// The header written before the project was renamed; still read, so learned tables keep working.
+const OLD_COMBO_HEADER: &str = "ddg-combo 1";
 
 impl ComboTable {
     /// Inputs that change as one handle moves; inputs the same in every position belong to
@@ -698,7 +700,10 @@ impl ComboTable {
 
     pub fn parse(text: &str) -> Result<Self> {
         let mut lines = text.lines().filter(|l| !l.trim().is_empty());
-        if lines.next().map(str::trim) != Some(COMBO_HEADER) {
+        if !matches!(
+            lines.next().map(str::trim),
+            Some(COMBO_HEADER | OLD_COMBO_HEADER)
+        ) {
             bail!("not a {COMBO_HEADER} file");
         }
         let mut t = Self::default();
@@ -934,7 +939,7 @@ impl PadSource {
 pub struct PadOptions {
     /// `joystick.dat` to load (mode 6 calibration); the exe default when absent or missing.
     pub joystick_dat: Option<PathBuf>,
-    /// A learned combination table (`ddg-combo 1` text); selects the combination profile.
+    /// A learned combination table (`shuppatsu-combo 1` text); selects the combination profile.
     pub combo_table: Option<PathBuf>,
     /// Setting `keyboard_with_controller` (default on): the keyboard's horn and A button work
     /// in the controller modes too ([`Joystick::keyboard_buttons`]). With `hybrid_input` on
@@ -1891,9 +1896,15 @@ mod tests {
     fn combo_text_round_trip() {
         let t = learned();
         let text = t.to_text();
-        assert!(text.starts_with("ddg-combo 1\n"));
+        assert!(text.starts_with("shuppatsu-combo 1\n"));
         assert_eq!(ComboTable::parse(&text).unwrap(), t);
-        assert!(ComboTable::parse("ddg-combo 1\npower 1\n").is_err());
+        let old = text.replacen("shuppatsu-combo 1", "ddg-combo 1", 1);
+        assert_eq!(
+            ComboTable::parse(&old).unwrap(),
+            t,
+            "pre-rename tables load"
+        );
+        assert!(ComboTable::parse("shuppatsu-combo 1\npower 1\n").is_err());
         assert!(ComboTable::parse("junk").is_err());
         assert_eq!(raw_axis(5, 0.7), Some(RAW_AXIS_POS | 5));
         assert_eq!(raw_axis(5, -0.2), None);

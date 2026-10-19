@@ -15,7 +15,8 @@ $XDG_DATA_HOME/icons/hicolor/<n>x<n>/apps/shuppatsu.png (native sizes, plus 128 
 nearest-upscaled). XDG_DATA_HOME defaults to ~/.local/share.
   --exec <path>   program the entry starts (default: this executable)
   --exe <file>    exe to take the icon from (default: $SHUPPATSU_DATA_DIR's dengo3k.exe)
-  --uninstall     remove the files instead";
+  --uninstall     remove the files instead
+Entries and icons named ddg-game (from before the rename) are removed in both cases.";
 
 /// Upscaled sizes for HiDPI launchers.
 const UPSCALED: [u32; 2] = [128, 256];
@@ -72,6 +73,8 @@ pub fn run(args: &[String]) -> Result<()> {
             .with_context(|| format!("writing {}", path.display()))?;
         println!("wrote {} ({}x{})", path.display(), img.width, img.height);
     }
+    // The entry and icons from before the rename would show a second, stale launcher.
+    remove_named(&data_home, OLD_APP_ID)?;
     let apps = data_home.join("applications");
     std::fs::create_dir_all(&apps)?;
     let entry = apps.join(format!("{APP_ID}.desktop"));
@@ -90,16 +93,29 @@ fn data_home() -> Result<PathBuf> {
     Ok(PathBuf::from(home).join(".local/share"))
 }
 
-/// Removes the entry and every `hicolor/*/apps/shuppatsu.png`.
+/// The entry and icon name used before the project was renamed; install and uninstall remove
+/// its files too.
+const OLD_APP_ID: &str = "ddg-game";
+
+/// Removes the entries and every `hicolor/*/apps/<name>.png` of [`APP_ID`] and [`OLD_APP_ID`].
 fn remove(data_home: &Path) -> Result<()> {
+    let removed = remove_named(data_home, APP_ID)? + remove_named(data_home, OLD_APP_ID)?;
+    if removed == 0 {
+        println!("nothing to remove under {}", data_home.display());
+    }
+    Ok(())
+}
+
+/// Removes `applications/<name>.desktop` and the `<name>.png` icons; returns how many files.
+fn remove_named(data_home: &Path, name: &str) -> Result<usize> {
     let mut files = vec![
         data_home
             .join("applications")
-            .join(format!("{APP_ID}.desktop")),
+            .join(format!("{name}.desktop")),
     ];
     if let Ok(sizes) = std::fs::read_dir(data_home.join("icons/hicolor")) {
         for s in sizes.flatten() {
-            files.push(s.path().join("apps").join(format!("{APP_ID}.png")));
+            files.push(s.path().join("apps").join(format!("{name}.png")));
         }
     }
     let mut removed = 0;
@@ -110,10 +126,7 @@ fn remove(data_home: &Path) -> Result<()> {
             removed += 1;
         }
     }
-    if removed == 0 {
-        println!("nothing to remove under {}", data_home.display());
-    }
-    Ok(())
+    Ok(removed)
 }
 
 /// The `.desktop` file. `SHUPPATSU_DATA_DIR` is baked in when set, since launchers don't run the dev
@@ -131,7 +144,7 @@ fn desktop_entry(exec: &Path, data_dir: Option<&Path>) -> String {
          Type=Application\n\
          Version=1.5\n\
          Name={TITLE}\n\
-         Comment=Native reimplementation; plays from your own disc\n\
+         Comment=Train driving engine for Densha de GO! 2 data from your own disc\n\
          Exec={cmd}\n\
          Icon={APP_ID}\n\
          Terminal=false\n\
@@ -280,5 +293,31 @@ mod tests {
         let e = desktop_entry(Path::new("/x/shuppatsu"), Some(Path::new("/d")));
         assert!(e.contains("Exec=env SHUPPATSU_DATA_DIR=/d /x/shuppatsu\n"));
         assert!(e.contains("StartupWMClass=shuppatsu\n"));
+        assert!(e.contains("Name=Shuppatsu\n"));
+    }
+
+    #[test]
+    fn uninstall_removes_new_and_old_names() {
+        let home = std::env::temp_dir().join(format!("shuppatsu-desktop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let icons = home.join("icons/hicolor/32x32/apps");
+        std::fs::create_dir_all(&icons).unwrap();
+        std::fs::create_dir_all(home.join("applications")).unwrap();
+        let other = icons.join("other.png");
+        for f in [
+            home.join("applications/shuppatsu.desktop"),
+            home.join("applications/ddg-game.desktop"),
+            icons.join("shuppatsu.png"),
+            icons.join("ddg-game.png"),
+            other.clone(),
+        ] {
+            std::fs::write(f, b"x").unwrap();
+        }
+        assert_eq!(remove_named(&home, OLD_APP_ID).unwrap(), 2);
+        remove(&home).unwrap();
+        assert!(!home.join("applications/shuppatsu.desktop").exists());
+        assert!(!icons.join("shuppatsu.png").exists());
+        assert!(other.exists(), "other apps' icons stay");
+        std::fs::remove_dir_all(&home).unwrap();
     }
 }
