@@ -802,11 +802,11 @@ whose gist the context settles.
 | 0xf5 | cause 9 | "Trains can't stop suddenly." | confirmed |
 | 0xe9, 0xed, 0xee, 0xf4 | no caller in a stage found | "Please press the Start button.", "Watch your speed entering stations, OK?", "Make good use of coasting, OK?", "Use full notch when starting off, OK?" | confirmed |
 | sequences 0..4 (0xfa + 0xf7 / 0xf8 / 0xf9 / 0xfd / 0xfe) | result screens (menus.md), which show no subtitles | "Congratulations!" + "You passed the beginner class." / "…intermediate class." / "Aim for a high score." / "Shift complete." / "Good work." | confirmed (0xf7/0xf8 初級/中級…合格) |
-| 0x34 | coupling minigame intro, loop tick 30 | "Begin coupling preparations. Over." | guess ("coupling preparations" + a request + "over"; the verb garbled) |
+| 0x34 | coupling minigame intro, loop tick 30 | "Prepare for coupling. Over." | guess ("coupling preparations" + a request + "over"; the verb garbled) |
 | 0x40 | coupling minigame intro, tick 70; E3 coupling (sequence 0x29 with 0x12) | "Coupling preparations complete. Over." | likely (0x35 + "over"; one model reads it whole, the other in the intro's context) |
 | 0x36 | coupling minigame intro, tick 130 | "Stop once at 3 metres, then proceed." | likely (one model whole; "3 m" though the mark is 4.5–6.5 m) |
-| 0x37 | coupling reminder every 90 ticks (≥ 9 m, or waiting at the mark) | "Come ahead." | guess (by its vowels: "forward" + "all right") |
-| 0x38 | coupling call at 8 m | "All right." | guess (0.6 s; "all right" by its vowels) |
+| 0x37 | coupling reminder every 90 ticks (≥ 9 m, or waiting at the mark) | "Clear ahead, keep coming." | likely (heard as まいおら / まおらお / 前を来た: 前オーライ, the ground staff's "clear ahead, come on" call used in real coupling at Morioka, e.g. in the song MOTER MAN 秋田新幹線こまち; a vocabulary-prompted Whisper run, out/stt/coupling/res4.tsv, did not sharpen it further) |
+| 0x38 | coupling call at 8 m | "Keep coming." | guess (0.6 s; オーライ by its vowels, the shortened call as the train gets close) |
 | 0x39 | coupling call at 6.5 m (the mark) | "Stop, stop!" | confirmed (both models in context) |
 | 0x3a | coupling, stopped at the mark | "Now for the coupling." | likely ("next" + "coupling", a word both models garble in every clip) |
 | 0x3b, 0x3c, 0x3d | coupling calls at 3, 2, 1 m | "OK, 3 metres." / "OK, 2 metres." / "OK, 1 metre." | confirmed (both models, the clips in a row) |

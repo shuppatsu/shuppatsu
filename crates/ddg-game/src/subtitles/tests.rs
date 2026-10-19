@@ -140,12 +140,12 @@ fn coupling_radio_has_a_line_per_call() {
     assert_eq!(
         lines,
         [
-            "Begin coupling preparations. Over.",
+            "Prepare for coupling. Over.",
             "Coupling preparations complete. Over.",
             "Stop once at 3 metres, then proceed.",
             // The reminder (every 90 ticks while 9 m or more away), then the 8 m call.
-            "Come ahead.",
-            "All right.",
+            "Clear ahead, keep coming.",
+            "Keep coming.",
             "Stop, stop!",
             "Now for the coupling.",
             "OK, 3 metres.",
