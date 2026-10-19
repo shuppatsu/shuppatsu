@@ -432,6 +432,69 @@ mod tests {
         assert!(!replay, "no replay stored: the flag goes off");
     }
 
+    /// The train list of group `g` drawn on a fresh layer: per row, the tilemaps in the
+    /// thumbnail, caption, from, to and type slots.
+    fn drawn_rows(t: &FrontTables, g: usize) -> Vec<[i16; 5]> {
+        let m = RouteSelect {
+            level: 1,
+            count: t.group_stages[g].len() as i32,
+            list: ScrollList::default(),
+            group: g,
+            blink: 0,
+            cursor_x: 0,
+        };
+        let mut l = SpriteLayer::default();
+        m.draw(&Env::default(), t, false, &|_| 0, &mut l);
+        (0..t.group_stages[g].len())
+            .map(|i| {
+                [rec::THUMB, rec::CAPTION, rec::FROM, rec::TO, rec::TYPE]
+                    .map(|r| l.slots[t.train_row[r].slot as usize + ROW_SLOTS * i].tilemap)
+            })
+            .collect()
+    }
+
+    fn table_rows(t: &FrontTables, g: usize) -> Vec<[i16; 5]> {
+        t.group_stages[g]
+            .iter()
+            .map(|&s| {
+                let st = &t.stages[s];
+                [st.thumb, st.caption, st.from, st.to, st.train_type]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn each_row_shows_its_own_stage() {
+        let mut t = tables();
+        for (i, st) in t.stages.iter_mut().enumerate() {
+            let i = i as i16;
+            (st.thumb, st.caption, st.from, st.to, st.train_type) =
+                (0x100 + i, 0x200 + i, 0x300 + i, 0x400 + i, 0x500 + i);
+        }
+        for g in 0..GROUP_LEVEL_COUNT as usize {
+            assert_eq!(drawn_rows(&t, g), table_rows(&t, g), "group {g}");
+        }
+    }
+
+    /// With the exe's tables: every row draws the stage `0x47cb74` lists for it. Group 4 lists
+    /// stage 2 four times, and the original shows four identical Komachi rows there too
+    /// (menus.md §6.1, captured under Wine).
+    #[test]
+    fn rows_follow_the_exe_tables() {
+        let Ok(data) = crate::scene::GameData::from_env() else {
+            eprintln!("SHUPPATSU_DATA_DIR unset; skipping");
+            return;
+        };
+        let bytes = data.exe().unwrap();
+        let exe = shuppatsu_formats::exe::Exe::parse(&bytes).unwrap();
+        let t = FrontTables::read(&exe).unwrap();
+        for g in 0..GROUP_LEVEL_COUNT as usize {
+            assert_eq!(drawn_rows(&t, g), table_rows(&t, g), "group {g}");
+        }
+        let first = table_rows(&t, 4)[0];
+        assert_eq!(drawn_rows(&t, 4), [first; 4], "group 4: stage 2 four times");
+    }
+
     #[test]
     fn cancel_goes_back_a_level() {
         let mut replay = false;

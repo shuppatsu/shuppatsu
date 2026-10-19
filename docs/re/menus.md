@@ -431,7 +431,15 @@ Two levels in one task (`+0x30` level, `+0x38` cursor, `+0x34` item count, `+0x4
   | 1 | 0x127 東北路線 | 0, 3, 17, 18, 4, 1 |
   | 2 | 0x124 関東路線 | 11, 10, 20, 16 |
   | 3 | 0x125 関西路線 | 13, 15, 12, 14 |
-  | 4 | 0x127 東北路線 | 2, 2, 2, 2 (see open questions) |
+  | 4 | 0x127 東北路線 | 2, 2, 2, 2 |
+
+  Group 4 is reachable (the line level has 5 items, 0x435490; with an analog lever the
+  cursor follows the notch `0x829d00`, 0–5, so it reaches row 4 too). Its line box
+  shows thumbnails tbl 104, 103 and 0, and its train list is
+  **stage 2 four times**: four identical rows 秋田新幹線E3系, こまち, 秋田〜新花巻, 特級, five
+  stars. **confirmed** (table bytes at 0x47cbd4; capture of the unmodified original under Wine,
+  2026-10-19, `out/explain/route_select/orig_g4_*.png` (port: `port_{en,ja}_g4_*.png`); the other four groups' rows matched the
+  port row for row in the same capture)
 
 * **Train select** (header 電車選択: descriptor 0x48c58a): the stages of the chosen group, one
   106-px row each, drawn from the **stage table 0x4656ac** (21 × 32 bytes):
@@ -1053,10 +1061,9 @@ Evidence: unit tests `screens::ranking::tests::timeout_filters_and_commits`,
 
 ## Open questions
 
-1. Group 4 of the line select (header 東北路線 again, stage list `2, 2, 2, 2`, thumbnails 104, 103,
-   0): the code makes it reachable (the line level is created with 5 items, 0x435490, and the
-   cursor clamps at 4), so the port shows and selects it; why stage 2 four times is open. Stage 19
-   (route 19) is in no group. Needs a run of the original.
+1. ~~Group 4 of the line select~~: resolved, the original shows it as the port does (§6.1):
+   four identical 秋田新幹線E3系 こまち 秋田〜新花巻 特級 rows (stage 2). Why the table repeats
+   stage 2, and why stage 19 (route 19) is in no group, stays unknown (likely a placeholder).
 11. Who draws the lever-check arrows tbl 0x3b / 0x3c (§7), and what 0x40aa42 does with a clear
     mark of 3 at station 7 of the route-10 variant.
 2. ~~`0x855ae8`~~: resolved, the cached pixel width of tbl 0x504 (§1.3).
