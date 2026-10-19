@@ -263,8 +263,11 @@ handle); the in-game controls page shows each.
 
 | Button | Driving | Menus |
 |---|---|---|
-| D-pad or left stick ↓ / ↑ | power notch up / down | cursor |
-| D-pad or left stick → / ← | brake apply / release (past B8 = emergency) | left / right |
+| D-pad ↓ / ↑ | power notch up / down | cursor |
+| D-pad → / ← | brake apply / release (past B8 = emergency) | left / right |
+| Left stick ↓ / ↑ | power notch up / down | cursor |
+| Left stick → / ← | | left / right |
+| Right stick ↓ / ↑ | brake apply / release (past B8 = emergency) | |
 | RT / RB | power notch up / down | |
 | LT / LB | brake apply / release | |
 | A | ATS confirm, Pro-mode panel | confirm |
@@ -273,7 +276,9 @@ handle); the in-game controls page shows each.
 | Y | | automatic run (route select) |
 | Menu | pause | resume |
 
-Pressing the same direction on both devices counts once. Pads can be plugged in at any time.
+The sticks step like the d-pad: push past half way for one notch, hold to repeat. Pulling a
+stick toward you is more (power or brake). The triggers count from half way. Pressing the
+same direction on two inputs or devices counts once. Pads can be plugged in at any time.
 
 **Densha de GO! controllers:**
 
@@ -396,8 +401,10 @@ detail.
   run the Nix package through nixGL.
 * **No sound**: the game plays through ALSA on Linux (PipeWire and PulseAudio provide it).
   `--mute` starts silent.
-* **The controller does nothing**: check what arrives with `shuppatsu pad monitor`. With
-  `hybrid_input` off, choose a controller mode (4–6) in the options.
+* **The controller does nothing**: check what arrives with `shuppatsu pad monitor`. It prints the
+  pad and its mapping, every button and axis as the gamepad library names it, and the Xbox-layout
+  reading (sticks, LT/RT travel 0–1, held buttons) with the notches. With `hybrid_input` off,
+  choose a controller mode (4–6) in the options.
 * **A setting has no effect**: a bad value in `config.toml` is reported in the log and only
   that setting is ignored; a flag or environment variable overrides the file.
 * **Start over with the settings**: delete `config.toml` (keep `eeprom.dat`, your save).

@@ -422,7 +422,10 @@ one-handle mode (not implemented, open), and the button mapping for the combinat
 ### 10.5 Tools
 
 `shuppatsu pad monitor|calibrate|learn [--mode 4..6] [--joystick-dat F] [--combo F]`.
-`monitor` prints notch and word changes (Enter = station-start reset). `calibrate` runs the
+`monitor` prints notch and word changes (Enter = station-start reset). Without `--mode` it reads
+the pad as the game does by default (`hybrid_input`, keyboard mode 0, Xbox layout); it also
+prints the pad's identity (name, vendor:product, SDL GUID, mapping source), every button and axis
+gilrs names with its value, the raw evdev codes on Linux, and the resulting Xbox-layout reading. `calibrate` runs the
 ADJUSTMENT sequence with Enter as the confirm and writes `joystick.dat`. `learn` records a combination table.
 
 ### 10.6 Hybrid input (setting `hybrid_input`, on by default; enhancement)
@@ -443,12 +446,16 @@ and followed through hot-plugging. In modes 0–4 it is read in the Xbox layout.
 `hybrid_input` off. The decoder needs its device at start, as `input_init` does. Without one,
 the mode falls back to keyboard mode 0 and a pad connected later is read in the Xbox layout.
 
-**Xbox layout** (`hybrid::modern_pad`; test `hybrid::tests::xbox_mapping`):
+**Xbox layout** (`hybrid::ModernPad`; tests `hybrid::tests::xbox_mapping`,
+`hybrid::tests::twin_sticks_step_power_and_brake`):
 
 | Pad | Driving | Menus |
 |---|---|---|
-| D-pad / left stick ↓ ↑ (past half travel, like mode 4's ±500) | power + / − | cursor down / up |
-| D-pad / left stick → ← | brake + / − | right / left |
+| D-pad ↓ ↑ | power + / − | cursor down / up |
+| D-pad → ← | brake + / − (past B8 = EB) | right / left |
+| Left stick ↓ ↑ (past half travel, like mode 4's ±500) | power + / − | cursor down / up |
+| Left stick → ← | — | right / left |
+| Right stick ↓ ↑ | brake + / − (past B8 = EB) | — |
 | RT / RB | power + / − | — |
 | LT / LB | brake + / − | — |
 | A | A bit 0x100000 (Pro-mode panel, ATS confirm) | menu confirm 0x1000 |
@@ -456,6 +463,51 @@ the mode falls back to keyboard mode 0 and a pad connected later is read in the 
 | X | horn 0x100 | — |
 | Y | R 0x4000, press frame only, like the keyboard's | — |
 | Menu | pause 0x800000 | pause |
+
+**Twin sticks.** The left stick is the power handle and the right stick the brake handle, both
+stepped like the d-pad: the sticks centre themselves, so a stick past half travel
+(`STICK_STEP` = 0.5) holds that lever direction and steps one notch, holding it repeats with
+the original's repeat rule, and it lets go below `STICK_RELEASE` = 0.35 (hysteresis, so a
+stick resting near half travel never chatters into extra steps; a stick resting a few percent
+off centre, like the measured 34354 of 0..65535, holds nothing). Direction: pulled toward the
+player (down) is more, for both sticks, matching the d-pad (↓ = power +, keyboard mode 0) and
+the arcade one-handle lever pulled back; one constant, `hybrid::STICK_PULL_IS_MORE`, flips
+both sticks (the controls-page strings `pad_power_dpad` / `pad_brake_stick` then need the
+arrows swapped). The left stick's → ← are menu directions only; the right stick never moves
+the menu cursor.
+
+**Triggers.** LT/RT are analog: pressed at `TRIGGER_PRESS` = 0.5 of their travel, released
+below `TRIGGER_RELEASE` = 0.35 (test `hybrid::tests::stick_and_trigger_hysteresis`).
+
+**Reading the pad** (`gamepad::generic_inputs` over a `PadReading`; tests
+`gamepad::tests::bluetooth_xbox_pad_without_a_mapping`, `gamepad::tests::mapped_and_xpad_triggers`).
+gilrs names a pad's inputs from an SDL mapping (its bundled SDL_GameControllerDB, or
+`SDL_GAMECONTROLLERCONFIG`) when the pad's GUID is listed there exactly; otherwise it names the
+kernel's codes itself, which loses the triggers and the right stick of the Bluetooth Xbox pads.
+Measured on an Xbox Wireless Controller over Bluetooth (045e:0b13, version 0x0521, GUID
+`050000005e040000130b000021050000`, not in gilrs 0.11.2's database, which lists versions
+0x0501, 0x0505, 0x0507, …, 0x0517 and 0x0522 only; `out/pad/xbox-bt-evtest.txt`, `shuppatsu pad monitor`):
+
+| Input | Kernel code (range) | gilrs without a mapping |
+|---|---|---|
+| Left stick | ABS_X / ABS_Y (0..65535) | `LeftStickX/Y` |
+| Right stick | ABS_Z / ABS_RZ (0..65535, rest ~34354 / 33319) | `LeftZ` / `RightZ` (Y not flipped) |
+| LT / RT | ABS_BRAKE / ABS_GAS (0..1023) | unnamed raw axes, −1 at rest |
+| LB / RB | BTN_TL / BTN_TR | `LeftTrigger` / `RightTrigger` |
+| X / Y | BTN_NORTH / BTN_WEST (legacy BTN_X / BTN_Y) | `North` / `West`: swapped |
+| D-pad | ABS_HAT0X / HAT0Y | `DPadX/Y` |
+| (listed, never fire) | BTN_TL2 / BTN_TR2 | `LeftTrigger2` / `RightTrigger2` |
+
+So the reading is robust to the backends: a trigger's travel is the most of the named analog
+`LeftTrigger2`/`RightTrigger2` (an SDL mapping, XInput / Windows.Gaming.Input), `LeftZ`/`RightZ`
+rescaled from −1..1 when the pad also has a named right stick (Linux xpad without a mapping:
+ABS_Z/RZ are the triggers), and the raw ABS_BRAKE/ABS_GAS (Linux only). The right stick is the
+named `RightStickX/Y`, else `LeftZ` and −`RightZ`. LB/RB fall back to the raw BTN_TL/BTN_TR.
+On Linux, a Microsoft pad without an SDL mapping has X and Y swapped back. Unseen axes count as
+at rest. With these, the user's pad reads correctly in a live `pad monitor` run (LT/RT 0..1, right
+stick, X = horn, Y = R). What was wrong before: the triggers were read as `is_pressed`
+of `LeftTrigger2`/`RightTrigger2`, which on this pad are dead digital codes, and LB/RB step
+power − / brake −, which do nothing at P0/B0, so all four looked dead.
 
 This replaces the older generic mapping, which put horn and cancel on one button because the
 binding rows of modes 4–6 share them. B is back in Xbox convention, so the horn moved to X.
