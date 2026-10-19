@@ -212,11 +212,6 @@ impl PaperFill {
                 .collect();
             tileable(&b, sw, ph)
         };
-        let ex = Exemplars {
-            w: sw,
-            h: ph,
-            blocks: [block(0), block(width - sw)],
-        };
         // The light near the edge and, much blurrier, far from it.
         let light = |cols: std::ops::Range<usize>| -> [Vec<Rgb>; 2] {
             let n = cols.len() as f32;
@@ -231,17 +226,26 @@ impl PaperFill {
                 .collect();
             [blur(&rows, LIGHT_SIGMA), blur(&rows, FAR_LIGHT_SIGMA)]
         };
+        // The two exemplar blocks and the two sides' light are independent: built at once.
+        let (blocks, (light_l, light_r)) = std::thread::scope(|s| {
+            let left = s.spawn(|| block(0));
+            let l_light = s.spawn(|| light(skip..skip + ec));
+            let r_light = s.spawn(|| light(width - skip - ec..width - skip));
+            let right = block(width - sw);
+            let lost = "paper worker";
+            (
+                [left.join().expect(lost), right],
+                (l_light.join().expect(lost), r_light.join().expect(lost)),
+            )
+        });
+        let ex = Exemplars {
+            w: sw,
+            h: ph,
+            blocks,
+        };
         let (w, r, reach_i) = (width as i32, ramp as i32, reach as i32);
-        let left = Side::build(&ex, &light(skip..skip + ec), -reach_i..r, r - 1, -1, r, &at);
-        let right = Side::build(
-            &ex,
-            &light(width - skip - ec..width - skip),
-            w - r..w + reach_i,
-            w - r,
-            1,
-            r,
-            &at,
-        );
+        let left = Side::build(&ex, &light_l, -reach_i..r, r - 1, -1, r, &at);
+        let right = Side::build(&ex, &light_r, w - r..w + reach_i, w - r, 1, r, &at);
         Some(Self {
             width: w,
             height: height as i32,
