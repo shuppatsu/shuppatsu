@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- round 5: classic rounded bullet nose in profile, entering from the left, under a green proceed lamp -->
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4b93d6"/><stop offset="1" stop-color="#cfe6f6"/></linearGradient>
+    <linearGradient id="gnd" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8dbb72"/><stop offset="1" stop-color="#5b9447"/></linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="0.55" stop-color="#f3f1ea"/><stop offset="1" stop-color="#dcdfe5"/></linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#8dffc4" stop-opacity="0.6"/><stop offset="1" stop-color="#8dffc4" stop-opacity="0"/></radialGradient>
+    <radialGradient id="beam" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#fff3c0" stop-opacity="0.95"/><stop offset="0.35" stop-color="#ffe98f" stop-opacity="0.45"/><stop offset="1" stop-color="#ffe98f" stop-opacity="0"/></radialGradient>
+    <clipPath id="r"><rect width="512" height="512" rx="104"/></clipPath>
+    <clipPath id="tb"><path d="M-20 222 H186 C258 222 312 246 338 284 C356 310 356 344 338 364 C326 378 306 386 280 386 H-20 Z"/></clipPath>
+  </defs>
+  <g clip-path="url(#r)">
+    <rect width="512" height="512" fill="url(#sky)"/>
+    <g fill="#ffffff" opacity="0.92"><ellipse cx="96" cy="74" rx="70" ry="13"/><ellipse cx="118" cy="64" rx="34" ry="14"/><ellipse cx="300" cy="50" rx="44" ry="9"/></g>
+    <path d="M-10 302 C40 282 92 222 140 178 C160 160 176 150 196 152 C214 154 222 168 240 170 C262 172 284 184 312 210 C350 244 420 280 522 296 V310 H-10 Z" fill="#7393b8"/>
+    <path d="M150 170 C166 158 180 150 196 152 C214 154 222 168 240 170 C258 172 274 180 290 192 L276 190 L266 200 L254 188 L242 194 L230 184 L218 194 L206 180 L194 190 L182 178 L170 188 L160 176 Z" fill="#ffffff"/>
+    <path d="M-10 300 C140 292 330 298 522 290 V512 H-10 Z" fill="url(#gnd)"/>
+    <rect x="-10" y="404" width="532" height="40" fill="#bdb5a6"/>
+    <g fill="#8a7d6d"><rect x="-6" y="406" width="12" height="7"/><rect x="18" y="406" width="12" height="7"/><rect x="42" y="406" width="12" height="7"/><rect x="66" y="406" width="12" height="7"/><rect x="90" y="406" width="12" height="7"/><rect x="114" y="406" width="12" height="7"/><rect x="138" y="406" width="12" height="7"/><rect x="162" y="406" width="12" height="7"/><rect x="186" y="406" width="12" height="7"/><rect x="210" y="406" width="12" height="7"/><rect x="234" y="406" width="12" height="7"/><rect x="258" y="406" width="12" height="7"/><rect x="282" y="406" width="12" height="7"/><rect x="306" y="406" width="12" height="7"/><rect x="330" y="406" width="12" height="7"/><rect x="354" y="406" width="12" height="7"/><rect x="378" y="406" width="12" height="7"/><rect x="402" y="406" width="12" height="7"/><rect x="426" y="406" width="12" height="7"/><rect x="450" y="406" width="12" height="7"/><rect x="474" y="406" width="12" height="7"/><rect x="498" y="406" width="12" height="7"/></g>
+    <!-- shadow of the train on the ballast -->
+    <path d="M-20 404 H300 C320 404 332 410 340 418 H-20 Z" fill="#000000" opacity="0.22"/>
+    <!-- signal -->
+    <rect x="424" y="160" width="16" height="250" fill="#3d4757"/>
+    <rect x="410" y="402" width="44" height="10" rx="3" fill="#3d4757"/>
+    <circle cx="432" cy="138" r="112" fill="url(#glow)"/>
+    <circle cx="432" cy="138" r="56" fill="#1b2433"/>
+    <circle cx="432" cy="138" r="38" fill="#2fe592"/>
+    <path d="M388 128 A46 46 0 0 1 476 128" fill="none" stroke="#5a6678" stroke-width="10" stroke-linecap="round"/>
+    <!-- bogies and wheels, standing on the rail -->
+    <g fill="#2f3642">
+      <rect x="34" y="378" width="104" height="16" rx="5"/><rect x="206" y="378" width="96" height="16" rx="5"/>
+      <circle cx="58" cy="392" r="11"/><circle cx="114" cy="392" r="11"/><circle cx="228" cy="392" r="11"/><circle cx="280" cy="392" r="11"/>
+    </g>
+    <!-- rail: head and web -->
+    <rect x="-10" y="398" width="532" height="9" fill="#5f6672"/>
+    <rect x="-10" y="397" width="532" height="3" fill="#d6dbe2"/>
+    <!-- train -->
+    <g clip-path="url(#tb)">
+      <rect x="-20" y="210" width="380" height="190" fill="url(#body)"/>
+      <path d="M-20 234 H186 C238 234 280 248 308 268" fill="none" stroke="#ffffff" stroke-width="5" opacity="0.9"/>
+      <g fill="#24364c"><rect x="-8" y="256" width="28" height="20" rx="6"/><rect x="34" y="256" width="28" height="20" rx="6"/><rect x="76" y="256" width="28" height="20" rx="6"/><rect x="118" y="256" width="28" height="20" rx="6"/><rect x="160" y="256" width="28" height="20" rx="6"/></g>
+      <path d="M-20 300 H230" stroke="#d3d8df" stroke-width="2"/>
+      <path d="M-20 336 H262 C298 336 326 344 352 354" fill="none" stroke="#f0a030" stroke-width="13"/>
+      <rect x="-20" y="370" width="380" height="20" fill="#a2aab6"/>
+    </g>
+    <path d="M204 232 C252 234 294 250 318 276 C322 281 320 286 314 288 L304 290 C282 268 248 256 204 252 Z" fill="#24364c"/>
+    <path d="M214 236 C252 239 284 251 304 268" fill="none" stroke="#5f7894" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="340" cy="322" r="17" fill="#ffffff" stroke="#c3cad5" stroke-width="3.5"/>
+    <ellipse cx="332" cy="352" rx="9" ry="6" fill="#fff4bf" stroke="#d6bf62" stroke-width="2"/>
+  </g>
+</svg>

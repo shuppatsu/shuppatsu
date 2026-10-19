@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32">
+<!-- 32 px hand-hinted: white rounded nose + amber stripe + green lamp -->
+<defs><clipPath id="r"><rect width="32" height="32" rx="6.5"/></clipPath><clipPath id="tb"><path d="M-1 13 H12 C16.6 13 19.6 15 21 17.6 C22 19.6 21.6 22 19.6 23 H-1 Z"/></clipPath>
+<linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4b93d6"/><stop offset="1" stop-color="#bcdcf3"/></linearGradient></defs>
+<g clip-path="url(#r)">
+<rect width="32" height="32" fill="url(#sky)"/>
+<path d="M0 17 L5 12 L9 8.5 L12 7.5 L15 8.5 L19 11 L25 15 L32 17 V20 H0 Z" fill="#7393b8"/><path d="M8 9.4 L9 8.5 L12 7.5 L15 8.5 L16.6 9.6 L15 9.9 L13.4 9.1 L11.6 10 L10 9.3 Z" fill="#fff"/>
+<rect y="19" width="32" height="13" fill="#7fb065"/>
+<rect y="25" width="32" height="3" fill="#bdb5a6"/>
+<g shape-rendering="crispEdges">
+<rect x="26" y="9" width="2" height="16" fill="#3d4757"/>
+<rect x="2" y="23" width="3" height="2" fill="#2f3642"/><rect x="7" y="23" width="3" height="2" fill="#2f3642"/><rect x="13" y="23" width="3" height="2" fill="#2f3642"/>
+<rect y="24" width="32" height="1" fill="#5f6672"/>
+</g>
+<circle cx="27" cy="6.5" r="4.5" fill="#1b2433"/><circle cx="27" cy="6.5" r="3" fill="#2fe592"/>
+<g clip-path="url(#tb)">
+<rect x="-1" y="12" width="24" height="12" fill="#f6f4ee"/>
+<g shape-rendering="crispEdges" fill="#24364c"><rect x="0" y="15" width="2" height="2"/><rect x="4" y="15" width="2" height="2"/><rect x="8" y="15" width="2" height="2"/></g>
+<path d="M-1 20.5 H16 C18 20.5 19.8 20.8 22 21.6" fill="none" stroke="#f0a030" stroke-width="1.6"/>
+<rect x="-1" y="22" width="24" height="1.2" fill="#a2aab6"/>
+</g>
+<path d="M12.6 13.6 C15.4 13.8 17.6 14.8 19 16.4 L18 17 C16.6 15.8 14.8 15 12.6 14.8 Z" fill="#24364c"/>
+<circle cx="20.2" cy="19.6" r="1" fill="#ffffff" stroke="#b9c1cc" stroke-width="0.5"/>
+</g>
+</svg>
