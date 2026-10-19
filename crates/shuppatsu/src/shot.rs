@@ -96,6 +96,28 @@ pub fn render_to_ppm_with(
         overlay.render(&device, &queue, &view, overlay.rect(width, height));
     }
 
+    let image = read_rgba(&device, &queue, &target)?;
+    let mut ppm = format!("P6\n{width} {height}\n255\n").into_bytes();
+    for px in image.rgba.as_chunks::<4>().0 {
+        ppm.extend_from_slice(&px[..3]);
+    }
+    std::fs::write(path, ppm).with_context(|| format!("writing {}", path.display()))
+}
+
+/// Copies an 8-bit RGBA or BGRA `texture` (made with `COPY_SRC`) back from the GPU, waiting
+/// for it, as RGBA rows.
+pub fn read_rgba(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    texture: &wgpu::Texture,
+) -> Result<shuppatsu_render::rgba::RgbaImage> {
+    use wgpu::TextureFormat as F;
+    let bgra = match texture.format() {
+        F::Rgba8Unorm | F::Rgba8UnormSrgb => false,
+        F::Bgra8Unorm | F::Bgra8UnormSrgb => true,
+        other => anyhow::bail!("cannot read back a {other:?} frame"),
+    };
+    let (width, height) = (texture.width(), texture.height());
     // Rows must be 256-byte aligned for the copy.
     let row = (width * 4).div_ceil(256) * 256;
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -106,7 +128,7 @@ pub fn render_to_ppm_with(
     });
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
     encoder.copy_texture_to_buffer(
-        target.as_image_copy(),
+        texture.as_image_copy(),
         wgpu::TexelCopyBufferInfo {
             buffer: &buffer,
             layout: wgpu::TexelCopyBufferLayout {
@@ -130,14 +152,19 @@ pub fn render_to_ppm_with(
     let data = slice
         .get_mapped_range()
         .map_err(|e| anyhow::anyhow!("mapping readback buffer: {e:?}"))?;
-    let mut ppm = format!("P6\n{width} {height}\n255\n").into_bytes();
+    let mut rgba = Vec::with_capacity(width as usize * height as usize * 4);
     for y in 0..height {
         let start = (y * row) as usize;
-        for px in data[start..start + width as usize * 4].as_chunks::<4>().0 {
-            ppm.extend_from_slice(&px[..3]);
+        for &[c0, g, c2, a] in data[start..start + width as usize * 4].as_chunks::<4>().0 {
+            let (r, b) = if bgra { (c2, c0) } else { (c0, c2) };
+            rgba.extend_from_slice(&[r, g, b, a]);
         }
     }
-    std::fs::write(path, ppm).with_context(|| format!("writing {}", path.display()))
+    Ok(shuppatsu_render::rgba::RgbaImage {
+        width,
+        height,
+        rgba,
+    })
 }
 
 /// Clears `view` to black (the front-end screens have no 3D layer; the 640×480 canvas is drawn
