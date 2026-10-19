@@ -182,6 +182,10 @@ settings! {
     /// its last row (menus.md §3); off = the original's four or five items, the movie only in
     /// attract once every stage is cleared.
     movie_in_menu = true;
+    /// A route-select group lists each of its stages once (menus.md §6.1): group 4, whose
+    /// table repeats stage 2 four times, shows one row; off = the original's four identical
+    /// rows.
+    unique_routes = true;
 
     @levels {
         /// Samples per pixel of the 3D view, with alpha to coverage for the colour-keyed

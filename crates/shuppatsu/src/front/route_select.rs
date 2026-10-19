@@ -6,6 +6,10 @@
 //! route is shown as a star. The R key toggles the replay-playback flag `0x816974` at the train
 //! level; replays are not implemented, so no row ever has one, and leaving switches the flag
 //! off again (0x436640 does that when the chosen stage has no replay).
+//!
+//! Port (setting `unique_routes`): a group's train list skips a stage the same group already
+//! listed, so group 4 (`2, 2, 2, 2` in 0x47cb74) shows its one stage once; off, the original's
+//! four identical rows (menus.md §6.1).
 
 use super::tables::FrontTables;
 use super::{Env, ScrollList, snd};
@@ -91,6 +95,10 @@ pub struct RouteSelect {
     list: ScrollList,
     /// +0x44: the chosen group.
     group: usize,
+    /// The chosen group's train rows ([`group_rows`]); empty at the line level.
+    rows: Vec<usize>,
+    /// Setting `unique_routes` (port).
+    unique: bool,
     /// +0x4c: decide blink.
     blink: i32,
     cursor_x: i16,
@@ -98,14 +106,16 @@ pub struct RouteSelect {
 
 impl RouteSelect {
     /// `0x435490`: BGM 0x19e (re)starts; the creation argument (EB + P3 held at the title) is
-    /// never read.
-    pub fn new(cursor_x: i16, sfx: &mut Vec<Sfx>) -> Self {
+    /// never read. `unique` is setting `unique_routes`.
+    pub fn new(cursor_x: i16, unique: bool, sfx: &mut Vec<Sfx>) -> Self {
         sfx.push(Sfx::Play(snd::BGM_MENU));
         Self {
             level: 0,
             count: GROUP_LEVEL_COUNT,
             list: ScrollList::default(),
             group: 0,
+            rows: Vec::new(),
+            unique,
             blink: 0,
             cursor_x,
         }
@@ -144,7 +154,8 @@ impl RouteSelect {
                 }
                 self.group = self.list.cursor as usize;
                 self.level = 1;
-                self.count = t.group_stages[self.group].len() as i32;
+                self.rows = group_rows(t, self.group, self.unique);
+                self.count = self.rows.len() as i32;
                 self.list = ScrollList::default();
                 return None;
             }
@@ -161,6 +172,7 @@ impl RouteSelect {
                 return Some(RouteResult::Back);
             }
             self.level = 0;
+            self.rows.clear();
             self.count = GROUP_LEVEL_COUNT;
             self.list = ScrollList::settled(self.group as i32);
             return None;
@@ -177,7 +189,7 @@ impl RouteSelect {
 
     /// `RouteSelect_Destroy` 0x436640 for a chosen stage.
     fn destroy(&self, t: &FrontTables, replay: &mut bool) -> Chosen {
-        let stage = t.group_stages[self.group][self.list.cursor as usize];
+        let stage = self.rows[self.list.cursor as usize];
         let variant = stage == 20;
         let route = if variant {
             10
@@ -248,7 +260,7 @@ impl RouteSelect {
                 }
                 continue;
             }
-            let s = t.group_stages[self.group][i];
+            let s = self.rows[i];
             let st = &t.stages[s];
             let row = &t.train_row;
             let th = &row[rec::THUMB];
@@ -345,6 +357,19 @@ impl RouteSelect {
     }
 }
 
+/// The train rows of group `g`: its stages in the order of 0x47cb74 (up to the −1). With
+/// setting `unique_routes` a stage the group already listed is skipped, so group 4 (`2, 2, 2,
+/// 2`) has one row; without, every entry is a row, as in the original.
+pub fn group_rows(t: &FrontTables, g: usize, unique: bool) -> Vec<usize> {
+    let mut rows: Vec<usize> = Vec::new();
+    for &s in &t.group_stages[g] {
+        if !(unique && rows.contains(&s)) {
+            rows.push(s);
+        }
+    }
+    rows
+}
+
 /// `0x42e450(stage)`: the stored replay of a stage. Replays (`REPLAY.DAT`) are not
 /// implemented, so there never is one.
 fn replay_exists(_stage: usize) -> bool {
@@ -384,7 +409,7 @@ mod tests {
     fn line_then_train_then_chosen() {
         let mut replay = false;
         let mut sfx = vec![];
-        let mut m = RouteSelect::new(0, &mut sfx);
+        let mut m = RouteSelect::new(0, true, &mut sfx);
         assert_eq!(sfx, [Sfx::Play(snd::BGM_MENU)]);
         let down = press(|i| i.down = true);
         for _ in 0..10 {
@@ -432,24 +457,29 @@ mod tests {
         assert!(!replay, "no replay stored: the flag goes off");
     }
 
-    /// The train list of group `g` drawn on a fresh layer: per row, the tilemaps in the
-    /// thumbnail, caption, from, to and type slots.
-    fn drawn_rows(t: &FrontTables, g: usize) -> Vec<[i16; 5]> {
+    /// The train list of group `g` drawn on a fresh layer (with setting `unique_routes` as
+    /// `unique`): per row, the tilemaps in the thumbnail, caption, from, to and type slots, up
+    /// to the first row whose thumbnail slot stayed empty.
+    fn drawn_rows(t: &FrontTables, g: usize, unique: bool) -> Vec<[i16; 5]> {
+        let rows = group_rows(t, g, unique);
         let m = RouteSelect {
             level: 1,
-            count: t.group_stages[g].len() as i32,
+            count: rows.len() as i32,
             list: ScrollList::default(),
             group: g,
+            rows,
+            unique,
             blink: 0,
             cursor_x: 0,
         };
         let mut l = SpriteLayer::default();
         m.draw(&Env::default(), t, false, &|_| 0, &mut l);
-        (0..t.group_stages[g].len())
+        (0..6)
             .map(|i| {
                 [rec::THUMB, rec::CAPTION, rec::FROM, rec::TO, rec::TYPE]
                     .map(|r| l.slots[t.train_row[r].slot as usize + ROW_SLOTS * i].tilemap)
             })
+            .take_while(|row| row[0] != SpriteLayer::default().slots[0].tilemap)
             .collect()
     }
 
@@ -472,13 +502,67 @@ mod tests {
                 (0x100 + i, 0x200 + i, 0x300 + i, 0x400 + i, 0x500 + i);
         }
         for g in 0..GROUP_LEVEL_COUNT as usize {
-            assert_eq!(drawn_rows(&t, g), table_rows(&t, g), "group {g}");
+            assert_eq!(drawn_rows(&t, g, false), table_rows(&t, g), "group {g}");
+        }
+    }
+
+    /// Setting `unique_routes`: group 4 (`2, 2, 2, 2`) has one row, every other group (no
+    /// repeats) the same rows either way; off, group 4 has the original's four.
+    #[test]
+    fn unique_routes_drops_repeated_rows() {
+        let t = tables();
+        let g4 = |unique| group_rows(&t, 4, unique);
+        assert_eq!((g4(true), g4(false)), (vec![2], vec![2; 4]));
+        for g in 0..4 {
+            assert_eq!(group_rows(&t, g, true), t.group_stages[g], "group {g}");
+            assert_eq!(group_rows(&t, g, false), t.group_stages[g], "group {g}");
+        }
+        let row = table_rows(&t, 4)[0];
+        assert_eq!(drawn_rows(&t, 4, true), [row]);
+        assert_eq!(drawn_rows(&t, 4, false), [row; 4]);
+    }
+
+    /// Group 4 driven through the menu: with `unique_routes` the cursor stays on its one row
+    /// (no "more rows" arrow below it) and confirm runs stage 2; without, it reaches the fourth
+    /// row, which runs stage 2 too.
+    #[test]
+    fn group_4_cursor_follows_the_rows() {
+        for (unique, last) in [(true, 0), (false, 3)] {
+            let mut replay = false;
+            let mut m = RouteSelect::new(0, unique, &mut vec![]);
+            let down = press(|i| i.down = true);
+            for _ in 0..4 {
+                run(&mut m, down, &mut replay);
+                settle(&mut m, &mut replay);
+            }
+            run(&mut m, press(|i| i.confirm = true), &mut replay);
+            for _ in 0..30 {
+                run(&mut m, MenuInput::NONE, &mut replay);
+            }
+            assert_eq!((m.level(), m.count), (1, last + 1), "unique {unique}");
+            for _ in 0..5 {
+                run(&mut m, down, &mut replay);
+                settle(&mut m, &mut replay);
+            }
+            assert_eq!(m.cursor(), last, "unique {unique}");
+            run(&mut m, press(|i| i.confirm = true), &mut replay);
+            let mut r = None;
+            for _ in 0..30 {
+                r = run(&mut m, MenuInput::NONE, &mut replay).0.or(r);
+            }
+            let chosen = Chosen {
+                group: 4,
+                stage: 2,
+                route: 2,
+                variant: false,
+            };
+            assert_eq!(r, Some(RouteResult::Chosen(chosen)), "unique {unique}");
         }
     }
 
     /// With the exe's tables: every row draws the stage `0x47cb74` lists for it. Group 4 lists
     /// stage 2 four times, and the original shows four identical Komachi rows there too
-    /// (menus.md §6.1, captured under Wine).
+    /// (menus.md §6.1, captured under Wine); with `unique_routes` it is one row.
     #[test]
     fn rows_follow_the_exe_tables() {
         let Ok(data) = crate::scene::GameData::from_env() else {
@@ -489,16 +573,24 @@ mod tests {
         let exe = shuppatsu_formats::exe::Exe::parse(&bytes).unwrap();
         let t = FrontTables::read(&exe).unwrap();
         for g in 0..GROUP_LEVEL_COUNT as usize {
-            assert_eq!(drawn_rows(&t, g), table_rows(&t, g), "group {g}");
+            assert_eq!(drawn_rows(&t, g, false), table_rows(&t, g), "group {g}");
+            if g != 4 {
+                assert_eq!(drawn_rows(&t, g, true), table_rows(&t, g), "group {g}");
+            }
         }
         let first = table_rows(&t, 4)[0];
-        assert_eq!(drawn_rows(&t, 4), [first; 4], "group 4: stage 2 four times");
+        assert_eq!(
+            drawn_rows(&t, 4, false),
+            [first; 4],
+            "group 4: stage 2 four times"
+        );
+        assert_eq!(drawn_rows(&t, 4, true), [first], "group 4: stage 2 once");
     }
 
     #[test]
     fn cancel_goes_back_a_level() {
         let mut replay = false;
-        let mut m = RouteSelect::new(0, &mut vec![]);
+        let mut m = RouteSelect::new(0, true, &mut vec![]);
         run(&mut m, press(|i| i.down = true), &mut replay);
         settle(&mut m, &mut replay);
         run(&mut m, press(|i| i.confirm = true), &mut replay);

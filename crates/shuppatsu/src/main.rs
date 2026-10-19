@@ -159,6 +159,7 @@ switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml
                            modes [on]
   --exit-no-to-menu        exit dialog No returns to the title menu, not attract [on]
   --movie-in-menu          the Komachi movie as item 6 of the title menu [on]
+  --unique-routes          route select lists each stage of a group once [on]
 
 settings file: $XDG_CONFIG_HOME/shuppatsu/config.toml (~/.config/shuppatsu; %APPDATA%\\shuppatsu on Windows;
   copied once from the old ddg folder if only that exists),

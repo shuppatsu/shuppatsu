@@ -441,6 +441,16 @@ Two levels in one task (`+0x30` level, `+0x38` cursor, `+0x34` item count, `+0x4
   2026-10-19, `out/explain/route_select/orig_g4_*.png` (port: `port_{en,ja}_g4_*.png`); the other four groups' rows matched the
   port row for row in the same capture)
 
+  Port (setting `unique_routes`, on by default, §14.1): a group's train list skips a stage the
+  same group listed before, so group 4 has one row (stage 2); its line box, header and
+  thumbnails stay. Groups 0–3 repeat nothing and are unchanged. The cursor, the scroll, the
+  ▲/▼ arrows and the confirm all follow the shorter list (`route_select::group_rows`); the
+  legends do not depend on the row count. Nothing else reads a train-row index: the destroy
+  maps the row to its stage at once, and clear marks, rankings, replays (`0x42e450(stage)`), the
+  attract demo picker (routes 0–12, §2.1) and `eeprom.dat` are keyed by stage or route, so the
+  save format is unchanged. The Komachi unlock 0x404cf0 walks the group lists as a set of
+  stages, which dedupe does not change. Shots: `out/explain/route_select/unique_{on,off}_{en,ja}_g4*.png`.
+
 * **Train select** (header 電車選択: descriptor 0x48c58a): the stages of the chosen group, one
   106-px row each, drawn from the **stage table 0x4656ac** (21 × 32 bytes):
 
@@ -1046,6 +1056,7 @@ setting (docs/settings.md); off restores the original's behaviour.
 | When `eeprom.dat` is written (`save_on_change`) | only at exit (0x434f50, §13.1) | also right after a ranking entry, a clear mark, an options change (options list and value pages) and a calibration; same 0x35a-byte format, written to `eeprom.dat.tmp` and renamed. The exit write is unchanged. Headless `--shot` runs have no save path and never write. A failed write is a warning; play goes on | `save.rs` (`Save::persist`, `write_atomic`), `play.rs`, `app.rs` (`apply`, `save_calibration`; `joystick.dat` is written atomically too) |
 | Keyboard with a controller (`keyboard_with_controller`) | in modes 4–6 only Esc, Enter (menu confirm) and R reach the game (input.md §6) | the keyboard's horn (Space) and A / ATS confirm (Enter) also work while driving, OR-ed with the pad's buttons; the levers stay the controller's | `gamepad.rs` (`Joystick::poll`), input.md §10.3 |
 | Exit dialog いいえ (`exit_no_to_menu`) | attract restarts at the title picture (§3) | the title menu comes back after the same 3 ticks, cursor on ゲーム終了, menu BGM restarted | `app.rs` (`exit_declined`) |
+| Repeated train rows (`unique_routes`) | group 4's train list is stage 2 four times (§6.1) | each stage of a group once: group 4 has one row; groups 0–3 unchanged | `front/route_select.rs` (`group_rows`) |
 
 Evidence: unit tests `screens::ranking::tests::timeout_filters_and_commits`,
 `screens::flow::tests::time_out_offers_continue`, `save::tests::saves_after_every_change`

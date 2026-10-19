@@ -401,7 +401,11 @@ impl App {
                 sfx.push(Sfx::Play(snd::BGM_MENU));
                 Screen::Title(TitleMenu::new(cursor, self.defs.cursor_x))
             }
-            Next::RouteSelect => Screen::RouteSelect(RouteSelect::new(self.defs.cursor_x, sfx)),
+            Next::RouteSelect => Screen::RouteSelect(RouteSelect::new(
+                self.defs.cursor_x,
+                self.opts.settings.unique_routes,
+                sfx,
+            )),
             Next::Records => {
                 let layer = &mut self.res.as_mut().expect("resources").layer;
                 crate::front::clear_all(layer);

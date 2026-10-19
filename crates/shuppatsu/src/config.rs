@@ -578,6 +578,7 @@ mod tests {
         ("keyboard_with_controller", true),
         ("exit_no_to_menu", true),
         ("movie_in_menu", true),
+        ("unique_routes", true),
     ];
 
     #[test]

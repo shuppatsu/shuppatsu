@@ -165,6 +165,7 @@ pub const ITEMS: &[Item] = {
         switch("keyboard_with_controller", Saves, Now),
         switch("exit_no_to_menu", Saves, Now),
         switch("movie_in_menu", Saves, Now),
+        switch("unique_routes", Saves, Now),
     ]
 };
 
@@ -913,7 +914,7 @@ mod tests {
         p.tick(&down, &locks, &mut cfg, &mut s, &mut sfx);
         assert_eq!(p.cursor(), 1);
         assert_eq!(sfx, [Sfx::Play(snd::MOVE)]);
-        for _ in 0..40 {
+        for _ in 0..ITEMS.len() {
             p.tick(&down, &locks, &mut cfg, &mut s, &mut sfx);
         }
         assert_eq!(p.cursor(), ITEMS.len() - 1, "no wrap at the bottom");
