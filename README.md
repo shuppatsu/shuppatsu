@@ -10,8 +10,7 @@ patch, and it needs neither Windows nor Wine on Linux. **No game files are inclu
 unofficial fan project, not affiliated with the game's publishers (see [Legal](#legal)).
 
 *About the name:* 出発 (*shuppatsu*, "departure") is the first word of 出発進行
-(*shuppatsu shinkō*), the call a Japanese driver makes when the starting signal clears. The
-project uses its own name rather than the game's so that it carries no one else's trademark.
+(*shuppatsu shinkō*), the call a Japanese driver makes when the starting signal clears.
 
 <!-- Screenshots: images of the running game are derived from game data, so they are not
      committed to this repository (see "Legal"). Link to externally hosted ones here. -->
