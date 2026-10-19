@@ -160,12 +160,44 @@ The records viewer is **not** an attract item: the only caller of 0x41f5e0 is th
 **START** is the confirm edge `0x48c42c & 0x1000` (free play, `0x8573e0 = 1`; 0x401dc0 then
 returns 1). While an item runs, the walk tests START unless the item handles it itself
 (`0x855ffc & 0x100`, the logo only): START clears `0x855ff8 & 4`, the item's task dies in the
-next `Task_Tick`, the walk counter goes up, and then
+next `Task_Tick` (0x4027f6), one more runs (0x4027ff), the walk counter goes up (0x402829), and
+then
 * with the title picture up (`0x855ffc & 0x20`, set by 0x4037f0): sound 0x1e and `Attract_Run`
   returns, the title menu follows;
-* otherwise `0x855ffc |= 0x10`, one `Task_Tick`, and the walk restarts at item 2, whose title
-  then skips the opening.
+* otherwise `0x855ffc |= 0x10` (0x40284c), one `Task_Tick` (0x40270c), and the walk restarts at
+  item 2, whose title then skips the opening.
 Cancel (`0x2000`) during the title picture sets `0x48de00`, which nothing reads. **confirmed**
+(The input word is active-low: 0x402762 / 0x4027cf treat a *clear* 0x1000 bit as START.)
+
+**START per item — confirmed** (disassembly of 0x402700 0x402723–0x402878, 0x402e80,
+0x402a70, 0x404e10, 0x428f00; no Wine capture needed, the code has no other path). `0x855ffc &
+0x10` is set on *every* START abort and cleared only by 0x402e80 when it consumes it, so the
+opening never comes back after START; it plays again only when a walk runs to the table's end
+untouched (item 0 onwards with the bit clear).
+
+| START during | Original | Walk counter |
+|---|---|---|
+| logo, states 0–2 | jumps to state 3 (logo alone); the logo goes on and the title item then plays the opening | — |
+| logo, states 4–7 | 0x402a70 sets `0x10` and ends the item; the walk goes on to item 2 → title picture | — |
+| logo, state 3 | nothing | — |
+| cold-start opening (item 2 before 0x4037f0) | abort, `0x10`, restart at item 2 → title picture | +1 |
+| title picture | sound 0x1e → title menu | +1 |
+| Komachi movie (item 3) | 0x428f00 sets `0x10` and returns; 0x404e10 leaves `0x855ff8 & 4` set, the walk sees the same edge → abort → title picture | +1 |
+| route demo, lesson demo | abort → title picture | +1 |
+| photos, poster | abort → title picture | +1 |
+
+The ranking pages are not an attract item (the records viewer is reached from the title menu
+only), so there is no attract case for them.
+
+**Port** (`front/attract.rs`, `Attract::restart_at_title`): until 2026-10-19 only the logo and
+the movie skip set `skip_opening`; START in a photo, the poster or a demo after the opening had
+played once restarted the walk at item 2 with the flag clear and **replayed the opening**, and
+START in the opening, a demo or the title picture did not count the walk counter on (it feeds the demo route,
+item 4, and the poster parity). Now every abort goes through one path that counts the walk and
+sets the flag. Tests: `attract::tests::start_in_any_item_restarts_at_the_picture_without_the_opening`,
+`a_full_walk_plays_the_opening_again`, `late_start_in_the_logo_goes_to_the_picture`, and on the
+real data with the app's loop and a scripted Enter `app::tests::start_in_attract_never_replays_the_opening`
+(opening, route demo, photo, poster, then the picture → title menu) and `app::tests::start_in_the_logo`.
 
 * Item 3, 0x404e10, calls 0x404cf0, which returns 1 when every select stage of the five
   route-select groups has a clear mark on its route (`0x85635a[stage +0x1c]`), and then plays the
