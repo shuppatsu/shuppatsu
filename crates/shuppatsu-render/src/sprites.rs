@@ -1200,10 +1200,18 @@ impl SpriteLayer {
                 let backdrop = style
                     .backdrop
                     .and_then(|b| Some(palette(b.palette)?.rgba(b.index)));
-                let inked = (0..mw).filter(|&px| (0..mh).any(|py| mask[py * mw + px] > 0));
-                if let (Some(b), Some(first), Some(last)) =
-                    (backdrop, inked.clone().min(), inked.max())
-                {
+                // The inked columns: the backdrop spans them.
+                let mut inked = vec![false; if backdrop.is_some() { mw } else { 0 }];
+                if backdrop.is_some() {
+                    for row in mask.chunks_exact(mw.max(1)).take(mh) {
+                        for (i, &v) in inked.iter_mut().zip(row) {
+                            *i |= v > 0;
+                        }
+                    }
+                }
+                let first = inked.iter().position(|&i| i);
+                let last = inked.iter().rposition(|&i| i);
+                if let (Some(b), Some(first), Some(last)) = (backdrop, first, last) {
                     let pad = BACKDROP_PAD * c.s;
                     let (bx0, bx1) = (first.saturating_sub(pad), (last + 1 + pad).min(mw));
                     for py in 0..mh {
@@ -1217,16 +1225,11 @@ impl SpriteLayer {
                     .and_then(|o| Some(palette(o.palette)?.rgba(o.index)));
                 if let Some(o) = outline {
                     // One original pixel around the solid part of the text, under it.
-                    let r = c.s as isize;
-                    let solid = |px: isize, py: isize| {
-                        (0..mw as isize).contains(&px)
-                            && (0..mh as isize).contains(&py)
-                            && mask[py as usize * mw + px as usize] >= 128
-                    };
-                    for py in (ky0 - y0) as isize..(ky1.max(ky0) - y0) as isize {
-                        for px in (kx0 - x0) as isize..(kx1.max(kx0) - x0) as isize {
-                            if (-r..=r).any(|dy| (-r..=r).any(|dx| solid(px + dx, py + dy))) {
-                                put(canvas, x0 + px as usize, y0 + py as usize, o);
+                    let near = dilate_solid(&mask, mw, mh, c.s);
+                    for py in (ky0 - y0)..(ky1.max(ky0) - y0) {
+                        for px in (kx0 - x0)..(kx1.max(kx0) - x0) {
+                            if near[py * mw + px] {
+                                put(canvas, x0 + px, y0 + py, o);
                             }
                         }
                     }
@@ -1261,6 +1264,38 @@ impl SpriteLayer {
             }
         }
     }
+}
+
+/// For each pixel of a `w × h` coverage mask, whether a solid pixel (coverage ≥ 128) lies within
+/// `r` pixels in x and in y (a square around it): the text outline's pixels. Separable, so
+/// linear in the mask's size rather than in `r²` per pixel.
+fn dilate_solid(mask: &[u8], w: usize, h: usize, r: usize) -> Vec<bool> {
+    // Rows: a solid pixel within `r` columns, from prefix counts.
+    let mut rows = vec![false; w * h];
+    let mut pre = vec![0u32; w + 1];
+    for y in 0..h {
+        for x in 0..w {
+            pre[x + 1] = pre[x] + u32::from(mask[y * w + x] >= 128);
+        }
+        for x in 0..w {
+            let (a, b) = (x.saturating_sub(r), (x + r + 1).min(w));
+            rows[y * w + x] = pre[b] > pre[a];
+        }
+    }
+    // Columns: such a row pixel within `r` rows, from running counts per column.
+    let mut cols = vec![0u32; (h + 1) * w];
+    for y in 0..h {
+        for x in 0..w {
+            cols[(y + 1) * w + x] = cols[y * w + x] + u32::from(rows[y * w + x]);
+        }
+    }
+    (0..w * h)
+        .map(|i| {
+            let (x, y) = (i % w, i / w);
+            let (a, b) = (y.saturating_sub(r), (y + r + 1).min(h));
+            cols[b * w + x] > cols[a * w + x]
+        })
+        .collect()
 }
 
 /// `src` blended over the canvas pixel `under` (straight alpha, in sRGB like the label text).
@@ -1431,11 +1466,20 @@ fn draw_paper(p: &PaperFill, (x0, y0): (i32, i32), shift: i32, c: Canvas, canvas
     let right = ((x0 + b) * s + shift).clamp(cx0, cx1)..cx1;
     for y in c.clip[1] as i32..c.clip[3] as i32 {
         let py = y.div_euclid(s) - y0;
-        for x in left.clone().chain(right.clone()) {
-            let px = (x - shift).div_euclid(s) - x0;
-            if let Some(rgba) = p.at(px, py) {
-                let o = (y as usize * c.w + x as usize) * 4;
-                canvas[o..o + 4].copy_from_slice(&rgba);
+        let row = y as usize * c.w;
+        for range in [left.clone(), right.clone()] {
+            // Runs of canvas pixels showing the same original pixel.
+            let mut x = range.start;
+            while x < range.end {
+                let px = (x - shift).div_euclid(s) - x0;
+                let end = ((px + x0 + 1) * s + shift).min(range.end);
+                if let Some(rgba) = p.at(px, py) {
+                    let run = &mut canvas[(row + x as usize) * 4..(row + end as usize) * 4];
+                    for q in run.as_chunks_mut::<4>().0 {
+                        *q = rgba;
+                    }
+                }
+                x = end;
             }
         }
     }
@@ -1516,10 +1560,7 @@ impl SlotDraw<'_> {
         let s = c.s as i32;
         let ts = TILE_SIZE as i32;
         let text = self.text;
-        let colours: [[u8; 4]; 256] = match self.hires {
-            Some(_) => std::array::from_fn(|i| palette.rgba(i as u8)),
-            None => [[0; 4]; 256],
-        };
+        let colours: [[u8; 4]; 256] = std::array::from_fn(|i| palette.rgba(i as u8));
         for ty in 0..h {
             for &tx in &self.cols {
                 let (mc, mr) = match self.repeat {
@@ -1531,6 +1572,16 @@ impl SlotDraw<'_> {
                 }
                 let ox = sx0 + tx * ts;
                 let oy = sy0 + ty * ts;
+                // The cell's canvas pixels; cells outside the clip are skipped whole.
+                let (cell_x, cell_y) = (ox * s + shift, oy * s);
+                let [kx0, ky0, kx1, ky1] = c.clip.map(|v| v as i32);
+                if cell_x >= kx1
+                    || cell_x + ts * s <= kx0
+                    || cell_y >= ky1
+                    || cell_y + ts * s <= ky0
+                {
+                    continue;
+                }
                 if let Some(hi) = &self.hires {
                     // Every cell, empty ones too: shaped edges reach into them.
                     let (ic, ir) = match self.view {
@@ -1547,7 +1598,7 @@ impl SlotDraw<'_> {
                     });
                     let cell = Cell {
                         image: (ic, ir),
-                        at: (ox * s + shift, oy * s),
+                        at: (cell_x, cell_y),
                         open,
                     };
                     blit_hires(hi, &cell, &colours, c, canvas);
@@ -1557,37 +1608,40 @@ impl SlotDraw<'_> {
                 let Some(tile) = (id != 0).then(|| self.bank.tile(id)).flatten() else {
                     continue;
                 };
+                // Translated text only covers the slot's own columns; the wide-fill columns
+                // outside them have negative `tx`.
+                let text_here = text.filter(|_| (0..w).contains(&tx));
                 for py in 0..ts {
+                    // One original pixel becomes an s × s block, cut to the clip.
+                    let y0 = cell_y + py * s;
+                    let (ya, yb) = (y0.max(ky0), (y0 + s).min(ky1));
+                    if ya >= yb {
+                        continue;
+                    }
                     for px in 0..ts {
                         let index = tile[(py * ts + px) as usize];
                         if index == 0 {
                             continue;
                         }
-                        // Translated text only covers the slot's own columns; the wide-fill
-                        // columns outside them have negative `tx`, so test that first.
-                        let covered = (0..w).contains(&tx)
-                            && text.is_some_and(|parts| {
-                                let lx = (tx * ts + px) as usize;
-                                let (bx, by) = (lx * c.s, (ty * ts + py) as usize * c.s);
-                                parts.iter().any(|p| p.contains(bx, by))
-                            });
+                        let x0 = cell_x + px * s;
+                        let (xa, xb) = (x0.max(kx0), (x0 + s).min(kx1));
+                        if xa >= xb {
+                            continue;
+                        }
+                        let covered = text_here.is_some_and(|parts| {
+                            let lx = (tx * ts + px) as usize;
+                            let (bx, by) = (lx * c.s, (ty * ts + py) as usize * c.s);
+                            parts.iter().any(|p| p.contains(bx, by))
+                        });
                         if covered {
                             continue;
                         }
-                        // One original pixel becomes an s × s block.
-                        let rgba = palette.rgba(index);
-                        for dy in 0..s {
-                            let y = (oy + py) * s + dy;
-                            if !c.has_y(y) {
-                                continue;
-                            }
-                            for dx in 0..s {
-                                let x = (ox + px) * s + dx + shift;
-                                if !c.has_x(x) {
-                                    continue;
-                                }
-                                let o = (y as usize * c.w + x as usize) * 4;
-                                canvas[o..o + 4].copy_from_slice(&rgba);
+                        let rgba = colours[usize::from(index)];
+                        for y in ya..yb {
+                            let row = y as usize * c.w;
+                            let run = &mut canvas[(row + xa as usize) * 4..(row + xb as usize) * 4];
+                            for px in run.as_chunks_mut::<4>().0 {
+                                *px = rgba;
                             }
                         }
                     }
@@ -1683,14 +1737,6 @@ struct Canvas {
 }
 
 impl Canvas {
-    fn has_x(&self, x: i32) -> bool {
-        x >= 0 && (self.clip[0]..self.clip[2]).contains(&(x as usize))
-    }
-
-    fn has_y(&self, y: i32) -> bool {
-        y >= 0 && (self.clip[1]..self.clip[3]).contains(&(y as usize))
-    }
-
     fn has(&self, x: usize, y: usize) -> bool {
         (self.clip[0]..self.clip[2]).contains(&x) && (self.clip[1]..self.clip[3]).contains(&y)
     }
