@@ -1,3 +1,8 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo/header-dark.svg">
+  <img alt="Shuppatsu 出発" src="assets/logo/header-light.svg">
+</picture>
+
 # Shuppatsu
 
 **Shuppatsu** (出発): an open-source engine for playing **Densha de GO! 2 Kōsoku-hen
@@ -154,7 +159,7 @@ Either way the engine needs:
 ```
 data/extracted/
   install/Program_Executable_Files/
-    BIN/dengo3k.exe                      the original exe (its tables and icon are read)
+    BIN/dengo3k.exe                      the original exe (its tables are read)
     DATA/*.COM, cg.rom, tbl.rom, ...     routes, models, textures, sounds, music
 ```
 
@@ -191,13 +196,13 @@ shuppatsu\
 ```
 
 There is no console window; the log goes to `%APPDATA%\shuppatsu\shuppatsu.log` (or start with
-`--console`). The taskbar icon comes from your `dengo3k.exe`.
+`--console`). The exe and its window carry Shuppatsu's own icon ([`assets/logo/`](assets/logo/)).
 
 **Linux with Nix:**
 
 ```sh
 nix run github:shuppatsu/shuppatsu                # or `nix run .` in a checkout
-nix profile install github:shuppatsu/shuppatsu    # installs shuppatsu with a desktop entry
+nix profile install github:shuppatsu/shuppatsu    # installs shuppatsu with a desktop entry and icon
 ```
 
 On NixOS it works as is. On other distributions, Nix's Vulkan loader may not find your GPU
@@ -231,7 +236,7 @@ shuppatsu --size 2560x1600         # window size (default 1280x800)
 shuppatsu --fullscreen             # borderless full screen (Alt+Enter / F11 toggle it)
 shuppatsu --lang en                # language for this run
 shuppatsu play 0                   # straight into a stage (0..19), skipping the menus
-shuppatsu install-desktop          # Linux: desktop entry with the game's own icon
+shuppatsu install-desktop          # Linux: desktop entry with the Shuppatsu icon
 ```
 
 ## Controls
