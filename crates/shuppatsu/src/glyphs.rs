@@ -65,6 +65,7 @@ pub enum Btn {
     /// The d-pad with the arms (up, down, left, right) in use lit.
     DPad([bool; 4]),
     LStick,
+    RStick,
 }
 
 /// D-pad arms: up/down, left/right.
@@ -116,6 +117,12 @@ pub fn glyph(b: Btn) -> Glyph {
         Btn::LStick => Glyph {
             shape: GlyphShape::Stick,
             label: "L".into(),
+            fill: [0x5a, 0x5e, 0x66],
+            ink: WHITE,
+        },
+        Btn::RStick => Glyph {
+            shape: GlyphShape::Stick,
+            label: "R".into(),
             fill: [0x5a, 0x5e, 0x66],
             ink: WHITE,
         },

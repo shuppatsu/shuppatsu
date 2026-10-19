@@ -417,6 +417,7 @@ const UI_IDS: &[&str] = &[
     "pad_power_dpad",
     "pad_power_shoulders",
     "pad_brake_dpad",
+    "pad_brake_stick",
     "pad_brake_shoulders",
     "pad_a",
     "pad_x",

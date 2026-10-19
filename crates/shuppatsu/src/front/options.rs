@@ -446,10 +446,12 @@ pub fn draw_pad_panel(
         ui.get("pad_title"),
         title,
     );
-    let rows: [(&[Btn], &str); 9] = [
+    // The stick rows follow `hybrid::STICK_PULL_IS_MORE` (pulled toward you = more).
+    let rows: [(&[Btn], &str); 10] = [
         (&[DPAD_UD, Btn::LStick], "pad_power_dpad"),
         (&[Btn::Rt, Btn::Rb], "pad_power_shoulders"),
-        (&[DPAD_LR, Btn::LStick], "pad_brake_dpad"),
+        (&[DPAD_LR], "pad_brake_dpad"),
+        (&[Btn::RStick], "pad_brake_stick"),
         (&[Btn::Lt, Btn::Lb], "pad_brake_shoulders"),
         (&[Btn::A], "pad_a"),
         (&[Btn::X], "pad_x"),
@@ -457,7 +459,7 @@ pub fn draw_pad_panel(
         (&[Btn::Y], "pad_y"),
         (&[Btn::Menu], "pad_menu"),
     ];
-    const ROW: f32 = 27.0;
+    const ROW: f32 = 25.0;
     for (n, (btns, key)) in rows.into_iter().enumerate() {
         let ry = y + 32.0 + ROW * n as f32;
         // The glyphs in a fixed column, so the words line up.
@@ -479,7 +481,7 @@ pub fn draw_pad_panel(
     }
     let mut note = TextStyle::plain(look.dim, Some(10.0));
     note.align = Align::Left;
-    let ny = y + 32.0 + ROW * 9.0 + 2.0;
+    let ny = y + 32.0 + ROW * 10.0 + 2.0;
     l.add_styled_text(
         LAYER,
         [x + 12.0, ny, w - 24.0, 22.0],
