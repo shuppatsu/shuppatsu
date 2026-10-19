@@ -7,13 +7,14 @@ use super::tables::FrontTables;
 use super::{Env, PAL_MENU, snd};
 use crate::glyphs::{Btn, Hint};
 use crate::save::Eeprom;
+use crate::screens::tables::TextDesc;
 use crate::screens::{MenuInput, Sfx};
-use shuppatsu_render::sprites::SpriteLayer;
+use shuppatsu_render::sprites::{SpriteBank, SpriteLayer};
 
 /// Header page of the list (0x42a820(8)); value pages use item + 1.
 const LIST_PAGE: usize = 8;
 const LAYER: u8 = 3;
-/// Label and value slots (0x42a730).
+/// Label and value slots (0x42a730); the port's seventh label takes `SLOT_LABELS + 6`.
 const SLOT_LABELS: usize = 0x90;
 const SLOT_VALUES: usize = 0x9a;
 /// The control page's pictures (0x42ad10).
@@ -47,6 +48,110 @@ const CONTROL_SECOND: [(i16, i16, i16); 6] = [
 ];
 const CONTROL_PICTURE_POS: (i16, i16) = (0x118, 0x90);
 const MODE6_PICTURES: [(i16, i16, i16); 2] = [(0x49d, 0x138, 0x90), (0x4a1, 0x180, 0xf8)];
+
+/// Port only: the seventh label, "Port settings" (`item::PORT`), as an index of
+/// [`FrontTables::option_selected`] / [`FrontTables::option_normal`] after the exe's 38
+/// descriptors ([`add_port_rows`]).
+pub const PORT_LABEL: usize = 38;
+/// The vibration values 切 弱 並 強 (sheet indices 10–13), whose cells are 32×32 where the other
+/// values' are 192×32.
+const VIBRATION_VALUES: std::ops::RangeInclusive<usize> = 10..=13;
+/// The sheets' shape the rows are appended to: 27×38 tiles (tbl 0x4fa, 0x4fb).
+const SHEET_SIZE: (u8, u8) = (27, 38);
+
+/// Port only: appends rows to both option sheets (selected 0x4fa, normal 0x4fb) and points the
+/// tables at them, so that the port's additions are sprites drawn exactly like the original
+/// items (same slot, palette, translated size group and colours):
+///
+/// * rows 38–39: the seventh label's cell, a copy of label 0's (コントロール); a translation
+///   names it (`[sheet.0x4fa] port_label`, also in `ja.toml`), so it never shows that art;
+/// * rows 40–47: the vibration values 10–13, their 32×32 art in the left of a 192×32 cell
+///   like the other values', so their translations ("Off", "Low", …) get the width the other
+///   values have. The art and its place are unchanged; the cells' extra columns are empty.
+///
+/// Call it once, before the translations are installed (their `rect` names the new rows).
+/// `false` when a sheet is not the expected shape (left as it is; the list then draws the
+/// seventh row as a plain label, [`super::port_settings::draw_options_item`]).
+pub fn add_port_rows(bank: &mut SpriteBank, t: &mut FrontTables) -> bool {
+    use shuppatsu_formats::cg::Tilemap;
+    let sheets = [&t.option_selected, &t.option_normal];
+    let Some(tbls) = sheets
+        .iter()
+        .map(|s| s.first().and_then(|d| u16::try_from(d.tbl).ok()))
+        .collect::<Option<Vec<u16>>>()
+    else {
+        return false;
+    };
+    let (sw, sh) = SHEET_SIZE;
+    // One 12×2 cell per band of two rows, from column 0: the label, then the four values.
+    let sources: Vec<usize> = std::iter::once(0).chain(VIBRATION_VALUES).collect();
+    let place = |d: &TextDesc| (d.col, d.row, d.w, d.h);
+    // A source cell lies in the sheet and fits a 12×2 cell.
+    let fits = |d: &TextDesc| {
+        (0..=12).contains(&d.w)
+            && (0..=2).contains(&d.h)
+            && d.col >= 0
+            && d.row >= 0
+            && i32::from(d.col) + i32::from(d.w) <= i32::from(sw)
+            && i32::from(d.row) + i32::from(d.h) <= i32::from(sh)
+    };
+    let shape_ok = tbls[0] != tbls[1]
+        && sheets.iter().zip(&tbls).all(|(s, &tbl)| {
+            s.len() == PORT_LABEL
+                && sources.iter().all(|&i| {
+                    s[i].tbl == s[0].tbl
+                        && fits(&s[i])
+                        && place(&s[i]) == place(&t.option_normal[i])
+                })
+                && bank
+                    .tilemaps
+                    .get(usize::from(tbl))
+                    .is_some_and(|m| (m.width, m.height) == (sw, sh))
+        });
+    if !shape_ok || place(&t.option_normal[0]) != (0, 0, 12, 2) {
+        return false;
+    }
+    let (cw, ch) = (12usize, 2usize);
+    let w = usize::from(sw);
+    for &tbl in &tbls {
+        let map = bank.tilemaps[usize::from(tbl)].clone();
+        let mut tiles = map.tiles.clone();
+        for &i in &sources {
+            let d = t.option_normal[i];
+            let (c0, r0) = (d.col as usize, d.row as usize);
+            for ty in 0..ch {
+                for tx in 0..w {
+                    let inside = tx < d.w as usize && ty < d.h as usize;
+                    tiles.push(if inside {
+                        map.tiles[(r0 + ty) * w + c0 + tx]
+                    } else {
+                        0
+                    });
+                }
+            }
+        }
+        bank.tilemaps[usize::from(tbl)] = Tilemap {
+            height: sh + (sources.len() * ch) as u8,
+            tiles,
+            ..map
+        };
+    }
+    for sheet in [&mut t.option_selected, &mut t.option_normal] {
+        let tbl = sheet[0].tbl;
+        let cell = |band: usize| TextDesc {
+            tbl,
+            col: 0,
+            row: (usize::from(sh) + band * ch) as i8,
+            w: cw as i8,
+            h: ch as i8,
+        };
+        for (band, i) in VIBRATION_VALUES.enumerate() {
+            sheet[i] = cell(band + 1);
+        }
+        sheet.push(cell(0));
+    }
+    true
+}
 
 /// Clears the menu slots (the destroy callback 0x42a710 of every menu task).
 pub fn destroy(l: &mut SpriteLayer) {
@@ -219,6 +324,23 @@ impl OptionsList {
                 super::text(l, SLOT_VALUES + i, d, x0 + 0x150, y, PAL_MENU, LAYER);
             }
         }
+        // Port only: the seventh row at the same x and pitch ([`add_port_rows`]).
+        let i = item::PORT;
+        let sheet = if i as i32 == self.cursor {
+            &t.option_selected
+        } else {
+            &t.option_normal
+        };
+        if let Some(&label) = sheet.get(PORT_LABEL) {
+            let y = y0 + 0xa0 + 0x30 * i as i16;
+            super::text(l, SLOT_LABELS + i, label, x0 + 0x60, y, PAL_MENU, LAYER);
+        }
+    }
+
+    /// Whether the list draws the seventh row itself (the sheets have its cell); otherwise the
+    /// app draws it as a plain label ([`super::port_settings::draw_options_item`]).
+    pub fn draws_port_row(t: &FrontTables) -> bool {
+        t.option_normal.len() > PORT_LABEL && t.option_selected.len() > PORT_LABEL
     }
 }
 
@@ -565,6 +687,42 @@ mod tests {
         let mut m = OptionsList::new(0);
         let r = m.tick(&press(|i| i.horn = true), &env, &e, &t, &mut l, &mut sfx);
         assert_eq!(r, None);
+    }
+
+    #[test]
+    fn port_row_is_a_label_at_the_list_pitch() {
+        let mut t = tables();
+        let e = eeprom();
+        let env = Env::default();
+        let mut sfx = Vec::new();
+        let mut l = SpriteLayer::default();
+        let slot = SLOT_LABELS + item::PORT;
+        // Without the port's cells the app draws the row ([`OptionsList::draws_port_row`]).
+        assert!(!OptionsList::draws_port_row(&t));
+        OptionsList::new(0).tick(&MenuInput::NONE, &env, &e, &t, &mut l, &mut sfx);
+        assert_eq!(l.slots[slot].tilemap, -1);
+        let cell = |tbl| TextDesc {
+            tbl,
+            col: 0,
+            row: 38,
+            w: 12,
+            h: 2,
+        };
+        t.option_selected.push(cell(0x4fa));
+        t.option_normal.push(cell(0x4fb));
+        assert!(OptionsList::draws_port_row(&t));
+        for (cursor, tbl) in [(0, 0x4fb), (item::PORT, 0x4fa)] {
+            OptionsList::new(cursor).tick(&MenuInput::NONE, &env, &e, &t, &mut l, &mut sfx);
+            let s = l.slots[slot];
+            let label = l.slots[SLOT_LABELS + item::DISTANCE_METER];
+            assert_eq!(s.tilemap, tbl, "selected or normal sheet");
+            assert_eq!((s.col, s.row, s.w, s.h), (0, 38, 12, 2));
+            assert_eq!(
+                (s.x, s.palette, s.layer),
+                (label.x, label.palette, label.layer)
+            );
+            assert_eq!(s.y - label.y, 0x30, "the list's pitch");
+        }
     }
 
     #[test]

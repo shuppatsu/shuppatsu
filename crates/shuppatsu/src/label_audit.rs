@@ -498,10 +498,11 @@ pub fn run(args: &[String]) -> Result<()> {
         &shuppatsu_formats::cg::CgFile::parse(&data.read("cg.rom")?)?,
         shuppatsu_formats::cg::parse_tbl(&data.read("tbl.rom")?)?,
     );
-    // The movie label numbered 5 (`movie_in_menu`), as the game builds it.
-    crate::front::title::add_movie_label_five(
+    // The port's own cells (the movie label numbered 5, the options' extra rows), as the game
+    // builds them.
+    crate::front::add_port_art(
         &mut bank,
-        &crate::front::tables::FrontTables::read(&exe)?,
+        &mut crate::front::tables::FrontTables::read(&exe)?,
     );
     let palettes: std::collections::HashMap<u8, Palette> =
         shuppatsu_formats::cg::init_palettes(&exe)?
@@ -854,8 +855,8 @@ mod tests {
             &shuppatsu_formats::cg::CgFile::parse(&data.read("cg.rom").unwrap()).unwrap(),
             shuppatsu_formats::cg::parse_tbl(&data.read("tbl.rom").unwrap()).unwrap(),
         );
-        let front = crate::front::tables::FrontTables::read(&exe).unwrap();
-        crate::front::title::add_movie_label_five(&mut bank, &front);
+        let mut front = crate::front::tables::FrontTables::read(&exe).unwrap();
+        crate::front::add_port_art(&mut bank, &mut front);
         let cat = Catalogue::load("en", None).unwrap();
         let items = audit(&cat, &SheetTables::read(&exe).unwrap(), &bank).unwrap();
         assert!(items.len() > 300, "{} parts", items.len());

@@ -237,7 +237,7 @@ impl App {
         let mut pad = opts.pad.clone();
         pad.joystick_dat = joystick_dat(&opts.pad);
         let controls = Controls::new(&exe, usize::from(save.eeprom.options().control_mode), &pad)?;
-        let mut bank = play::load_bank(&data, &exe, &opts.locale)?;
+        let (mut bank, mut front) = play::load_bank(&data, &exe, &opts.locale)?;
         bank.set_upscale(opts.settings.hud_upscale);
         if opts.first_run {
             // The language screen's labels, before any language is installed.
@@ -257,7 +257,6 @@ impl App {
         };
         let canvas = layer.new_canvas();
         crate::hud::Hud::install_palettes(&exe, &mut layer)?;
-        let mut front = FrontTables::read(&exe)?;
         front.map_rows = front
             .legend_maps()
             .into_iter()
@@ -712,9 +711,11 @@ impl App {
             Screen::Options(mut m) => {
                 match m.tick(&input, &env, &r.save.eeprom, t, &mut r.layer, &mut sfx) {
                     None => {
-                        let selected = m.cursor() == options::item::PORT;
-                        let (look, ui) = (&self.defs.port, &self.ui);
-                        port_settings::draw_options_item(&mut r.layer, t, look, ui, selected);
+                        if !OptionsList::draws_port_row(t) {
+                            let selected = m.cursor() == options::item::PORT;
+                            let (look, ui) = (&self.defs.port, &self.ui);
+                            port_settings::draw_options_item(&mut r.layer, t, look, ui, selected);
+                        }
                         Screen::Options(m)
                     }
                     Some(res) => {
@@ -1542,7 +1543,12 @@ mod tests {
         port_settings::ITEMS[index("lang")].step(cfg, s, 1);
         app.apply_port_setting(index("lang")).unwrap();
         assert_eq!(app.ui.get("title"), "ポート設定");
-        assert!(app.res().bank.text().is_none(), "the original art");
+        let ja = app.res().bank.text().map(|t| t.len());
+        assert_eq!(
+            ja,
+            Some(2),
+            "the original art, but for the port's seventh options row"
+        );
 
         let before = app.res().layer.scale;
         app.opts.locale.ui_scale_fixed = Some(if before == 3 { 2 } else { 3 });

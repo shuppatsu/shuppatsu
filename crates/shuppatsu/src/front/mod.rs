@@ -288,6 +288,15 @@ pub fn mark_backdrops(bank: &mut shuppatsu_render::sprites::SpriteBank, t: &Fron
     }
 }
 
+/// The port's own cells composed into the sprite bank, with the tables pointing at them: the
+/// movie label numbered 5 ([`title::add_movie_label_five`]) and the options' seventh label and
+/// widened vibration values ([`options::add_port_rows`]). Call it once, before the
+/// translations are installed (their `rect`s name the new rows).
+pub fn add_port_art(bank: &mut shuppatsu_render::sprites::SpriteBank, t: &mut FrontTables) {
+    title::add_movie_label_five(bank, t);
+    options::add_port_rows(bank, t);
+}
+
 /// The legend set for the hints: keyboard modes, the pad (mode 4) or the levers (5/6); the
 /// glyphs replace the keyboard set's pictures ([`legend_glyphs`]).
 fn legend_set(l: &Legends<TextDesc>, hint: Hint) -> (TextDesc, TextDesc, TextDesc) {

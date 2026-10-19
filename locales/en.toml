@@ -998,75 +998,88 @@ komachi = { rect = [0, 30, -1, 6], parts = [{ region = [88, 8, 408, 64], shared_
 # with the fifth label's "5" for the "6" (front/title.rs `add_movie_label_five`).
 komachi_5 = { rect = [0, 36, -1, 6], parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", font = "display", text = "LOVE Express Komachi" }, { region = [192, 75, 306, 16], align = "right", shared_group = "title.subtitles", text = "LOVE特急こまち" }] }
 
-# Options labels and values (0x47c584), selected colouring. Labels 192×32, values 240×32
-# (10–13 are 32×32). Labels 0–5 and the values shown in the list or on the control
-# page (not the 32-px vibration values) each share one size (`shared_group`).
+# Options labels and values (0x47c584), selected colouring. Labels 192×32, values 192×32 or
+# 240×32 (10–13 are 32×32). The labels and the values each share one size (`shared_group`)
+# and a left edge and baseline (`layout = "cell"`), so the list reads as two even columns.
+# Rows 38–47 are the port's (front/options.rs `add_port_rows`): the seventh label "Port
+# settings" (a copy of label 0's cell) and the vibration values 10–13 in 192-px cells, which
+# the list and the vibration page draw instead of the 32-px ones.
 [sheet.0x4fa]
-0 = { text = "Controls", align = "left", shared_group = "options.labels" }                       # コントロール
-1 = { text = "Difficulty", align = "left", shared_group = "options.labels" }                     # 難易度
-2 = { text = "Vibration", align = "left", shared_group = "options.labels" }                      # 振動
-3 = { text = "Sound", align = "left", shared_group = "options.labels" }                          # サウンド
-4 = { text = "Speedometer", align = "left", shared_group = "options.labels" }                    # 速度メーター
-5 = { text = "Distance meter", align = "left", shared_group = "options.labels" }                 # 距離メーター
-6 = { text = "Easy", align = "left", shared_group = "options.values" }                           # イージー
-7 = { text = "Normal", align = "left", shared_group = "options.values" }                         # ノーマル
-8 = { text = "Hard", align = "left", shared_group = "options.values" }                           # ハード
-9 = { text = "Very Hard", align = "left", shared_group = "options.values" }                      # ベリーハード
+0 = { text = "Controls", align = "left", shared_group = "options.labels", layout = "cell" }   # コントロール
+1 = { text = "Difficulty", align = "left", shared_group = "options.labels", layout = "cell" }   # 難易度
+2 = { text = "Vibration", align = "left", shared_group = "options.labels", layout = "cell" }   # 振動
+3 = { text = "Sound", align = "left", shared_group = "options.labels", layout = "cell" }   # サウンド
+4 = { text = "Speedometer", align = "left", shared_group = "options.labels", layout = "cell" }   # 速度メーター
+5 = { text = "Distance meter", align = "left", shared_group = "options.labels", layout = "cell" }   # 距離メーター
+6 = { text = "Easy", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }   # イージー
+7 = { text = "Normal", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }   # ノーマル
+8 = { text = "Hard", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }   # ハード
+9 = { text = "Very Hard", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }   # ベリーハード
 10 = { text = "Off", align = "left" }                           # 切 (vibration)
 11 = { text = "Low", align = "left" }                           # 弱
 12 = { text = "Mid", align = "left" }                           # 並
 13 = { text = "High", align = "left" }                          # 強
-14 = { text = "On", align = "left", shared_group = "options.values" }                            # オン
-15 = { text = "Off", align = "left", shared_group = "options.values" }                           # オフ
-16 = { text = "Hidden", align = "left", shared_group = "options.values" }                        # 非表示
-17 = { text = "cm", align = "left", shared_group = "options.values" }                            # cm表示
-18 = { text = "m", align = "left", shared_group = "options.values" }                             # m表示
-19 = { text = "Big digital", align = "left", shared_group = "options.values" }                   # デカデジ
+14 = { text = "On", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }   # オン
+15 = { text = "Off", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }   # オフ
+16 = { text = "Hidden", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }   # 非表示
+17 = { text = "cm", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }   # cm表示
+18 = { text = "m", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }   # m表示
+19 = { text = "Big digital", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }   # デカデジ
 20 = { text = "Load", align = "left" }                          # ロードする (in no item list)
 21 = { text = "Save", align = "left" }                          # セーブする (in no item list)
-22 = { text = "Keyboard A", align = "left", shared_group = "options.values" }                    # キーボード A
-23 = { text = "Keyboard B", align = "left", shared_group = "options.values" }
-24 = { text = "Keyboard C", align = "left", shared_group = "options.values" }
-25 = { text = "Keyboard D", align = "left", shared_group = "options.values" }
-26 = { text = "Gamepad", align = "left", shared_group = "options.values" }                       # ジョイパッド
-27 = { text = "Joystick", align = "left", shared_group = "options.values" }                      # ジョイスティック
-28 = { text = "Train controller", align = "left", shared_group = "options.values" }                # 専用コントローラ
+22 = { text = "Keyboard A", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }   # キーボード A
+23 = { text = "Keyboard B", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+24 = { text = "Keyboard C", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+25 = { text = "Keyboard D", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+26 = { text = "Gamepad", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }   # ジョイパッド
+27 = { text = "Joystick", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }   # ジョイスティック
+28 = { text = "Train controller", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }   # 専用コントローラ
 29 = { text = "Port A, socket 1", align = "left" }              # ポートA拡張ソケット1 (console leftover)
 31 = { text = "Port B, socket 1", align = "left" }              # ポートB拡張ソケット1 (console leftover)
+port_label = { rect = [0, 38, 12, 2], text = "Port settings", align = "left", shared_group = "options.labels", layout = "cell" }   # the port's seventh row ([ui] options_item)
+vibration_off = { rect = [0, 40, 12, 2], text = "Off", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }   # 切 (10)
+vibration_low = { rect = [0, 42, 12, 2], text = "Low", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }   # 弱 (11)
+vibration_mid = { rect = [0, 44, 12, 2], text = "Mid", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }   # 並 (12)
+vibration_high = { rect = [0, 46, 12, 2], text = "High", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }   # 強 (13)
 
 # The same, normal colouring (0x47c664).
 [sheet.0x4fb]
-0 = { text = "Controls", align = "left", shared_group = "options.labels" }
-1 = { text = "Difficulty", align = "left", shared_group = "options.labels" }
-2 = { text = "Vibration", align = "left", shared_group = "options.labels" }
-3 = { text = "Sound", align = "left", shared_group = "options.labels" }
-4 = { text = "Speedometer", align = "left", shared_group = "options.labels" }
-5 = { text = "Distance meter", align = "left", shared_group = "options.labels" }
-6 = { text = "Easy", align = "left", shared_group = "options.values" }
-7 = { text = "Normal", align = "left", shared_group = "options.values" }
-8 = { text = "Hard", align = "left", shared_group = "options.values" }
-9 = { text = "Very Hard", align = "left", shared_group = "options.values" }
+0 = { text = "Controls", align = "left", shared_group = "options.labels", layout = "cell" }
+1 = { text = "Difficulty", align = "left", shared_group = "options.labels", layout = "cell" }
+2 = { text = "Vibration", align = "left", shared_group = "options.labels", layout = "cell" }
+3 = { text = "Sound", align = "left", shared_group = "options.labels", layout = "cell" }
+4 = { text = "Speedometer", align = "left", shared_group = "options.labels", layout = "cell" }
+5 = { text = "Distance meter", align = "left", shared_group = "options.labels", layout = "cell" }
+6 = { text = "Easy", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+7 = { text = "Normal", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+8 = { text = "Hard", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+9 = { text = "Very Hard", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
 10 = { text = "Off", align = "left" }
 11 = { text = "Low", align = "left" }
 12 = { text = "Mid", align = "left" }
 13 = { text = "High", align = "left" }
-14 = { text = "On", align = "left", shared_group = "options.values" }
-15 = { text = "Off", align = "left", shared_group = "options.values" }
-16 = { text = "Hidden", align = "left", shared_group = "options.values" }
-17 = { text = "cm", align = "left", shared_group = "options.values" }
-18 = { text = "m", align = "left", shared_group = "options.values" }
-19 = { text = "Big digital", align = "left", shared_group = "options.values" }
+14 = { text = "On", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+15 = { text = "Off", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+16 = { text = "Hidden", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+17 = { text = "cm", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+18 = { text = "m", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+19 = { text = "Big digital", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
 20 = { text = "Load", align = "left" }
 21 = { text = "Save", align = "left" }
-22 = { text = "Keyboard A", align = "left", shared_group = "options.values" }
-23 = { text = "Keyboard B", align = "left", shared_group = "options.values" }
-24 = { text = "Keyboard C", align = "left", shared_group = "options.values" }
-25 = { text = "Keyboard D", align = "left", shared_group = "options.values" }
-26 = { text = "Gamepad", align = "left", shared_group = "options.values" }
-27 = { text = "Joystick", align = "left", shared_group = "options.values" }
-28 = { text = "Train controller", align = "left", shared_group = "options.values" }
+22 = { text = "Keyboard A", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+23 = { text = "Keyboard B", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+24 = { text = "Keyboard C", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+25 = { text = "Keyboard D", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+26 = { text = "Gamepad", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+27 = { text = "Joystick", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+28 = { text = "Train controller", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
 29 = { text = "Port A, socket 1", align = "left" }
 31 = { text = "Port B, socket 1", align = "left" }
+port_label = { rect = [0, 38, 12, 2], text = "Port settings", align = "left", shared_group = "options.labels", layout = "cell" }
+vibration_off = { rect = [0, 40, 12, 2], text = "Off", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+vibration_low = { rect = [0, 42, 12, 2], text = "Low", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+vibration_mid = { rect = [0, 44, 12, 2], text = "Mid", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
+vibration_high = { rect = [0, 46, 12, 2], text = "High", align = "left", shared_group = "options.values", layout = "cell", group_outline = true }
 
 # Pause and dialog texts (0x48bbb0). Odd item indices are the highlighted variants. 0 (star
 # cursor) and 1 ("Pause") are not text to translate.

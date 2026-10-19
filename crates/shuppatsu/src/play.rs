@@ -145,26 +145,28 @@ pub struct Shared {
     pub gpu: Option<Gpu>,
 }
 
-/// Loads the sprite bank (`cg.rom` + `tbl.rom`) with the locale's text overrides.
+/// Loads the sprite bank (`cg.rom` + `tbl.rom`) with the locale's text overrides, and the
+/// front-end tables pointing at the port's own cells in it ([`crate::front::add_port_art`]).
 pub fn load_bank(
     data: &GameData,
     exe: &Exe<'_>,
     locale: &crate::locale::LocaleConfig,
-) -> Result<SpriteBank> {
+) -> Result<(SpriteBank, crate::front::tables::FrontTables)> {
     let cg_bytes = data.read("cg.rom")?;
     let mut bank = SpriteBank::new(
         &shuppatsu_formats::cg::CgFile::parse(&cg_bytes)?,
         shuppatsu_formats::cg::parse_tbl(&data.read("tbl.rom")?)?,
     );
-    // Port (`movie_in_menu`): the movie label numbered 5, before the translations name it.
-    let front = crate::front::tables::FrontTables::read(exe)?;
-    crate::front::title::add_movie_label_five(&mut bank, &front);
+    // Port: the movie label numbered 5 and the options' extra cells, before the translations
+    // name them.
+    let mut front = crate::front::tables::FrontTables::read(exe)?;
+    crate::front::add_port_art(&mut bank, &mut front);
     crate::locale::install(locale, exe, &mut bank)?;
     // Controller hints (`hybrid_input`) in every language.
     bank.set_legend_font(Some(shuppatsu_render::label::LabelFont::new(Box::new(
         crate::locale::bundled_font()?,
     ))));
-    Ok(bank)
+    Ok((bank, front))
 }
 
 /// `shuppatsu play <stage>`: one run in its own window (or headless with `--shot`).
@@ -187,7 +189,7 @@ pub fn run(mut opts: PlayOptions) -> Result<()> {
         eprintln!("save: {}", p.display());
     }
     let controls = Controls::new(&exe, opts.control_mode, &opts.pad)?;
-    let bank = load_bank(&data, &exe, &opts.locale)?;
+    let (bank, _) = load_bank(&data, &exe, &opts.locale)?;
     let sound = if opts.shot.is_some() || opts.mute {
         None
     } else {

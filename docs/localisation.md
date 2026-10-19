@@ -36,8 +36,9 @@ Keyed by the sprite's identity in the original:
 * `[ui]`: the port's own screens, which have no original art (the settings screen,
   settings.md "In the game"): string ID → text (`lang = "Language"`, `lang_desc = "…"`). The
   IDs are listed by `known_ui_key` in `crates/shuppatsu/src/front/port_settings.rs`; an
-  unknown one is an error. `locales/ja.toml` holds only `[meta]` and `[ui]`: the Japanese of
-  these strings, written for the port (`ja` stays the identity for every sprite). A string
+  unknown one is an error. `locales/ja.toml` holds `[meta]` and `[ui]`: the Japanese of
+  these strings, written for the port, and one sprite entry, `port_label`: the options list's
+  seventh row, a port-made cell (`ja` stays the identity for every sprite of the original). A string
   missing in a language falls back to English.
 
 Values are a string, or a table with `text` and options:
@@ -70,7 +71,8 @@ right of them, オン / オフ in the options; for boxes the backdrop's 2×2 pat
 lettering's colour), so the palette swaps the game uses for colour variants (white/yellow/red
 digits and labels, highlighted menu items) recolour the text too.
 
-Rules: `ja` is the identity (no overrides). Any sprite that is not in the catalogue, or is shown
+Rules: `ja` is the identity (no overrides of the original's sprites; `ja.toml` names only the
+port's own cells). Any sprite that is not in the catalogue, or is shown
 through a sub-rectangle the catalogue does not name, draws the original art. A catalogue that
 does not parse (unknown fields, bad keys, a descriptor index out of range, two entries for one
 sprite) is an error, not a silent fallback.

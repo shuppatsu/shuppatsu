@@ -657,12 +657,10 @@ impl Locale {
         })
     }
 
-    /// Loads `lang`: `ja` is the identity; otherwise `<dir>/<lang>.toml` when a directory is
-    /// given and the file exists, else the built-in catalogue.
+    /// Loads `lang`: `<dir>/<lang>.toml` when a directory is given and the file exists, else
+    /// the built-in catalogue. `ja` keeps the original art: its catalogue names only the
+    /// port's own cells ([`crate::front::add_port_art`]), never an original sprite.
     pub fn load(lang: &str, dir: Option<&Path>, sheets: &SheetTables) -> Result<Self> {
-        if lang == IDENTITY_LANG {
-            return Ok(Self::identity());
-        }
         Self::from_catalogue(&Catalogue::load(lang, dir)?, sheets)
     }
 
@@ -907,16 +905,20 @@ fn clamp_scale(s: usize) -> usize {
 }
 
 /// Builds the overlay for `cfg` and installs it on `bank`. Returns the number of sprites
-/// overridden (0 for `ja`). Without `--font` the bundled M+ 2 Medium is used.
+/// overridden: for `ja` only the port's own cells (`ja.toml`, the options' seventh label),
+/// the original art everywhere else. Without `--font` the bundled M+ 2 Medium is used.
 pub fn install(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Result<usize> {
-    if cfg.lang == IDENTITY_LANG {
-        bank.set_text(None);
-        bank.set_label_font(None);
-        bank.set_display_label_font(None);
-        return Ok(0);
-    }
     let sheets = SheetTables::read(exe)?;
     let locale = Locale::load(&cfg.lang, cfg.dir.as_deref(), &sheets)?;
+    let identity = cfg.lang == IDENTITY_LANG;
+    if identity {
+        bank.set_label_font(None);
+        bank.set_display_label_font(None);
+        if locale.is_identity() {
+            bank.set_text(None);
+            return Ok(0);
+        }
+    }
     // A `:`-separated list (`;` on Windows), like PATH: the primary font, then fallbacks.
     let load = |list: &Path| {
         let paths: Vec<PathBuf> = std::env::split_paths(list).collect();
@@ -936,6 +938,9 @@ pub fn install(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Resu
     let overlay = TextOverlay::build_with(bank, locale.overrides(), fonts, cfg.ui_scale);
     let n = overlay.len();
     bank.set_text(Some(overlay));
+    if identity {
+        return Ok(n);
+    }
     // The same fonts for the free text of port-only widgets (captions, banners, plates).
     bank.set_label_font(Some(LabelFont::new(Box::new(font))));
     bank.set_display_label_font(display.map(|d| LabelFont::new(Box::new(d))));
@@ -1129,9 +1134,16 @@ mod tests {
             h: 0,
         };
         assert!(en.lookup(0x206, whole).is_some());
-        // Japanese is the identity.
+        // Japanese is the identity for the original's sprites: it names only the port's own
+        // cells, the options sheets' rows from 38 (`front::options::add_port_rows`).
         let ja = Locale::load("ja", None, &sheets).unwrap();
-        assert!(ja.is_identity());
+        assert_eq!(ja.len(), 2);
+        for (tbl, rect, _) in ja.overrides() {
+            assert!(
+                [0x4fa, 0x4fb].contains(&tbl) && rect.row >= 38,
+                "{tbl:#x} {rect:?}"
+            );
+        }
         assert!(ja.lookup(0x206, SubRect::WHOLE).is_none());
         assert!(Locale::load("xx", None, &sheets).is_err());
     }
@@ -1278,13 +1290,15 @@ mod tests {
         let exe_bytes = std::fs::read(install.join("BIN/dengo3k.exe")).unwrap();
         let exe = Exe::parse(&exe_bytes).unwrap();
         let sheets = SheetTables::read(&exe).unwrap();
-        // The movie label numbered 5, composed under sheet 0x513 as the game does.
-        let front = crate::front::tables::FrontTables::read(&exe).unwrap();
+        // The movie label numbered 5, composed under sheet 0x513 as the game does, and the
+        // options' extra rows.
+        let mut front = crate::front::tables::FrontTables::read(&exe).unwrap();
         assert!(crate::front::title::add_movie_label_five(&mut bank, &front));
+        assert!(crate::front::options::add_port_rows(&mut bank, &mut front));
         let maps = &bank.tilemaps;
-        let cat = en();
-        let locale = Locale::from_catalogue(&cat, &sheets).unwrap();
-        for (tbl, rect, o) in locale.overrides() {
+        let locales = [en(), Catalogue::load("ja", None).unwrap()]
+            .map(|cat| Locale::from_catalogue(&cat, &sheets).unwrap());
+        for (tbl, rect, o) in locales.iter().flat_map(Locale::overrides) {
             let map = maps
                 .get(usize::from(tbl))
                 .unwrap_or_else(|| panic!("tbl {tbl:#x} not in tbl.rom ({})", maps.len()));

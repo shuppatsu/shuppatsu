@@ -1,6 +1,7 @@
 # 日本語: the port's own strings only (docs/localisation.md). Language `ja` draws the
-# original art everywhere; this catalogue has no sprite entries, only `[ui]` for the screens
-# the original does not have (the settings screen, docs/settings.md "In the game").
+# original art everywhere; this catalogue names only the port's own cells (`[sheet]`, the
+# options list's seventh row) and has `[ui]` for the screens the original does not have (the
+# settings screen, docs/settings.md "In the game").
 # String IDs as in en.toml's [ui]; a missing ID falls back to English.
 
 [meta]
@@ -154,3 +155,12 @@ movie_in_menu = "メニューにムービー"
 movie_in_menu_desc = "タイトルメニューの6番目に「LOVE特急こまち」（こまちムービー）を表示"
 unique_routes = "路線の重複なし"
 unique_routes_desc = "電車選択で同じ電車を1回だけ表示（2つ目の東北路線は同じ電車が4回並ぶ）"
+
+# The options list's seventh row (front/options.rs `add_port_rows`: a copy of label 0's cell,
+# コントロール, under the sheets). Laid out like the art it replaces, so it has the size and
+# left edge of the labels above.
+[sheet.0x4fa]
+port_label = { rect = [0, 38, 12, 2], text = "ポート設定", align = "left", shared_group = "options.labels" }
+
+[sheet.0x4fb]
+port_label = { rect = [0, 38, 12, 2], text = "ポート設定", align = "left", shared_group = "options.labels" }

@@ -52,6 +52,12 @@ and the six options rows (positions, values, value pages, `Options_Set`) stay ex
 original's; only moving the cursor below 距離メーター reaches the new row. With the analog
 levers (control modes 5/6) the options cursor follows the power notch P0–P5 and cannot reach
 a seventh row, so there the horn opens it (the original reads no horn on that page).
+The row is drawn like the six above it: a cell copied from label 0's art under the option
+sheets (rows 38–39 of tbl 0x4fa / 0x4fb, `options::add_port_rows`), in slot 0x96 at the list's x
+(0x60) and pitch (y 0xa0 + 0x30 × 6 = 448), with its text from the catalogue (`port_label`
+in `en.toml`, and in `ja.toml`, the only sprite entry Japanese has). So it has the labels'
+size group, colours and selected / normal sheets. On the 4:3 canvas its cell is y 448–480: the
+full pitch fits, flush with the bottom edge (the descenders of "settings" reach y 479).
 Code: `crates/shuppatsu/src/front/port_settings.rs` (screen, items, values),
 `App::apply_port_setting` in `app.rs`, `config::store` / `config::locks`.
 
