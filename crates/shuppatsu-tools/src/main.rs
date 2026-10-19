@@ -2,6 +2,7 @@
 
 mod check;
 mod export;
+mod frame_report;
 mod gltf;
 mod hud_upscale;
 mod inventory;
@@ -27,6 +28,9 @@ commands:
   export <what> [--out DIR] [--palette N]
                                   write PNG/WAV from $SHUPPATSU_DATA_DIR to out/export (default)
                                   what: textures | tilemaps | audio | models | routes | all
+  frame-report [--hz N] <trace.tsv>...
+                                  per-screen frame times of SHUPPATSU_FRAME_TRACE files
+                                  (docs/performance.md)
   check [-v]                      Phase 2 exit check: every file in $SHUPPATSU_DATA_DIR parsed or documented
   trace-replay <trace.csv> [-v] [--rules | --drive]
                                   replay an oracle trace through the engine physics (or, with
@@ -108,6 +112,7 @@ fn main() -> Result<()> {
             };
             if ok { Ok(()) } else { bail!("trace mismatch") }
         }
+        "frame-report" => frame_report::run(&args[1..]),
         "check" => {
             let verbose = args.get(1).is_some_and(|a| a == "-v");
             let root = std::env::var_os("SHUPPATSU_DATA_DIR")

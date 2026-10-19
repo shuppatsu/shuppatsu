@@ -611,6 +611,7 @@ impl Renderer {
         queue: &wgpu::Queue,
         frame: &FrameGeometry,
     ) {
+        let _perf = crate::perf::scope(crate::perf::Section::Upload3d);
         for (page, quads) in self.pages.iter_mut().zip(&frame.background_tex) {
             page.bg_tex_count = quads.len() as u32;
             page.bg_tex
@@ -768,6 +769,7 @@ impl Renderer {
         camera: &Camera,
         sub: &SubView,
     ) {
+        let _perf = crate::perf::scope(crate::perf::Section::Render);
         let [vx, vy, vw, vh] = sub.rect;
         let (vw, vh) = (vw.max(1.0), vh.max(1.0));
         // The geometry is stored relative to its origin; so is the camera.

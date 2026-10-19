@@ -11,6 +11,7 @@ pub mod label;
 pub mod lettering;
 pub mod mip;
 pub mod overlay;
+pub mod perf;
 pub mod rgba;
 pub mod sprites;
 pub mod text;

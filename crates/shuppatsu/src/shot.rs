@@ -170,6 +170,7 @@ pub fn read_rgba(
 /// Clears `view` to black (the front-end screens have no 3D layer; the 640×480 canvas is drawn
 /// over it with black bars either side).
 pub fn clear_black(device: &wgpu::Device, queue: &wgpu::Queue, view: &wgpu::TextureView) {
+    let _perf = shuppatsu_render::perf::scope(shuppatsu_render::perf::Section::Render);
     let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
         label: Some("clear"),
     });

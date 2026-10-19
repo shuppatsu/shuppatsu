@@ -219,6 +219,7 @@ impl Gpu {
     /// The next frame to draw into, or `None` when this frame should be skipped.
     pub fn acquire(&mut self) -> Option<wgpu::SurfaceTexture> {
         self.update_cursor();
+        let _perf = shuppatsu_render::perf::scope(shuppatsu_render::perf::Section::Acquire);
         match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(f) => Some(f),
             wgpu::CurrentSurfaceTexture::Suboptimal(f) => {
@@ -249,6 +250,7 @@ impl Gpu {
         }
         self.draw_toast(&frame.texture);
         self.window.pre_present_notify();
+        let _perf = shuppatsu_render::perf::scope(shuppatsu_render::perf::Section::Present);
         self.queue.present(frame);
     }
 
