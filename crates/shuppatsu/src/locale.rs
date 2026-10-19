@@ -577,7 +577,17 @@ fn apply_option(p: &mut TextPart, k: &str, v: &toml::Value) -> Result<()> {
             }
         }
         "vertical" => p.vertical = v.as_bool().context("vertical must be a boolean")?,
+        "layout" => {
+            p.cell = match v.as_str() {
+                Some("ink") => false,
+                Some("cell") => true,
+                _ => bail!("layout must be ink or cell"),
+            }
+        }
         "outline" => p.outline = v.as_bool().context("outline must be a boolean")?,
+        "group_outline" => {
+            p.group_outline = v.as_bool().context("group_outline must be a boolean")?;
+        }
         "group" => {
             let g = v.as_str().context("group must be a string")?;
             ensure!(!g.is_empty(), "empty group");

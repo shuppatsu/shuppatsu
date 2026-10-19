@@ -49,7 +49,9 @@ Values are a string, or a table with `text` and options:
 | `align` | `center` (default), `left`, `right`. |
 | `style` | `auto` (default), `plain` (lettering on transparency: the old art is removed), `boxed` (a plate or box: the backdrop is kept, the old lettering painted over). `auto` picks `boxed` when more than 35 % of the region's edge is opaque. |
 | `vertical` | Rotate 90° clockwise (reads top to bottom). |
+| `layout` | `ink` (default): the text is laid out in the original lettering's ink box with its own ink centred. `cell`: in the whole region, with the baseline set by the font (a capital's top to a descender's bottom centred; a full-height kanji for Japanese text), so the items of a column share a left edge and a baseline whatever the art's margins and whatever letters they have (the options labels and values: "m" under "Normal"). The size still follows the lettering. |
 | `outline` | Plain style: 1-px outline in the art's second colour (default on). |
+| `group_outline` | Plain style, with a `shared_group`: the outline takes the commonest outline colour of the group's parts on the same tilemap instead of the art's own (the options values: オン and オフ cast a darker shadow, index 125, than the other values, index 1). |
 | `backdrop` | Boxed style: `art` (default, the backdrop as drawn) or `solid` (the backdrop's opaque colour fills the transparent half of a dither too, so the text never sits on the dither; the signal captions). |
 | `group` | Parts of one entry with the same group name are drawn at one size, the smallest any of them fits at (the words of one callout cell). |
 | `shared_group` | The same across entries: every part with this name, in any entry of any sheet or tilemap, is drawn at the smallest size any of them fits at (the items of one menu list: the title items `title.items`, the options labels and values, the route select's line names). Names are global, so they carry a screen prefix. |

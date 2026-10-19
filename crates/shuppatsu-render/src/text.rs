@@ -200,6 +200,15 @@ pub struct TextPart {
     /// drawn at one size: the smallest any of them fits at (the items of one menu list,
     /// which are separate entries of a string sheet or separate tilemaps).
     pub shared_group: Option<String>,
+    /// Laid out in the whole region with the baseline set by the font ([`rasterise_fit`]'s
+    /// `cell`), instead of in the original lettering's ink box with the text's own ink
+    /// centred: the items of a column then share a left edge and a baseline whatever the art's
+    /// margins (`layout = "cell"` in the catalogue; the size still follows the lettering).
+    pub cell: bool,
+    /// Plain style with a `shared_group`: the outline takes the commonest outline colour of the
+    /// group's parts on the same tilemap, instead of this art's own (the options values: オン
+    /// and オフ cast a darker shadow than the other values; `group_outline = true`).
+    pub group_outline: bool,
     /// The font role (`font = "display"` in the catalogue).
     pub font: FontRole,
     /// The names of the part in the original script, as the art writes them (`kanji = "齋藤
@@ -415,11 +424,20 @@ pub fn rasterise_spaced(
     cap_px: Option<f32>,
     line_em: Option<f32>,
 ) -> Vec<u8> {
-    rasterise_fit(text, w, h, align, vertical, glyphs, cap_px, line_em, None).0
+    rasterise_fit(
+        text, w, h, align, vertical, glyphs, cap_px, line_em, None, false,
+    )
+    .0
 }
 
 /// [`rasterise_spaced`] at most `max_px` font pixels; also returns the font size it used, so
 /// several texts can be drawn at one size (the smallest of their fitted sizes).
+///
+/// `cell`: the first baseline is set by the font, not by this text's ink: the span from the
+/// top of a capital to the bottom of a descender (a full-height kanji for Japanese text) is
+/// centred in the box. Texts in boxes of one height then share a baseline whatever their
+/// letters ("m" and "Difficulty" line up), and nearly so across sizes (the span's middle moves
+/// a quarter of the size difference).
 #[allow(clippy::too_many_arguments)]
 pub fn rasterise_fit(
     text: &str,
@@ -431,10 +449,13 @@ pub fn rasterise_fit(
     cap_px: Option<f32>,
     line_em: Option<f32>,
     max_px: Option<f32>,
+    cell: bool,
 ) -> (Vec<u8>, f32) {
     if vertical {
         // Lay out in the rotated frame, then turn it clockwise.
-        let (src, px) = rasterise_fit(text, h, w, align, false, glyphs, cap_px, line_em, max_px);
+        let (src, px) = rasterise_fit(
+            text, h, w, align, false, glyphs, cap_px, line_em, max_px, cell,
+        );
         let mut out = vec![0u8; w * h];
         for sy in 0..w {
             for sx in 0..h {
@@ -513,16 +534,38 @@ pub fn rasterise_fit(
         px = px.min(m);
     }
     px = px.clamp(MIN_PX, MAX_PX);
+    // The first baseline's distance from the top of the mask.
+    let shift_at = |px: f32| {
+        let (top, bottom) = if cell {
+            let extent = |ch: char| {
+                let g = glyphs.glyph(ch, px);
+                (-(g.ymin + g.height as i32) as f32, -g.ymin as f32)
+            };
+            if is_cjk(text) {
+                extent('国')
+            } else {
+                (extent('H').0, extent('p').1)
+            }
+        } else {
+            ink(px)
+        };
+        PAD as f32 + (ah - (bottom - top)) / 2.0 - top
+    };
     let fits = |px: f32| {
         let (t, b) = ink(px);
-        lines.iter().all(|l| width_at(l, px) <= aw) && b - t <= ah
+        let height_ok = if cell {
+            let s = shift_at(px).round();
+            s + t >= 0.0 && s + b <= h as f32
+        } else {
+            b - t <= ah
+        };
+        lines.iter().all(|l| width_at(l, px) <= aw) && height_ok
     };
     while px > MIN_PX && !fits(px) {
         px = (px - 0.5).max(MIN_PX);
     }
     let lh = line_h(px);
-    let (top, bottom) = ink(px);
-    let shift = PAD as f32 + (ah - (bottom - top)) / 2.0 - top;
+    let shift = shift_at(px);
     for (i, line) in lines.iter().enumerate() {
         let lw = width_at(line, px);
         let mut pen = PAD as f32
@@ -682,6 +725,22 @@ impl TextOverlay {
             })
             .collect();
         let k_of = |p: &TextPart| cap_per_px(fonts.get(p.font));
+        // The outline colours of the `group_outline` parts, per shared group and tilemap.
+        let mut outlines: HashMap<(&str, u16), [u32; 256]> = HashMap::new();
+        for e in &entries {
+            let (pw, ph) = e.size;
+            for p in e.o.parts.iter().filter(|p| p.group_outline) {
+                if let (Some(g), Some(o)) =
+                    (p.shared_group.as_deref(), plain_outline(p, &e.art, pw, ph))
+                {
+                    outlines.entry((g, e.tbl)).or_insert([0; 256])[usize::from(o)] += 1;
+                }
+            }
+        }
+        let group_outline = |p: &TextPart, tbl: u16| {
+            let counts = outlines.get(&(p.shared_group.as_deref()?, tbl))?;
+            (1..=255u8).max_by_key(|&i| counts[usize::from(i)])
+        };
         // The smallest fitted size of each shared group (across entries and tilemaps).
         let mut shared_min: HashMap<&str, GroupMin> = HashMap::new();
         for e in &entries {
@@ -708,6 +767,10 @@ impl TextOverlay {
                 .zip(e.fitted)
                 .filter_map(|(p, f)| {
                     let (part, px) = f?;
+                    let outline = p
+                        .group_outline
+                        .then(|| plain_outline(p, &e.art, pw, ph).zip(group_outline(p, e.tbl)))
+                        .flatten();
                     let k = k_of(p);
                     let group = p.group.as_deref().map(|g| smallest[g]);
                     let sheet = p.shared_group.as_deref().map(|g| shared_min[g]);
@@ -716,13 +779,21 @@ impl TextOverlay {
                         .chain(sheet)
                         .map(|m| m.px_for(k))
                         .reduce(f32::min);
-                    match min {
+                    let rendered = match min {
                         Some(min) if min < px => {
                             let g = fonts.get(p.font);
                             render_part_at(p, &e.art, pw, ph, g, scale, Some(min)).map(|(r, _)| r)
                         }
                         _ => Some(part),
-                    }
+                    };
+                    rendered.map(|mut r| {
+                        if let Some((own, shared)) = outline {
+                            for b in r.base.iter_mut().filter(|b| **b == own) {
+                                *b = shared;
+                            }
+                        }
+                        r
+                    })
                 })
                 .collect::<Vec<_>>();
             if !rendered.is_empty() {
@@ -978,9 +1049,10 @@ fn render_part_at(
     // The text keeps the original's margins: it is laid out in the lettering's ink box, which
     // may grow along the reading direction up to the smaller of the original's two margins
     // there, but never across it (so it cannot reach a neighbouring HUD element).
-    // A solid backdrop is the text's own box: it may use all of it.
+    // A solid backdrop is the text's own box, and a `cell` layout the whole region: they may
+    // use all of it.
     let own_box = boxed && part.backdrop == Backdrop::Solid;
-    let (lx0, lx1, ly0, ly1) = if !inked || own_box {
+    let (lx0, lx1, ly0, ly1) = if !inked || own_box || part.cell {
         (0, w, 0, h)
     } else if part.vertical {
         let m = y0.min(h - y1);
@@ -1013,6 +1085,7 @@ fn render_part_at(
         cap_px,
         line_em,
         max_px,
+        part.cell,
     );
     let mut coverage = vec![0u8; sw * sh];
     for row in 0..lh {
@@ -1091,6 +1164,18 @@ fn ranked_colours(art: &[u8], art_w: usize, art_h: usize, rect: [u16; 4]) -> Vec
         .collect();
     ranked.sort_by_key(|&i| std::cmp::Reverse(counts[usize::from(i)]));
     ranked
+}
+
+/// The outline colour a plain part with an outline takes from its art ([`plain_colours`]);
+/// `None` for a box, without an outline, or without interior pixels.
+fn plain_outline(part: &TextPart, art: &[u8], art_w: usize, art_h: usize) -> Option<u8> {
+    let scan = RegionScan::of(part, art, art_w, art_h)?;
+    if scan.boxed || !part.outline {
+        return None;
+    }
+    let [x, y, w, h] = scan.rect;
+    let (fill, outline) = plain_colours(&|px, py| art[(y + py) * art_w + x + px], w, h)?;
+    (outline != fill).then_some(outline)
 }
 
 /// The fill and outline colours of plain lettering in a `w × h` region: the fill is the
@@ -1293,6 +1378,68 @@ pub(crate) mod tests {
                 coverage: vec![255; width * height],
             }
         }
+    }
+
+    /// Lowercase `m` (x-height), capital `H` and `p` with a descender, as boxes.
+    struct Letters;
+
+    impl GlyphSource for Letters {
+        fn vertical_metrics(&self, px: f32) -> (f32, f32) {
+            (px * 0.8, -px * 0.2)
+        }
+        fn glyph(&self, ch: char, px: f32) -> Glyph {
+            let (h, ymin) = match ch {
+                'm' => (0.5, 0.0),
+                'p' => (0.7, -0.2),
+                _ => (0.7, 0.0),
+            };
+            let (width, height) = ((px * 0.5) as usize, (px * h) as usize);
+            Glyph {
+                advance: px * 0.6,
+                xmin: 0,
+                ymin: (px * ymin) as i32,
+                width,
+                height,
+                coverage: vec![255; width * height],
+            }
+        }
+    }
+
+    /// The last row of column `x` with ink.
+    fn bottom_at(mask: &[u8], w: usize, x: usize) -> Option<usize> {
+        (0..mask.len() / w).rev().find(|&y| mask[y * w + x] > 0)
+    }
+
+    #[test]
+    fn cell_layout_shares_a_baseline() {
+        let (w, h) = (60, 32);
+        let fit = |text: &str, cell| {
+            let (m, px) = rasterise_fit(
+                text,
+                w,
+                h,
+                Align::Left,
+                false,
+                &Letters,
+                None,
+                None,
+                Some(20.0),
+                cell,
+            );
+            assert_eq!(px, 20.0);
+            m
+        };
+        // The first letter's bottom: the baseline of `m` and of `H` (before a `p`).
+        let base = |text, cell| bottom_at(&fit(text, cell), w, PAD + 1).unwrap();
+        assert_eq!(base("m", true), base("Hp", true), "one baseline");
+        assert_eq!(base("m", true), base("H", true));
+        assert_ne!(
+            base("m", false),
+            base("H", false),
+            "each text's ink centred"
+        );
+        // The span from a capital's top to a descender's bottom is centred: 14 + 4 px.
+        assert_eq!(base("H", true), PAD + (30 - 18) / 2 + 14 - 1);
     }
 
     #[test]
