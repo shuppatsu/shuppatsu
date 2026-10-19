@@ -255,6 +255,7 @@ both work in every mode, and the on-screen button hints follow the device you us
 | Enter | ATS confirm, Pro-mode panel | confirm |
 | Esc | pause | cancel |
 | Alt+Enter, F11 | full screen on / off | full screen on / off |
+| F12 | [issue mark](docs/marks.md) | issue mark |
 
 Modes 1–3 use other layouts (Z/A for power; number keys for direct notches; a single
 handle); the in-game controls page shows each.
@@ -275,6 +276,7 @@ handle); the in-game controls page shows each.
 | X | horn | |
 | Y | | automatic run (route select) |
 | Menu | pause | resume |
+| View + Y, held 1 s | [issue mark](docs/marks.md) | issue mark |
 
 The sticks step like the d-pad: push past half way for one notch, hold to repeat. Pulling the
 left stick toward you is more power; pushing the right stick away is more brake. The left
@@ -410,6 +412,12 @@ detail.
 * **A setting has no effect**: a bad value in `config.toml` is reported in the log and only
   that setting is ignored; a flag or environment variable overrides the file.
 * **Start over with the settings**: delete `config.toml` (keep `eeprom.dat`, your save).
+* **Reporting a visual or UI issue**: press **F12** (or hold View + Y on a pad) the moment you
+  see it. The game keeps running and saves a mark: the frame as a PNG, the state of the run,
+  the settings and the inputs so far, in `~/.local/share/shuppatsu/marks/` (Windows:
+  `%APPDATA%\shuppatsu\marks\`). Attach that folder to the report: its `reproduce.sh` renders
+  the same frame again headless. Marks stay on your machine until you share them
+  ([docs/marks.md](docs/marks.md)).
 
 ## Building from source and development
 
@@ -452,7 +460,8 @@ each claim with its evidence and confidence, are in [docs/re/](docs/re/); the di
 ### Contributing
 
 * **Bug reports**: describe what happened, attach the log (Linux: the terminal; Windows:
-  `%APPDATA%\shuppatsu\shuppatsu.log`) and, if useful, a screenshot. Reports from real Windows
+  `%APPDATA%\shuppatsu\shuppatsu.log`) and, if useful, a screenshot. For something seen on
+  screen, attach an [issue mark](docs/marks.md) (F12) instead. Reports from real Windows
   machines, gamepads and Densha de GO! controllers are especially welcome.
 * **Translations**: the strings live in [`locales/`](locales/);
   [docs/localisation.md](docs/localisation.md) explains the format and how to add a language.

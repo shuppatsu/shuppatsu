@@ -151,8 +151,9 @@ Code: `crates/shuppatsu/src/front/port_settings.rs` (screen, items, values),
 | `movie_scaling` | `smooth` | `--movie-scaling <smooth\|sharp\|nearest>` | a DirectDraw stretch blit (`Blt`, no FX flags) of the 320×144 sample to 640×288: point-sampled by the HEL, filtered or not by the card's driver: not known (movie.md §5) | how the movie reaches its rectangle: `smooth` (default) = plain bilinear, suited to the low-resolution live-action picture; `sharp` = sharp bilinear like `ui_scaling smooth` (square pixels, blended edges); `nearest` = nearest neighbour. The rectangle itself follows `hud_layout` (original: the original's on the 640×480 design; enhanced: the window filled), always at the stream's 2.03:1 |
 
 Not settings: the window size (`--size`), `--mute`, the controller files (`--joystick-dat`,
-`--combo`) and the check aids (`--shot`, `--inputs`, `--speedometer`, `--ending`,
-`--first-run`, `--debug-title`) are per-run options, not behaviours. The audio mixer's
+`--combo`) and the check aids (`--shot`, `--inputs`, `--save`, `--global-tick`, `--speedometer`,
+`--ending`, `--first-run`, `--debug-title`) are per-run options, not behaviours. Issue marks (F12,
+[marks.md](marks.md)) are always on: they record what the game reads anyway. The audio mixer's
 options (`MixerConfig`: `master_volume`, `smooth_volume`, `interpolation`, audio-text.md §10)
 are library options left at their defaults (the original's level, no ramps, linear
 resampling, as the closest match to DirectSound is not known); they get keys with the audio
