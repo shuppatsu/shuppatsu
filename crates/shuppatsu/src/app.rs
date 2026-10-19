@@ -1262,7 +1262,10 @@ impl App {
         self.fit_front()?;
         // The movie: the picture for the clock, and where it goes.
         let new_picture = match &mut self.screen {
-            Screen::Movie(m) => m.player.update(),
+            Screen::Movie(m) => {
+                m.player.update_display();
+                m.player.take_new_picture()
+            }
             _ => false,
         };
         let movie_rect = match (&self.screen, self.res.as_ref().and_then(|r| r.gpu.as_ref())) {
@@ -1283,7 +1286,7 @@ impl App {
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
         crate::shot::clear_black(&gpu.device, &gpu.queue, &view);
-        if let (Screen::Movie(m), Some(rect)) = (&self.screen, movie_rect) {
+        if let (Screen::Movie(m), Some(rect)) = (&mut self.screen, movie_rect) {
             // Black around the picture, nothing of the canvas.
             let mut fresh = false;
             let o = self.movie_overlay.get_or_insert_with(|| {
@@ -1292,7 +1295,8 @@ impl App {
                 o.resize(&gpu.device, m.player.size());
                 o
             });
-            if (fresh || new_picture) && !m.player.rgba().is_empty() {
+            let upload = (fresh || new_picture) && !m.player.rgba().is_empty();
+            if upload {
                 o.upload(&gpu.queue, m.player.rgba());
             }
             movie_scaling.configure(o);
@@ -1301,6 +1305,7 @@ impl App {
             }
             gpu.window.pre_present_notify();
             gpu.queue.present(frame);
+            m.player.trace_present(upload, now.elapsed());
             return Ok(());
         }
         // A run may have left the overlay at its wide size.

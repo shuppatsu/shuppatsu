@@ -133,14 +133,17 @@ original's renderer).
 
 * **Where it is played**: attract item 3 once every select stage is cleared
   (`komachi_unlocked`, as 0x404cf0), and, with setting `movie_in_menu` (on), the title menu's
-  sixth label as its last row (menus.md §3); as the fifth row (without the Densha de GO! controller) its label reads 5, composed from the fifth label's number (menus.md §3). Skip and end as §1; from the menu the BGM comes
-  back and the cursor sits on the movie row (case 5).
+  sixth label as its last row (menus.md §3); as the fifth row (without the Densha de GO!
+  controller) its label reads 5, composed from the fifth label's number (menus.md §3). Skip
+  and end as §1; from the menu the BGM comes back and the cursor sits on the movie row (case 5).
 * **A/V sync**: the soundtrack is a `shuppatsu_audio::PcmStream` mixed at unity gain and resampled to
-  the device rate by `audio_resampler`. The mixer counts the source frames played; that count
-  over 44,100 is the clock, and picture *n* is shown from *n* · 1001/30000 s on (plus the
-  audio-minus-video start offset, 0 here). A dry queue holds the sound and so the clock.
-  Without a sound device the clock is the app's 33 ms ticks. Measured live: clock 11.189 s
-  after 11.187 s of wall time at the skip (`movie:` log line).
+  the device rate by `audio_resampler`. The mixer counts the source frames played; picture *n*
+  is due from *n* · 1001/30000 s of that clock on (plus the audio-minus-video start offset, 0
+  here). A dry queue holds the sound and so the clock. Without a sound device the clock is
+  the app's 33 ms ticks. Measured live: clock 11.189 s after 11.187 s of wall time at the skip
+  (`movie:` log line).
+* **Playback timing** (§6.1): the count is read smoothly, and each presented display frame
+  picks its picture, on the display's refresh grid; a picture is uploaded once, when it changes.
 * **On screen**: black around the picture (the sprites are cleared). `hud_layout original`:
   the original's rectangle (§1) on the presented 640×480 design, scaled with it; `enhanced`:
   the largest rectangle of the picture's shape in the window. Always the
@@ -149,7 +152,53 @@ original's renderer).
   `smooth` (bilinear, default), `sharp` (sharp bilinear like the UI), `nearest`. Colour:
   BT.601 video range, chroma upsampled bilinearly from the MPEG-1 sample positions.
 * **Shots**: `out/explain/movie/` (menus in English and Japanese, frames at 2560×1440 and 4:3
-  in both layouts and aspects, the filters, a skip).
+  in both layouts and aspects, the filters, a skip, the fifth-row menu label in both languages).
+
+### 6.1 Playback timing — confirmed (measured 2026-10-19)
+
+**The stutter (fixed).** Pictures were moved to the clock both by the 30 Hz app tick and by
+each redraw, but only a picture the *redraw* moved to was uploaded to the GPU. A redraw runs
+the ticks that are due first, so on every frame with a tick (half of them at 60 Hz) the tick
+took the new picture and the redraw found nothing new: about half the pictures were never
+shown, and while the tick and picture phases lined up the screen froze for up to 12 refreshes
+(200 ms). Now the picture carries a "not yet uploaded" flag (`MoviePlayer::take_new_picture`),
+and once a display draws the movie only the redraws move the pictures; the ticks keep the
+sound fed.
+
+**The clock between callbacks.** The played-frame count moves once per audio callback (470 or
+941 source frames here, 10.7 / 21.3 ms, under PipeWire; other setups use larger buffers). At
+the start of each callback the output records the count, the time and the device's output
+latency (`cpal` callback → playback timestamps, capped at 250 ms;
+`PcmStream::mark_callback`). The position heard at a time t is that count + (t − callback −
+latency) · 44,100, clamped to 0 ..= the frames rendered (an underrun still holds it;
+`PcmStream::position_at`). Against a straight line through wall time it deviates 9 µs RMS
+(22 µs at most); it lags the raw count by 21–32 ms (median 27 ms), which the raw clock used
+to show the pictures early by.
+
+**The refresh grid.** With Fifo the redraw runs some time before the refresh that shows it,
+±2 ms of jitter at 60 Hz (redraw intervals 15.8–18.2 ms). Sampled at the redraw, a picture
+boundary near a refresh shows one picture 1 refresh and its neighbour 3. `FrameGrid` numbers
+the redraws by refresh, fits a least-squares line through all of them (skipped refreshes are
+steps; more than half a period off restarts the line) and gives each redraw its refresh's
+time on the line; the picture is the one due at the clock read for that time
+(`MoviePlayer::update_display`, `picture_at`). The clock is kept from going back.
+
+**Cadence**, 4K window (3840×2160 fullscreen, the external display at 60 Hz, Fifo, release
+build, ~26 s of the movie; `SHUPPATSU_MOVIE_TRACE=<file>` writes one line per presented
+frame):
+
+| Build | Pictures shown | Skipped | Display frames per picture | Redraw CPU (mean / max) |
+|---|---|---|---|---|
+| before | 352 | 335 | 1: 4, 2: 289, 3: 2, 4–12: 57 | 1.09 / 2.76 ms |
+| after | 786 | 0 | 2: 784, 3: 2 | 1.06 / 3.17 ms |
+
+No refresh was missed in either (present interval mean 16.67 ms, max 20 ms; the upload,
+the bilinear scale to 4K and the present cost about 1 ms of CPU), so the GPU side was not the
+cause. The two 3-refresh pictures are the 29.97-against-30 beat: at 60 Hz a picture lasts
+2.002 refreshes, one more refresh every 500 pictures (17 s). Simulated with the measured jitter
+(`movie::tests::display_cadence_is_even_on_the_grid`, 58 s after a 1 s warm-up): 60 Hz
+{2: 1763, 3: 4}, 120 Hz {4: 1761, 5: 7}, 180 Hz {6: 1757, 7: 11}; sampled at the redraws
+instead, 60 Hz {1: 69, 2: 1625, 3: 73}.
 
 ## 7. Open points
 
@@ -157,3 +206,5 @@ original's renderer).
 * The DirectDraw stretch filter of the original is driver-dependent and not measured under
   Wine.
 * The renderer's level is taken as full scale (DirectShow's default renderer at volume 0 dB).
+* The cadence at 120 and 180 Hz is simulated (§6.1), not measured in a window: the laptop
+  panel runs at 180 Hz, the external display at 60 Hz.
