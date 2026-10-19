@@ -13,8 +13,8 @@ use anyhow::{Context, Result, bail};
 use shuppatsu_formats::exe::Exe;
 
 use crate::hybrid::{
-    HANDLE_DEADBAND, HandleTick, HintDevice, HintTracker, LeverArbiter, MenuRepeat, modern_pad,
-    pad_buttons,
+    HANDLE_DEADBAND, HandleTick, HintDevice, HintTracker, LeverArbiter, MenuRepeat, ModernPad,
+    pad_axes, pad_buttons,
 };
 use crate::input::{
     BINDING_STRIDE, BINDINGS_VA, BUTTON_SLOTS, Bindings, ButtonState, ButtonWord, EB, Keyboard,
@@ -567,14 +567,18 @@ pub struct GenericInputs {
     /// Start / Menu: pause.
     pub start: bool,
     /// The rest are read by the Xbox-layout mapping of `hybrid_input` only
-    /// ([`crate::hybrid::modern_pad`]): left face button (X / Square), the horn.
+    /// ([`crate::hybrid::ModernPad`]): left face button (X / Square), the horn.
     pub west: bool,
     /// Top face button (Y / Triangle): the R key.
     pub north: bool,
     pub lb: bool,
     pub rb: bool,
-    pub lt: bool,
-    pub rt: bool,
+    /// Trigger travel, 0 at rest to 1 fully pulled (a digital trigger reads 0 or 1).
+    pub lt: f32,
+    pub rt: f32,
+    /// Right stick, same convention as the left one (+Y up).
+    pub right_x: f32,
+    pub right_y: f32,
     /// Back / View.
     pub select: bool,
 }
@@ -780,6 +784,187 @@ pub enum PadProfile {
     Combo(ComboTable),
 }
 
+/// Linux evdev codes as gilrs' `Code::into_u32` gives them there (`type << 16 | code`), for
+/// pads gilrs has no SDL mapping for (input.md §10.6).
+mod evdev {
+    const KEY: u32 = 1 << 16;
+    const ABS: u32 = 3 << 16;
+    pub const BTN_TL: u32 = KEY | 0x136;
+    pub const BTN_TR: u32 = KEY | 0x137;
+    /// The analog triggers of the Xbox pads on Bluetooth (hid-generic / hid-microsoft):
+    /// LT = ABS_BRAKE, RT = ABS_GAS, 0..1023 (measured: 045e:0b13 v0521).
+    pub const ABS_GAS: u32 = ABS | 0x09;
+    pub const ABS_BRAKE: u32 = ABS | 0x0a;
+}
+
+/// Microsoft's USB vendor id: its pads use the kernel's legacy X/Y codes (input.md §10.6).
+const VENDOR_MICROSOFT: u16 = 0x045e;
+
+/// What gilrs reports for one pad this tick, as plain data so the mapping onto
+/// [`GenericInputs`] ([`generic_inputs`]) is pure and testable. Axis values are gilrs' (−1..=1,
+/// sticks +Y up, already scaled from the device's own range, so a 0..65535 stick resting at
+/// 34354 reads about +0.05); button values are 0..=1 (analog triggers mapped as buttons too).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PadReading {
+    /// gilrs found an SDL mapping for the pad (otherwise it names the kernel codes itself).
+    pub sdl_mapping: bool,
+    pub vendor: Option<u16>,
+    /// The Linux evdev backend (the raw codes below are evdev codes).
+    pub evdev: bool,
+    /// Buttons gilrs names for the pad, with their value (0 until first seen).
+    pub buttons: Vec<(gilrs::Button, f32)>,
+    /// Axes gilrs names for the pad, with their value (`None` until first seen).
+    pub axes: Vec<(gilrs::Axis, Option<f32>)>,
+    /// Every input seen so far by its raw code (Linux only; empty elsewhere): what a pad
+    /// without a mapping reports under no name.
+    pub raw_buttons: Vec<(u32, f32)>,
+    pub raw_axes: Vec<(u32, f32)>,
+}
+
+impl PadReading {
+    fn button(&self, b: gilrs::Button) -> f32 {
+        self.buttons
+            .iter()
+            .find(|(n, _)| *n == b)
+            .map_or(0.0, |(_, v)| *v)
+    }
+
+    fn named(&self, a: gilrs::Axis) -> bool {
+        self.axes.iter().any(|(n, _)| *n == a)
+    }
+
+    fn axis(&self, a: gilrs::Axis) -> Option<f32> {
+        self.axes
+            .iter()
+            .find(|(n, _)| *n == a)
+            .and_then(|(_, v)| *v)
+    }
+
+    fn raw_button(&self, code: u32) -> f32 {
+        self.raw_buttons
+            .iter()
+            .find(|(c, _)| *c == code)
+            .map_or(0.0, |(_, v)| *v)
+    }
+
+    fn raw_axis(&self, code: u32) -> Option<f32> {
+        self.raw_axes
+            .iter()
+            .find(|(c, _)| *c == code)
+            .map(|(_, v)| *v)
+    }
+}
+
+/// The trigger travel 0..=1 of an axis that rests at −1 and reads +1 fully pulled: a trigger
+/// that gilrs reports as `Axis::LeftZ`/`RightZ`, or as a raw axis without a mapping (gilrs
+/// scales any axis to −1..=1 from the device's range, so a 0..1023 trigger at rest is −1).
+pub fn trigger_travel_from_axis(v: f32) -> f32 {
+    ((v + 1.0) / 2.0).clamp(0.0, 1.0)
+}
+
+/// The Xbox-layout inputs from what gilrs reports, robust to the ways a backend can name them
+/// (input.md §10.6):
+///
+/// - Triggers: the most travel of the named analog `LeftTrigger2`/`RightTrigger2` (an SDL
+///   mapping, XInput / Windows.Gaming.Input), `LeftZ`/`RightZ` when the pad also has a named
+///   right stick (Linux xpad without a mapping: ABS_Z/ABS_RZ are the triggers, rest −1), and
+///   the raw ABS_BRAKE/ABS_GAS (Bluetooth Xbox pads without a mapping). A pad can list a
+///   digital BTN_TL2 that never fires next to its analog axis, hence the most of all.
+/// - Right stick: the named `RightStickX/Y`, else `LeftZ`/`RightZ` (Bluetooth Xbox pads
+///   without a mapping: ABS_Z/ABS_RZ are the right stick; gilrs does not flip an unnamed Y,
+///   so −RZ is up).
+/// - LB/RB: the named buttons or the raw BTN_TL/BTN_TR.
+/// - X/Y: on Linux, a Microsoft pad without an SDL mapping reports X as BTN_NORTH and Y as BTN_WEST
+///   (the kernel's legacy BTN_X/BTN_Y), which gilrs names North/West: swapped back.
+pub fn generic_inputs(r: &PadReading) -> GenericInputs {
+    use gilrs::{Axis, Button};
+    let pressed = |b: Button| r.button(b) >= 0.5;
+    let value = |a: Axis| r.axis(a).unwrap_or(0.0);
+    let dpad_x = value(Axis::DPadX);
+    let dpad_y = value(Axis::DPadY);
+    let named_right = r.named(Axis::RightStickX) || r.named(Axis::RightStickY);
+    let trigger = |b: Button, z: Axis, raw: u32| {
+        let mut t = r.button(b);
+        if named_right && let Some(v) = r.axis(z) {
+            t = t.max(trigger_travel_from_axis(v));
+        }
+        if let Some(v) = r.raw_axis(raw) {
+            t = t.max(trigger_travel_from_axis(v));
+        }
+        t
+    };
+    let (right_x, right_y) = if named_right {
+        (value(Axis::RightStickX), value(Axis::RightStickY))
+    } else {
+        (value(Axis::LeftZ), -value(Axis::RightZ))
+    };
+    let legacy_xy = r.evdev && !r.sdl_mapping && r.vendor == Some(VENDOR_MICROSOFT);
+    let (west, north) = if legacy_xy {
+        (pressed(Button::North), pressed(Button::West))
+    } else {
+        (pressed(Button::West), pressed(Button::North))
+    };
+    GenericInputs {
+        left_x: value(Axis::LeftStickX),
+        left_y: value(Axis::LeftStickY),
+        dpad_up: pressed(Button::DPadUp) || dpad_y >= 0.5,
+        dpad_down: pressed(Button::DPadDown) || dpad_y <= -0.5,
+        dpad_left: pressed(Button::DPadLeft) || dpad_x <= -0.5,
+        dpad_right: pressed(Button::DPadRight) || dpad_x >= 0.5,
+        south: pressed(Button::South),
+        east: pressed(Button::East),
+        start: pressed(Button::Start),
+        west,
+        north,
+        lb: pressed(Button::LeftTrigger) || r.raw_button(evdev::BTN_TL) >= 0.5,
+        rb: pressed(Button::RightTrigger) || r.raw_button(evdev::BTN_TR) >= 0.5,
+        lt: trigger(Button::LeftTrigger2, Axis::LeftZ, evdev::ABS_BRAKE),
+        rt: trigger(Button::RightTrigger2, Axis::RightZ, evdev::ABS_GAS),
+        right_x,
+        right_y,
+        select: pressed(Button::Select),
+    }
+}
+
+/// Every named gilrs button and axis, for [`PadReading`] and `shuppatsu pad monitor`.
+const NAMED_BUTTONS: [gilrs::Button; 19] = {
+    use gilrs::Button::*;
+    [
+        South,
+        East,
+        North,
+        West,
+        C,
+        Z,
+        LeftTrigger,
+        LeftTrigger2,
+        RightTrigger,
+        RightTrigger2,
+        Select,
+        Start,
+        Mode,
+        LeftThumb,
+        RightThumb,
+        DPadUp,
+        DPadDown,
+        DPadLeft,
+        DPadRight,
+    ]
+};
+const NAMED_AXES: [gilrs::Axis; 8] = {
+    use gilrs::Axis::*;
+    [
+        LeftStickX,
+        LeftStickY,
+        LeftZ,
+        RightStickX,
+        RightStickY,
+        RightZ,
+        DPadX,
+        DPadY,
+    ]
+};
+
 /// The first connected gilrs gamepad (a force-feedback one if any, like 0x433d60).
 pub struct PadSource {
     gilrs: gilrs::Gilrs,
@@ -864,6 +1049,60 @@ impl PadSource {
         Some(set)
     }
 
+    /// What gilrs reports for the pad now (call after [`PadSource::pump`]); `None` with no pad.
+    pub fn reading(&self) -> Option<PadReading> {
+        let g = self.gilrs.connected_gamepad(self.id?)?;
+        let st = g.state();
+        let buttons = NAMED_BUTTONS
+            .iter()
+            .filter(|&&b| g.button_code(b).is_some())
+            .map(|&b| {
+                let v = g.button_data(b).map_or(0.0, |d| d.value());
+                (b, if g.is_pressed(b) { v.max(1.0) } else { v })
+            })
+            .collect();
+        let axes = NAMED_AXES
+            .iter()
+            .filter(|&&a| g.axis_code(a).is_some())
+            .map(|&a| (a, g.axis_data(a).map(|d| d.value())))
+            .collect();
+        let linux = cfg!(target_os = "linux");
+        Some(PadReading {
+            sdl_mapping: g.mapping_source() == gilrs::MappingSource::SdlMappings,
+            vendor: g.vendor_id(),
+            evdev: linux,
+            buttons,
+            axes,
+            raw_buttons: if linux {
+                st.buttons()
+                    .map(|(c, d)| (c.into_u32(), if d.is_pressed() { 1.0 } else { d.value() }))
+                    .collect()
+            } else {
+                Vec::new()
+            },
+            raw_axes: if linux {
+                st.axes().map(|(c, d)| (c.into_u32(), d.value())).collect()
+            } else {
+                Vec::new()
+            },
+        })
+    }
+
+    /// The pad's identity for `shuppatsu pad monitor`.
+    pub fn describe(&self) -> Option<String> {
+        let g = self.gilrs.connected_gamepad(self.id?)?;
+        let uuid: String = g.uuid().iter().map(|b| format!("{b:02x}")).collect();
+        Some(format!(
+            "{} (os name {:?}, {:04x}:{:04x}, SDL GUID {uuid}), mapping: {:?}{}",
+            g.name(),
+            g.os_name(),
+            g.vendor_id().unwrap_or(0),
+            g.product_id().unwrap_or(0),
+            g.mapping_source(),
+            g.map_name().map(|n| format!(" ({n})")).unwrap_or_default(),
+        ))
+    }
+
     /// This tick's state for a joystick whose binding row is `row`; `None` with no pad.
     pub fn sample(&mut self, row: &[u8; BINDING_STRIDE]) -> Option<JoyState> {
         self.read(row).map(|(s, _)| s)
@@ -879,29 +1118,10 @@ impl PadSource {
                 None
             }
         };
+        let reading = self.reading()?;
+        let mut inputs = generic_inputs(&reading);
         let g = self.gilrs.connected_gamepad(self.id?)?;
-        use gilrs::{Axis, Button};
-        let pressed = |b: Button| g.is_pressed(b);
-        let dpad_x = g.value(Axis::DPadX);
-        let dpad_y = g.value(Axis::DPadY);
-        let mut inputs = GenericInputs {
-            left_x: g.value(Axis::LeftStickX),
-            left_y: g.value(Axis::LeftStickY),
-            dpad_up: pressed(Button::DPadUp) || dpad_y >= 0.5,
-            dpad_down: pressed(Button::DPadDown) || dpad_y <= -0.5,
-            dpad_left: pressed(Button::DPadLeft) || dpad_x <= -0.5,
-            dpad_right: pressed(Button::DPadRight) || dpad_x >= 0.5,
-            south: pressed(Button::South),
-            east: pressed(Button::East),
-            start: pressed(Button::Start),
-            west: pressed(Button::West),
-            north: pressed(Button::North),
-            lb: pressed(Button::LeftTrigger),
-            rb: pressed(Button::RightTrigger),
-            lt: pressed(Button::LeftTrigger2),
-            rt: pressed(Button::RightTrigger2),
-            select: pressed(Button::Select),
-        };
+        use gilrs::Button;
         let state = match (&self.profile, raw) {
             (PadProfile::Combo(table), Some(raw)) => {
                 // A button that is part of a handle's pattern is not also a button.
@@ -986,7 +1206,7 @@ struct Hybrid {
     pad: Option<PadSource>,
     /// Modes 5/6 (or a learned combination controller): the selected decoder for the pad's
     /// handles; its buttons follow its binding row. Otherwise the pad is read in the Xbox
-    /// layout ([`crate::hybrid::modern_pad`]).
+    /// layout ([`crate::hybrid::ModernPad`]).
     analog: Option<(Joystick, LeverArbiter)>,
     /// Mode 4's row: where [`PadSource::read`] places the buttons of a state that the Xbox
     /// mapping does not use.
@@ -995,6 +1215,8 @@ struct Hybrid {
     prev_held: u32,
     /// Y on the previous poll (its R bit is a press-frame bit).
     prev_north: bool,
+    /// The Xbox layout's stick and trigger latches.
+    modern: ModernPad,
     hint: HintTracker,
 }
 
@@ -1117,6 +1339,7 @@ impl Controls {
                 menu: MenuRepeat::default(),
                 prev_held: 0,
                 prev_north: false,
+                modern: ModernPad::default(),
                 hint: HintTracker::new(device),
             }),
             hint_override: opts.hint_device,
@@ -1179,7 +1402,7 @@ impl Controls {
         let mut deadband = HANDLE_DEADBAND;
         match (&mut h.analog, &sample) {
             (None, Some((_, inputs))) => {
-                (pad_word, levers) = modern_pad(inputs);
+                (pad_word, levers) = h.modern.map(inputs);
                 if inputs.north && !h.prev_north {
                     pad_word |= bits::KEY_R;
                 }
@@ -1200,6 +1423,9 @@ impl Controls {
             (_, None) => {}
         }
         h.prev_north = sample.as_ref().is_some_and(|(_, i)| i.north);
+        if sample.is_none() {
+            h.modern.reset();
+        }
 
         let before = [self.keyboard.power, self.keyboard.brake];
         let kb = self.keyboard.poll_with(down, levers);
@@ -1218,9 +1444,7 @@ impl Controls {
         let held = h.menu.merge(&[kb.word.held, pad_word]);
         let word = ButtonWord::new(h.prev_held, held);
         h.prev_held = held;
-        let pad_view = sample
-            .as_ref()
-            .map(|(_, i)| (pad_buttons(i), [i.left_x, i.left_y]));
+        let pad_view = sample.as_ref().map(|(_, i)| (pad_buttons(i), pad_axes(i)));
         h.hint.update(
             self.keyboard.any_pressed(),
             pad_view.as_ref().map(|(b, a)| (*b, &a[..])),
@@ -1295,6 +1519,14 @@ impl Controls {
         }
     }
 
+    /// The gamepad, whichever way it is read (for `shuppatsu pad monitor`).
+    pub fn pad_source(&self) -> Option<&PadSource> {
+        match &self.hybrid {
+            Some(h) => h.pad.as_ref(),
+            None => self.joystick.as_ref().map(|(_, p)| p),
+        }
+    }
+
     /// The device the on-screen hints show (`hybrid_input` only; `None` = the original's
     /// legends for the selected control mode).
     pub fn hint_device(&self) -> Option<HintDevice> {
@@ -1312,13 +1544,176 @@ impl Controls {
     }
 }
 
+/// The evdev name of a raw Linux code, for the monitor.
+fn evdev_name(code: u32) -> String {
+    let (kind, c) = (code >> 16, code & 0xffff);
+    let name = match (kind, c) {
+        (1, 0x130) => "BTN_SOUTH",
+        (1, 0x131) => "BTN_EAST",
+        (1, 0x132) => "BTN_C",
+        (1, 0x133) => "BTN_NORTH",
+        (1, 0x134) => "BTN_WEST",
+        (1, 0x135) => "BTN_Z",
+        (1, 0x136) => "BTN_TL",
+        (1, 0x137) => "BTN_TR",
+        (1, 0x138) => "BTN_TL2",
+        (1, 0x139) => "BTN_TR2",
+        (1, 0x13a) => "BTN_SELECT",
+        (1, 0x13b) => "BTN_START",
+        (1, 0x13c) => "BTN_MODE",
+        (1, 0x13d) => "BTN_THUMBL",
+        (1, 0x13e) => "BTN_THUMBR",
+        (3, 0x00) => "ABS_X",
+        (3, 0x01) => "ABS_Y",
+        (3, 0x02) => "ABS_Z",
+        (3, 0x03) => "ABS_RX",
+        (3, 0x04) => "ABS_RY",
+        (3, 0x05) => "ABS_RZ",
+        (3, 0x09) => "ABS_GAS",
+        (3, 0x0a) => "ABS_BRAKE",
+        (3, 0x10) => "ABS_HAT0X",
+        (3, 0x11) => "ABS_HAT0Y",
+        _ => return format!("{code:#x}"),
+    };
+    name.to_owned()
+}
+
+/// The monitor's view of one reading: what gilrs names and the raw codes, each value to one
+/// decimal (so stick noise does not flood the terminal), then the Xbox-layout result.
+fn monitor_lines(r: &PadReading) -> [String; 3] {
+    let f = |v: f32| format!("{:+.1}", (v * 10.0).round() / 10.0 + 0.0);
+    let named = r
+        .buttons
+        .iter()
+        .map(|(b, v)| format!("{b:?} {}", f(*v)))
+        .chain(
+            r.axes
+                .iter()
+                .map(|(a, v)| format!("{a:?} {}", v.map_or("--".into(), f))),
+        )
+        .collect::<Vec<_>>()
+        .join(", ");
+    let raw = r
+        .raw_buttons
+        .iter()
+        .filter(|(_, v)| *v != 0.0)
+        .chain(&r.raw_axes)
+        .map(|(c, v)| format!("{} {}", evdev_name(*c), f(*v)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let i = generic_inputs(r);
+    let held = [
+        (i.south, "A"),
+        (i.east, "B"),
+        (i.west, "X"),
+        (i.north, "Y"),
+        (i.lb, "LB"),
+        (i.rb, "RB"),
+        (i.select, "View"),
+        (i.start, "Menu"),
+        (i.dpad_up, "D-up"),
+        (i.dpad_down, "D-down"),
+        (i.dpad_left, "D-left"),
+        (i.dpad_right, "D-right"),
+    ]
+    .iter()
+    .filter(|(on, _)| *on)
+    .map(|(_, n)| *n)
+    .collect::<Vec<_>>()
+    .join(" ");
+    let xbox = format!(
+        "left stick {}/{}, right stick {}/{}, LT {:.1}, RT {:.1}, held [{held}]",
+        f(i.left_x),
+        f(i.left_y),
+        f(i.right_x),
+        f(i.right_y),
+        i.lt,
+        i.rt,
+    );
+    [
+        format!("  gilrs: {named}"),
+        format!("  raw:   {raw}"),
+        format!("  xbox:  {xbox}"),
+    ]
+}
+
+/// `shuppatsu pad monitor`: the notches and the button word the game reads, plus what gilrs
+/// reports (named buttons and axes, raw codes) and the Xbox-layout reading. Without `--mode`
+/// it watches the pad as the game does by default: `hybrid_input` in keyboard mode 0.
+fn monitor(exe: &Exe<'_>, mode: Option<usize>, opts: PadOptions) -> Result<()> {
+    let (mode, opts) = match mode {
+        None => (
+            0,
+            PadOptions {
+                hybrid_input: true,
+                ..opts
+            },
+        ),
+        Some(m @ 4..=6) => (m, opts),
+        Some(m) => {
+            bail!("monitor: --mode {m} is not a joystick mode (4..=6); omit it for the Xbox layout")
+        }
+    };
+    let mut controls = Controls::new(exe, mode, &opts)?;
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lines() {
+            if line.is_err() || tx.send(()).is_err() {
+                break;
+            }
+        }
+    });
+    println!(
+        "mode {mode} ({}; analog levers: {}); Enter = station start, Ctrl+C = quit",
+        if opts.hybrid_input {
+            "hybrid input, pad in the Xbox layout"
+        } else {
+            "the selected joystick mode alone"
+        },
+        controls.is_analog()
+    );
+    let mut last = None;
+    let mut last_pad = None;
+    let mut last_lines: [String; 3] = Default::default();
+    loop {
+        if rx.try_recv().is_ok() {
+            controls.reset_levers();
+        }
+        let b = controls.poll(|_| false, false);
+        let pad = controls.pad_source();
+        let who = pad.and_then(|p| p.describe());
+        if who != last_pad {
+            match &who {
+                Some(w) => println!("pad: {w}"),
+                None => println!("pad: none connected"),
+            }
+            last_pad = who;
+        }
+        if let Some(r) = controls.pad_source().and_then(|p| p.reading()) {
+            let lines = monitor_lines(&r);
+            for (new, old) in lines.iter().zip(&mut last_lines) {
+                if new != old {
+                    println!("{new}");
+                    *old = new.clone();
+                }
+            }
+        }
+        let now = (controls.power(), controls.brake(), b.word.held);
+        if last != Some(now) {
+            println!("P{} B{} buttons {:#08x}", now.0, now.1, now.2);
+            last = Some(now);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(33));
+    }
+}
+
 /// `shuppatsu pad`: watch, calibrate or learn a controller from the terminal.
 pub fn run_tool(exe: &Exe<'_>, args: &[String]) -> Result<()> {
-    const USAGE: &str = "usage: shuppatsu pad <monitor|calibrate|learn> [--mode <4..6>] \
+    const USAGE: &str = "usage: shuppatsu pad <monitor|calibrate|learn> [--mode <0..6>] \
                          [--joystick-dat <file>] [--combo <file>]";
     let mut it = args.iter();
     let action = it.next().context(USAGE)?.clone();
-    let mut mode = 6;
+    let mut mode = None;
     // The tool watches the selected device alone (the original's one-device model).
     let mut opts = PadOptions {
         hybrid_input: false,
@@ -1327,13 +1722,17 @@ pub fn run_tool(exe: &Exe<'_>, args: &[String]) -> Result<()> {
     while let Some(a) = it.next() {
         let mut value = || it.next().with_context(|| format!("{a} needs a value"));
         match a.as_str() {
-            "--mode" => mode = value()?.parse()?,
+            "--mode" => mode = Some(value()?.parse()?),
             "--joystick-dat" => opts.joystick_dat = Some(value()?.into()),
             "--combo" => opts.combo_table = Some(value()?.into()),
             other => bail!("unknown option {other}\n{USAGE}"),
         }
     }
-    if mode < 4 {
+    if action == "monitor" {
+        return monitor(exe, mode, opts);
+    }
+    let mode = mode.unwrap_or(6);
+    if !(4..=6).contains(&mode) {
         bail!("joystick modes are 4..=6");
     }
     let learn = action == "learn";
@@ -1363,26 +1762,6 @@ pub fn run_tool(exe: &Exe<'_>, args: &[String]) -> Result<()> {
     });
     let tick = std::time::Duration::from_millis(33);
     match action.as_str() {
-        "monitor" => {
-            println!(
-                "mode {:?} (analog levers: {}); Enter = station start",
-                controls.joy_mode(),
-                controls.is_analog()
-            );
-            let mut last = None;
-            loop {
-                if rx.try_recv().is_ok() {
-                    controls.reset_levers();
-                }
-                let b = controls.poll(|_| false, false);
-                let now = (controls.power(), controls.brake(), b.word.held);
-                if last != Some(now) {
-                    println!("P{} B{} buttons {:#08x}", now.0, now.1, now.2);
-                    last = Some(now);
-                }
-                std::thread::sleep(tick);
-            }
-        }
         "calibrate" => {
             let path = opts
                 .joystick_dat
@@ -1933,6 +2312,7 @@ mod tests {
                 menu: MenuRepeat::default(),
                 prev_held: 0,
                 prev_north: false,
+                modern: ModernPad::default(),
                 hint: HintTracker::new(HintDevice::Keyboard),
             }),
             hint_override: None,
@@ -2011,7 +2391,7 @@ mod tests {
                 keys(&[DIK_DOWN]),
                 xpad(|i| {
                     i.dpad_down = true;
-                    i.rt = true;
+                    i.rt = 1.0;
                 }),
             );
         }
@@ -2022,7 +2402,7 @@ mod tests {
         c.keyboard.power = 0;
         for t in 1..=12 {
             let k: &[u8] = if t <= 5 { &[DIK_DOWN] } else { &[] };
-            c.tick_hybrid(keys(k), xpad(|i| i.rt = t >= 3));
+            c.tick_hybrid(keys(k), xpad(|i| i.rt = if t >= 3 { 1.0 } else { 0.0 }));
         }
         assert_eq!(c.power(), 3);
         // Brake: LT and → together reach EB on the press only; the repeat stops at B8.
@@ -2031,14 +2411,14 @@ mod tests {
             c.tick_hybrid(
                 keys(&[]),
                 xpad(|i| {
-                    i.lt = true;
+                    i.lt = 1.0;
                     i.dpad_right = true;
                 }),
             );
         }
         assert_eq!(c.brake(), 8);
         c.tick_hybrid(keys(&[]), xpad(|_| {}));
-        c.tick_hybrid(keys(&[0xcd]), xpad(|i| i.lt = true));
+        c.tick_hybrid(keys(&[0xcd]), xpad(|i| i.lt = 1.0));
         assert_eq!(c.brake(), EB);
         // Either device steps alone too.
         c.tick_hybrid(keys(&[]), xpad(|_| {}));
@@ -2048,23 +2428,229 @@ mod tests {
         assert_eq!(c.brake(), 7);
     }
 
+    /// gilrs' scaling of a raw axis value in `min..=max` to −1..=1 (gilrs 0.11 `axis_value`,
+    /// before its Y flip), to build synthetic readings from the evdev numbers a pad reports.
+    fn gilrs_axis(raw: i32, min: i32, max: i32) -> f32 {
+        let (mut range, mut v) = ((max - min) as f32, (raw - min) as f32);
+        if (max - min) % 2 == 1 {
+            range += 1.0;
+            v += 1.0;
+        }
+        (v / range * 2.0 - 1.0).clamp(-1.0, 1.0)
+    }
+
+    /// The Xbox Wireless Controller on Bluetooth (045e:0b13 v0521, measured with evtest): no
+    /// SDL mapping in gilrs' database, so gilrs names the kernel codes itself.
+    fn xbox_bt(f: impl FnOnce(&mut PadReading)) -> GenericInputs {
+        use gilrs::{Axis, Button};
+        let stick = |raw| Some(gilrs_axis(raw, 0, 65535));
+        let mut r = PadReading {
+            sdl_mapping: false,
+            vendor: Some(VENDOR_MICROSOFT),
+            evdev: true,
+            buttons: [
+                Button::South,
+                Button::East,
+                Button::North,
+                Button::West,
+                Button::LeftTrigger,
+                Button::RightTrigger,
+                // BTN_TL2/TR2 are listed but never fire.
+                Button::LeftTrigger2,
+                Button::RightTrigger2,
+                Button::Select,
+                Button::Start,
+            ]
+            .map(|b| (b, 0.0))
+            .to_vec(),
+            // Resting values from the capture: sticks off centre, triggers at 0.
+            axes: vec![
+                (Axis::LeftStickX, stick(32136)),
+                (Axis::LeftStickY, Some(-gilrs_axis(32767, 0, 65535))),
+                (Axis::LeftZ, stick(34354)),
+                (Axis::RightZ, stick(33319)),
+                (Axis::DPadX, Some(0.0)),
+                (Axis::DPadY, Some(0.0)),
+            ],
+            raw_buttons: Vec::new(),
+            raw_axes: vec![
+                (evdev::ABS_GAS, gilrs_axis(0, 0, 1023)),
+                (evdev::ABS_BRAKE, gilrs_axis(0, 0, 1023)),
+            ],
+        };
+        f(&mut r);
+        generic_inputs(&r)
+    }
+
+    fn set_axis(r: &mut PadReading, a: gilrs::Axis, v: f32) {
+        r.axes.iter_mut().find(|(n, _)| *n == a).unwrap().1 = Some(v);
+    }
+
+    fn set_raw(r: &mut PadReading, code: u32, v: f32) {
+        r.raw_axes.iter_mut().find(|(c, _)| *c == code).unwrap().1 = v;
+    }
+
+    fn press(r: &mut PadReading, b: gilrs::Button) {
+        r.buttons.iter_mut().find(|(n, _)| *n == b).unwrap().1 = 1.0;
+    }
+
+    #[test]
+    fn bluetooth_xbox_pad_without_a_mapping() {
+        use gilrs::{Axis, Button};
+        // At rest nothing is held: sticks within a few percent of centre, triggers at 0.
+        let rest = xbox_bt(|_| {});
+        assert!(rest.left_x.abs() < 0.03 && rest.left_y.abs() < 0.01);
+        assert!(rest.right_x.abs() < 0.06 && rest.right_y.abs() < 0.03);
+        assert!(rest.lt < 0.01 && rest.rt < 0.01);
+        assert_eq!(
+            crate::hybrid::ModernPad::default().map(&rest),
+            (0, LeverHolds::NONE)
+        );
+        // LT = ABS_BRAKE, RT = ABS_GAS, 0..1023: travel 0..1 with half at 511.
+        let i = xbox_bt(|r| {
+            set_raw(r, evdev::ABS_BRAKE, gilrs_axis(1023, 0, 1023));
+            set_raw(r, evdev::ABS_GAS, gilrs_axis(511, 0, 1023));
+        });
+        assert_eq!(i.lt, 1.0);
+        assert!((i.rt - 0.5).abs() < 0.001);
+        // The right stick is ABS_Z / ABS_RZ (LeftZ / RightZ): RZ at 0 is the stick pushed up.
+        let i = xbox_bt(|r| {
+            set_axis(r, Axis::LeftZ, gilrs_axis(65535, 0, 65535));
+            set_axis(r, Axis::RightZ, gilrs_axis(0, 0, 65535));
+        });
+        assert!(i.right_x == 1.0 && i.right_y > 0.999);
+        // The Z axes are not triggers on this pad.
+        assert!(i.lt < 0.01 && i.rt < 0.01);
+        // X arrives as BTN_NORTH, Y as BTN_WEST: X is the horn (west), Y the R key (north).
+        let i = xbox_bt(|r| press(r, Button::North));
+        assert!(i.west && !i.north);
+        let i = xbox_bt(|r| press(r, Button::West));
+        assert!(i.north && !i.west);
+        // LB / RB are the named shoulders, or the raw BTN_TL / BTN_TR.
+        assert!(xbox_bt(|r| press(r, Button::LeftTrigger)).lb);
+        let i = xbox_bt(|r| {
+            r.buttons.retain(|(b, _)| *b != Button::RightTrigger);
+            r.raw_buttons.push((evdev::BTN_TR, 1.0));
+        });
+        assert!(i.rb && !i.lb);
+        // The same pad with an SDL mapping (or `SDL_GAMECONTROLLERCONFIG`): no swap.
+        let i = xbox_bt(|r| {
+            r.sdl_mapping = true;
+            press(r, Button::North);
+        });
+        assert!(i.north && !i.west);
+    }
+
+    #[test]
+    fn mapped_and_xpad_triggers() {
+        use gilrs::{Axis, Button};
+        // An SDL mapping (or XInput): analog triggers are buttons with a value, the right
+        // stick is named.
+        let mapped = PadReading {
+            sdl_mapping: true,
+            vendor: Some(VENDOR_MICROSOFT),
+            evdev: true,
+            buttons: vec![(Button::LeftTrigger2, 0.62), (Button::RightTrigger2, 0.1)],
+            axes: vec![
+                (Axis::RightStickX, Some(-0.7)),
+                (Axis::RightStickY, Some(0.4)),
+            ],
+            ..PadReading::default()
+        };
+        let i = generic_inputs(&mapped);
+        assert_eq!((i.lt, i.rt, i.right_x, i.right_y), (0.62, 0.1, -0.7, 0.4));
+        // Linux xpad without a mapping: ABS_Z / ABS_RZ (0..255) are the triggers, resting
+        // at −1, and the right stick is RX / RY. Unseen axes count as at rest.
+        let xpad = PadReading {
+            evdev: true,
+            axes: vec![
+                (Axis::LeftZ, Some(gilrs_axis(255, 0, 255))),
+                (Axis::RightZ, None),
+                (Axis::RightStickX, Some(0.0)),
+                (Axis::RightStickY, Some(0.0)),
+            ],
+            ..PadReading::default()
+        };
+        let i = generic_inputs(&xpad);
+        assert_eq!((i.lt, i.rt), (1.0, 0.0));
+        assert!(trigger_travel_from_axis(gilrs_axis(0, 0, 255)) < 0.01);
+        assert_eq!(trigger_travel_from_axis(-1.0), 0.0);
+        assert_eq!(trigger_travel_from_axis(0.0), 0.5);
+    }
+
+    #[test]
+    fn hybrid_sticks_and_dpad_never_double_step() {
+        use crate::hybrid::tests::PULL;
+        let mut c = hybrid(0, None);
+        c.keyboard.brake = 0;
+        // D-pad ↓ and the left stick pulled in the same tick: one power step; held together
+        // they repeat on one counter (steps on 1, 9, 12).
+        for _ in 0..12 {
+            c.tick_hybrid(
+                keys(&[]),
+                xpad(|i| {
+                    i.dpad_down = true;
+                    i.left_y = PULL;
+                }),
+            );
+        }
+        assert_eq!(c.power(), 3);
+        // The stick taking over from the d-pad mid-hold continues the hold.
+        c.tick_hybrid(keys(&[]), xpad(|_| {}));
+        c.keyboard.power = 0;
+        for t in 1..=12 {
+            c.tick_hybrid(
+                keys(&[]),
+                xpad(|i| {
+                    i.dpad_down = t <= 4;
+                    i.left_y = if t >= 3 { PULL } else { 0.0 };
+                }),
+            );
+        }
+        assert_eq!(c.power(), 3);
+        // Brake: d-pad → and the right stick pulled together, one step; the stick's
+        // hysteresis keeps a wobble around half travel from stepping again.
+        c.tick_hybrid(keys(&[]), xpad(|_| {}));
+        for y in [1.0, 0.6, 0.45, 0.55, 0.4, 0.5] {
+            c.tick_hybrid(
+                keys(&[]),
+                xpad(|i| {
+                    i.dpad_right = y == 1.0;
+                    i.right_y = y * PULL;
+                }),
+            );
+        }
+        assert_eq!(c.brake(), 1);
+        // Released and pulled again: the next step. Pushed up: release.
+        c.tick_hybrid(keys(&[]), xpad(|_| {}));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.right_y = 0.9 * PULL));
+        assert_eq!(c.brake(), 2);
+        c.tick_hybrid(keys(&[]), xpad(|_| {}));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.right_y = -0.9 * PULL));
+        assert_eq!(c.brake(), 1);
+        // The left stick's → is not the brake any more.
+        c.tick_hybrid(keys(&[]), xpad(|_| {}));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.left_x = 1.0));
+        assert_eq!((c.power(), c.brake()), (3, 1));
+    }
+
     #[test]
     fn hybrid_pad_on_the_one_handle_and_direct_modes() {
         // Mode 3: the pad's brake+ moves the one handle toward the brake side.
         let mut c = hybrid(3, None);
         c.keyboard.brake = 0;
-        c.tick_hybrid(keys(&[]), xpad(|i| i.rt = true));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.rt = 1.0));
         c.tick_hybrid(keys(&[]), xpad(|_| {}));
         assert_eq!((c.power(), c.brake()), (1, 0));
-        c.tick_hybrid(keys(&[]), xpad(|i| i.lt = true));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.lt = 1.0));
         c.tick_hybrid(keys(&[]), xpad(|_| {}));
-        c.tick_hybrid(keys(&[]), xpad(|i| i.lt = true));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.lt = 1.0));
         assert_eq!((c.power(), c.brake()), (0, 1));
         // Mode 2: the pad steps the power notch; the digits take it back when they change.
         let mut c = hybrid(2, None);
-        c.tick_hybrid(keys(&[]), xpad(|i| i.rt = true));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.rt = 1.0));
         c.tick_hybrid(keys(&[]), xpad(|_| {}));
-        c.tick_hybrid(keys(&[]), xpad(|i| i.rt = true));
+        c.tick_hybrid(keys(&[]), xpad(|i| i.rt = 1.0));
         assert_eq!(c.power(), 2);
         c.tick_hybrid(keys(&[]), xpad(|_| {}));
         assert_eq!(c.power(), 2, "no digit held is not a change");

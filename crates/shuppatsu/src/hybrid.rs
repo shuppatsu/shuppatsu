@@ -4,7 +4,7 @@
 //! The pieces here are pure and tested on their own; [`crate::gamepad::Controls`] puts them
 //! together once per tick:
 //!
-//! - [`modern_pad`]: the Xbox-layout mapping of a gamepad onto the button word and the four
+//! - [`ModernPad`]: the Xbox-layout mapping of a gamepad onto the button word and the four
 //!   lever directions (keyboard modes and mode 4).
 //! - [`MenuRepeat`]: the menu cursor pulses of the merged word, one counter per direction.
 //! - [`LeverArbiter`]: last device used wins between stepped input and a physical handle
@@ -18,6 +18,18 @@ use crate::input::{LeverHolds, bits, repeat_pulse};
 /// Stick travel (gilrs units, ±1) that counts as a direction: the same half travel as mode 4's
 /// ±500 of ±1000 (0x43425f…).
 pub const STICK_STEP: f32 = 0.5;
+/// Stick travel below which a held stick direction lets go again: the hysteresis under
+/// [`STICK_STEP`], so a stick resting near half travel never chatters into extra steps.
+pub const STICK_RELEASE: f32 = 0.35;
+/// Analog trigger travel (0 at rest, 1 fully pulled) that presses LT / RT ...
+pub const TRIGGER_PRESS: f32 = 0.5;
+/// ... and the travel below which it lets go again.
+pub const TRIGGER_RELEASE: f32 = 0.35;
+/// The twin-stick direction: `true` = pulling a stick toward you (down) is more power on the
+/// left stick and more brake on the right stick, matching the d-pad (↓ = power +, the
+/// original's keyboard mode 0) and the arcade one-handle lever pulled back. `false` flips both
+/// sticks (the d-pad stays as it is).
+pub const STICK_PULL_IS_MORE: bool = true;
 /// Analog handle travel (axis units of ±1000) that hands the levers back to the handle after a
 /// key or button step took them over: 5 % of the range, well above the jitter of a resting
 /// pot and well below the 40–250 units between two calibrated notches (0x48c434).
@@ -26,12 +38,23 @@ pub const HANDLE_DEADBAND: i32 = 50;
 /// where the axis last stood, so a stick resting off centre or drifting never flips the hints.
 pub const HINT_AXIS_DEADBAND: f32 = 0.25;
 
-/// The held word and lever directions of a gamepad in the Xbox layout (hybrid only):
+/// One direction with hysteresis: on at `press`, off again below `release`.
+fn latch(on: &mut bool, v: f32, press: f32, release: f32) -> bool {
+    *on = if *on { v >= release } else { v >= press };
+    *on
+}
+
+/// The Xbox-layout mapping of a gamepad onto the button word and the four lever directions
+/// (hybrid only; keyboard modes and mode 4). It keeps the stick and trigger latches from tick
+/// to tick; [`ModernPad::reset`] on unplug.
 ///
 /// | Pad | Driving | Menus |
 /// |---|---|---|
-/// | D-pad / left stick ↓ ↑ | power + / − | cursor down / up |
-/// | D-pad / left stick → ← | brake + / − | right / left |
+/// | D-pad ↓ ↑ | power + / − | cursor down / up |
+/// | D-pad → ← | brake + / − (past B8 = EB) | right / left |
+/// | Left stick ↓ ↑ | power + / − | cursor down / up |
+/// | Left stick → ← | — | right / left |
+/// | Right stick ↓ ↑ | brake + / − (past B8 = EB) | — |
 /// | RT / RB | power + / − | — |
 /// | LT / LB | brake + / − | — |
 /// | A | the A button (Pro-mode panel, ATS confirm) | confirm |
@@ -40,42 +63,84 @@ pub const HINT_AXIS_DEADBAND: f32 = 0.25;
 /// | Y | R (route select: automatic run) | — |
 /// | Menu | pause | pause |
 ///
+/// The stick rows are for [`STICK_PULL_IS_MORE`] = `true`. Each lever direction is one held
+/// virtual key whichever input holds it, so the d-pad and a stick (or a trigger) pressed
+/// together step once and repeat on one counter (`Keyboard::poll_with`).
+///
 /// The menu cursor pulses are not set here ([`MenuRepeat`] makes them from the merged word),
 /// and Y's R bit is a press-frame bit like the keyboard's, made by the caller from the edge.
-pub fn modern_pad(i: &GenericInputs) -> (u32, LeverHolds) {
-    // The d-pad wins over the stick on its axis, as in `generic_state`.
-    let (up, down) = if i.dpad_up || i.dpad_down {
-        (i.dpad_up && !i.dpad_down, i.dpad_down && !i.dpad_up)
-    } else {
-        (i.left_y >= STICK_STEP, i.left_y <= -STICK_STEP)
-    };
-    let (left, right) = if i.dpad_left || i.dpad_right {
-        (i.dpad_left && !i.dpad_right, i.dpad_right && !i.dpad_left)
-    } else {
-        (i.left_x <= -STICK_STEP, i.left_x >= STICK_STEP)
-    };
-    let mut w = 0;
-    for (on, bit) in [
-        (up, bits::UP),
-        (down, bits::DOWN),
-        (left, bits::LEFT),
-        (right, bits::RIGHT),
-        (i.south, bits::A | bits::MENU_CONFIRM),
-        (i.east || i.select, bits::CANCEL),
-        (i.west, bits::HORN),
-        (i.start, bits::PAUSE),
-    ] {
-        if on {
-            w |= bit;
-        }
+#[derive(Clone, Debug, Default)]
+pub struct ModernPad {
+    /// Left stick ↑ ↓ ← →, right stick ↑ ↓, LT, RT.
+    on: [bool; 8],
+}
+
+impl ModernPad {
+    /// Unplugged: every latch lets go.
+    pub fn reset(&mut self) {
+        self.on = [false; 8];
     }
-    let levers = LeverHolds {
-        power_up: down || i.rt,
-        power_down: up || i.rb,
-        brake_up: right || i.lt,
-        brake_down: left || i.lb,
-    };
-    (w, levers)
+
+    /// The held word and lever directions of this tick.
+    pub fn map(&mut self, i: &GenericInputs) -> (u32, LeverHolds) {
+        let o = &mut self.on;
+        let stick = |on: &mut bool, v: f32| latch(on, v, STICK_STEP, STICK_RELEASE);
+        let l_up = stick(&mut o[0], i.left_y);
+        let l_down = stick(&mut o[1], -i.left_y);
+        let l_left = stick(&mut o[2], -i.left_x);
+        let l_right = stick(&mut o[3], i.left_x);
+        let r_up = stick(&mut o[4], i.right_y);
+        let r_down = stick(&mut o[5], -i.right_y);
+        let lt = latch(&mut o[6], i.lt, TRIGGER_PRESS, TRIGGER_RELEASE);
+        let rt = latch(&mut o[7], i.rt, TRIGGER_PRESS, TRIGGER_RELEASE);
+        // The d-pad wins over the left stick on its axis, as in `generic_state`.
+        let dpad_v = i.dpad_up || i.dpad_down;
+        let (up, down) = if dpad_v {
+            (i.dpad_up && !i.dpad_down, i.dpad_down && !i.dpad_up)
+        } else {
+            (l_up && !l_down, l_down && !l_up)
+        };
+        let (left, right) = if i.dpad_left || i.dpad_right {
+            (i.dpad_left && !i.dpad_right, i.dpad_right && !i.dpad_left)
+        } else {
+            (l_left && !l_right, l_right && !l_left)
+        };
+        let mut w = 0;
+        for (on, bit) in [
+            (up, bits::UP),
+            (down, bits::DOWN),
+            (left, bits::LEFT),
+            (right, bits::RIGHT),
+            (i.south, bits::A | bits::MENU_CONFIRM),
+            (i.east || i.select, bits::CANCEL),
+            (i.west, bits::HORN),
+            (i.start, bits::PAUSE),
+        ] {
+            if on {
+                w |= bit;
+            }
+        }
+        // Power: the vertical of the d-pad (↓ = power +) or, when the d-pad's vertical is
+        // free, the left stick. Brake: the d-pad's horizontal or the right stick; the left
+        // stick's ← → are menu directions only.
+        let (power_more, power_less) = if dpad_v || STICK_PULL_IS_MORE {
+            (down, up)
+        } else {
+            (up, down)
+        };
+        let (r_more, r_less) = if STICK_PULL_IS_MORE {
+            (r_down && !r_up, r_up && !r_down)
+        } else {
+            (r_up && !r_down, r_down && !r_up)
+        };
+        let levers = LeverHolds {
+            power_up: power_more || rt,
+            power_down: power_less || i.rb,
+            brake_up: (i.dpad_right && !i.dpad_left) || r_more || lt,
+            brake_down: (i.dpad_left && !i.dpad_right) || r_less || i.lb,
+        };
+        (w, levers)
+    }
 }
 
 /// The menu cursor of the merged word: each direction is held while either device holds it,
@@ -285,6 +350,11 @@ impl HintTracker {
     }
 }
 
+/// The pad's axes for [`HintTracker::update`]: both sticks and the trigger travels.
+pub fn pad_axes(i: &GenericInputs) -> [f32; 6] {
+    [i.left_x, i.left_y, i.right_x, i.right_y, i.lt, i.rt]
+}
+
 /// The pad's buttons as one bit each, for [`HintTracker::update`].
 pub fn pad_buttons(i: &GenericInputs) -> u32 {
     [
@@ -294,8 +364,6 @@ pub fn pad_buttons(i: &GenericInputs) -> u32 {
         i.north,
         i.lb,
         i.rb,
-        i.lt,
-        i.rt,
         i.start,
         i.select,
         i.dpad_up,
@@ -309,13 +377,21 @@ pub fn pad_buttons(i: &GenericInputs) -> u32 {
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
 
     fn pad(f: impl FnOnce(&mut GenericInputs)) -> GenericInputs {
         let mut i = GenericInputs::default();
         f(&mut i);
         i
+    }
+
+    /// The stick Y of "pulled toward you" (gilrs +Y is up), per [`STICK_PULL_IS_MORE`].
+    pub const PULL: f32 = if STICK_PULL_IS_MORE { -1.0 } else { 1.0 };
+
+    /// One tick of a fresh mapping.
+    fn modern_pad(i: &GenericInputs) -> (u32, LeverHolds) {
+        ModernPad::default().map(i)
     }
 
     #[test]
@@ -329,28 +405,104 @@ mod tests {
         // Y is the R key, made from the edge by the caller; View is back like B.
         assert_eq!(modern_pad(&pad(|i| i.north = true)).0, 0);
         assert_eq!(modern_pad(&pad(|i| i.select = true)).0, bits::CANCEL);
-        // D-pad down is power+ and the menu cursor down.
+        // D-pad down is power+ and the menu cursor down; → is brake+ and the cursor right.
         let (w, l) = modern_pad(&pad(|i| i.dpad_down = true));
         assert_eq!(w, bits::DOWN);
         assert!(l.power_up && !l.power_down && !l.brake_up);
+        let (w, l) = modern_pad(&pad(|i| i.dpad_right = true));
+        assert_eq!(w, bits::RIGHT);
+        assert!(l.brake_up && !l.power_up && !l.brake_down);
         // Shoulders: RT/RB power, LT/LB brake; not menu directions.
         let (w, l) = modern_pad(&pad(|i| {
-            i.rt = true;
+            i.rt = 1.0;
             i.lb = true;
         }));
         assert_eq!(w, 0);
         assert!(l.power_up && l.brake_down && !l.power_down && !l.brake_up);
-        // The stick past half travel (gilrs +Y is up); the d-pad wins on its axis.
+        // The left stick past half travel (gilrs +Y is up): ↑ = power − and cursor up.
         let (w, l) = modern_pad(&pad(|i| i.left_y = 0.6));
         assert_eq!(w, bits::UP);
-        assert!(l.power_down);
+        assert!(l.power_down && !l.power_up);
         assert_eq!(modern_pad(&pad(|i| i.left_y = 0.49)).0, 0);
-        let (w, _) = modern_pad(&pad(|i| {
+        // The d-pad wins on its axis; the stick's ← stays a menu direction.
+        let (w, l) = modern_pad(&pad(|i| {
             i.left_y = 0.9;
             i.dpad_down = true;
             i.left_x = -0.7;
         }));
         assert_eq!(w, bits::DOWN | bits::LEFT);
+        assert!(l.power_up && !l.power_down && !l.brake_down && !l.brake_up);
+    }
+
+    #[test]
+    fn twin_sticks_step_power_and_brake() {
+        // Left stick pulled (↓ by default): power +, ↑ power −, ← → never the brake (menu
+        // directions only).
+        let (w, l) = modern_pad(&pad(|i| i.left_y = 0.8 * PULL));
+        assert_eq!(w, if PULL < 0.0 { bits::DOWN } else { bits::UP });
+        assert!(l.power_up && !l.power_down);
+        for x in [-1.0, 1.0] {
+            let (w, l) = modern_pad(&pad(|i| i.left_x = x));
+            assert_eq!(w, if x < 0.0 { bits::LEFT } else { bits::RIGHT });
+            assert_eq!(l, LeverHolds::NONE);
+        }
+        // Right stick: ↓ brake +, ↑ brake −, and no menu direction at all.
+        let (w, l) = modern_pad(&pad(|i| i.right_y = 0.8 * PULL));
+        assert_eq!(w, 0);
+        assert!(l.brake_up && !l.brake_down && !l.power_up);
+        let (w, l) = modern_pad(&pad(|i| i.right_y = -0.8 * PULL));
+        assert_eq!(w, 0);
+        assert!(l.brake_down && !l.brake_up);
+        assert_eq!(modern_pad(&pad(|i| i.right_x = 1.0)).1, LeverHolds::NONE);
+        // Both sticks at once: power and brake together.
+        let l = modern_pad(&pad(|i| {
+            i.left_y = PULL;
+            i.right_y = PULL;
+        }))
+        .1;
+        assert!(l.power_up && l.brake_up);
+    }
+
+    #[test]
+    fn stick_and_trigger_hysteresis() {
+        let mut m = ModernPad::default();
+        let hold =
+            |m: &mut ModernPad, f: fn(&mut GenericInputs, f32), v: f32| m.map(&pad(|i| f(i, v))).1;
+        // Right stick ↓: on at half travel, held down to the release travel, off below it.
+        let ry: fn(&mut GenericInputs, f32) = |i, v| i.right_y = v;
+        let seq: Vec<bool> = [-0.3, -0.49, -0.5, -0.4, -0.36, -0.34, -0.45, -0.5]
+            .iter()
+            .map(|&v| hold(&mut m, ry, v).brake_up)
+            .collect();
+        assert_eq!(seq, [false, false, true, true, true, false, false, true]);
+        // Trigger travel 0..1: pressed at 0.5, released below 0.35.
+        let lt: fn(&mut GenericInputs, f32) = |i, v| i.lt = v;
+        let mut m = ModernPad::default();
+        let seq: Vec<bool> = [0.0, 0.3, 0.49, 0.5, 0.9, 0.4, 0.36, 0.3, 0.45, 1.0]
+            .iter()
+            .map(|&v| hold(&mut m, lt, v).brake_up)
+            .collect();
+        assert_eq!(
+            seq,
+            [
+                false, false, false, true, true, true, true, false, false, true
+            ]
+        );
+        // A stick resting off centre (a 0..65535 stick at 34354 reads ~+0.05) holds nothing.
+        let mut m = ModernPad::default();
+        let l = m
+            .map(&pad(|i| {
+                i.left_x = 0.048;
+                i.left_y = -0.02;
+                i.right_x = 0.05;
+                i.right_y = 0.017;
+            }))
+            .1;
+        assert_eq!(l, LeverHolds::NONE);
+        // Unplugged: the latches let go.
+        m.map(&pad(|i| i.rt = 1.0));
+        m.reset();
+        assert!(!m.map(&pad(|i| i.rt = 0.4)).1.power_up);
     }
 
     #[test]
