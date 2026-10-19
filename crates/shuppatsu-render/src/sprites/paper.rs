@@ -92,6 +92,7 @@ const MAX_SCALE: f32 = 2.0;
 /// takes milliseconds, scaling a fraction of that. A scaled fill serves one call: a palette
 /// that stays the same gets the exact fill on the next. So the fill of a settled palette is
 /// always exact, and the fill during a fade differs from an exact one by a level or two.
+#[derive(Clone)]
 pub(super) struct PaperCache {
     pub(super) tbl: u16,
     pub(super) reach: usize,
@@ -269,16 +270,16 @@ impl PaperFill {
 
     /// This fill for a palette scaled by `c`.
     fn scaled(&self, c: f32) -> Self {
+        // Every channel value scaled once (each fade step rescales the whole fill).
+        let lut: [u8; 256] = std::array::from_fn(|v| (v as f32 * c).round().min(255.0) as u8);
+        let v = |v: u8| lut[usize::from(v)];
         let side = |s: &Side| Side {
             first: s.first,
             cols: s.cols,
             px: s
                 .px
                 .iter()
-                .map(|&[r, g, b, a]| {
-                    let v = |v: u8| (f32::from(v) * c).round().min(255.0) as u8;
-                    [v(r), v(g), v(b), a]
-                })
+                .map(|&[r, g, b, a]| [v(r), v(g), v(b), a])
                 .collect(),
         };
         Self {
@@ -316,7 +317,7 @@ impl Side {
             .map(|x| x.rem_euclid(ex.w as i32) as usize)
             .collect();
         // Rows are independent: built on all cores (a 4K title backdrop took 13-16 ms on one).
-        let rows = crate::par::par_range(near.len(), 8, |y| {
+        let rows = crate::par::par_range(near.len(), 64, |y| {
             let (n, f) = (near[y], far[y]);
             let yh = y % ex.h;
             let mut px = Vec::with_capacity(cols);

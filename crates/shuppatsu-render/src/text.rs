@@ -1291,19 +1291,43 @@ const SHADOW_BIAS: f64 = 0.4;
 /// Calls `f` with the index of every pixel of a `w × h` mask within `r` pixels (a square) of a
 /// pixel whose coverage is at least `min`.
 fn dilate(coverage: &[u8], w: usize, h: usize, r: usize, min: u8, mut f: impl FnMut(usize)) {
-    let r = r as isize;
-    let inked = |px: isize, py: isize| {
-        (0..w as isize).contains(&px)
-            && (0..h as isize).contains(&py)
-            && coverage[py as usize * w + px as usize] >= min
-    };
-    for py in 0..h as isize {
-        for px in 0..w as isize {
-            if (-r..=r).any(|dy| (-r..=r).any(|dx| inked(px + dx, py + dy))) {
-                f(py as usize * w + px as usize);
-            }
+    for (i, near) in dilated(coverage, w, h, r, min).into_iter().enumerate() {
+        if near {
+            f(i);
         }
     }
+}
+
+/// For each pixel of a `w × h` mask, whether a pixel of coverage at least `min` lies within `r`
+/// pixels in x and in y (a square around it). Separable: linear in the mask's size, not in
+/// `r²` per pixel.
+pub(crate) fn dilated(coverage: &[u8], w: usize, h: usize, r: usize, min: u8) -> Vec<bool> {
+    // Rows: an inked pixel within `r` columns, from prefix counts.
+    let mut rows = vec![false; w * h];
+    let mut pre = vec![0u32; w + 1];
+    for y in 0..h {
+        for x in 0..w {
+            pre[x + 1] = pre[x] + u32::from(coverage[y * w + x] >= min);
+        }
+        for x in 0..w {
+            let (a, b) = (x.saturating_sub(r), (x + r + 1).min(w));
+            rows[y * w + x] = pre[b] > pre[a];
+        }
+    }
+    // Columns: such a row pixel within `r` rows, from running counts per column.
+    let mut cols = vec![0u32; (h + 1) * w];
+    for y in 0..h {
+        for x in 0..w {
+            cols[(y + 1) * w + x] = cols[y * w + x] + u32::from(rows[y * w + x]);
+        }
+    }
+    (0..w * h)
+        .map(|i| {
+            let (x, y) = (i % w, i / w);
+            let (a, b) = (y.saturating_sub(r), (y + r + 1).min(h));
+            cols[b * w + x] > cols[a * w + x]
+        })
+        .collect()
 }
 
 /// Draws the parts of one slot whose source rectangle starts at canvas `(ox, oy)`, into the

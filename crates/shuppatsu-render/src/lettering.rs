@@ -275,17 +275,59 @@ pub fn of_region(
             if scan.lettering_at(ax, ay, v) { v } else { 0 }
         })
         .collect();
-    analyse(&px, w, h)
+    analysed(px, w, h)
+}
+
+/// [`analyse`], remembered for the process: it depends only on the pixels, and every change of
+/// the canvas multiple rasterises all translated text again (the analysis was most of it).
+fn analysed(px: Vec<u8>, w: usize, h: usize) -> Option<Effects> {
+    type Memo = std::collections::HashMap<(usize, usize, Vec<u8>), Option<Effects>>;
+    static MEMO: std::sync::OnceLock<std::sync::Mutex<Memo>> = std::sync::OnceLock::new();
+    let memo = MEMO.get_or_init(Default::default);
+    let key = (w, h, px);
+    if let Some(e) = memo.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+        return *e;
+    }
+    let e = analyse(&key.2, w, h);
+    memo.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key, e);
+    e
 }
 
 /// The best shadow in `colour` of the strokes `body` (`n_body` pixels): its score and offset.
 /// Only pixels of `colour` outside `body` count as shadow.
 fn find_shadow(
     g: &Grid<'_>,
-    body: &impl Fn(i32, i32) -> bool,
+    body_at: &impl Fn(i32, i32) -> bool,
     n_body: usize,
     colour: u8,
 ) -> Option<(f32, Shadow)> {
+    // The strokes as a bitmap (the callers' tests are costly and asked many times per pixel;
+    // outside the grid there are none), and its summed-area table for the swept boxes.
+    let (w, h) = (g.w, g.h);
+    let map: Vec<bool> = g.coords().map(|(x, y)| body_at(x, y)).collect();
+    let body = |x: i32, y: i32| g.inside(x, y) && map[y as usize * w + x as usize];
+    let mut sat = vec![0u32; (w + 1) * (h + 1)];
+    for y in 0..h {
+        for x in 0..w {
+            sat[(y + 1) * (w + 1) + x + 1] =
+                u32::from(map[y * w + x]) + sat[y * (w + 1) + x + 1] + sat[(y + 1) * (w + 1) + x]
+                    - sat[y * (w + 1) + x];
+        }
+    }
+    // Stroke pixels in the box between two corners (inclusive, in any order), cut to the grid.
+    let in_box = |(ax, ay): (i32, i32), (bx, by): (i32, i32)| {
+        let x0 = ax.min(bx).max(0);
+        let x1 = (ax.max(bx) + 1).min(w as i32);
+        let y0 = ay.min(by).max(0);
+        let y1 = (ay.max(by) + 1).min(h as i32);
+        if x0 >= x1 || y0 >= y1 {
+            return 0;
+        }
+        let s = |x: i32, y: i32| sat[y as usize * (w + 1) + x as usize];
+        s(x1, y1) + s(x0, y0) - s(x0, y1) - s(x1, y0)
+    };
     let shade: Vec<(i32, i32)> = g
         .coords()
         .filter(|&(x, y)| g.at(x, y) == colour && !body(x, y))
@@ -317,10 +359,9 @@ fn find_shadow(
             }
             // A copy at (dx, dy), else the strokes swept there (every offset in the box).
             let steps = sweep(dx, dy);
+            // Strokes at any offset of the box but (0, 0): the box count less the pixel itself.
             let swept = |x: i32, y: i32, sign: i32| {
-                steps
-                    .iter()
-                    .any(|&(tx, ty)| body(x - sign * tx, y - sign * ty))
+                in_box((x, y), (x - sign * dx, y - sign * dy)) > u32::from(body(x, y))
             };
             let (extrude, hit, back) = {
                 let hit = share(&|x, y| body(x - dx, y - dy));

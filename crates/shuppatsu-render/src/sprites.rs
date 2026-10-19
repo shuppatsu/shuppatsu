@@ -27,6 +27,10 @@ pub const CANVAS_H: usize = 480;
 pub const SLOT_COUNT: usize = 207;
 /// Palette table entries (`0x829d5c + p·0x400`).
 pub const PALETTE_COUNT: usize = 128;
+/// Paper fills kept for palettes seen before ([`SpriteBank::paper_memo`]).
+const PAPER_MEMO: usize = 32;
+/// A built paper fill: map, bank generation, palette, reach.
+type PaperMemo = (u16, u64, Palette, usize, PaperCache);
 /// Rect layer capacity (0x816b00, 16 fans of ≤ 4 points).
 pub const MAX_FANS: usize = 16;
 const LAYERS: u8 = 4;
@@ -254,6 +258,10 @@ pub struct SpriteBank {
     /// The paper fills synthesised for [`WideFill::Paper`] maps, one per map ([`PaperCache`]:
     /// kept across palette fades; at art resolution, so one serves every canvas scale).
     paper: Mutex<Vec<PaperCache>>,
+    /// Fills built before, by map, bank generation, palette and reach: [`PaperCache::build`] is
+    /// a pure function of them, and palette fades ask for the same palettes again (attract
+    /// loops), each build costing milliseconds. At most [`PAPER_MEMO`] are kept.
+    paper_memo: Mutex<Vec<PaperMemo>>,
     /// Enhancement `hud_upscale`: the art drawn from xBRZ-upscaled images ([`hires`]) at
     /// canvas multiples 2–4; off draws whole-pixel blocks, as the original.
     upscale: bool,
@@ -328,6 +336,7 @@ impl SpriteBank {
             legend_font: None,
             wide_fill: Vec::new(),
             paper: Mutex::default(),
+            paper_memo: Mutex::default(),
             upscale: false,
             hires: Mutex::default(),
         }
@@ -460,8 +469,22 @@ impl SpriteBank {
         let reach = reach
             .max(slot.map_or(0, |i| cache[i].reach))
             .next_multiple_of(64);
-        let (w, h, px) = self.art(tbl)?;
-        let entry = PaperCache::build(tbl, spec, (w, h, &px), palette, reach);
+        let mut memo = self.paper_memo.lock().unwrap_or_else(|e| e.into_inner());
+        let known = memo.iter().position(|(t, g, p, r, _)| {
+            (*t, *g, *r) == (tbl, self.generation, reach) && p == palette
+        });
+        let entry = match known {
+            Some(i) => memo[i].4.clone(),
+            None => {
+                let (w, h, px) = self.art(tbl)?;
+                let built = PaperCache::build(tbl, spec, (w, h, &px), palette, reach);
+                if memo.len() >= PAPER_MEMO {
+                    memo.remove(0);
+                }
+                memo.push((tbl, self.generation, palette.clone(), reach, built.clone()));
+                built
+            }
+        };
         let fill = entry.get_built();
         match slot {
             Some(i) => cache[i] = entry,
@@ -472,6 +495,10 @@ impl SpriteBank {
 
     fn put_wide_fill(&mut self, tbl: u16, fill: WideFill) {
         // A changed spec rebuilds the fill.
+        self.paper_memo
+            .get_mut()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|e| e.0 != tbl);
         self.paper
             .get_mut()
             .unwrap_or_else(|e| e.into_inner())
@@ -1227,7 +1254,7 @@ impl SpriteLayer {
                     .and_then(|o| Some(palette(o.palette)?.rgba(o.index)));
                 if let Some(o) = outline {
                     // One original pixel around the solid part of the text, under it.
-                    let near = dilate_solid(&mask, mw, mh, c.s);
+                    let near = crate::text::dilated(&mask, mw, mh, c.s, 128);
                     for py in (ky0 - y0)..(ky1.max(ky0) - y0) {
                         for px in (kx0 - x0)..(kx1.max(kx0) - x0) {
                             if near[py * mw + px] {
@@ -1266,38 +1293,6 @@ impl SpriteLayer {
             }
         }
     }
-}
-
-/// For each pixel of a `w × h` coverage mask, whether a solid pixel (coverage ≥ 128) lies within
-/// `r` pixels in x and in y (a square around it): the text outline's pixels. Separable, so
-/// linear in the mask's size rather than in `r²` per pixel.
-fn dilate_solid(mask: &[u8], w: usize, h: usize, r: usize) -> Vec<bool> {
-    // Rows: a solid pixel within `r` columns, from prefix counts.
-    let mut rows = vec![false; w * h];
-    let mut pre = vec![0u32; w + 1];
-    for y in 0..h {
-        for x in 0..w {
-            pre[x + 1] = pre[x] + u32::from(mask[y * w + x] >= 128);
-        }
-        for x in 0..w {
-            let (a, b) = (x.saturating_sub(r), (x + r + 1).min(w));
-            rows[y * w + x] = pre[b] > pre[a];
-        }
-    }
-    // Columns: such a row pixel within `r` rows, from running counts per column.
-    let mut cols = vec![0u32; (h + 1) * w];
-    for y in 0..h {
-        for x in 0..w {
-            cols[(y + 1) * w + x] = cols[y * w + x] + u32::from(rows[y * w + x]);
-        }
-    }
-    (0..w * h)
-        .map(|i| {
-            let (x, y) = (i % w, i / w);
-            let (a, b) = (y.saturating_sub(r), (y + r + 1).min(h));
-            cols[b * w + x] > cols[a * w + x]
-        })
-        .collect()
 }
 
 /// `src` blended over the canvas pixel `under` (straight alpha, in sRGB like the label text).
@@ -1800,6 +1795,7 @@ mod tests {
             legend_font: None,
             wide_fill: Vec::new(),
             paper: Mutex::default(),
+            paper_memo: Mutex::default(),
             upscale: false,
             hires: Mutex::default(),
         }
