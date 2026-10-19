@@ -1070,31 +1070,33 @@ komachi = { rect = [0, 30, -1, 6], parts = [{ region = [88, 8, 408, 64], shared_
 [sheet.0x544]
 2 = "Quit this run?"                 # 運転を中止しますか?, 336×32
 3 = "Back to the first station?"     # 始発駅に戻りますか?, 336×32
-4 = "Resume"                         # 運転再開, 192×32
-5 = "Resume"
-6 = "Quit run"                        # 運転中止
-7 = "Quit run"
-8 = "Restart line"                   # 始発駅に戻る
-9 = "Restart line"
+# The choices of one dialog share a size: the plain and highlighted art are lettered at
+# different sizes, so each fitted on its own would change size as the cursor moves.
+4 = { text = "Resume", shared_group = "dialog.pause" }          # 運転再開, 192×32
+5 = { text = "Resume", shared_group = "dialog.pause" }
+6 = { text = "Quit run", shared_group = "dialog.pause" }        # 運転中止
+7 = { text = "Quit run", shared_group = "dialog.pause" }
+8 = { text = "Restart line", shared_group = "dialog.pause" }    # 始発駅に戻る
+9 = { text = "Restart line", shared_group = "dialog.pause" }
 10 = "Quit the game?"                # 終了しますか?
 11 = "Quit the game?"
-12 = "Yes"                           # はい, 96×32
-13 = "Yes"
-14 = "No"                            # いいえ
-15 = "No"
+12 = { text = "Yes", shared_group = "dialog.yes_no" }           # はい, 96×32
+13 = { text = "Yes", shared_group = "dialog.yes_no" }
+14 = { text = "No", shared_group = "dialog.yes_no" }            # いいえ
+15 = { text = "No", shared_group = "dialog.yes_no" }
 # Calibration prompts (input.md §5), 176×32: the arrow on the left stays.
-16 = { region = [88, 0, 84, 32], text = "Up" }      # 上
-17 = { region = [88, 0, 84, 32], text = "Up" }
-18 = { region = [87, 0, 85, 32], text = "Down" }    # 下 (from x 87, measured)
-19 = { region = [87, 0, 85, 32], text = "Down" }
-20 = { region = [88, 0, 84, 32], text = "Left" }    # 左
-21 = { region = [88, 0, 84, 32], text = "Left" }
-22 = { region = [88, 0, 84, 32], text = "Right" }   # 右 (from x 88, where the arrow's tip touches it)
-23 = { region = [88, 0, 84, 32], text = "Right" }
-24 = "Reset to default"              # 標準に戻す
-25 = "Reset to default"
-26 = "Finish setup"                  # 調整終了
-27 = "Finish setup"
+16 = { region = [88, 0, 84, 32], text = "Up", shared_group = "dialog.calibrate_dir" }     # 上
+17 = { region = [88, 0, 84, 32], text = "Up", shared_group = "dialog.calibrate_dir" }
+18 = { region = [87, 0, 85, 32], text = "Down", shared_group = "dialog.calibrate_dir" }   # 下 (from x 87, measured)
+19 = { region = [87, 0, 85, 32], text = "Down", shared_group = "dialog.calibrate_dir" }
+20 = { region = [88, 0, 84, 32], text = "Left", shared_group = "dialog.calibrate_dir" }   # 左
+21 = { region = [88, 0, 84, 32], text = "Left", shared_group = "dialog.calibrate_dir" }
+22 = { region = [88, 0, 84, 32], text = "Right", shared_group = "dialog.calibrate_dir" }  # 右 (from x 88, where the arrow's tip touches it)
+23 = { region = [88, 0, 84, 32], text = "Right", shared_group = "dialog.calibrate_dir" }
+24 = { text = "Reset to default", shared_group = "dialog.calibrate_action" }  # 標準に戻す
+25 = { text = "Reset to default", shared_group = "dialog.calibrate_action" }
+26 = { text = "Finish setup", shared_group = "dialog.calibrate_action" }      # 調整終了
+27 = { text = "Finish setup", shared_group = "dialog.calibrate_action" }
 28 = "Record this run?"              # 運転を記録しますか? (no caller found), 336×32
 
 # Screen headers, 288×48. 0 = 0x48c584, 1 = 0x48c58a; the rest have no known descriptor.
