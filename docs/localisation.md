@@ -153,7 +153,8 @@ wide_weather = true       # and the other switches of settings.md
   `ui_scale = 9`) loses only that setting; a `lang` with no catalogue is dropped. The game never
   stops over the file.
 * First run: when no language comes from a flag, the environment or the file, `shuppatsu`
-  (the front end) opens with a language screen before attract: "Language / 言語" over
+  (the front end) opens with a language screen before attract: the Shuppatsu logo board
+  (`assets/logo/`, embedded), then "Language / 言語" over
   **English** and **日本語**, the title menu's cursor frame, up/down (or the power lever) and
   Enter / pad confirm, the menu move and decide sounds. The choice is installed at once (`en`,
   or `ja` = the original art) and written to `config.toml` as `lang` (an existing file keeps its

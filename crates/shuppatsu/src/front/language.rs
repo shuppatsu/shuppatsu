@@ -1,26 +1,29 @@
 //! The first-run language screen (port only; docs/localisation.md, "Settings").
 //!
 //! Shown before attract when no language comes from a flag, the environment or
-//! `config.toml`: "Language / 言語" over two choices, English and 日本語, picked with the
-//! title menu's cursor frame, keys and sounds (menus.md §1.4, §3). The choice is written to
-//! `config.toml` by the app and only sets the language.
+//! `config.toml`: the project's logo board, then "Language / 言語" over two choices, English and
+//! 日本語, picked with the title menu's cursor frame, keys and sounds (menus.md §1.4, §3). The
+//! choice is written to `config.toml` by the app and only sets the language.
 
 use super::{PAL_MENU, ScrollList, snd};
 use crate::screens::{MenuInput, Sfx};
 use shuppatsu_formats::cg::Palette;
 use shuppatsu_render::sprites::{Paint, SpriteLayer, TextStyle};
 
-/// Layer of the cursor frame and the text.
+/// Layer of the cursor frame, the logo and the text.
 const LAYER: u8 = 3;
 /// The title menu's geometry (0x42b530): first item y, cursor frame y, item x offset from
 /// the frame; rows [`super::ROW`] apart.
 const ITEM_Y: i32 = 0x8e;
 const FRAME_Y: i32 = 0x86;
 const ITEM_DX: f32 = 20.0;
-/// Everything this much lower than on the title menu, to centre the two rows.
-const DOWN: i32 = 30;
+/// Everything this much lower than on the title menu, to leave room for the logo and the
+/// heading above the two rows.
+const DOWN: i32 = 66;
+/// The logo board's box (centred; [`crate::logo::board`] fills it), original pixels.
+const LOGO: [f32; 4] = [166.0, 44.0, 308.0, 66.0];
 /// The heading's box and capital height, original pixels.
-const HEADING: [f32; 4] = [0.0, 84.0, 640.0, 40.0];
+const HEADING: [f32; 4] = [0.0, 130.0, 640.0, 40.0];
 const HEADING_CAP: f32 = 22.0;
 const ITEM_CAP: f32 = 26.0;
 
@@ -136,8 +139,10 @@ impl LanguageScreen {
         None
     }
 
-    /// The heading, the two labels (the one under the cursor bright) and the cursor frame.
+    /// The logo, the heading, the two labels (the one under the cursor bright) and the cursor
+    /// frame.
     pub fn draw(&self, look: &Look, l: &mut SpriteLayer) {
+        l.add_image(LAYER, LOGO, crate::logo::board());
         let mut heading = TextStyle::plain(look.bright, Some(HEADING_CAP));
         heading.font = shuppatsu_render::text::FontRole::Display;
         l.add_styled_text(LAYER, HEADING, "Language / 言語", heading);
@@ -265,5 +270,14 @@ mod tests {
             l.slots[super::super::slot::CURSOR].tilemap,
             super::super::tbl::CURSOR
         );
+        // The logo, centred above the heading.
+        let logo = l
+            .widgets
+            .iter()
+            .find(|w| matches!(w.kind, shuppatsu_render::sprites::WidgetKind::Image(_)))
+            .expect("the logo");
+        let [x, y, w, h] = logo.rect;
+        assert_eq!(x + w / 2.0, 320.0);
+        assert!(y + h < HEADING[1]);
     }
 }
