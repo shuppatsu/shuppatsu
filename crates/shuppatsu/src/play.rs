@@ -434,6 +434,8 @@ impl Play {
             gpu,
             accumulator: Duration::ZERO,
             last_frame: now,
+            clock: crate::pacing::FrameClock::new(opts.settings.vsync),
+            refresh: None,
             title_at: now,
             title_frames: (0, Duration::ZERO),
             error: None,
@@ -829,6 +831,10 @@ pub struct Play {
     gpu: Option<Gpu>,
     accumulator: Duration,
     last_frame: Instant,
+    /// How far each redraw moves the simulation ([`crate::pacing`]).
+    clock: crate::pacing::FrameClock,
+    /// The display's refresh period ([`Play::refresh_period`]), `None` before the first look.
+    refresh: Option<Option<Duration>>,
     title_at: Instant,
     /// Frames since `title_at` and the slowest of them (`--debug-title`).
     title_frames: (u32, Duration),
@@ -1341,6 +1347,28 @@ impl Play {
         crate::presentation::band_top(rect, h, HUD_BAND_TOP)
     }
 
+    /// The display's refresh period, looked up every 120 redraws (it changes only when the
+    /// window moves to another monitor).
+    fn refresh_period(&mut self) -> Option<Duration> {
+        if self.title_frames.0 % 120 == 1 || self.refresh.is_none() {
+            let before = self.refresh.flatten();
+            self.refresh = Some(
+                self.gpu
+                    .as_ref()
+                    .and_then(|g| g.window.current_monitor())
+                    .and_then(|m| m.refresh_rate_millihertz())
+                    .filter(|&mhz| mhz > 0)
+                    .map(|mhz| Duration::from_secs_f64(1000.0 / f64::from(mhz))),
+            );
+            let now = self.refresh.flatten();
+            if now != before {
+                let hz = now.map_or(0.0, |p| 1.0 / p.as_secs_f64());
+                eprintln!("display refresh {hz:.2} Hz (pacing on its grid with vsync)");
+            }
+        }
+        self.refresh.flatten()
+    }
+
     /// What the run shows, for the frame trace ([`shuppatsu_render::perf`]).
     fn screen_name(&self) -> &'static str {
         if self.demo.is_some() {
@@ -1370,7 +1398,10 @@ impl Play {
         let dt = now - self.last_frame;
         self.last_frame = now;
         self.title_frames = (self.title_frames.0 + 1, self.title_frames.1.max(dt));
-        self.accumulator += dt.min(Duration::from_millis(250));
+        // The simulation advances by the refresh grid's time, not the jittery redraw's.
+        let period = self.refresh_period();
+        let step = self.clock.advance(now, period);
+        self.accumulator += step.min(Duration::from_millis(250));
         while self.accumulator >= TICK && !self.leave {
             self.accumulator -= TICK;
             shuppatsu_render::perf::count(shuppatsu_render::perf::Counter::Ticks, 1);
@@ -1574,6 +1605,7 @@ impl Play {
         };
         self.last_frame = Instant::now();
         self.accumulator = Duration::ZERO;
+        self.clock.reset();
         let r = &mut gpu.renderer;
         r.texture_filtering = self.opts.settings.texture_filtering;
         r.shading = self.opts.settings.shading();
@@ -1604,6 +1636,7 @@ impl ApplicationHandler for Play {
         match self.init_gpu(event_loop) {
             Ok(()) => {
                 self.last_frame = Instant::now();
+                self.clock.reset();
                 if let Some(g) = &self.gpu {
                     g.window.request_redraw();
                 }

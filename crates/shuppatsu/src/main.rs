@@ -29,6 +29,7 @@ mod logo;
 mod marks;
 mod movie;
 mod navigator;
+mod pacing;
 mod play;
 mod popups;
 mod presentation;
