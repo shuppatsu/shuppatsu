@@ -176,12 +176,18 @@ where
     device
         .build_output_stream::<T, _, _>(
             config,
-            move |out: &mut [T], _| {
+            move |out: &mut [T], info: &cpal::OutputCallbackInfo| {
+                let at = std::time::Instant::now();
                 while let Ok(c) = config_receiver.try_recv() {
                     mixer.set_config(c);
                 }
                 while let Ok(s) = stream_receiver.try_recv() {
                     mixer.set_stream(s);
+                }
+                // The movie clock: this callback's start, and when its first frame is heard.
+                if let Some(s) = mixer.stream() {
+                    let ts = info.timestamp();
+                    s.mark_callback(at, ts.playback.saturating_duration_since(ts.callback));
                 }
                 while let Ok(cmd) = receiver.try_recv() {
                     mixer.apply(cmd);
