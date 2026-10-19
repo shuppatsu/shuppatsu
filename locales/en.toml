@@ -993,10 +993,10 @@ name = "English"
 4 = { parts = [{ region = [88, 8, 408, 66], shared_group = "title.items", font = "display", text = "Calibration" }, { region = [296, 75, 202, 16], align = "right", shared_group = "title.subtitles", text = "専用コントローラー設定" }] }   # input mode 6
 # The sixth label, LOVE特急こまち (the Komachi movie): no descriptor in the exe, the cell under
 # the fifth (FrontTables::movie_item); shown with setting `movie_in_menu`.
-komachi = { rect = [0, 30, -1, 6], parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", font = "display", text = "Komachi Movie" }, { region = [192, 75, 306, 16], align = "right", shared_group = "title.subtitles", text = "LOVE特急こまち" }] }
+komachi = { rect = [0, 30, -1, 6], parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", font = "display", text = "LOVE Express Komachi" }, { region = [192, 75, 306, 16], align = "right", shared_group = "title.subtitles", text = "LOVE特急こまち" }] }
 # The same as the fifth row (no Densha de GO! controller): the port composes it under the sheet
 # with the fifth label's "5" for the "6" (front/title.rs `add_movie_label_five`).
-komachi_5 = { rect = [0, 36, -1, 6], parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", font = "display", text = "Komachi Movie" }, { region = [192, 75, 306, 16], align = "right", shared_group = "title.subtitles", text = "LOVE特急こまち" }] }
+komachi_5 = { rect = [0, 36, -1, 6], parts = [{ region = [88, 8, 408, 64], shared_group = "title.items", font = "display", text = "LOVE Express Komachi" }, { region = [192, 75, 306, 16], align = "right", shared_group = "title.subtitles", text = "LOVE特急こまち" }] }
 
 # Options labels and values (0x47c584), selected colouring. Labels 192×32, values 240×32
 # (10–13 are 32×32). Labels 0–5 and the values shown in the list or on the control
@@ -1569,4 +1569,4 @@ keyboard_with_controller_desc = "Hybrid input off: horn and A / ATS confirm keys
 exit_no_to_menu = "Exit \"No\" to menu"
 exit_no_to_menu_desc = "\"No\" in the exit dialog returns to the title menu, not the attract"
 movie_in_menu = "Movie in the menu"
-movie_in_menu_desc = "The Komachi movie as the title menu's sixth item, LOVE特急こまち"
+movie_in_menu_desc = "The Komachi music video, LOVE Express Komachi, as an item of the title menu"
