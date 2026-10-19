@@ -30,6 +30,7 @@ fn bank(map: Tilemap) -> SpriteBank {
         wide_fill: Vec::new(),
         paper: Mutex::default(),
         paper_memo: Mutex::default(),
+        map_art: Mutex::default(),
         upscale: false,
         hires: Mutex::default(),
     }

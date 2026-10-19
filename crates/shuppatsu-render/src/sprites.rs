@@ -29,6 +29,10 @@ pub const SLOT_COUNT: usize = 207;
 pub const PALETTE_COUNT: usize = 128;
 /// Paper fills kept for palettes seen before ([`SpriteBank::paper_memo`]).
 const PAPER_MEMO: usize = 32;
+/// Whole-map pictures kept for sprite widgets.
+const MAP_ART: usize = 16;
+/// A whole-map picture: (map, bank generation) and its palette indices.
+type MapArt = ((u16, u64), Arc<[u8]>);
 /// A built paper fill: map, bank generation, palette, reach.
 type PaperMemo = (u16, u64, Palette, usize, PaperCache);
 /// Rect layer capacity (0x816b00, 16 fans of ≤ 4 points).
@@ -262,6 +266,8 @@ pub struct SpriteBank {
     /// a pure function of them, and palette fades ask for the same palettes again (attract
     /// loops), each build costing milliseconds. At most [`PAPER_MEMO`] are kept.
     paper_memo: Mutex<Vec<PaperMemo>>,
+    /// Whole-map art of sprite widgets ([`SpriteBank::map_art`]), by map and generation.
+    map_art: Mutex<Vec<MapArt>>,
     /// Enhancement `hud_upscale`: the art drawn from xBRZ-upscaled images ([`hires`]) at
     /// canvas multiples 2–4; off draws whole-pixel blocks, as the original.
     upscale: bool,
@@ -337,6 +343,7 @@ impl SpriteBank {
             wide_fill: Vec::new(),
             paper: Mutex::default(),
             paper_memo: Mutex::default(),
+            map_art: Mutex::default(),
             upscale: false,
             hires: Mutex::default(),
         }
@@ -593,6 +600,27 @@ impl SpriteBank {
         let (w, h) = (map.width, map.height);
         let px = self.render_rect(tbl, (0, 0, w, h));
         Some((usize::from(w) * TILE_SIZE, usize::from(h) * TILE_SIZE, px))
+    }
+
+    /// The whole art of map `tbl` ([`SpriteBank::render_rect`]), kept while the bank is
+    /// unchanged: sprite widgets draw from it every compose (the staff roll's pictures
+    /// rendered their whole map once per redrawn rectangle).
+    fn map_art(&self, tbl: u16) -> Arc<[u8]> {
+        let mut cache = self.map_art.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, art)) = cache.iter().find(|(k, _)| *k == (tbl, self.generation)) {
+            return art.clone();
+        }
+        let (w, h) = self
+            .tilemaps
+            .get(usize::from(tbl))
+            .map_or((0, 0), |m| (m.width, m.height));
+        let art: Arc<[u8]> = self.render_rect(tbl, (0, 0, w, h)).into();
+        cache.retain(|((_, g), _)| *g == self.generation);
+        if cache.len() >= MAP_ART {
+            cache.remove(0);
+        }
+        cache.push(((tbl, self.generation), art.clone()));
+        art
     }
 
     /// Palette indices of a resolved `(col, row, w, h)` tile rectangle of map `tbl`,
@@ -1127,7 +1155,7 @@ impl SpriteLayer {
                 else {
                     return;
                 };
-                let art = bank.render_rect(*tilemap, (0, 0, map.width, map.height));
+                let art = bank.map_art(*tilemap);
                 let aw = usize::from(map.width) * TILE_SIZE;
                 let ah = usize::from(map.height) * TILE_SIZE;
                 let [ax, ay, sw, sh] = src.map(usize::from);
@@ -1796,6 +1824,7 @@ mod tests {
             wide_fill: Vec::new(),
             paper: Mutex::default(),
             paper_memo: Mutex::default(),
+            map_art: Mutex::default(),
             upscale: false,
             hires: Mutex::default(),
         }
