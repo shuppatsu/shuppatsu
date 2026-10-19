@@ -1,38 +1,33 @@
-//! `shuppatsu install-desktop`: an opt-in desktop entry plus hicolor icons (from the user's exe)
-//! under `$XDG_DATA_HOME`, so launchers and Wayland compositors (which ignore window icons) can
-//! show the game with its icon. Runs only when asked; `--uninstall` removes the files again.
+//! `shuppatsu install-desktop`: an opt-in desktop entry plus hicolor icons (the project's own
+//! logo, [`crate::logo`]) under `$XDG_DATA_HOME`, so launchers and Wayland compositors (which
+//! ignore window icons) can show the game with its icon. Runs only when asked; `--uninstall`
+//! removes the files again.
 
 use crate::identity::{APP_ID, TITLE};
 use anyhow::{Context, Result, bail};
-use shuppatsu_formats::icon::IconImage;
+use shuppatsu_render::rgba::RgbaImage;
 use std::path::{Path, PathBuf};
 
 pub const USAGE: &str = "\
-usage: shuppatsu install-desktop [--exec <path>] [--exe <dengo3k.exe>] [--uninstall]
+usage: shuppatsu install-desktop [--exec <path>] [--uninstall]
 
-Writes $XDG_DATA_HOME/applications/shuppatsu.desktop and the exe's icon as
-$XDG_DATA_HOME/icons/hicolor/<n>x<n>/apps/shuppatsu.png (native sizes, plus 128 and 256
-nearest-upscaled). XDG_DATA_HOME defaults to ~/.local/share.
+Writes $XDG_DATA_HOME/applications/shuppatsu.desktop and the Shuppatsu icon as
+$XDG_DATA_HOME/icons/hicolor/<n>x<n>/apps/shuppatsu.png for n = 16, 32, 48, 64, 128, 256
+and 512. XDG_DATA_HOME defaults to ~/.local/share.
   --exec <path>   program the entry starts (default: this executable)
-  --exe <file>    exe to take the icon from (default: $SHUPPATSU_DATA_DIR's dengo3k.exe)
   --uninstall     remove the files instead
 Entries and icons named ddg-game (from before the rename) are removed in both cases.";
-
-/// Upscaled sizes for HiDPI launchers.
-const UPSCALED: [u32; 2] = [128, 256];
 
 pub fn run(args: &[String]) -> Result<()> {
     if cfg!(windows) {
         bail!("install-desktop is for Linux desktops; on Windows make a shortcut to shuppatsu.exe");
     }
     let mut exec: Option<PathBuf> = None;
-    let mut exe: Option<PathBuf> = None;
     let mut uninstall = false;
     let mut it = args.iter();
     while let Some(a) = it.next() {
         match a.as_str() {
             "--exec" => exec = Some(it.next().context("--exec needs a path")?.into()),
-            "--exe" => exe = Some(it.next().context("--exe needs a file")?.into()),
             "--uninstall" => uninstall = true,
             "-h" | "--help" => {
                 println!("{USAGE}");
@@ -45,34 +40,13 @@ pub fn run(args: &[String]) -> Result<()> {
     if uninstall {
         return remove(&data_home);
     }
-    let exe_bytes = match exe {
-        Some(p) => std::fs::read(&p).with_context(|| format!("reading {}", p.display()))?,
-        None => crate::scene::GameData::from_env()?.exe()?,
-    };
-    let (images, best) = crate::identity::exe_icon(&exe_bytes)?;
     let exec = match exec {
         Some(p) => p,
         None => std::env::current_exe().context("locating this executable")?,
     };
     let data_dir = std::env::var_os("SHUPPATSU_DATA_DIR").map(PathBuf::from);
 
-    let mut icons: Vec<IconImage> = images;
-    for size in UPSCALED {
-        if !icons.iter().any(|i| i.width == size) {
-            icons.push(upscale_nearest(&best, size));
-        }
-    }
-    for img in &icons {
-        let dir = data_home.join(format!(
-            "icons/hicolor/{0}x{0}/apps",
-            img.width.max(img.height)
-        ));
-        let path = dir.join(format!("{APP_ID}.png"));
-        std::fs::create_dir_all(&dir)?;
-        std::fs::write(&path, encode_png(img))
-            .with_context(|| format!("writing {}", path.display()))?;
-        println!("wrote {} ({}x{})", path.display(), img.width, img.height);
-    }
+    write_icons(&data_home)?;
     // The entry and icons from before the rename would show a second, stale launcher.
     remove_named(&data_home, OLD_APP_ID)?;
     let apps = data_home.join("applications");
@@ -81,6 +55,18 @@ pub fn run(args: &[String]) -> Result<()> {
     std::fs::write(&entry, desktop_entry(&exec, data_dir.as_deref()))
         .with_context(|| format!("writing {}", entry.display()))?;
     println!("wrote {}", entry.display());
+    Ok(())
+}
+
+/// Writes the embedded icons as `icons/hicolor/<n>x<n>/apps/shuppatsu.png`.
+fn write_icons(data_home: &Path) -> Result<()> {
+    for (size, png) in crate::logo::ICON_PNGS {
+        let dir = data_home.join(format!("icons/hicolor/{size}x{size}/apps"));
+        let path = dir.join(format!("{APP_ID}.png"));
+        std::fs::create_dir_all(&dir)?;
+        std::fs::write(&path, png).with_context(|| format!("writing {}", path.display()))?;
+        println!("wrote {} ({size}x{size})", path.display());
+    }
     Ok(())
 }
 
@@ -172,27 +158,8 @@ fn exec_arg(s: &str) -> String {
     out
 }
 
-/// Nearest-neighbour scale to `size`×`size` (integer factors keep pixels crisp).
-fn upscale_nearest(img: &IconImage, size: u32) -> IconImage {
-    let mut rgba = Vec::with_capacity((size * size * 4) as usize);
-    for y in 0..size {
-        let sy = y * img.height / size;
-        for x in 0..size {
-            let sx = x * img.width / size;
-            let i = ((sy * img.width + sx) * 4) as usize;
-            rgba.extend_from_slice(&img.rgba[i..i + 4]);
-        }
-    }
-    IconImage {
-        width: size,
-        height: size,
-        bit_count: img.bit_count,
-        rgba,
-    }
-}
-
-/// A minimal RGBA8 PNG: filter 0 rows in stored (uncompressed) deflate blocks.
-pub fn encode_png(img: &IconImage) -> Vec<u8> {
+/// A minimal RGBA8 PNG of `img`: filter 0 rows in stored (uncompressed) deflate blocks.
+pub fn encode_png(img: &RgbaImage) -> Vec<u8> {
     let mut raw = Vec::with_capacity((img.width * 4 + 1) as usize * img.height as usize);
     for row in img.rgba.chunks(img.width as usize * 4) {
         raw.push(0);
@@ -259,10 +226,9 @@ mod tests {
 
     #[test]
     fn png_layout() {
-        let img = IconImage {
+        let img = RgbaImage {
             width: 2,
             height: 1,
-            bit_count: 32,
             rgba: vec![1, 2, 3, 4, 5, 6, 7, 8],
         };
         let png = encode_png(&img);
@@ -274,16 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn upscales_and_quotes() {
-        let img = IconImage {
-            width: 1,
-            height: 1,
-            bit_count: 4,
-            rgba: vec![9, 8, 7, 255],
-        };
-        let big = upscale_nearest(&img, 4);
-        assert_eq!(big.rgba.len(), 64);
-        assert!(big.rgba.chunks(4).all(|p| p == [9, 8, 7, 255]));
+    fn quotes() {
         assert_eq!(
             exec_arg("/nix/store/x/bin/shuppatsu"),
             "/nix/store/x/bin/shuppatsu"
@@ -318,6 +275,24 @@ mod tests {
         assert!(!home.join("applications/shuppatsu.desktop").exists());
         assert!(!icons.join("shuppatsu.png").exists());
         assert!(other.exists(), "other apps' icons stay");
+        std::fs::remove_dir_all(&home).unwrap();
+    }
+
+    #[test]
+    fn writes_every_icon_size() {
+        let home = std::env::temp_dir().join(format!("shuppatsu-icons-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        write_icons(&home).unwrap();
+        for n in [16, 32, 48, 64, 128, 256, 512] {
+            let png = std::fs::read(home.join(format!("icons/hicolor/{n}x{n}/apps/shuppatsu.png")));
+            assert_eq!(png.unwrap()[16..20], (n as u32).to_be_bytes(), "{n} px");
+        }
+        assert_eq!(remove(&home).ok(), Some(()));
+        assert!(
+            !home
+                .join("icons/hicolor/512x512/apps/shuppatsu.png")
+                .exists()
+        );
         std::fs::remove_dir_all(&home).unwrap();
     }
 }

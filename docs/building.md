@@ -41,8 +41,17 @@ statically, so the exes import only system DLLs. Check with
 
 `scripts/package-windows.sh` builds the release exes, strips them and zips them with
 `LICENSE.txt` (GPL-3.0-or-later), `OFL-Mplus.txt` (the licence of the font compiled into the
-exe), `settings.md` and a `README-windows.txt`. It includes no game data. The window icon is
-read at runtime from the user's `dengo3k.exe`, so the exe has no icon resource of its own.
+exe), `settings.md` and a `README-windows.txt`. It includes no game data.
+
+**Exe icon.** `crates/shuppatsu/build.rs` compiles `crates/shuppatsu/shuppatsu.rc` with the dev
+shell's `x86_64-w64-mingw32-windres` (or `$WINDRES`) when the target is `windows-gnu`, and links
+the resource object into the exe: `assets/logo/gen/shuppatsu.ico` (16, 32, 48 and 256 px, PNG
+entries) as icon group 1, which Explorer and shortcuts show. Without `windres` the build only
+warns and the exe has no icon; other targets skip the step. Check with
+`x86_64-w64-mingw32-objdump -p shuppatsu.exe | grep -A2 '\.rsrc'`; the Windows test
+`logo::tests::exe_has_the_icon_resource` reads it back with `shuppatsu_formats::icon`. The window
+uses the same logo: the hinted 32 px icon in the title bar, 256 px for the taskbar and Alt-Tab
+(`identity.rs`, embedded by `logo.rs`).
 
 ### Platform behaviour
 
@@ -113,7 +122,7 @@ stdio), use `wine start /wait /unix "$PWD/shuppatsu.exe" …` with `WINEPREFIX=$
   to the Linux build. Data was found through `SHUPPATSU_DATA_DIR` (Z: path), `--data`, and a `data`
   folder next to the unzipped release exe.
 - The windowed game opens and presents on the **Vulkan** backend (winevulkan → RADV, FIFO,
-  `Bgra8UnormSrgb`). The window and taskbar icon come from the user's exe. WASAPI audio
+  `Bgra8UnormSrgb`). WASAPI audio
   reaches PipeWire (`application.name = shuppatsu.exe`). gilrs starts without errors.
 - **DX12 under Wine does not work, and the fallback handles it.** wgpu's DX12 backend
   compiles HLSL with FXC, and naga's sampler heap is a shader-model 5.1 resource array.

@@ -25,6 +25,7 @@ mod identity;
 mod input;
 mod label_audit;
 mod locale;
+mod logo;
 mod movie;
 mod navigator;
 mod play;
@@ -69,7 +70,7 @@ usage: shuppatsu [options] [--joystick-dat <file>] [--combo <file>] [--mute]
        shuppatsu view <route.com> [options]
        shuppatsu shot <route.com> --at <metres> --out <file.ppm> [options]
        shuppatsu pad <monitor|calibrate|learn> [--mode <4..6>] [--joystick-dat <file>] [--combo <file>]
-       shuppatsu install-desktop [--exec <path>] [--exe <dengo3k.exe>] [--uninstall]
+       shuppatsu install-desktop [--exec <path>] [--uninstall]
                      desktop entry + icon under $XDG_DATA_HOME (opt-in; see --help)
        shuppatsu label-audit [--out <dir>] [--catalogue <en.toml>] [--palette <n>]
                      check the catalogue's regions against the art (report + crops)

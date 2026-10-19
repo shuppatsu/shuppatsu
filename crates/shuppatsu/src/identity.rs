@@ -1,8 +1,7 @@
-//! How the game presents itself to the desktop: the window title, the icon read from the user's
-//! `dengo3k.exe`, and the Wayland app id / X11 `WM_CLASS` a desktop entry can match.
+//! How the game presents itself to the desktop: the window title, the icon (the project's own
+//! logo, [`crate::logo`]), and the Wayland app id / X11 `WM_CLASS` a desktop entry can match.
 
-use anyhow::{Context, Result};
-use shuppatsu_formats::icon::{self, IconData, IconImage};
+use crate::logo::IconSize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use winit::window::WindowAttributes;
 
@@ -42,55 +41,28 @@ pub fn initial_title(debug: &str) -> &str {
     if debug_title() { debug } else { TITLE }
 }
 
-/// The icons of the exe's first icon group, and the one to use (largest, then deepest).
-pub fn exe_icon(exe: &[u8]) -> Result<(Vec<IconImage>, IconImage)> {
-    let exe = shuppatsu_formats::exe::Exe::parse(exe)?;
-    let icons = icon::exe_icons(&exe)?;
-    for i in &icons {
-        if let IconData::Png(_) = i.data {
-            eprintln!(
-                "icon #{}: {}x{} is PNG-compressed (not decoded)",
-                i.entry.id, i.entry.width, i.entry.height
-            );
-        }
-    }
-    let best = icon::best(&icons)
-        .cloned()
-        .context("dengo3k.exe has no decodable icon")?;
-    let images = icons
-        .into_iter()
-        .filter_map(|i| match i.data {
-            IconData::Dib(img) => Some(img),
-            IconData::Png(_) => None,
-        })
-        .collect();
-    Ok((images, best))
-}
-
-/// The window icon from the user's exe, or `None` (with a note) if it can't be read.
-fn window_icon() -> Option<winit::window::Icon> {
-    let load = || -> Result<winit::window::Icon> {
-        let exe = crate::scene::GameData::from_env()?.exe()?;
-        let (_, best) = exe_icon(&exe)?;
-        Ok(winit::window::Icon::from_rgba(
-            best.rgba,
-            best.width,
-            best.height,
-        )?)
-    };
-    load().inspect_err(|e| eprintln!("window icon: {e:#}")).ok()
+/// The window icon of `size` from the embedded logo, or `None` (with a note) if winit
+/// refuses it.
+fn window_icon(size: IconSize) -> Option<winit::window::Icon> {
+    let img = crate::logo::icon(size);
+    winit::window::Icon::from_rgba(img.rgba, img.width, img.height)
+        .inspect_err(|e| eprintln!("window icon: {e}"))
+        .ok()
 }
 
 /// Adds the icon (X11, Windows; Wayland ignores it) and the app id / `WM_CLASS`.
 pub fn apply(attrs: WindowAttributes) -> WindowAttributes {
-    let icon = window_icon();
-    // Windows: the title bar uses the window icon, Alt-Tab and the taskbar the big one.
+    // Windows: the title bar uses the window icon (small), Alt-Tab and the taskbar the big one.
     #[cfg(windows)]
     let attrs = winit::platform::windows::WindowAttributesExtWindows::with_taskbar_icon(
         attrs,
-        icon.clone(),
+        window_icon(IconSize::Large),
     );
-    let attrs = attrs.with_window_icon(icon);
+    #[cfg(windows)]
+    let attrs = attrs.with_window_icon(window_icon(IconSize::Small));
+    // X11 has a single icon for the title bar, taskbar and switcher, scaled by them.
+    #[cfg(not(windows))]
+    let attrs = attrs.with_window_icon(window_icon(IconSize::Large));
     #[cfg(all(
         unix,
         not(any(target_os = "macos", target_os = "ios", target_os = "android"))

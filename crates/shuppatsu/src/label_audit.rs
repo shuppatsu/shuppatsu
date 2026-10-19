@@ -773,10 +773,9 @@ fn crop(
         }
     }
     Ok(crate::desktop::encode_png(
-        &shuppatsu_formats::icon::IconImage {
+        &shuppatsu_render::rgba::RgbaImage {
             width: cw as u32,
             height: ch as u32,
-            bit_count: 32,
             rgba,
         },
     ))

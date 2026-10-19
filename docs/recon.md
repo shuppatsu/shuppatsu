@@ -110,13 +110,10 @@ Icon (confirmed, decoded by `shuppatsu_formats::icon`, data test `icon::tests::r
 | #1 | 32×32 | 4 bpp, 16-colour palette | 744 | 40 header + 64 palette + 512 XOR + 128 AND |
 | #2 | 16×16 | 4 bpp, 16-colour palette | 296 | 40 header + 64 palette + 128 XOR + 64 AND |
 
-The art is a train front over the text "DENGO!3K", transparent via the AND mask. `shuppatsu` uses
-the 32×32 image as its window icon (X11 and Windows; Wayland ignores window icons) and sets the
-app id / `WM_CLASS` `shuppatsu` and the window title "Shuppatsu". The opt-in `shuppatsu install-desktop` writes it to
-`$XDG_DATA_HOME/icons/hicolor/<n>x<n>/apps/shuppatsu.png` for n = 16, 32, 128, 256 (the larger two
-nearest-upscaled from 32×32) with a matching `applications/shuppatsu.desktop` (and removes the
-`ddg-game` entry and icons from before the rename); the icon is read
-from the user's exe at install time and never shipped.
+The art is a train front over the text "DENGO!3K", transparent via the AND mask. `shuppatsu` no
+longer uses it: its window, exe and desktop icons are the project's own logo (`assets/logo/`),
+with the app id / `WM_CLASS` `shuppatsu` and the window title "Shuppatsu". The parser stays (with
+its data test) and checks the icon resource of our own Windows build (docs/building.md).
 
 ## 4. Notable strings (`dengo3k.exe`, Shift-JIS decoded)
 

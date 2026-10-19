@@ -105,6 +105,14 @@
             postInstall = ''
               install -Dm644 LICENSE -t $out/share/doc/${pname}
               install -Dm644 assets/fonts/OFL-Mplus.txt -t $out/share/doc/${pname}
+            ''
+            # The game's own icon (assets/logo) for the desktop item and launchers.
+            + pkgs.lib.optionalString (pname == "shuppatsu") ''
+              for n in 16 32 48 64 128 256 512; do
+                install -Dm644 assets/logo/gen/icon-$n.png \
+                  $out/share/icons/hicolor/''${n}x''${n}/apps/shuppatsu.png
+              done
+              install -Dm644 assets/logo/icon.svg $out/share/icons/hicolor/scalable/apps/shuppatsu.svg
             '';
             meta = {
               description = "Shuppatsu: an open-source engine for playing Densha de GO! 2 Kousoku-hen 3000-bandai from your own disc";
@@ -131,8 +139,7 @@
               desktopName = "Shuppatsu";
               comment = "Train driving engine for Densha de GO! 2 data from your own disc";
               exec = "shuppatsu";
-              # The icon comes from the user's own exe: `shuppatsu install-desktop` writes it per
-              # user under this name. The package ships none.
+              # The package's own hicolor icons (postInstall).
               icon = "shuppatsu";
               categories = [
                 "Game"
