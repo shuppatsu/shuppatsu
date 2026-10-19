@@ -22,6 +22,8 @@ commands:
   manifest <dir> <variant>        print a data-manifest TOML (hashes only) for <dir>
   pe <file>                       PE sections/entropy, imports, Rich header, resources
   strings <file> [--min N] [--jp] ASCII and Shift-JIS strings with offsets
+  pack-rgba <in.png> <out>        run-length pack an image of the port's own art (the logo,
+                                  scripts/build-logo.sh) for embedding in the game
   export <what> [--out DIR] [--palette N]
                                   write PNG/WAV from $SHUPPATSU_DATA_DIR to out/export (default)
                                   what: textures | tilemaps | audio | models | routes | all
@@ -63,6 +65,19 @@ fn main() -> Result<()> {
             inventory::print_manifest(&path(1)?, variant)
         }
         "pe" => pe::print_report(&path(1)?),
+        "pack-rgba" => {
+            let img = image::open(path(1)?)?.into_rgba8();
+            let packed = shuppatsu_render::rgba::RgbaImage {
+                width: img.width(),
+                height: img.height(),
+                rgba: img.into_raw(),
+            }
+            .pack();
+            let out = path(2)?;
+            std::fs::write(&out, &packed)?;
+            println!("wrote {} ({} bytes)", out.display(), packed.len());
+            Ok(())
+        }
         "play-sound" => sound::play_sound(&args[1..]),
         "movie" => movie::run(&args[1..]),
         "export" => run_export(&args[1..]),

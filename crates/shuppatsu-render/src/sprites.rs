@@ -3,6 +3,7 @@
 //! original blits them into its back buffer. The canvas is then drawn as one overlay texture.
 
 use crate::label::LabelFont;
+use crate::rgba::RgbaImage;
 use crate::text::{Align, FontRole, SubRect, TextOverlay, draw_parts};
 use hires::{Hires, View};
 pub use paper::Paper;
@@ -148,6 +149,47 @@ pub enum WidgetKind {
         parts: Vec<legend::LegendPart>,
         style: TextStyle,
     },
+    /// An RGBA picture of the port's own art (the logo), as large as fits in the rectangle
+    /// without distortion, centred, area-averaged to canvas pixels and blended over what is
+    /// below ([`WidgetImage`]).
+    Image(Arc<WidgetImage>),
+}
+
+/// The picture of a [`WidgetKind::Image`], with its last canvas-sized copy cached (the canvas
+/// is rebuilt every tick at the same size).
+#[derive(Debug)]
+pub struct WidgetImage {
+    pub image: RgbaImage,
+    /// Over transparent canvas pixels, partly transparent picture pixels are flattened onto
+    /// this colour (the screen behind), since the overlay's alpha test would otherwise cut
+    /// their soft edges. `None` keeps their alpha.
+    pub matte: Option<[u8; 3]>,
+    scaled: Mutex<Option<RgbaImage>>,
+}
+
+impl WidgetImage {
+    pub fn new(image: RgbaImage, matte: Option<[u8; 3]>) -> Self {
+        Self {
+            image,
+            matte,
+            scaled: Mutex::new(None),
+        }
+    }
+
+    /// Runs `f` on the picture at `w`×`h` (cached).
+    fn with_scaled<R>(&self, w: u32, h: u32, f: impl FnOnce(&RgbaImage) -> R) -> R {
+        let mut cache = self.scaled.lock().unwrap_or_else(|e| e.into_inner());
+        if cache.as_ref().is_none_or(|c| (c.width, c.height) != (w, h)) {
+            *cache = Some(self.image.scaled(w, h));
+        }
+        f(cache.as_ref().expect("just filled"))
+    }
+}
+
+impl PartialEq for WidgetImage {
+    fn eq(&self, other: &Self) -> bool {
+        self.image == other.image && self.matte == other.matte
+    }
 }
 
 /// How a [`WidgetKind::Text`] is drawn.
@@ -651,6 +693,11 @@ impl SpriteLayer {
         self.add_widget(layer, rect, WidgetKind::Text { text, style });
     }
 
+    /// A [`WidgetKind::Image`] in `rect`.
+    pub fn add_image(&mut self, layer: u8, rect: [f32; 4], image: Arc<WidgetImage>) {
+        self.add_widget(layer, rect, WidgetKind::Image(image));
+    }
+
     /// Appends a fan; ignored once the list is full (16 fans).
     pub fn add_fan(&mut self, points: &[[i32; 2]], argb: u32) {
         if self.fans.len() >= MAX_FANS || points.len() < 3 {
@@ -1035,6 +1082,40 @@ impl SpriteLayer {
                 };
                 resample_sprite(&src, &colours, z, (cx, cy), [x0, y0, x1, y1], c, canvas);
             }
+            WidgetKind::Image(img) => {
+                let (iw, ih) = (img.image.width as f32, img.image.height as f32);
+                if iw <= 0.0 || ih <= 0.0 {
+                    return;
+                }
+                // Fitted and centred in the unclipped rectangle, on whole canvas pixels.
+                let k = (rw * s / iw).min(rh * s / ih);
+                let (dw, dh) = ((iw * k).round() as i64, (ih * k).round() as i64);
+                if dw <= 0 || dh <= 0 {
+                    return;
+                }
+                let left =
+                    ((x + sx as f32) * s + shift + (rw * s - dw as f32) / 2.0).round() as i64;
+                let top = ((y + sy as f32) * s + (rh * s - dh as f32) / 2.0).round() as i64;
+                img.with_scaled(dw as u32, dh as u32, |pic| {
+                    for py in y0..y1 {
+                        let iy = py as i64 - top;
+                        if !(0..dh).contains(&iy) {
+                            continue;
+                        }
+                        for px in x0..x1 {
+                            let ix = px as i64 - left;
+                            if !(0..dw).contains(&ix) {
+                                continue;
+                            }
+                            let i = ((iy * dw + ix) * 4) as usize;
+                            let src: [u8; 4] = pic.rgba[i..i + 4].try_into().expect("4 bytes");
+                            let o = (py * c.w + px) * 4;
+                            let under: [u8; 4] = canvas[o..o + 4].try_into().expect("4 bytes");
+                            canvas[o..o + 4].copy_from_slice(&over(src, under, img.matte));
+                        }
+                    }
+                });
+            }
             WidgetKind::Legend { parts, style } => {
                 let Some(font) = bank.legend_font.as_ref().or(bank.label_font(style.font)) else {
                     return;
@@ -1139,6 +1220,32 @@ impl SpriteLayer {
             }
         }
     }
+}
+
+/// `src` blended over the canvas pixel `under` (straight alpha, in sRGB like the label text).
+/// Over transparency the picture keeps its alpha, or with a `matte` is flattened onto it.
+fn over(src: [u8; 4], under: [u8; 4], matte: Option<[u8; 3]>) -> [u8; 4] {
+    let under = match (under[3], matte) {
+        (0, None) => return src,
+        (0, Some([r, g, b])) => [r, g, b, 255],
+        _ => under,
+    };
+    let a = u32::from(src[3]);
+    if a == 0 {
+        return under;
+    }
+    let ua = u32::from(under[3]);
+    // Both alphas scaled to 0..=255², so the division rounds once.
+    let out_a = a * 255 + ua * (255 - a);
+    let mix = |s: u8, u: u8| {
+        ((u32::from(s) * a * 255 + u32::from(u) * ua * (255 - a) + out_a / 2) / out_a) as u8
+    };
+    [
+        mix(src[0], under[0]),
+        mix(src[1], under[1]),
+        mix(src[2], under[2]),
+        ((out_a + 127) / 255) as u8,
+    ]
 }
 
 /// Palette indices of a sprite: the `rect` (`[x, y, w, h]`) of a `stride`-wide image.
@@ -1721,6 +1828,62 @@ mod tests {
         assert!((600..700).all(|x| (600..620).all(|y| c[(y * w + x) * 4 + 3] == 0)));
         l.reset_transient();
         assert!(l.widgets.is_empty());
+    }
+
+    #[test]
+    fn image_widgets_fit_scale_and_blend() {
+        let b = bank(0);
+        let mut l = SpriteLayer {
+            scale: 2,
+            ..SpriteLayer::default()
+        };
+        // 8×2: the left half opaque blue, the right half half-transparent white.
+        let rgba = (0..2)
+            .flat_map(|_| 0..8)
+            .flat_map(|x| {
+                if x < 4 {
+                    [0, 0, 200, 255]
+                } else {
+                    [255, 255, 255, 128]
+                }
+            })
+            .collect();
+        let pic = RgbaImage {
+            width: 8,
+            height: 2,
+            rgba,
+        };
+        // A 4×4 rectangle at (10, 10) is 8×8 canvas pixels: the 8×2 picture fills its width
+        // at 1:1, centred vertically (canvas rows 23..25).
+        l.add_image(
+            0,
+            [10.0, 10.0, 4.0, 4.0],
+            Arc::new(WidgetImage::new(pic.clone(), None)),
+        );
+        // Half size with a black matte at (100, 10): 4×1 canvas pixels.
+        let matte = Arc::new(WidgetImage::new(pic, Some([0, 0, 0])));
+        l.add_image(0, [100.0, 10.0, 2.0, 0.5], matte);
+        let (w, h) = l.canvas_size();
+        let mut c = vec![0; w * h * 4];
+        l.compose(&b, &mut c);
+        let px = |x: usize, y: usize| -> [u8; 4] { c[(y * w + x) * 4..][..4].try_into().unwrap() };
+        assert_eq!(px(20, 22), [0, 0, 0, 0]);
+        assert_eq!(px(20, 23), [0, 0, 200, 255]);
+        assert_eq!(
+            px(27, 24),
+            [255, 255, 255, 128],
+            "alpha kept without a matte"
+        );
+        assert_eq!(px(20, 25), [0, 0, 0, 0]);
+        assert_eq!(px(200, 20), [0, 0, 200, 255]);
+        assert_eq!(px(203, 20), [128, 128, 128, 255], "flattened onto black");
+        assert_eq!(px(204, 20), [0, 0, 0, 0]);
+        // Over an opaque pixel: straight-alpha "over".
+        assert_eq!(
+            over([255, 255, 255, 128], [0, 0, 0, 255], None),
+            [128, 128, 128, 255]
+        );
+        assert_eq!(over([9, 9, 9, 0], [1, 2, 3, 255], None), [1, 2, 3, 255]);
     }
 
     /// Fractional sprite scales: an area average of the art under each canvas pixel.

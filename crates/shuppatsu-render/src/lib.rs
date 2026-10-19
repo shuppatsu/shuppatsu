@@ -10,6 +10,7 @@ pub mod ground;
 pub mod label;
 pub mod mip;
 pub mod overlay;
+pub mod rgba;
 pub mod sprites;
 pub mod text;
 pub mod text_audit;
