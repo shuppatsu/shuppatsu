@@ -494,9 +494,14 @@ pub fn run(args: &[String]) -> Result<()> {
     let exe_bytes = data.exe()?;
     let exe = shuppatsu_formats::exe::Exe::parse(&exe_bytes)?;
     let sheets = SheetTables::read(&exe)?;
-    let bank = SpriteBank::new(
+    let mut bank = SpriteBank::new(
         &shuppatsu_formats::cg::CgFile::parse(&data.read("cg.rom")?)?,
         shuppatsu_formats::cg::parse_tbl(&data.read("tbl.rom")?)?,
+    );
+    // The movie label numbered 5 (`movie_in_menu`), as the game builds it.
+    crate::front::title::add_movie_label_five(
+        &mut bank,
+        &crate::front::tables::FrontTables::read(&exe)?,
     );
     let palettes: std::collections::HashMap<u8, Palette> =
         shuppatsu_formats::cg::init_palettes(&exe)?
@@ -845,10 +850,12 @@ mod tests {
         let data = crate::scene::GameData::from_env().unwrap();
         let exe_bytes = data.exe().unwrap();
         let exe = shuppatsu_formats::exe::Exe::parse(&exe_bytes).unwrap();
-        let bank = SpriteBank::new(
+        let mut bank = SpriteBank::new(
             &shuppatsu_formats::cg::CgFile::parse(&data.read("cg.rom").unwrap()).unwrap(),
             shuppatsu_formats::cg::parse_tbl(&data.read("tbl.rom").unwrap()).unwrap(),
         );
+        let front = crate::front::tables::FrontTables::read(&exe).unwrap();
+        crate::front::title::add_movie_label_five(&mut bank, &front);
         let cat = Catalogue::load("en", None).unwrap();
         let items = audit(&cat, &SheetTables::read(&exe).unwrap(), &bank).unwrap();
         assert!(items.len() > 300, "{} parts", items.len());

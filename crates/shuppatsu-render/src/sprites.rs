@@ -465,6 +465,15 @@ impl SpriteBank {
         self.tiles.get(usize::from(id))?.as_deref()
     }
 
+    /// Port: adds a tile of palette indices, for art composed from the original's (a title
+    /// label with another row number); returns its id, `None` once the ids run out. Add tiles
+    /// before drawing: upscaled images already built are not rebuilt.
+    pub fn add_tile(&mut self, px: [u8; TILE_PIXELS]) -> Option<u16> {
+        let id = u16::try_from(self.tiles.len()).ok()?;
+        self.tiles.push(Some(Box::new(px)));
+        Some(id)
+    }
+
     /// Installs (or with `None` removes) the text overrides. Build them with
     /// [`TextOverlay::build`] from this bank.
     pub fn set_text(&mut self, overlay: Option<TextOverlay>) {

@@ -156,6 +156,9 @@ pub fn load_bank(
         &shuppatsu_formats::cg::CgFile::parse(&cg_bytes)?,
         shuppatsu_formats::cg::parse_tbl(&data.read("tbl.rom")?)?,
     );
+    // Port (`movie_in_menu`): the movie label numbered 5, before the translations name it.
+    let front = crate::front::tables::FrontTables::read(exe)?;
+    crate::front::title::add_movie_label_five(&mut bank, &front);
     crate::locale::install(locale, exe, &mut bank)?;
     // Controller hints (`hybrid_input`) in every language.
     bank.set_legend_font(Some(shuppatsu_render::label::LabelFont::new(Box::new(

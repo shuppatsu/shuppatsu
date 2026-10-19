@@ -1258,10 +1258,20 @@ mod tests {
             eprintln!("skipped: no tbl.rom under SHUPPATSU_DATA_DIR");
             return;
         };
-        let maps = shuppatsu_formats::cg::parse_tbl(&tbl).unwrap();
+        let mut bank = shuppatsu_render::sprites::SpriteBank::new(
+            &shuppatsu_formats::cg::CgFile::parse(
+                &std::fs::read(install.join("DATA/cg.rom")).unwrap(),
+            )
+            .unwrap(),
+            shuppatsu_formats::cg::parse_tbl(&tbl).unwrap(),
+        );
         let exe_bytes = std::fs::read(install.join("BIN/dengo3k.exe")).unwrap();
         let exe = Exe::parse(&exe_bytes).unwrap();
         let sheets = SheetTables::read(&exe).unwrap();
+        // The movie label numbered 5, composed under sheet 0x513 as the game does.
+        let front = crate::front::tables::FrontTables::read(&exe).unwrap();
+        assert!(crate::front::title::add_movie_label_five(&mut bank, &front));
+        let maps = &bank.tilemaps;
         let cat = en();
         let locale = Locale::from_catalogue(&cat, &sheets).unwrap();
         for (tbl, rect, o) in locale.overrides() {

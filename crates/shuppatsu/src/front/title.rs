@@ -11,7 +11,10 @@
 
 use super::tables::FrontTables;
 use super::{Env, PAL_MENU, ScrollList, snd};
+use crate::screens::tables::TextDesc;
 use crate::screens::{MenuInput, Sfx};
+use shuppatsu_formats::cg::{TILE_PIXELS, TILE_SIZE, Tilemap};
+use shuppatsu_render::sprites::SpriteBank;
 use shuppatsu_render::sprites::SpriteLayer;
 
 /// Header page of the title (0x42a820(0)).
@@ -59,6 +62,86 @@ impl TitleChoice {
 
 /// The label index (0x513 sheet row / 6) of the movie item.
 const MOVIE_ITEM: usize = 5;
+/// Port: the number box of a 512×96 title label, `[x0, y0, x1, y1)` in art pixels: inside
+/// the frame (x 0..=2, y 0..=1 and 94..=95) and left of the colour bar (x 56..=87). The
+/// digits lie in x 11..=46, y 15..=80; the box's background is the same index in every label
+/// (sheet 0x513 dumped, rows 24 and 30).
+const NUMBER_BOX: [usize; 4] = [3, 2, 56, 94];
+
+/// Port (setting `movie_in_menu`): the movie label with the "5" of the fifth label for its
+/// "6", for the menu without the Densha de GO! controller, where it is the fifth row. Built
+/// by [`add_movie_label_five`] in the rows under the sheet.
+pub fn movie_label_five(t: &FrontTables) -> TextDesc {
+    let m = t.movie_item();
+    TextDesc {
+        row: m.row + m.h,
+        ..m
+    }
+}
+
+/// Composes [`movie_label_five`] into the bank: the movie label (sheet 0x513 row 30) with its
+/// number box taken from the fifth label (row 24), appended as new rows of the sheet, so it
+/// is original art in the frame and colours of the movie item. Call it once, before the
+/// translations are installed (their `rect` names the new rows). `false` when the sheet is not
+/// the expected shape (left as it is).
+pub fn add_movie_label_five(bank: &mut SpriteBank, t: &FrontTables) -> bool {
+    let (movie, five) = (t.movie_item(), t.title_items[4]);
+    let Ok(tbl) = u16::try_from(movie.tbl) else {
+        return false;
+    };
+    let Some(map) = bank.tilemaps.get(usize::from(tbl)).cloned() else {
+        return false;
+    };
+    let (Ok(row), Ok(h), Ok(five_row)) = (
+        u8::try_from(movie.row),
+        u8::try_from(movie.h),
+        u8::try_from(five.row),
+    ) else {
+        return false;
+    };
+    // Once, and only if the movie label is the sheet's last (rows 30..36 of 36).
+    if u16::from(row) + u16::from(h) != u16::from(map.height)
+        || five.h != movie.h
+        || usize::from(map.width) * TILE_SIZE < NUMBER_BOX[2]
+    {
+        return false;
+    }
+    let cols = NUMBER_BOX[2].div_ceil(TILE_SIZE);
+    let pw = cols * TILE_SIZE;
+    let mut px = bank.render_rect(tbl, (0, row, cols as u8, h));
+    let src = bank.render_rect(tbl, (0, five_row, cols as u8, h));
+    for y in NUMBER_BOX[1]..NUMBER_BOX[3].min(usize::from(h) * TILE_SIZE) {
+        let r = y * pw;
+        px[r + NUMBER_BOX[0]..r + NUMBER_BOX[2]]
+            .copy_from_slice(&src[r + NUMBER_BOX[0]..r + NUMBER_BOX[2]]);
+    }
+    let w = usize::from(map.width);
+    let mut tiles = map.tiles.clone();
+    for ty in 0..usize::from(h) {
+        for tx in 0..w {
+            let id = if tx < cols {
+                let mut cell = [0u8; TILE_PIXELS];
+                for (py, line) in cell.as_chunks_mut::<TILE_SIZE>().0.iter_mut().enumerate() {
+                    let s = (ty * TILE_SIZE + py) * pw + tx * TILE_SIZE;
+                    line.copy_from_slice(&px[s..s + TILE_SIZE]);
+                }
+                match bank.add_tile(cell) {
+                    Some(id) => id,
+                    None => return false,
+                }
+            } else {
+                map.tiles[(usize::from(row) + ty) * w + tx]
+            };
+            tiles.push(id);
+        }
+    }
+    bank.tilemaps[usize::from(tbl)] = Tilemap {
+        height: map.height + h,
+        tiles,
+        ..map
+    };
+    true
+}
 
 /// The items shown, by label index: 1–4, 5 with the Densha de GO! controller (mode 6), and 6 (the
 /// movie) with setting `movie_in_menu`.
@@ -140,11 +223,12 @@ impl TitleMenu {
         super::draw_menu_header(l, t, env, HEADER_PAGE);
         let last = Self::last(env);
         for (i, item) in items(env).enumerate() {
-            let d = t
-                .title_items
-                .get(item)
-                .copied()
-                .unwrap_or_else(|| t.movie_item());
+            let d = match t.title_items.get(item) {
+                Some(&d) => d,
+                // The fifth row (no Densha de GO! controller) reads 5, not the label's 6.
+                None if i == 4 => movie_label_five(t),
+                None => t.movie_item(),
+            };
             let y = ITEM_Y + ROW_I * i as i32 + self.list.scroll;
             super::text(
                 l,
@@ -275,8 +359,9 @@ mod tests {
         assert_eq!(choice, Some(TitleChoice::Movie));
         // The row shows the derived label.
         let slot = &l.slots[SLOT_ITEMS + 4];
-        let d = t.movie_item();
+        let d = movie_label_five(&t);
         assert_eq!((slot.tilemap, slot.row), (d.tbl, d.row));
+        assert_eq!(d.row, t.movie_item().row + t.movie_item().h);
         // Mode 6 without the setting: the calibration item last, as the original.
         let orig6 = Env {
             control_mode: 6,
@@ -289,5 +374,55 @@ mod tests {
             choice = choice.or(m.tick(&input, &orig6, &t, &mut l, &mut sfx));
         }
         assert_eq!(choice, Some(TitleChoice::Calibrate));
+        // Mode 6 with the setting: the movie is the sixth row, with the label's own 6.
+        let mut m = TitleMenu::new(5, 0);
+        run(&mut m, &mode6, MenuInput::NONE);
+        let mut l = SpriteLayer::default();
+        m.draw(&mode6, &t, &mut l);
+        assert_eq!(l.slots[SLOT_ITEMS + 5].row, t.movie_item().row);
+    }
+
+    /// The composed label on the real sheet: the movie label's frame, bar and title, the
+    /// fifth label's number box. Needs `SHUPPATSU_DATA_DIR`.
+    #[test]
+    fn the_fifth_row_movie_label_reads_five() {
+        let Ok(data) = crate::scene::GameData::from_env() else {
+            eprintln!("skipped: SHUPPATSU_DATA_DIR not set");
+            return;
+        };
+        let exe_bytes = data.exe().unwrap();
+        let exe = shuppatsu_formats::exe::Exe::parse(&exe_bytes).unwrap();
+        let t = FrontTables::read(&exe).unwrap();
+        let mut bank = SpriteBank::new(
+            &shuppatsu_formats::cg::CgFile::parse(&data.read("cg.rom").unwrap()).unwrap(),
+            shuppatsu_formats::cg::parse_tbl(&data.read("tbl.rom").unwrap()).unwrap(),
+        );
+        assert!(add_movie_label_five(&mut bank, &t));
+        assert!(!add_movie_label_five(&mut bank, &t), "only once");
+        let (movie, five, new) = (t.movie_item(), t.title_items[4], movie_label_five(&t));
+        assert_eq!(new.row, 36);
+        let rect = |d: TextDesc| bank.render_rect(0x513, (0, d.row as u8, 32, 6));
+        let (a, b, c) = (rect(movie), rect(five), rect(new));
+        let [x0, y0, x1, y1] = NUMBER_BOX;
+        let mut digit = 0;
+        for y in 0..96 {
+            for x in 0..512 {
+                let i = y * 512 + x;
+                if (x0..x1).contains(&x) && (y0..y1).contains(&y) {
+                    assert_eq!(c[i], b[i], "({x}, {y}) of the fifth label");
+                    digit += usize::from(b[i] != a[i]);
+                } else {
+                    assert_eq!(c[i], a[i], "({x}, {y}) of the movie label");
+                }
+            }
+        }
+        assert!(digit > 500, "the 5 and the 6 differ ({digit} pixels)");
+        // Both digits lie inside the box: its edges are the same background in both labels.
+        for (x, y) in (x0..x1).flat_map(|x| [(x, y0), (x, y1 - 1)]) {
+            assert_eq!(a[y * 512 + x], b[y * 512 + x], "({x}, {y})");
+        }
+        for (x, y) in (y0..y1).flat_map(|y| [(x0, y), (x1 - 1, y)]) {
+            assert_eq!(a[y * 512 + x], b[y * 512 + x], "({x}, {y})");
+        }
     }
 }

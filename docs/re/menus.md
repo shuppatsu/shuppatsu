@@ -335,7 +335,7 @@ the last tick an exact copy); the title call 0x1024 at tick 100; the item ends a
 | 2 | 3 ランキングを見る / Ranking | records viewer (§5) |
 | 3 | 4 ゲーム終了 / Game Exit | `ExitConfirm_Run`, Yes → `DestroyWindow` |
 | 4 | 5 専用コントローラー設定 / Controller Adjust (mode 6 only) | `ControllerAdjust_Run` 0x434a00 |
-| (5) | 6 LOVE特急こまち | movie `FUN_00429110`; **not reachable from the menu**: the cursor max is 3 or 4 and 0x47c778 holds only five descriptors. Attract plays it once every select stage is cleared (§2). The label is on the sheet at row 30 (the cell under item 5). Port: setting `movie_in_menu` makes it the last row (movie.md §6) |
+| (5) | 6 LOVE特急こまち | movie `FUN_00429110`; **not reachable from the menu**: the cursor max is 3 or 4 and 0x47c778 holds only five descriptors. Attract plays it once every select stage is cleared (§2). The label is on the sheet at row 30 (the cell under item 5). Port: setting `movie_in_menu` makes it the last row (movie.md §6). As the fifth row (no mode 6) the label's "6" would skip 5, so the port composes a copy under the sheet (rows 36..41): the movie label with the number box (x 3..55, y 2..93, inside the frame and left of the colour bar) of the fifth label, i.e. the original "5" in the movie item's frame and colours (`front::title::add_movie_label_five`); the English catalogue gives it its own entry `komachi_5` |
 
 * Confirm: sound 0xd, 30-tick blink, stop 0xd, `0x816834 = index`. Cancel: sound 0x13,
   `0x816834 = −2` → `TitleMenu_Run` returns −2, `Game_MainFlow` sets `0x855ffc |= 0x10` and shows

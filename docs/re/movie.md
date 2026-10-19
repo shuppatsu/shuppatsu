@@ -133,7 +133,7 @@ original's renderer).
 
 * **Where it is played**: attract item 3 once every select stage is cleared
   (`komachi_unlocked`, as 0x404cf0), and, with setting `movie_in_menu` (on), the title menu's
-  sixth label as its last row (menus.md §3). Skip and end as §1; from the menu the BGM comes
+  sixth label as its last row (menus.md §3); as the fifth row (without the Densha de GO! controller) its label reads 5, composed from the fifth label's number (menus.md §3). Skip and end as §1; from the menu the BGM comes
   back and the cursor sits on the movie row (case 5).
 * **A/V sync**: the soundtrack is a `shuppatsu_audio::PcmStream` mixed at unity gain and resampled to
   the device rate by `audio_resampler`. The mixer counts the source frames played; that count
