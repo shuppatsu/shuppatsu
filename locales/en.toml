@@ -1030,7 +1030,7 @@ komachi_5 = { rect = [0, 36, -1, 6], parts = [{ region = [88, 8, 408, 64], share
 25 = { text = "Keyboard D", align = "left", shared_group = "options.values" }
 26 = { text = "Gamepad", align = "left", shared_group = "options.values" }                       # ジョイパッド
 27 = { text = "Joystick", align = "left", shared_group = "options.values" }                      # ジョイスティック
-28 = { text = "DDG controller", align = "left", shared_group = "options.values" }                # 専用コントローラ
+28 = { text = "Train controller", align = "left", shared_group = "options.values" }                # 専用コントローラ
 29 = { text = "Port A, socket 1", align = "left" }              # ポートA拡張ソケット1 (console leftover)
 31 = { text = "Port B, socket 1", align = "left" }              # ポートB拡張ソケット1 (console leftover)
 
@@ -1064,7 +1064,7 @@ komachi_5 = { rect = [0, 36, -1, 6], parts = [{ region = [88, 8, 408, 64], share
 25 = { text = "Keyboard D", align = "left", shared_group = "options.values" }
 26 = { text = "Gamepad", align = "left", shared_group = "options.values" }
 27 = { text = "Joystick", align = "left", shared_group = "options.values" }
-28 = { text = "DDG controller", align = "left", shared_group = "options.values" }
+28 = { text = "Train controller", align = "left", shared_group = "options.values" }
 29 = { text = "Port A, socket 1", align = "left" }
 31 = { text = "Port B, socket 1", align = "left" }
 
