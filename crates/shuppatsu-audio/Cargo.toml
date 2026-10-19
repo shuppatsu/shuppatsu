@@ -1,0 +1,15 @@
+[package]
+name = "shuppatsu-audio"
+description = "Audio mixer and music/SFX playback"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+shuppatsu-formats.workspace = true
+thiserror.workspace = true
+cpal.workspace = true

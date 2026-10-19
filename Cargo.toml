@@ -9,8 +9,8 @@ license = "GPL-3.0-or-later"
 publish = false
 
 [workspace.dependencies]
-ddg-formats = { path = "crates/ddg-formats" }
-ddg-engine = { path = "crates/ddg-engine" }
+shuppatsu-formats = { path = "crates/shuppatsu-formats" }
+shuppatsu-engine = { path = "crates/shuppatsu-engine" }
 anyhow = "1"
 thiserror = "2"
 encoding_rs = "0.8"
@@ -20,8 +20,8 @@ wgpu = "30"
 winit = "0.30"
 glam = { version = "0.34", features = ["bytemuck"] }
 bytemuck = { version = "1", features = ["derive"] }
-ddg-render = { path = "crates/ddg-render" }
-ddg-audio = { path = "crates/ddg-audio" }
+shuppatsu-render = { path = "crates/shuppatsu-render" }
+shuppatsu-audio = { path = "crates/shuppatsu-audio" }
 cpal = "0.18"
 gilrs = "0.11"
 fontdue = "0.9"

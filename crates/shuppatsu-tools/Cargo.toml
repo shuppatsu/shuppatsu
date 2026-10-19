@@ -1,0 +1,20 @@
+[package]
+name = "shuppatsu-tools"
+description = "Recon, inventory, dump and export CLI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+shuppatsu-formats.workspace = true
+shuppatsu-engine.workspace = true
+shuppatsu-audio.workspace = true
+shuppatsu-render.workspace = true
+anyhow.workspace = true
+encoding_rs.workspace = true
+pelite.workspace = true
+image.workspace = true

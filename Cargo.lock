@@ -449,78 +449,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ddg-audio"
-version = "0.1.0"
-dependencies = [
- "cpal",
- "ddg-formats",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "ddg-engine"
-version = "0.1.0"
-dependencies = [
- "ddg-formats",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "ddg-formats"
-version = "0.1.0"
-dependencies = [
- "encoding_rs",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "ddg-game"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ddg-audio",
- "ddg-engine",
- "ddg-formats",
- "ddg-render",
- "gilrs",
- "glam",
- "serde",
- "toml",
- "wgpu",
- "winit",
-]
-
-[[package]]
-name = "ddg-hook"
-version = "0.1.0"
-
-[[package]]
-name = "ddg-render"
-version = "0.1.0"
-dependencies = [
- "bytemuck",
- "ddg-formats",
- "fontdue",
- "glam",
- "thiserror 2.0.21",
- "wgpu",
-]
-
-[[package]]
-name = "ddg-tools"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "ddg-audio",
- "ddg-engine",
- "ddg-formats",
- "ddg-render",
- "encoding_rs",
- "image",
- "pelite",
-]
-
-[[package]]
 name = "derive_pod"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2043,6 +1971,78 @@ name = "shlex"
 version = "2.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
+
+[[package]]
+name = "shuppatsu"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "gilrs",
+ "glam",
+ "serde",
+ "shuppatsu-audio",
+ "shuppatsu-engine",
+ "shuppatsu-formats",
+ "shuppatsu-render",
+ "toml",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "shuppatsu-audio"
+version = "0.1.0"
+dependencies = [
+ "cpal",
+ "shuppatsu-formats",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "shuppatsu-engine"
+version = "0.1.0"
+dependencies = [
+ "shuppatsu-formats",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "shuppatsu-formats"
+version = "0.1.0"
+dependencies = [
+ "encoding_rs",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "shuppatsu-hook"
+version = "0.1.0"
+
+[[package]]
+name = "shuppatsu-render"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "fontdue",
+ "glam",
+ "shuppatsu-formats",
+ "thiserror 2.0.21",
+ "wgpu",
+]
+
+[[package]]
+name = "shuppatsu-tools"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "encoding_rs",
+ "image",
+ "pelite",
+ "shuppatsu-audio",
+ "shuppatsu-engine",
+ "shuppatsu-formats",
+ "shuppatsu-render",
+]
 
 [[package]]
 name = "simd-adler32"

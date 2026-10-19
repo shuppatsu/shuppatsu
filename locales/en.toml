@@ -3,7 +3,7 @@
 # The original draws every string as tile art from tbl.rom/cg.rom (docs/re/hud.md §4). Each entry
 # below replaces the art of one sprite with our own English, rasterised into the same rectangle,
 # so the arcade layout is kept. Anything not listed keeps the original art. Nothing here is drawn
-# unless a language and a font are configured (DDG_LANG=en, DDG_FONT=/path/to/font.ttf).
+# unless a language and a font are configured (SHUPPATSU_LANG=en, SHUPPATSU_FONT=/path/to/font.ttf).
 #
 # Keys
 #   [tbl]          0x206 = ...       a tbl.rom tilemap id; the whole map, or `rect` (tiles)
@@ -17,7 +17,7 @@
 #                                     sprite); the rest of the art stays (gauges, digits, icons)
 #   style: "auto" (default) | "plain" | "boxed"; align: "center" (default) | "left" | "right"
 #   font: "body" (default) | "display" (headers, menu titles, headlines; the display font,
-#         DDG_DISPLAY_FONT, or the body font when none is set)
+#         SHUPPATSU_DISPLAY_FONT, or the body font when none is set)
 # Colours always come from the slot's palette (the art's own colours), so palette swaps work.
 #
 # Comments give each sprite's role, a short Japanese label for identification, and the size in
@@ -720,7 +720,7 @@ name = "English"
 # Keyboard A and B put 解除 and 非常 beside a horizontal ◆◆, so that cell is redrawn whole. The
 # controller pictures (0x493–0x498, 0x4a1) and the A / B / B・C button tabs stay. A value region
 # ends a row short of its arrow's tip (the tips reach into the cell; measured with
-# `ddg-game label-audit`), so the arrows are not clipped.
+# `shuppatsu label-audit`), so the arrows are not clipped.
 # Keyboard A (mode 0).
 0x49e = { parts = [
     { region = [26, 2, 92, 21], group = "pro", text = "Pro Mode" },          # PROモード (the Professional plate)
@@ -789,7 +789,7 @@ name = "English"
     { region = [66, 250, 60, 19], backdrop = "solid", group = "lever", text = "Off" },
     { region = [66, 281, 60, 21], backdrop = "solid", group = "lever", text = "Accelerate" },
 ] }
-# DDG controller (mode 6), 352×272.
+# Densha de GO! controller (mode 6), 352×272.
 0x49d = { parts = [
     { region = [2, 23, 61, 22], group = "labels", text = "Power" },
     { region = [66, 2, 60, 24], backdrop = "solid", group = "power", text = "Off" },
@@ -978,7 +978,7 @@ name = "English"
 
 # =============================================================================================
 # String sheets (menus.md §1.2). Integer keys are descriptor indices into the sheet's table in
-# the exe (see SHEETS in crates/ddg-game/src/locale.rs); named keys give the rectangle in tiles.
+# the exe (see SHEETS in crates/shuppatsu/src/locale.rs); named keys give the rectangle in tiles.
 
 # Title menu items (0x47c778), 512×96 each: the big katakana only; the number on the left and
 # the small Latin subtitle stay.
