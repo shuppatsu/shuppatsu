@@ -534,8 +534,8 @@ const TITLE_CAP: f32 = 26.0;
 const ROW_CAP: f32 = 11.5;
 const PANEL_CAP: f32 = 11.0;
 const LEGEND_CAP: f32 = 9.5;
-/// The seventh item of the options list (0x42a730's rows, 0x30 apart from y 0xa0).
-const OPTIONS_ITEM_Y: i16 = 0xa0 + 0x30 * 6;
+/// The seventh item of the options list (0x42a730's rows, 0x30 apart from [`super::options::LIST_TOP`]).
+const OPTIONS_ITEM_Y: i16 = super::options::LIST_TOP + 0x30 * 6;
 const OPTIONS_ITEM_CAP: f32 = 24.0;
 
 /// A row of the list.

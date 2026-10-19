@@ -17,6 +17,11 @@ const LAYER: u8 = 3;
 /// Label and value slots (0x42a730); the port's seventh label takes `SLOT_LABELS + 6`.
 const SLOT_LABELS: usize = 0x90;
 const SLOT_VALUES: usize = 0x9a;
+/// The options list's first row. The original draws its six rows 0x30 apart from y 0xa0 (0x42a730),
+/// 48 px under the header (which ends at y 112) and 48 px above the bottom edge. The port's
+/// seventh row (Port settings) would end flush with the bottom, so the list starts 24 px higher
+/// at the same pitch: 24 px under the header and 24 px above the edge.
+pub const LIST_TOP: i16 = 0x88;
 /// The control page's pictures (0x42ad10).
 const SLOT_PICTURE: usize = 0x9a;
 const SLOT_PICTURE_2: usize = 0x9b;
@@ -305,7 +310,7 @@ impl OptionsList {
         None
     }
 
-    /// 0x42a730.
+    /// 0x42a730, with the port's seventh row: the list starts at [`LIST_TOP`], not 0xa0.
     fn draw(&self, env: &Env, e: &Eeprom, t: &FrontTables, l: &mut SpriteLayer) {
         super::draw_menu_header(l, t, env, LIST_PAGE);
         let (x0, y0) = t.origin;
@@ -315,7 +320,7 @@ impl OptionsList {
             } else {
                 &t.option_normal
             };
-            let y = y0 + 0xa0 + 0x30 * i as i16;
+            let y = y0 + LIST_TOP + 0x30 * i as i16;
             let label = sheet[list[0] as usize];
             super::text(l, SLOT_LABELS + i, label, x0 + 0x60, y, PAL_MENU, LAYER);
             let v = usize::from(get(e, env, i));
@@ -332,7 +337,7 @@ impl OptionsList {
             &t.option_normal
         };
         if let Some(&label) = sheet.get(PORT_LABEL) {
-            let y = y0 + 0xa0 + 0x30 * i as i16;
+            let y = y0 + LIST_TOP + 0x30 * i as i16;
             super::text(l, SLOT_LABELS + i, label, x0 + 0x60, y, PAL_MENU, LAYER);
         }
     }
