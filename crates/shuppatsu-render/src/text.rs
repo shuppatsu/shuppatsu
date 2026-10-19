@@ -182,8 +182,19 @@ pub struct TextPart {
     pub style: Style,
     /// Rotated 90° clockwise (reads top to bottom), for the vertical station plates.
     pub vertical: bool,
-    /// Plain style only: draw a 1-px outline in the art's second colour.
+    /// Plain style only: draw a 1-px outline in the art's second colour. With an outline
+    /// found in the original lettering ([`crate::lettering`]) that one is drawn instead, in
+    /// either style.
     pub outline: bool,
+    /// The drop shadow under the text: as found in the original lettering, none, or at a
+    /// given offset (`shadow = [dx, dy]` / `false` in the catalogue).
+    pub shadow: crate::lettering::ShadowMode,
+    /// Look for the lettering's shadow or outline in this rectangle of the sprite (`[x, y, w,
+    /// h]`) instead of the part's own region (`shadow_ink` in the catalogue).
+    pub shadow_ink: Option<[u16; 4]>,
+    /// One text colour even where the original strokes are a vertical gradient
+    /// ([`crate::lettering::gradient`]; `gradient = false` in the catalogue).
+    pub flat: bool,
     /// Boxed style only: the backdrop behind the text.
     pub backdrop: Backdrop,
     /// Lines this many font sizes apart instead of the font's line height (two lines in a
@@ -607,9 +618,12 @@ pub struct RenderedPart {
     pub region: [u16; 4],
     /// Under-colour per pixel: 0 = keep what is below, else a palette index (box or outline).
     pub base: Vec<u8>,
-    /// Text coverage per pixel, blended over `base` in colour `fg`.
+    /// Text coverage per pixel, blended over `base` in colour `fg` (or the pixel's `fg_map`).
     pub coverage: Vec<u8>,
     pub fg: u8,
+    /// The text colour per pixel, for lettering whose strokes are a vertical gradient
+    /// ([`crate::lettering::gradient`]); empty = `fg` everywhere.
+    pub fg_map: Vec<u8>,
 }
 
 impl RenderedPart {
@@ -1061,16 +1075,29 @@ fn render_part_at(
         let m = x0.min(w - x1);
         (m, w - m, y0, y1)
     };
+    // The shadow or outline of the original lettering, repeated under the English: a shadow
+    // anywhere; an outline found in a box, with a shadow, or wider than the plain one-pixel
+    // outline drawn below.
+    let effects = crate::lettering::for_part(part, &scan, art, art_w, art_h);
+    let shadow = effects.and_then(|e| e.shadow);
+    let fx_outline = effects
+        .and_then(|e| e.outline)
+        .filter(|o| boxed || shadow.is_some() || o.width > 1);
+    let drawn = shadow.is_some() || fx_outline.is_some();
     // A plain outline is one original pixel wide and the original's ink box includes its
     // outline: keep the fill that far inside (the rasteriser already pads one canvas pixel).
-    let inset = if !boxed && part.outline {
+    // So for a found outline's width, and for the shadow on its side.
+    let inset = if let Some(o) = fx_outline {
+        (usize::from(o.width) * s).saturating_sub(PAD)
+    } else if !boxed && part.outline && !drawn {
         s.saturating_sub(PAD)
     } else {
         0
     };
-    let (ox, oy) = (lx0 * s + inset, ly0 * s + inset);
-    let lw = ((lx1 - lx0) * s).saturating_sub(2 * inset);
-    let lh = ((ly1 - ly0) * s).saturating_sub(2 * inset);
+    let [sl, st, sr, sb] = crate::lettering::shadow_room(shadow, s);
+    let (ox, oy) = (lx0 * s + inset + sl, ly0 * s + inset + st);
+    let lw = ((lx1 - lx0) * s).saturating_sub(2 * inset + sl + sr);
+    let lh = ((ly1 - ly0) * s).saturating_sub(2 * inset + st + sb);
     // One line is fitted to the ink box by its ink, not by the font's line height (which
     // would leave it well short of the original lettering's height).
     let one_line = !part.text.contains('\n');
@@ -1135,17 +1162,30 @@ fn render_part_at(
             .unwrap_or(second)
     } else {
         let (fill, outline) = plain_colours(&region_art, w, h).unwrap_or((dominant, second));
-        if part.outline && outline != fill {
+        if part.outline && outline != fill && !drawn {
             // One original pixel thick at any scale.
             dilate(&coverage, sw, sh, s, 128, |i| base[i] = outline);
         }
         fill
     };
+    let fg = match effects {
+        Some(e) if drawn => {
+            crate::lettering::paint(&coverage, &mut base, sw, sh, s, fx_outline, shadow);
+            e.fill
+        }
+        _ => fg,
+    };
+    // A gradient in the original strokes runs down the English letters too.
+    let fg_map = crate::lettering::gradient_for(part, &scan, art, art_w, art_h, effects)
+        .map_or_else(Vec::new, |g| {
+            crate::lettering::spread(&g, &coverage, sw, sh, s, x)
+        });
     let rendered = RenderedPart {
         region: [(x * s) as u16, (y * s) as u16, sw as u16, sh as u16],
         base,
         coverage,
         fg,
+        fg_map,
     };
     Some((rendered, px))
 }
@@ -1295,6 +1335,7 @@ pub(crate) fn draw_parts(
                     continue;
                 }
                 let o = (y as usize * canvas_w + x as usize) * 4;
+                let fg = p.fg_map.get(i).map_or(fg, |&f| palette.rgba(f));
                 let under: [u8; 4] = if b != 0 {
                     palette.rgba(b)
                 } else {

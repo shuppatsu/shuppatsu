@@ -8,6 +8,7 @@ pub mod effects;
 pub mod gpu;
 pub mod ground;
 pub mod label;
+pub mod lettering;
 pub mod mip;
 pub mod overlay;
 pub mod rgba;

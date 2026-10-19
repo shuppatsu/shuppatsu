@@ -18,6 +18,12 @@
 #   style: "auto" (default) | "plain" | "boxed"; align: "center" (default) | "left" | "right"
 #   font: "body" (default) | "display" (headers, menu titles, headlines; the display font,
 #         SHUPPATSU_DISPLAY_FONT, or the body font when none is set)
+#   Shadows, outlines and gradients of the original lettering are found in the art and repeated
+#   (docs/localisation.md, "Shadows, outlines and gradients"); where that is wrong:
+#   shadow: true (default, as found) | false | [dx, dy] | [dx, dy, "extrude"] (original pixels)
+#   shadow_ink = [x, y, w, h]         look for the shadow/outline here instead of the region
+#   outline = false                   no outline, found or plain
+#   gradient = false                  one text colour even if the strokes are a gradient
 # Colours always come from the slot's palette (the art's own colours), so palette swaps work.
 #
 # Comments give each sprite's role, a short Japanese label for identification, and the size in

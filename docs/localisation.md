@@ -51,7 +51,10 @@ Values are a string, or a table with `text` and options:
 | `style` | `auto` (default), `plain` (lettering on transparency: the old art is removed), `boxed` (a plate or box: the backdrop is kept, the old lettering painted over). `auto` picks `boxed` when more than 35 % of the region's edge is opaque. |
 | `vertical` | Rotate 90° clockwise (reads top to bottom). |
 | `layout` | `ink` (default): the text is laid out in the original lettering's ink box with its own ink centred. `cell`: in the whole region, with the baseline set by the font (a capital's top to a descender's bottom centred; a full-height kanji for Japanese text), so the items of a column share a left edge and a baseline whatever the art's margins and whatever letters they have (the options labels and values: "m" under "Normal"). The size still follows the lettering. |
-| `outline` | Plain style: 1-px outline in the art's second colour (default on). |
+| `outline` | Plain style: 1-px outline in the art's second colour (default on). An outline found in the original lettering ("Shadows, outlines and gradients" below) is drawn instead, in either style; `false` turns both off. |
+| `shadow` | The drop shadow under the text: `true` (default: as found in the original lettering), `false` (none), `[dx, dy]` (a copy that many original pixels away, in the shadow colour found in the art, else its second lettering colour) or `[dx, dy, "extrude"]` (the strokes swept there, a solid extrusion like 時間切れ's). |
+| `shadow_ink = [x, y, w, h]` | Look for the lettering's shadow and outline in this rectangle of the sprite instead of the part's region. |
+| `gradient` | `false`: one text colour even where the original strokes are a vertical gradient (default `true`). |
 | `group_outline` | Plain style, with a `shared_group`: the outline takes the commonest outline colour of the group's parts on the same tilemap instead of the art's own (the options values: オン and オフ cast a darker shadow, index 125, than the other values, index 1). |
 | `backdrop` | Boxed style: `art` (default, the backdrop as drawn) or `solid` (the backdrop's opaque colour fills the transparent half of a dither too, so the text never sits on the dither; the signal captions). |
 | `group` | Parts of one entry with the same group name are drawn at one size, the smallest any of them fits at (the words of one callout cell). |
@@ -114,6 +117,42 @@ colours). The data test `english_regions_fit_their_art` keeps the English catalo
 findings outside `ALLOW` (`crates/shuppatsu/src/label_audit.rs`), each allowance with its
 reason, and fails when an allowance is no longer needed. Measured bounds go in the catalogue's
 comments, as for the distance plates.
+
+### Shadows, outlines and gradients
+
+Much of the original lettering is not flat, and the English repeats what it finds
+(`crates/shuppatsu-render/src/lettering.rs`), in the art's palette indices (so palette swaps
+still recolour it) and at its offsets and widths in original pixels (scaled to the canvas):
+
+* **Drop shadow.** One lettering colour is a copy of the strokes shifted by `(dx, dy)`: at
+  least 80 % of its pixels lie `(dx, dy)` from the strokes, at least 80 % of what such a copy
+  would add is that colour, at most half as many lie `(−dx, −dy)` from them (an outline lies on
+  both sides), and it spans at least 60 % of the strokes' extent with at least a quarter of
+  their pixels (a split-flap gap or a rule is not a shadow). The strokes must be at least 20 %
+  of the lettering. Where no single offset explains it, the strokes *swept* to the offset (every
+  offset in the box from (0, 0)) may: 時間切れ's black is such an extrusion up and left, (−2, −2).
+  The English's box gives up the shadow's offset on its side, as the original's ink box
+  includes the shadow.
+* **Outline.** The fill never touches non-lettering (90 % of its pixels have four lettering
+  neighbours), the rim colour fills at least 80 % of the ring of pixels round the fill (grey
+  antialiasing does not), and 85 % of the rim lies within `width` (1–3) pixels of the fill. A
+  found outline is drawn in boxes too (the station-name and departure banners, 急制動, ATS作動,
+  非常ブレーキ使え), and at its width; plain parts with a one-pixel outline keep the plain
+  outline above.
+* **Gradient.** Lettering on transparency whose strokes run through bands of colour from top to
+  bottom (準備, 開始, 運転評価, 仕業検査, 連結失敗, 危険回避合格, the line-group headers): per
+  row, the commonest interior colour in even and in odd columns (dithered bands keep their
+  dither), rows in the outline's colour skipped; at least three colours. The rows are stretched
+  over the English's own ink rows. Only for one-line text without a shadow or outline found.
+
+`parts.tsv` of `shuppatsu label-audit` lists what was found per part (`effects` column; the
+gradient's row colours).
+
+Measured over `en.toml` (867 parts): 52 shadows of (3, 3) (the options' labels in both
+colourings, the press-START line), one swept (−2, −2) (時間切れ), 1-px shadows on the line
+plates (1, 0), the coupling balloon (1, 1), 乗務記録 (1, 1) and the 難易度 header's highlight
+(0, −1); 110 outlines in boxes (now drawn), 128 plain outlines (drawn as before); 19 gradients.
+The thresholds are the constants in `lettering.rs`.
 
 ## Configuration
 
@@ -282,6 +321,8 @@ Play, the front end, `view --hud` and the headless `--shot` paths all use the sa
 * `crates/shuppatsu-render/src/sprites.rs`: `SpriteBank::set_text` installs an overlay. While
   composing, a slot whose `(tbl, resolved sub-rect)` has an override skips the art pixels inside
   the replaced regions and draws the text instead. With no overlay, composing is unchanged.
+* `crates/shuppatsu-render/src/lettering.rs`: the shadow, outline and gradient of the original
+  lettering, found and painted under the English ("Shadows, outlines and gradients" above).
 * `crates/shuppatsu-render/src/text_audit.rs` and `crates/shuppatsu/src/label_audit.rs`: the region
   checker and `shuppatsu label-audit` ("Checking the regions" above).
 * `crates/shuppatsu/src/locale.rs`: catalogue parsing, sheet descriptors from the exe,

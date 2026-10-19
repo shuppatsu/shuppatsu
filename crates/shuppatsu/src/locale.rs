@@ -20,6 +20,7 @@
 use anyhow::{Context, Result, bail, ensure};
 use shuppatsu_formats::exe::Exe;
 use shuppatsu_render::label::LabelFont;
+use shuppatsu_render::lettering::ShadowMode;
 use shuppatsu_render::sprites::SpriteBank;
 use shuppatsu_render::text::{
     Align, Backdrop, FontGlyphs, FontRole, Fonts, Style, SubRect, TextOverlay, TextOverride,
@@ -532,6 +533,30 @@ fn part_with_text(s: &str) -> TextPart {
     }
 }
 
+/// A drop shadow: `true` (as found in the art, the default), `false` (none), `[dx, dy]` (a copy
+/// that many original pixels away) or `[dx, dy, "extrude"]` (the strokes swept there).
+fn parse_shadow(v: &toml::Value) -> Result<ShadowMode> {
+    const MSG: &str = "shadow must be true, false, [dx, dy] or [dx, dy, \"extrude\"]";
+    if let Some(b) = v.as_bool() {
+        return Ok(if b { ShadowMode::Auto } else { ShadowMode::Off });
+    }
+    let a = v.as_array().context(MSG)?;
+    ensure!(a.len() == 2 || a.len() == 3, MSG);
+    let n = |i: usize| -> Result<i8> {
+        let d = a[i].as_integer().context(MSG)?;
+        ensure!((-8..=8).contains(&d), "shadow offsets must be -8 to 8");
+        Ok(d as i8)
+    };
+    let (dx, dy) = (n(0)?, n(1)?);
+    ensure!((dx, dy) != (0, 0), "shadow offset (0, 0)");
+    let extrude = match a.get(2) {
+        None => false,
+        Some(s) if s.as_str() == Some("extrude") => true,
+        Some(_) => bail!(MSG),
+    };
+    Ok(ShadowMode::At { dx, dy, extrude })
+}
+
 /// A font role: `"body"` or `"display"`.
 fn parse_role(v: &toml::Value) -> Result<FontRole> {
     v.as_str()
@@ -585,6 +610,9 @@ fn apply_option(p: &mut TextPart, k: &str, v: &toml::Value) -> Result<()> {
             }
         }
         "outline" => p.outline = v.as_bool().context("outline must be a boolean")?,
+        "shadow" => p.shadow = parse_shadow(v)?,
+        "shadow_ink" => p.shadow_ink = Some(pixel_rect(v, "shadow_ink")?),
+        "gradient" => p.flat = !v.as_bool().context("gradient must be a boolean")?,
         "group_outline" => {
             p.group_outline = v.as_bool().context("group_outline must be a boolean")?;
         }

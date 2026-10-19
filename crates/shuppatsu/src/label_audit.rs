@@ -334,6 +334,11 @@ pub struct Audited {
     /// from).
     pub ink: Option<[usize; 4]>,
     pub findings: Vec<Finding>,
+    /// The shadow or outline found in the original lettering (what the English repeats).
+    pub effects: Option<shuppatsu_render::lettering::Effects>,
+    /// The colours (even, odd columns) of a gradient in the original strokes, top to bottom
+    /// (empty: none).
+    pub gradient: Vec<[u8; 2]>,
 }
 
 impl Audited {
@@ -393,6 +398,14 @@ pub fn audit(cat: &Catalogue, sheets: &SheetTables, bank: &SpriteBank) -> Result
             let Some(a) = audit_part(p, &others, &art, w, h) else {
                 continue;
             };
+            let effects = shuppatsu_render::lettering::for_part(p, &a.scan, &art, w, h);
+            let gradient =
+                shuppatsu_render::lettering::gradient_for(p, &a.scan, &art, w, h, effects)
+                    .map(|mut g| {
+                        g.dedup();
+                        g
+                    })
+                    .unwrap_or_default();
             out.push(Audited {
                 key: key_name(&e.key),
                 tbl,
@@ -405,6 +418,8 @@ pub fn audit(cat: &Catalogue, sheets: &SheetTables, bank: &SpriteBank) -> Result
                 pattern: a.scan.pattern,
                 ink: a.scan.ink,
                 findings: a.findings,
+                effects,
+                gradient,
             });
         }
     }
@@ -599,10 +614,19 @@ pub fn run(args: &[String]) -> Result<()> {
     }
     std::fs::write(out.join("report.md"), md)?;
     // Every part with the ink box the English is sized from, for comparing catalogues.
-    let mut tsv = String::from("key\tpart\tregion\tink\n");
+    let mut tsv = String::from("key\tpart\tregion\tink\tstyle\teffects\n");
     for i in &items {
         let ink = i.ink.map_or("-".into(), |b| format!("{b:?}"));
-        writeln!(tsv, "{}\t{}\t{:?}\t{ink}", i.key, i.part, i.region)?;
+        let mut fx = i.effects.map_or("-".into(), |e| effects_text(&e));
+        if !i.gradient.is_empty() {
+            write!(fx, ", gradient {:?}", i.gradient)?;
+        }
+        let style = if i.boxed { "boxed" } else { "plain" };
+        writeln!(
+            tsv,
+            "{}\t{}\t{:?}\t{ink}\t{style}\t{fx}",
+            i.key, i.part, i.region
+        )?;
     }
     std::fs::write(out.join("parts.tsv"), tsv)?;
 
@@ -636,6 +660,22 @@ pub fn run(args: &[String]) -> Result<()> {
         out.join("report.md").display()
     );
     Ok(())
+}
+
+/// `fill 10, shadow (-2,-1) in 1, outline 1 px in 3`, or `fill 10, flat`.
+pub fn effects_text(e: &shuppatsu_render::lettering::Effects) -> String {
+    let mut s = format!("fill {}", e.fill);
+    if let Some(o) = e.outline {
+        write!(s, ", outline {} px in {}", o.width, o.colour).expect("string");
+    }
+    if let Some(d) = e.shadow {
+        let how = if d.extrude { "swept " } else { "" };
+        write!(s, ", shadow {how}({},{}) in {}", d.dx, d.dy, d.colour).expect("string");
+    }
+    if !e.any() {
+        s.push_str(", flat");
+    }
+    s
 }
 
 fn file_stem(key: &str) -> String {
@@ -728,7 +768,7 @@ fn crop(
                     } else {
                         bg(x, y)
                     };
-                    let fg = pal.rgba(p.fg);
+                    let fg = pal.rgba(p.fg_map.get(k).copied().unwrap_or(p.fg));
                     let t = u16::from(p.coverage[k]);
                     let mix =
                         |a: u8, b: u8| ((u16::from(a) * (255 - t) + u16::from(b) * t) / 255) as u8;
