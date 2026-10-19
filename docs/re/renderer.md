@@ -569,7 +569,8 @@ are unchanged (the three drive replays stay at 0 mismatches).
   (unit tests `wiper_and_snow_interpolate_between_ticks`, `needle_interpolates_between_the_ticks`);
   headless shots, pauses and position jumps use alpha 1. The needle stays a rect-layer fan in
   whole 640×480 pixels (hud.md §3.5): the HUD draws it once per tick, and the window moves that
-  fan and composes the canvas again only on frames where a needle pixel changes.
+  fan and composes the canvas again only on frames where a needle pixel changes (only the
+  needle's rectangle is redrawn and uploaded: docs/performance.md §2).
 - **`far_traffic`** (off: `--original-traffic`). AI trains are drawn up to the far plane (32
   units, 320 m, §10), as far as the scenery reaches, instead of 150 m; beyond 150 m they use
   the farthest distance band, LOD 4 (traffic.md §4). The lateral bands and the 25 m behind are
