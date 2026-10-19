@@ -1250,7 +1250,11 @@ impl App {
 
     fn redraw(&mut self) -> Result<()> {
         if let Screen::Play(p) = &mut self.screen {
+            // The run's ticks are app ticks too, as in the headless loop ([`App::step_play`]):
+            // the global tick of later runs counts them (0x84c494 counts every tick since boot).
+            let before = p.ticks();
             p.redraw()?;
+            self.ticks += p.ticks() - before;
             return self.after_play();
         }
         let now = Instant::now();

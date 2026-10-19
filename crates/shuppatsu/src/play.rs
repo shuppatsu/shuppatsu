@@ -475,6 +475,11 @@ impl Play {
         self.drive.set_global_tick(tick);
     }
 
+    /// Play ticks so far (every tick of the run, paused, demo and ending ones included).
+    pub fn ticks(&self) -> u64 {
+        self.ticks
+    }
+
     /// One tick, for headless drivers.
     pub fn step(&mut self) -> Result<()> {
         self.tick()
