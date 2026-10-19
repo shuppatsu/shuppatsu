@@ -641,6 +641,21 @@ more after the wait ends (`0x829d18`), else slot 0x81 is cleared.
 | Navigator reactions | 0x410cb0(n), n from `0x45addc/0x45ade0` per stage | 0x61 at (80, 145), animation tables 0x465e04.. `{tbl, ticks}` | EB, notch slam, overrun, obstacle (§3.17) | confirmed |
 | 自動運転 | replay playback (`0x816974`) | 0x86 at (403, 40), sub-rect col 6, 6×2 tiles of 0x50b | while replaying | confirmed |
 
+**The 時間切れ sign is see-through where the art is index 0 (confirmed: code, tile data and a Wine
+capture).** 0x252 is a 14×4-tile red train silhouette (palette 4: 15 red body, 10 yellow
+lettering, 1 black lettering shadow, the shadow an extrusion of the strokes up and left by
+about 2 px). Its window frames, doors, panel lines and bogie details are **palette index 0**
+in the tiles, not a dark colour. `TimeUp` draws only this one sprite in slot 0x39 (layer 3,
+palette 4, `0x4316e0`/`0x431850`, no flags beyond the keep word): no backing box or second
+sprite (slot 0x3a stays empty until the advice sprite at update 0x37). The blitter 0x430fb0
+has no per-slot option for opacity: it skips cell id 0 and, for every pixel, index 0 (the
+palette conversion's entry 0 is 0 and the RLE/LZ paths test `!= 0` before writing), while any
+other index whose colour is black is bumped to 0x0001 so it stays opaque. So the scene shows
+through the silhouette's lines. A capture of the original (stage 5, no inputs, difficulty 1:
+time runs out after 30 s; `out/captures/timeup5.mkv`, crop
+`out/explain/text_shadow/original_timeup_crop_x4.png`) shows the sky and catenary through the
+windows and lines; the port draws the same.
+
 **Coupling minigame readout panel (0x4093c0; confirmed, code and a Wine capture).** Slots 0x3f–0x4b, palette 4,
 layer 3, at 640×480: readout bar 0x17c (480×32, 東北 + km post, both speed digits on it) at
 (80, 292); 0x17d (256×32: あと, the distance box, m) at (112, 324) with digits 0x41–0x43 and
