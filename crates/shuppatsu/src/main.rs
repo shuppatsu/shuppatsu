@@ -453,8 +453,7 @@ struct HudView {
     layer: shuppatsu_render::sprites::SpriteLayer,
     hud: hud::Hud,
     state: hud::HudState,
-    canvas: Vec<u8>,
-    dirty: bool,
+    canvas: shuppatsu_render::sprites::Composer,
 }
 
 impl HudView {
@@ -475,7 +474,7 @@ impl HudView {
             scale: locale.ui_scale,
             ..SpriteLayer::default()
         };
-        let canvas = layer.new_canvas();
+        let canvas = shuppatsu_render::sprites::Composer::blank(layer.canvas_size());
         hud::Hud::install_palettes(&exe, &mut layer)?;
         let hud = hud::Hud::new(&exe, 0)?;
         hud.create(&mut layer);
@@ -504,7 +503,6 @@ impl HudView {
             hud,
             state,
             canvas,
-            dirty: true,
         })
     }
 
@@ -520,9 +518,7 @@ impl HudView {
             wide,
         )?;
         if resized {
-            self.canvas = self.layer.new_canvas();
-            self.layer.compose(&self.bank, &mut self.canvas);
-            self.dirty = true;
+            self.canvas.compose(&self.layer, &self.bank, None);
         }
         Ok(())
     }
@@ -551,8 +547,7 @@ impl HudView {
         }
         self.layer.reset_transient();
         self.hud.update(s, &mut self.layer);
-        self.layer.compose(&self.bank, &mut self.canvas);
-        self.dirty = true;
+        self.canvas.compose(&self.layer, &self.bank, None);
     }
 }
 
@@ -650,10 +645,8 @@ impl App {
             &camera,
         );
         if let Some(h) = self.hud.as_mut() {
-            let resized = gpu.overlay.resize(&gpu.device, h.layer.canvas_size());
-            if std::mem::take(&mut h.dirty) || resized {
-                gpu.overlay.upload(&gpu.queue, &h.canvas);
-            }
+            gpu.overlay.resize(&gpu.device, h.layer.canvas_size());
+            gpu.overlay.sync(&gpu.queue, &mut h.canvas);
             gpu.overlay.scaling = h.locale.ui_scaling;
             let rect = gpu.overlay.rect(gpu.config.width, gpu.config.height);
             gpu.overlay.render(&gpu.device, &gpu.queue, &view, rect);
@@ -857,7 +850,7 @@ fn run_main() -> Result<()> {
                 }
             },
             hud.as_ref()
-                .map(|h| (h.canvas.as_slice(), h.layer.canvas_size())),
+                .map(|h| (h.canvas.rgba(), h.layer.canvas_size())),
             &out,
         )?;
         eprintln!("wrote {}", out.display());

@@ -109,7 +109,7 @@ pub fn add_port_rows(bank: &mut SpriteBank, t: &mut FrontTables) -> bool {
                         && place(&s[i]) == place(&t.option_normal[i])
                 })
                 && bank
-                    .tilemaps
+                    .tilemaps()
                     .get(usize::from(tbl))
                     .is_some_and(|m| (m.width, m.height) == (sw, sh))
         });
@@ -119,7 +119,7 @@ pub fn add_port_rows(bank: &mut SpriteBank, t: &mut FrontTables) -> bool {
     let (cw, ch) = (12usize, 2usize);
     let w = usize::from(sw);
     for &tbl in &tbls {
-        let map = bank.tilemaps[usize::from(tbl)].clone();
+        let map = bank.tilemaps()[usize::from(tbl)].clone();
         let mut tiles = map.tiles.clone();
         for &i in &sources {
             let d = t.option_normal[i];
@@ -135,11 +135,14 @@ pub fn add_port_rows(bank: &mut SpriteBank, t: &mut FrontTables) -> bool {
                 }
             }
         }
-        bank.tilemaps[usize::from(tbl)] = Tilemap {
-            height: sh + (sources.len() * ch) as u8,
-            tiles,
-            ..map
-        };
+        bank.set_tilemap(
+            usize::from(tbl),
+            Tilemap {
+                height: sh + (sources.len() * ch) as u8,
+                tiles,
+                ..map
+            },
+        );
     }
     for sheet in [&mut t.option_selected, &mut t.option_normal] {
         let tbl = sheet[0].tbl;

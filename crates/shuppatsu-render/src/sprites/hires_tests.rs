@@ -22,6 +22,7 @@ fn bank(map: Tilemap) -> SpriteBank {
     SpriteBank {
         tiles: tiles(),
         tilemaps: vec![map],
+        generation: 0,
         text: None,
         labels: None,
         display_labels: None,

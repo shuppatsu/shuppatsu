@@ -1323,7 +1323,7 @@ mod tests {
         let mut front = crate::front::tables::FrontTables::read(&exe).unwrap();
         assert!(crate::front::title::add_movie_label_five(&mut bank, &front));
         assert!(crate::front::options::add_port_rows(&mut bank, &mut front));
-        let maps = &bank.tilemaps;
+        let maps = &bank.tilemaps();
         let locales = [en(), Catalogue::load("ja", None).unwrap()]
             .map(|cat| Locale::from_catalogue(&cat, &sheets).unwrap());
         for (tbl, rect, o) in locales.iter().flat_map(Locale::overrides) {

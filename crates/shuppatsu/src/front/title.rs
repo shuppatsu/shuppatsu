@@ -89,7 +89,7 @@ pub fn add_movie_label_five(bank: &mut SpriteBank, t: &FrontTables) -> bool {
     let Ok(tbl) = u16::try_from(movie.tbl) else {
         return false;
     };
-    let Some(map) = bank.tilemaps.get(usize::from(tbl)).cloned() else {
+    let Some(map) = bank.tilemaps().get(usize::from(tbl)).cloned() else {
         return false;
     };
     let (Ok(row), Ok(h), Ok(five_row)) = (
@@ -135,11 +135,14 @@ pub fn add_movie_label_five(bank: &mut SpriteBank, t: &FrontTables) -> bool {
             tiles.push(id);
         }
     }
-    bank.tilemaps[usize::from(tbl)] = Tilemap {
-        height: map.height + h,
-        tiles,
-        ..map
-    };
+    bank.set_tilemap(
+        usize::from(tbl),
+        Tilemap {
+            height: map.height + h,
+            tiles,
+            ..map
+        },
+    );
     true
 }
 

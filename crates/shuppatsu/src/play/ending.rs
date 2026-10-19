@@ -438,8 +438,7 @@ impl Play {
         if let Some(c) = &e.credits {
             c.draw(&mut self.layer);
         }
-        self.layer.compose(&self.bank, &mut self.canvas);
-        self.canvas_dirty = true;
+        self.canvas.compose(&self.layer, &self.bank, None);
         let done = e.done;
         self.ending = Some(e);
         self.ending_tables = Some(tables);

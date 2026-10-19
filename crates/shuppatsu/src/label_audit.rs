@@ -378,7 +378,7 @@ pub fn audit(cat: &Catalogue, sheets: &SheetTables, bank: &SpriteBank) -> Result
     let mut out = Vec::new();
     for e in &cat.entries {
         let (tbl, rect) = e.key.resolve(sheets)?;
-        let Some(map) = bank.tilemaps.get(usize::from(tbl)) else {
+        let Some(map) = bank.tilemaps().get(usize::from(tbl)) else {
             continue;
         };
         let Some(r) = rect.resolve(map.width, map.height) else {
@@ -831,7 +831,7 @@ fn crop(
 /// per palette index in order of first use), with x / y rulers and the legend.
 fn dump_map(bank: &SpriteBank, tbl: u16) -> Result<String> {
     let map = bank
-        .tilemaps
+        .tilemaps()
         .get(usize::from(tbl))
         .with_context(|| format!("no tilemap {tbl:#x}"))?;
     let (w, h) = (

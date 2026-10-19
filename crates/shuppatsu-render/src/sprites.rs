@@ -8,6 +8,7 @@ use crate::text::{Align, FontRole, SubRect, TextOverlay, draw_parts};
 use hires::{Hires, View};
 pub use paper::Paper;
 use paper::{PaperCache, PaperFill};
+pub use retained::{Composer, Pending};
 use shuppatsu_formats::cg::{CgFile, Palette, TILE_PIXELS, TILE_SIZE, Tilemap};
 use std::sync::{Arc, Mutex};
 
@@ -16,6 +17,7 @@ pub mod hires;
 mod hires_tests;
 pub mod legend;
 mod paper;
+mod retained;
 pub mod xbrz;
 
 /// The HUD design size: native pixels of resolution mode 1 (hud.md §1.1).
@@ -233,7 +235,9 @@ impl TextStyle {
 /// Decoded tiles and tilemaps (`cg.rom`, `tbl.rom`).
 pub struct SpriteBank {
     tiles: Vec<Option<Box<[u8; TILE_PIXELS]>>>,
-    pub tilemaps: Vec<Tilemap>,
+    tilemaps: Vec<Tilemap>,
+    /// Counts the changes to what the bank draws ([`SpriteBank::generation`]).
+    generation: u64,
     /// Opt-in translated text drawn instead of the art of some sprites (`text.rs`); `None`
     /// draws the original art everywhere.
     text: Option<TextOverlay>,
@@ -317,6 +321,7 @@ impl SpriteBank {
         Self {
             tiles,
             tilemaps,
+            generation: 0,
             text: None,
             labels: None,
             display_labels: None,
@@ -330,7 +335,27 @@ impl SpriteBank {
 
     /// Enhancement `hud_upscale`: draws the art from xBRZ-upscaled palette indices at canvas
     /// multiples 2–4 ([`hires`]); off (the default) draws each art pixel as a block.
+    /// Changes with everything that changes what the bank draws (art, text, fonts, the
+    /// upscaling and backdrop settings), so a [`Composer`] knows its canvas is stale.
+    pub fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    /// The tilemaps (`tbl.rom`, and the port's own).
+    pub fn tilemaps(&self) -> &[Tilemap] {
+        &self.tilemaps
+    }
+
+    /// Replaces tilemap `tbl` (no effect past the end).
+    pub fn set_tilemap(&mut self, tbl: usize, map: Tilemap) {
+        self.generation += 1;
+        if let Some(m) = self.tilemaps.get_mut(tbl) {
+            *m = map;
+        }
+    }
+
     pub fn set_upscale(&mut self, on: bool) {
+        self.generation += 1;
         self.upscale = on;
     }
 
@@ -346,6 +371,7 @@ impl SpriteBank {
     /// Forgets the upscaled images, so they are built again from the current tiles and
     /// tilemaps on their next use (a replaced tilemap is noticed without this).
     pub fn clear_upscaled(&mut self) {
+        self.generation += 1;
         self.hires
             .get_mut()
             .unwrap_or_else(|e| e.into_inner())
@@ -391,6 +417,7 @@ impl SpriteBank {
     /// whole map across the 4:3 design. Returns whether the map has a pattern to repeat; one
     /// without keeps the original's centred picture.
     pub fn set_wide_fill(&mut self, tbl: u16) -> bool {
+        self.generation += 1;
         let Some(r) = self.tilemaps.get(usize::from(tbl)).and_then(Repeat::of) else {
             return false;
         };
@@ -403,6 +430,7 @@ impl SpriteBank {
     /// picture with plain texture at its edges but no tile pattern. Returns whether the map
     /// exists.
     pub fn set_wide_paper(&mut self, tbl: u16, paper: Paper) -> bool {
+        self.generation += 1;
         if self.tilemaps.get(usize::from(tbl)).is_none() {
             return false;
         }
@@ -469,6 +497,7 @@ impl SpriteBank {
     /// label with another row number); returns its id, `None` once the ids run out. Add tiles
     /// before drawing: upscaled images already built are not rebuilt.
     pub fn add_tile(&mut self, px: [u8; TILE_PIXELS]) -> Option<u16> {
+        self.generation += 1;
         let id = u16::try_from(self.tiles.len()).ok()?;
         self.tiles.push(Some(Box::new(px)));
         Some(id)
@@ -477,6 +506,7 @@ impl SpriteBank {
     /// Installs (or with `None` removes) the text overrides. Build them with
     /// [`TextOverlay::build`] from this bank.
     pub fn set_text(&mut self, overlay: Option<TextOverlay>) {
+        self.generation += 1;
         self.text = overlay;
     }
 
@@ -486,12 +516,14 @@ impl SpriteBank {
 
     /// Installs (or with `None` removes) the font of [`WidgetKind::Text`] labels.
     pub fn set_label_font(&mut self, font: Option<LabelFont>) {
+        self.generation += 1;
         self.labels = font;
     }
 
     /// Installs (or with `None` removes) the font of display-role labels; without one they
     /// use the body label font.
     pub fn set_display_label_font(&mut self, font: Option<LabelFont>) {
+        self.generation += 1;
         self.display_labels = font;
     }
 
@@ -503,6 +535,7 @@ impl SpriteBank {
     /// Installs (or with `None` removes) the font of [`WidgetKind::Legend`]; without one
     /// legends use the body label font.
     pub fn set_legend_font(&mut self, font: Option<LabelFont>) {
+        self.generation += 1;
         self.legend_font = font;
     }
 
@@ -738,65 +771,126 @@ impl SpriteLayer {
 
     /// Draws the layer into `canvas` ([`SpriteLayer::canvas_size`] RGBA8, cleared to
     /// transparent): sprites in four passes (layer 3 → 0, slot high → low), then the rect layer.
+    /// [`Composer`] gives the same pixels while redrawing only what changed.
     pub fn compose(&self, bank: &SpriteBank, canvas: &mut [u8]) {
+        let _perf = crate::perf::scope(crate::perf::Section::Compose);
+        crate::perf::count(crate::perf::Counter::Composes, 1);
         let (cw, ch) = self.canvas_size();
         assert_eq!(canvas.len(), cw * ch * 4);
         canvas.fill(0);
-        let c = Canvas {
-            w: cw,
-            h: ch,
+        let c = self.full_canvas();
+        let slots = self.prepare(bank, c);
+        self.draw(bank, &slots, c, canvas);
+    }
+
+    /// Puts `rgb` under the composed `canvas` in the centred 640×480 design rectangle, in
+    /// the canvas pixels `[x0, y0, x1, y1]`: the original's clear colour behind its 2D layer
+    /// (screens with no 3D view). The rest of a wide canvas stays transparent.
+    pub fn put_backdrop(&self, canvas: &mut [u8], rgb: [u8; 3], clip: [usize; 4]) {
+        let (cw, ch) = self.canvas_size();
+        let s = self.scale.max(1);
+        let x0 = (self.wide / 2).min(cw).max(clip[0]);
+        let x1 = (self.wide / 2 + CANVAS_W * s).min(cw).min(clip[2]);
+        if x0 >= x1 {
+            return;
+        }
+        for y in clip[1]..(CANVAS_H * s).min(ch).min(clip[3]) {
+            let row = &mut canvas[4 * (y * cw + x0)..4 * (y * cw + x1)];
+            for px in row.as_chunks_mut::<4>().0 {
+                let under = 255 - u16::from(px[3]);
+                for (c, &b) in px[..3].iter_mut().zip(&rgb) {
+                    *c += (u16::from(b) * under / 255) as u8;
+                }
+                px[3] = 255;
+            }
+        }
+    }
+
+    /// The whole canvas of this layer as a drawing target.
+    fn full_canvas(&self) -> Canvas {
+        let (w, h) = self.canvas_size();
+        Canvas {
+            w,
+            h,
             s: self.scale.max(1),
-        };
+            clip: [0, 0, w, h],
+        }
+    }
+
+    /// The draw order of the slots: layer 3 → 0, slot high → low within a layer; the widgets of
+    /// a layer follow its slots.
+    fn slot_order(&self) -> impl Iterator<Item = usize> + '_ {
+        (0..LAYERS).rev().flat_map(move |layer| {
+            (0..SLOT_COUNT)
+                .rev()
+                .filter(move |&i| self.slots[i].layer == layer)
+        })
+    }
+
+    /// Every slot's [`SlotDraw`], by slot index. The bank's caches (paper fills, upscaled art)
+    /// are consulted here once per slot and compose, in draw order: their state depends on the
+    /// calls, so a compose that redraws only part of the canvas still asks for every slot.
+    fn prepare<'a>(&'a self, bank: &'a SpriteBank, c: Canvas) -> Vec<Option<SlotDraw<'a>>> {
+        let mut out: Vec<Option<SlotDraw<'a>>> = (0..SLOT_COUNT).map(|_| None).collect();
+        for i in self.slot_order() {
+            let shift = self.anchor_shift(self.anchors[i]);
+            out[i] = self.prepare_slot(bank, &self.slots[i], shift, c);
+        }
+        out
+    }
+
+    /// Draws everything that reaches `c.clip` (the slots as `slots` prepared them), in the
+    /// original's order.
+    fn draw(
+        &self,
+        bank: &SpriteBank,
+        slots: &[Option<SlotDraw<'_>>],
+        c: Canvas,
+        canvas: &mut [u8],
+    ) {
+        let full = c.clip == [0, 0, c.w, c.h];
+        let reaches = |b: Option<[usize; 4]>| full || b.is_some_and(|b| overlaps(b, c.clip));
         let (sx, sy) = (i32::from(self.shake.0), i32::from(self.shake.1));
         for layer in (0..LAYERS).rev() {
-            for (i, slot) in self.slots.iter().enumerate().rev() {
-                if slot.layer == layer {
-                    let shift = self.anchor_shift(self.anchors[i]);
-                    if self.wide > 0 && self.framed.contains(&i) {
-                        self.blit_framed(bank, slot, (sx, sy), shift, c, canvas);
-                    } else {
-                        self.blit(bank, slot, sx, sy, shift, c, canvas);
-                    }
+            for i in (0..SLOT_COUNT).rev() {
+                if self.slots[i].layer != layer {
+                    continue;
+                }
+                let Some(d) = &slots[i] else { continue };
+                if !reaches(d.bbox(c)) {
+                    continue;
+                }
+                if self.wide > 0 && self.framed.contains(&i) {
+                    Self::draw_framed(d, c, canvas);
+                } else {
+                    d.draw(c, canvas);
                 }
             }
             for w in self.widgets.iter().filter(|w| w.layer == layer) {
                 let shift = self.anchor_shift(w.anchor);
-                self.draw_widget(bank, w, sx, sy, shift, c, canvas);
+                if reaches(widget_bbox(w, sx, sy, shift, c)) {
+                    self.draw_widget(bank, w, sx, sy, shift, c, canvas);
+                }
             }
         }
         for fan in &self.fans {
-            fill_fan(fan, sx, sy, self.anchor_shift(fan.anchor), c, canvas);
+            let shift = self.anchor_shift(fan.anchor);
+            if reaches(fan_bbox(fan, sx, sy, shift, c)) {
+                fill_fan(fan, sx, sy, shift, c, canvas);
+            }
         }
     }
 
-    /// [`Self::blit`] cut at the 4:3 design's edges ([`SpriteLayer::frame`]): the canvas
-    /// columns outside them, on the rows the slot covers, are put back as they were.
-    fn blit_framed(
-        &self,
-        bank: &SpriteBank,
-        slot: &Slot,
-        (sx, sy): (i32, i32),
-        shift: i32,
-        c: Canvas,
-        canvas: &mut [u8],
-    ) {
-        let Some(map) = usize::try_from(slot.tilemap)
-            .ok()
-            .and_then(|id| bank.tilemaps.get(id))
-        else {
-            return;
-        };
+    /// A slot cut at the 4:3 design's edges ([`SpriteLayer::frame`]): the canvas columns
+    /// outside them, on the rows the slot covers, are put back as they were.
+    fn draw_framed(d: &SlotDraw<'_>, c: Canvas, canvas: &mut [u8]) {
         let s = c.s as i32;
-        let rows = if slot.h <= 0 {
-            i32::from(map.height)
-        } else {
-            i32::from(slot.h)
-        };
-        let top = (i32::from(slot.y) + sy) * s;
-        let ys = top.clamp(0, c.h as i32)..(top + rows * TILE_SIZE as i32 * s).clamp(0, c.h as i32);
+        let top = d.sy0 * s;
+        let ys =
+            top.clamp(0, c.h as i32)..(top + d.rows * TILE_SIZE as i32 * s).clamp(0, c.h as i32);
         let (x0, x1) = (
-            shift.clamp(0, c.w as i32) as usize,
-            (shift + (CANVAS_W * c.s) as i32).clamp(0, c.w as i32) as usize,
+            d.shift.clamp(0, c.w as i32) as usize,
+            (d.shift + (CANVAS_W * c.s) as i32).clamp(0, c.w as i32) as usize,
         );
         let row = |y: i32| y as usize * c.w * 4;
         let saved: Vec<(Vec<u8>, Vec<u8>)> = ys
@@ -809,7 +903,7 @@ impl SpriteLayer {
                 )
             })
             .collect();
-        self.blit(bank, slot, sx, sy, shift, c, canvas);
+        d.draw(c, canvas);
         for (y, (left, right)) in ys.zip(saved) {
             let r = row(y);
             canvas[r..r + x0 * 4].copy_from_slice(&left);
@@ -817,27 +911,23 @@ impl SpriteLayer {
         }
     }
 
-    /// Draws one slot; `shift` is its anchor's offset in canvas pixels.
-    #[allow(clippy::too_many_arguments)]
-    fn blit(
-        &self,
-        bank: &SpriteBank,
+    /// What one slot draws (`shift` is its anchor's offset in canvas pixels); `None` when it
+    /// draws nothing (hidden, or no map or palette).
+    fn prepare_slot<'a>(
+        &'a self,
+        bank: &'a SpriteBank,
         slot: &Slot,
-        sx: i32,
-        sy: i32,
         shift: i32,
         c: Canvas,
-        canvas: &mut [u8],
-    ) {
-        let Ok(id) = usize::try_from(slot.tilemap) else {
-            return;
-        };
+    ) -> Option<SlotDraw<'a>> {
+        let id = usize::try_from(slot.tilemap).ok()?;
         let (Some(map), Some(Some(palette))) = (
             bank.tilemaps.get(id),
             self.palettes.get(usize::from(slot.palette)),
         ) else {
-            return;
+            return None;
         };
+        let (sx, sy) = (i32::from(self.shake.0), i32::from(self.shake.1));
         let (mw, mh) = (i32::from(map.width), i32::from(map.height));
         let (c0, r0) = (i32::from(slot.col).max(0), i32::from(slot.row).max(0));
         let w = if slot.w <= 0 { mw } else { i32::from(slot.w) };
@@ -899,90 +989,26 @@ impl SpriteLayer {
         let hires = u16::try_from(slot.tilemap)
             .ok()
             .and_then(|t| bank.hires(t, c.s, view, palette, repeat));
-        let colours: [[u8; 4]; 256] = match hires {
-            Some(_) => std::array::from_fn(|i| palette.rgba(i as u8)),
-            None => [[0; 4]; 256],
-        };
-        for ty in 0..h {
-            for &tx in &cols {
-                let (mc, mr) = match repeat {
-                    Some(r) if !(0..w).contains(&tx) => (r.source(tx), r0 + ty),
-                    _ => (c0 + tx, r0 + ty),
-                };
-                if !(0..mw).contains(&mc) || !(0..mh).contains(&mr) {
-                    continue;
-                }
-                let ox = sx0 + tx * ts;
-                let oy = sy0 + ty * ts;
-                if let Some(hi) = &hires {
-                    // Every cell, empty ones too: shaped edges reach into them.
-                    let (ic, ir) = match view {
-                        View::Whole => (mc, mr),
-                        View::Wide { first, .. } => (tx - first, ty),
-                    };
-                    // Translated text only covers the slot's own columns.
-                    let open = text.filter(|_| (0..w).contains(&tx)).map(|parts| {
-                        std::array::from_fn(|k| {
-                            let bx = (tx * ts) as usize + k % TILE_SIZE;
-                            let by = (ty * ts) as usize + k / TILE_SIZE;
-                            !parts.iter().any(|p| p.contains(bx * c.s, by * c.s))
-                        })
-                    });
-                    let cell = Cell {
-                        image: (ic, ir),
-                        at: (ox * s + shift, oy * s),
-                        open,
-                    };
-                    blit_hires(hi, &cell, &colours, c, canvas);
-                    continue;
-                }
-                let id = map.tiles[(mr * mw + mc) as usize];
-                let Some(tile) = (id != 0).then(|| bank.tile(id)).flatten() else {
-                    continue;
-                };
-                for py in 0..ts {
-                    for px in 0..ts {
-                        let index = tile[(py * ts + px) as usize];
-                        if index == 0 {
-                            continue;
-                        }
-                        // Translated text only covers the slot's own columns; the wide-fill
-                        // columns outside them have negative `tx`, so test that first.
-                        let covered = (0..w).contains(&tx)
-                            && text.is_some_and(|parts| {
-                                let lx = (tx * ts + px) as usize;
-                                let (bx, by) = (lx * c.s, (ty * ts + py) as usize * c.s);
-                                parts.iter().any(|p| p.contains(bx, by))
-                            });
-                        if covered {
-                            continue;
-                        }
-                        // One original pixel becomes an s × s block.
-                        let rgba = palette.rgba(index);
-                        for dy in 0..s {
-                            let y = (oy + py) * s + dy;
-                            if !(0..c.h as i32).contains(&y) {
-                                continue;
-                            }
-                            for dx in 0..s {
-                                let x = (ox + px) * s + dx + shift;
-                                if !(0..c.w as i32).contains(&x) {
-                                    continue;
-                                }
-                                let o = (y as usize * c.w + x as usize) * 4;
-                                canvas[o..o + 4].copy_from_slice(&rgba);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(p) = &paper {
-            draw_paper(p, (sx0, sy0), shift, c, canvas);
-        }
-        if let Some(parts) = text {
-            draw_parts(parts, palette, sx0 * s + shift, sy0 * s, canvas, c.w, c.h);
-        }
+        Some(SlotDraw {
+            bank,
+            map,
+            palette,
+            w,
+            rows: if slot.h <= 0 { mh } else { i32::from(slot.h) },
+            h,
+            c0,
+            r0,
+            sx0,
+            sy0,
+            shift,
+            cols,
+            repeat,
+            paper,
+            view,
+            hires,
+            text,
+            spans: fill.is_some(),
+        })
     }
 
     /// Enhancement `wide_menus`: the continuation of a backdrop slot on a wide canvas. Only a
@@ -1026,7 +1052,13 @@ impl SpriteLayer {
         if x0 >= x1 || y0 >= y1 {
             return;
         }
+        // The part of it this draw may change.
+        let (kx0, ky0) = (x0.max(c.clip[0]), y0.max(c.clip[1]));
+        let (kx1, ky1) = (x1.min(c.clip[2]), y1.min(c.clip[3]));
         let put = |canvas: &mut [u8], px: usize, py: usize, rgba: [u8; 4]| {
+            if !c.has(px, py) {
+                return;
+            }
             let o = (py * c.w + px) * 4;
             canvas[o..o + 4].copy_from_slice(&rgba);
         };
@@ -1036,8 +1068,8 @@ impl SpriteLayer {
                     return;
                 };
                 let rgba = pal.rgba(p.index);
-                for py in y0..y1 {
-                    for px in x0..x1 {
+                for py in ky0..ky1 {
+                    for px in kx0..kx1 {
                         put(canvas, px, py, rgba);
                     }
                 }
@@ -1089,7 +1121,7 @@ impl SpriteLayer {
                     stride: aw,
                     rect: [ax, ay, sw, sh],
                 };
-                resample_sprite(&src, &colours, z, (cx, cy), [x0, y0, x1, y1], c, canvas);
+                resample_sprite(&src, &colours, z, (cx, cy), [kx0, ky0, kx1, ky1], c, canvas);
             }
             WidgetKind::Image(img) => {
                 let (iw, ih) = (img.image.width as f32, img.image.height as f32);
@@ -1106,12 +1138,12 @@ impl SpriteLayer {
                     ((x + sx as f32) * s + shift + (rw * s - dw as f32) / 2.0).round() as i64;
                 let top = ((y + sy as f32) * s + (rh * s - dh as f32) / 2.0).round() as i64;
                 img.with_scaled(dw as u32, dh as u32, |pic| {
-                    for py in y0..y1 {
+                    for py in ky0..ky1 {
                         let iy = py as i64 - top;
                         if !(0..dh).contains(&iy) {
                             continue;
                         }
-                        for px in x0..x1 {
+                        for px in kx0..kx1 {
                             let ix = px as i64 - left;
                             if !(0..dw).contains(&ix) {
                                 continue;
@@ -1191,8 +1223,8 @@ impl SpriteLayer {
                             && (0..mh as isize).contains(&py)
                             && mask[py as usize * mw + px as usize] >= 128
                     };
-                    for py in 0..mh as isize {
-                        for px in 0..mw as isize {
+                    for py in (ky0 - y0) as isize..(ky1.max(ky0) - y0) as isize {
+                        for px in (kx0 - x0) as isize..(kx1.max(kx0) - x0) as isize {
                             if (-r..=r).any(|dy| (-r..=r).any(|dx| solid(px + dx, py + dy))) {
                                 put(canvas, x0 + px as usize, y0 + py as usize, o);
                             }
@@ -1200,8 +1232,8 @@ impl SpriteLayer {
                     }
                 }
                 let fg = pal.rgba(paint.index);
-                for py in 0..mh {
-                    for px in 0..mw {
+                for py in (ky0 - y0)..(ky1.max(ky0) - y0) {
+                    for px in (kx0 - x0)..(kx1.max(kx0) - x0) {
                         let cov = mask[py * mw + px];
                         if cov == 0 {
                             continue;
@@ -1355,8 +1387,8 @@ fn blit_hires(hi: &Hires, cell: &Cell, colours: &[[u8; 4]; 256], c: Canvas, canv
     let s = c.s as i32;
     let (ox, oy) = cell.at;
     let (ic, ir) = cell.image;
-    let xs = (-ox).max(0)..(c.w as i32 - ox).min(t);
-    let ys = (-oy).max(0)..(c.h as i32 - oy).min(t);
+    let xs = (c.clip[0] as i32 - ox).max(0)..(c.clip[2] as i32 - ox).min(t);
+    let ys = (c.clip[1] as i32 - oy).max(0)..(c.clip[3] as i32 - oy).min(t);
     if xs.is_empty() || ys.is_empty() {
         return;
     }
@@ -1394,9 +1426,10 @@ fn draw_paper(p: &PaperFill, (x0, y0): (i32, i32), shift: i32, c: Canvas, canvas
     let s = c.s as i32;
     let (a, b) = p.inner();
     // The canvas columns of the two sides: left of the picture's column `a`, from `b` on.
-    let left = 0..((x0 + a) * s + shift).clamp(0, c.w as i32);
-    let right = ((x0 + b) * s + shift).clamp(0, c.w as i32)..c.w as i32;
-    for y in 0..c.h as i32 {
+    let (cx0, cx1) = (c.clip[0] as i32, c.clip[2] as i32);
+    let left = cx0..((x0 + a) * s + shift).clamp(cx0, cx1);
+    let right = ((x0 + b) * s + shift).clamp(cx0, cx1)..cx1;
+    for y in c.clip[1] as i32..c.clip[3] as i32 {
         let py = y.div_euclid(s) - y0;
         for x in left.clone().chain(right.clone()) {
             let px = (x - shift).div_euclid(s) - x0;
@@ -1429,12 +1462,238 @@ fn fill_fan(fan: &Fan, sx: i32, sy: i32, shift: i32, c: Canvas, canvas: &mut [u8
     }
 }
 
-/// The composed canvas: size in pixels and pixels per original pixel.
+/// One slot ready to draw ([`SpriteLayer::prepare_slot`]): its art, where it goes and the
+/// bank's cached images for it.
+struct SlotDraw<'a> {
+    bank: &'a SpriteBank,
+    map: &'a Tilemap,
+    palette: &'a Palette,
+    /// Columns and rows of the source rectangle, and its first column and row.
+    w: i32,
+    h: i32,
+    c0: i32,
+    r0: i32,
+    rows: i32,
+    /// Top left in original pixels (shake included) and the anchor's shift in canvas pixels.
+    sx0: i32,
+    sy0: i32,
+    shift: i32,
+    cols: Vec<i32>,
+    repeat: Option<Repeat>,
+    paper: Option<Arc<PaperFill>>,
+    view: View,
+    hires: Option<Arc<Hires>>,
+    text: Option<&'a [crate::text::RenderedPart]>,
+    /// A backdrop continued past the design's edges (`wide_menus`): it may reach the whole
+    /// canvas.
+    spans: bool,
+}
+
+impl SlotDraw<'_> {
+    /// The canvas pixels the slot may write, `[x0, y0, x1, y1]`; `None` when none.
+    fn bbox(&self, c: Canvas) -> Option<[usize; 4]> {
+        let s = c.s as i32;
+        let ts = TILE_SIZE as i32;
+        if self.spans {
+            return clamp_box([0, 0, c.w as i32, c.h as i32], c);
+        }
+        let x0 = self.sx0 * s + self.shift;
+        let y0 = self.sy0 * s;
+        let mut b = [x0, y0, x0 + self.w * ts * s, y0 + self.h * ts * s];
+        for p in self.text.into_iter().flatten() {
+            let [rx, ry, rw, rh] = p.region.map(i32::from);
+            b = union_i([x0 + rx, y0 + ry, x0 + rx + rw, y0 + ry + rh], b);
+        }
+        clamp_box(b, c)
+    }
+
+    /// Draws the slot into the pixels of `c.clip`.
+    fn draw(&self, c: Canvas, canvas: &mut [u8]) {
+        let (map, palette) = (self.map, self.palette);
+        let (mw, mh) = (i32::from(map.width), i32::from(map.height));
+        let (w, h, c0, r0) = (self.w, self.h, self.c0, self.r0);
+        let (sx0, sy0, shift) = (self.sx0, self.sy0, self.shift);
+        let s = c.s as i32;
+        let ts = TILE_SIZE as i32;
+        let text = self.text;
+        let colours: [[u8; 4]; 256] = match self.hires {
+            Some(_) => std::array::from_fn(|i| palette.rgba(i as u8)),
+            None => [[0; 4]; 256],
+        };
+        for ty in 0..h {
+            for &tx in &self.cols {
+                let (mc, mr) = match self.repeat {
+                    Some(r) if !(0..w).contains(&tx) => (r.source(tx), r0 + ty),
+                    _ => (c0 + tx, r0 + ty),
+                };
+                if !(0..mw).contains(&mc) || !(0..mh).contains(&mr) {
+                    continue;
+                }
+                let ox = sx0 + tx * ts;
+                let oy = sy0 + ty * ts;
+                if let Some(hi) = &self.hires {
+                    // Every cell, empty ones too: shaped edges reach into them.
+                    let (ic, ir) = match self.view {
+                        View::Whole => (mc, mr),
+                        View::Wide { first, .. } => (tx - first, ty),
+                    };
+                    // Translated text only covers the slot's own columns.
+                    let open = text.filter(|_| (0..w).contains(&tx)).map(|parts| {
+                        std::array::from_fn(|k| {
+                            let bx = (tx * ts) as usize + k % TILE_SIZE;
+                            let by = (ty * ts) as usize + k / TILE_SIZE;
+                            !parts.iter().any(|p| p.contains(bx * c.s, by * c.s))
+                        })
+                    });
+                    let cell = Cell {
+                        image: (ic, ir),
+                        at: (ox * s + shift, oy * s),
+                        open,
+                    };
+                    blit_hires(hi, &cell, &colours, c, canvas);
+                    continue;
+                }
+                let id = map.tiles[(mr * mw + mc) as usize];
+                let Some(tile) = (id != 0).then(|| self.bank.tile(id)).flatten() else {
+                    continue;
+                };
+                for py in 0..ts {
+                    for px in 0..ts {
+                        let index = tile[(py * ts + px) as usize];
+                        if index == 0 {
+                            continue;
+                        }
+                        // Translated text only covers the slot's own columns; the wide-fill
+                        // columns outside them have negative `tx`, so test that first.
+                        let covered = (0..w).contains(&tx)
+                            && text.is_some_and(|parts| {
+                                let lx = (tx * ts + px) as usize;
+                                let (bx, by) = (lx * c.s, (ty * ts + py) as usize * c.s);
+                                parts.iter().any(|p| p.contains(bx, by))
+                            });
+                        if covered {
+                            continue;
+                        }
+                        // One original pixel becomes an s × s block.
+                        let rgba = palette.rgba(index);
+                        for dy in 0..s {
+                            let y = (oy + py) * s + dy;
+                            if !c.has_y(y) {
+                                continue;
+                            }
+                            for dx in 0..s {
+                                let x = (ox + px) * s + dx + shift;
+                                if !c.has_x(x) {
+                                    continue;
+                                }
+                                let o = (y as usize * c.w + x as usize) * 4;
+                                canvas[o..o + 4].copy_from_slice(&rgba);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(p) = &self.paper {
+            draw_paper(p, (sx0, sy0), shift, c, canvas);
+        }
+        if let Some(parts) = text {
+            draw_parts(
+                parts,
+                palette,
+                sx0 * s + shift,
+                sy0 * s,
+                canvas,
+                c.w,
+                c.clip,
+            );
+        }
+    }
+}
+
+/// Whether two `[x0, y0, x1, y1]` boxes share a pixel.
+fn overlaps(a: [usize; 4], b: [usize; 4]) -> bool {
+    a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3]
+}
+
+fn union_i(a: [i32; 4], b: [i32; 4]) -> [i32; 4] {
+    [
+        a[0].min(b[0]),
+        a[1].min(b[1]),
+        a[2].max(b[2]),
+        a[3].max(b[3]),
+    ]
+}
+
+/// A box in signed canvas pixels cut to the canvas; `None` when nothing is left.
+fn clamp_box(b: [i32; 4], c: Canvas) -> Option<[usize; 4]> {
+    let x0 = b[0].clamp(0, c.w as i32) as usize;
+    let x1 = b[2].clamp(0, c.w as i32) as usize;
+    let y0 = b[1].clamp(0, c.h as i32) as usize;
+    let y1 = b[3].clamp(0, c.h as i32) as usize;
+    (x0 < x1 && y0 < y1).then_some([x0, y0, x1, y1])
+}
+
+/// The canvas pixels a widget may write (its rectangle; a legend's backdrop and glyphs may
+/// reach past its sides, so the whole width of its rows).
+fn widget_bbox(w: &Widget, sx: i32, sy: i32, shift: i32, c: Canvas) -> Option<[usize; 4]> {
+    let s = c.s as f32;
+    let [x, y, rw, rh] = w.rect;
+    let to_px =
+        |v: f32, shake: i32, offset: i32| ((v + shake as f32) * s).round() as i64 as i32 + offset;
+    let (x0, x1) = (to_px(x, sx, shift), to_px(x + rw, sx, shift));
+    let (y0, y1) = (to_px(y, sy, 0), to_px(y + rh, sy, 0));
+    let b = match &w.kind {
+        WidgetKind::Legend { .. } => [0, y0, c.w as i32, y1],
+        // The triangle's edges are rounded outwards.
+        WidgetKind::DownArrow(_) => [x0 - 1, y0 - 1, x1 + 1, y1 + 1],
+        _ => [x0, y0, x1, y1],
+    };
+    clamp_box(b, c)
+}
+
+/// The canvas pixels a fan may write.
+fn fan_bbox(fan: &Fan, sx: i32, sy: i32, shift: i32, c: Canvas) -> Option<[usize; 4]> {
+    let n = usize::from(fan.count);
+    if n < 3 {
+        return None;
+    }
+    let s = c.s as i32;
+    let pts = &fan.points[..n];
+    let xs = pts.iter().map(|p| (p[0] + sx) * s + shift);
+    let ys = pts.iter().map(|p| (p[1] + sy) * s);
+    let b = [
+        xs.clone().min()? - 1,
+        ys.clone().min()? - 1,
+        xs.max()? + 1,
+        ys.max()? + 1,
+    ];
+    clamp_box(b, c)
+}
+
+/// The composed canvas: size in pixels, pixels per original pixel, and the pixels a draw may
+/// change (`[x0, y0, x1, y1]`; the whole canvas in a full compose, a dirty rectangle in a
+/// [`Composer`] update). Layout always follows the whole canvas; only writes are clipped.
 #[derive(Clone, Copy, Debug)]
 struct Canvas {
     w: usize,
     h: usize,
     s: usize,
+    clip: [usize; 4],
+}
+
+impl Canvas {
+    fn has_x(&self, x: i32) -> bool {
+        x >= 0 && (self.clip[0]..self.clip[2]).contains(&(x as usize))
+    }
+
+    fn has_y(&self, y: i32) -> bool {
+        y >= 0 && (self.clip[1]..self.clip[3]).contains(&(y as usize))
+    }
+
+    fn has(&self, x: usize, y: usize) -> bool {
+        (self.clip[0]..self.clip[2]).contains(&x) && (self.clip[1]..self.clip[3]).contains(&y)
+    }
 }
 
 fn fill_triangle(t: [[f32; 2]; 3], rgba: [u8; 4], c: Canvas, canvas: &mut [u8]) {
@@ -1445,10 +1704,10 @@ fn fill_triangle(t: [[f32; 2]; 3], rgba: [u8; 4], c: Canvas, canvas: &mut [u8]) 
     if area == 0.0 {
         return;
     }
-    let min_x = t.iter().map(|p| p[0]).fold(f32::MAX, f32::min).max(0.0) as usize;
-    let max_x = (t.iter().map(|p| p[0]).fold(f32::MIN, f32::max).ceil() as usize).min(c.w);
-    let min_y = t.iter().map(|p| p[1]).fold(f32::MAX, f32::min).max(0.0) as usize;
-    let max_y = (t.iter().map(|p| p[1]).fold(f32::MIN, f32::max).ceil() as usize).min(c.h);
+    let min_x = (t.iter().map(|p| p[0]).fold(f32::MAX, f32::min).max(0.0) as usize).max(c.clip[0]);
+    let max_x = (t.iter().map(|p| p[0]).fold(f32::MIN, f32::max).ceil() as usize).min(c.clip[2]);
+    let min_y = (t.iter().map(|p| p[1]).fold(f32::MAX, f32::min).max(0.0) as usize).max(c.clip[1]);
+    let max_y = (t.iter().map(|p| p[1]).fold(f32::MIN, f32::max).ceil() as usize).min(c.clip[3]);
     for y in min_y..max_y {
         for x in min_x..max_x {
             let p = [x as f32 + 0.5, y as f32 + 0.5];
@@ -1478,6 +1737,7 @@ mod tests {
                 height: 1,
                 tiles: vec![1],
             }],
+            generation: 0,
             text: None,
             labels: None,
             display_labels: None,
@@ -2349,5 +2609,111 @@ mod tests {
         l.compose(&bank(0), &mut c);
         assert_eq!(pixel(&c, 5, 5), [0x12, 0x34, 0x56, 255]);
         assert_eq!(pixel(&c, 10, 5), [0, 0, 0, 0]);
+    }
+
+    /// A [`Composer`] redrawing only what changed gives the pixels of a full compose, through a
+    /// random walk of slot, widget, fan, palette, anchor and shake changes on a wide canvas.
+    #[test]
+    fn partial_composes_match_full_ones() {
+        let mut b = bank(1);
+        // A second, larger map: 3 × 2 tiles of index 2.
+        b.tiles.push(Some(Box::new([2; TILE_PIXELS])));
+        b.tilemaps.push(Tilemap {
+            width: 3,
+            height: 2,
+            tiles: vec![2, 1, 2, 0, 2, 1],
+        });
+        let mut layer = SpriteLayer {
+            scale: 2,
+            wide: 96,
+            ..SpriteLayer::default()
+        };
+        layer.palettes[0] = Some(palette());
+        layer.palettes[3] = Some(palette());
+        let mut composer = Composer::new();
+        let mut seed = 0x2545_f491_u32;
+        let mut rand = |n: u32| {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed % n
+        };
+        let mut partial = 0;
+        for step in 0..400 {
+            match rand(9) {
+                0..=2 => {
+                    let i = rand(12) as usize;
+                    layer.slots[i] = Slot {
+                        col: if rand(4) == 0 { 1 } else { 0 },
+                        w: if rand(4) == 0 { 2 } else { 0 },
+                        ..Slot::new(
+                            rand(3) as i16 - 1,
+                            rand(700) as i16 - 30,
+                            rand(500) as i16 - 10,
+                            if rand(2) == 0 { 0 } else { 3 },
+                            rand(4) as u8,
+                            false,
+                        )
+                    };
+                }
+                3 => {
+                    layer.anchors[rand(12) as usize] =
+                        [Anchor::Left, Anchor::Centre, Anchor::Right][rand(3) as usize]
+                }
+                4 => {
+                    let p = layer.palettes[3].as_mut().expect("palette 3");
+                    p.0[2] = rand(0x100_0000);
+                }
+                5 => {
+                    layer.widgets.clear();
+                    for _ in 0..rand(4) {
+                        let kind = if rand(2) == 0 {
+                            WidgetKind::Fill(Paint {
+                                palette: 3,
+                                index: 2,
+                            })
+                        } else {
+                            WidgetKind::DownArrow(Paint {
+                                palette: 0,
+                                index: 1,
+                            })
+                        };
+                        let rect = [rand(640) as f32, rand(480) as f32, 20.5, 13.25];
+                        layer.add_widget(rand(4) as u8, rect, kind);
+                    }
+                }
+                6 => {
+                    layer.fans.clear();
+                    if rand(2) == 0 {
+                        let (x, y) = (rand(600) as i32, rand(440) as i32);
+                        layer.add_fan(&[[x, y], [x + 30, y], [x + 10, y + 25]], 0xff_20_40_60);
+                    }
+                }
+                7 => {
+                    if rand(8) == 0 {
+                        layer.shake = (rand(5) as i8 - 2, rand(5) as i8 - 2);
+                    }
+                }
+                _ => {
+                    layer.framed = if rand(2) == 0 {
+                        vec![rand(12) as usize]
+                    } else {
+                        vec![]
+                    }
+                }
+            }
+            composer.compose(&layer, &b, (step % 50 == 49).then_some([9, 8, 7]));
+            if matches!(composer.take_pending(), Pending::Rects(_) | Pending::None) {
+                partial += 1;
+            }
+            let mut full = layer.new_canvas();
+            layer.compose(&b, &mut full);
+            if step % 50 == 49 {
+                let (w, h) = layer.canvas_size();
+                layer.put_backdrop(&mut full, [9, 8, 7], [0, 0, w, h]);
+            }
+            assert!(composer.rgba() == full.as_slice(), "step {step}");
+        }
+        assert!(partial > 200, "only {partial} partial composes");
     }
 }

@@ -719,7 +719,7 @@ impl TextOverlay {
         let entries: Vec<Entry<'a>> = overrides
             .into_iter()
             .filter_map(|(tbl, rect, o)| {
-                let map = bank.tilemaps.get(usize::from(tbl))?;
+                let map = bank.tilemaps().get(usize::from(tbl))?;
                 let r = rect.resolve(map.width, map.height)?;
                 let art = bank.render_rect(tbl, r);
                 let (pw, ph) = (usize::from(r.2) * TILE_SIZE, usize::from(r.3) * TILE_SIZE);
@@ -1306,7 +1306,8 @@ fn dilate(coverage: &[u8], w: usize, h: usize, r: usize, min: u8, mut f: impl Fn
     }
 }
 
-/// Draws the parts of one slot whose source rectangle starts at canvas `(ox, oy)`.
+/// Draws the parts of one slot whose source rectangle starts at canvas `(ox, oy)`, into the
+/// canvas pixels `[x0, y0, x1, y1]` of a canvas `canvas_w` pixels wide.
 pub(crate) fn draw_parts(
     parts: &[RenderedPart],
     palette: &Palette,
@@ -1314,19 +1315,19 @@ pub(crate) fn draw_parts(
     oy: i32,
     canvas: &mut [u8],
     canvas_w: usize,
-    canvas_h: usize,
+    [cx0, cy0, cx1, cy1]: [usize; 4],
 ) {
     for p in parts {
         let [rx, ry, rw, rh] = p.region.map(i32::from);
         let fg = palette.rgba(p.fg);
         for py in 0..rh {
             let y = oy + ry + py;
-            if !(0..canvas_h as i32).contains(&y) {
+            if y < 0 || !(cy0..cy1).contains(&(y as usize)) {
                 continue;
             }
             for px in 0..rw {
                 let x = ox + rx + px;
-                if !(0..canvas_w as i32).contains(&x) {
+                if x < 0 || !(cx0..cx1).contains(&(x as usize)) {
                     continue;
                 }
                 let i = (py * rw + px) as usize;

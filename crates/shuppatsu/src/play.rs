@@ -267,6 +267,7 @@ pub fn run(mut opts: PlayOptions) -> Result<()> {
     let event_loop = EventLoop::new()?;
     event_loop.set_control_flow(ControlFlow::Poll);
     event_loop.run_app(&mut app)?;
+    shuppatsu_render::perf::flush();
     let saved = app.save.write().context("writing the save");
     match app.error {
         Some(e) => Err(e),
@@ -327,7 +328,7 @@ impl Play {
             window,
             wide,
         )?;
-        let canvas = layer.new_canvas();
+        let canvas = shuppatsu_render::sprites::Composer::blank(layer.canvas_size());
         Hud::install_palettes(&exe, &mut layer)?;
         // The horn hint names the B button with a joystick in modes 5–6 (`FUN_00433270`).
         let mut cab = CabHud::new(&exe, opts.stage, matches!(opts.control_mode, 5 | 6))?;
@@ -377,7 +378,7 @@ impl Play {
         let flow = StageFlow::new(FlowDefs::new(&screen_tables, |tbl| {
             usize::try_from(tbl)
                 .ok()
-                .and_then(|i| bank.tilemaps.get(i))
+                .and_then(|i| bank.tilemaps().get(i))
                 .map_or((0, 0), |m| {
                     (i16::from(m.width) * TILE_PX, i16::from(m.height) * TILE_PX)
                 })
@@ -423,7 +424,6 @@ impl Play {
             layer,
             bank,
             canvas,
-            canvas_dirty: true,
             tolerance_m,
             last_events: Vec::new(),
             ticks: 0,
@@ -607,7 +607,7 @@ impl Play {
                         None => crate::shot::clear_black(device, queue, view),
                     }
                 },
-                Some((&self.canvas, self.layer.canvas_size())),
+                Some((self.canvas.rgba(), self.layer.canvas_size())),
                 out,
             );
         }
@@ -650,7 +650,7 @@ impl Play {
             render(None, &out.with_extension("world.ppm"))?;
             crate::shot::write_layer_dump(&self.layer, &out.with_extension("layer.txt"))?;
         }
-        render(Some((&self.canvas, self.layer.canvas_size())), out)
+        render(Some((self.canvas.rgba(), self.layer.canvas_size())), out)
     }
 
     /// Window events other than redraws: keys, focus, resize.
@@ -813,8 +813,7 @@ pub struct Play {
     pad_words: crate::screens::PadHints,
     layer: SpriteLayer,
     bank: SpriteBank,
-    canvas: Vec<u8>,
-    canvas_dirty: bool,
+    canvas: shuppatsu_render::sprites::Composer,
     tolerance_m: i32,
     /// Rule events of the previous tick, to keep repeats out of the log.
     last_events: Vec<shuppatsu_engine::rules::RuleEvent>,
@@ -1262,8 +1261,7 @@ impl Play {
         self.flow.clear_drawn(&mut self.layer);
         self.flow.draw(&mut self.layer);
         self.centre_screen();
-        self.layer.compose(&self.bank, &mut self.canvas);
-        self.canvas_dirty = true;
+        self.canvas.compose(&self.layer, &self.bank, None);
     }
 
     fn update_hud(&mut self, input: TickInput) {
@@ -1273,11 +1271,8 @@ impl Play {
             // The HUD task is killed before the report card and its slots cleared.
             self.layer.slots.fill(Slot::CLEAR);
             self.flow.draw(&mut self.layer);
-            self.layer.compose(&self.bank, &mut self.canvas);
-            if let Some(rgb) = self.flow.backdrop() {
-                crate::screens::fill_backdrop(&self.layer, &mut self.canvas, rgb);
-            }
-            self.canvas_dirty = true;
+            self.canvas
+                .compose(&self.layer, &self.bank, self.flow.backdrop());
             return;
         }
         let input = TickInput {
@@ -1293,7 +1288,7 @@ impl Play {
             let board = self.layer.slots[crate::departure_hud::SLOT_DIAGRAM];
             let board_bottom = u16::try_from(board.tilemap)
                 .ok()
-                .and_then(|t| self.bank.tilemaps.get(usize::from(t)))
+                .and_then(|t| self.bank.tilemaps().get(usize::from(t)))
                 .map(|m| f32::from(board.y) + f32::from(m.height) * 16.0);
             // The coupling minigame's readout panel covers their usual place: above it.
             let panel_top = crate::coupling_hud::panel_top(&self.layer);
@@ -1301,8 +1296,7 @@ impl Play {
         }
         self.flow.draw(&mut self.layer);
         self.centre_screen();
-        self.layer.compose(&self.bank, &mut self.canvas);
-        self.canvas_dirty = true;
+        self.canvas.compose(&self.layer, &self.bank, None);
     }
 
     /// The stage flow's screens (pause, result, continue) stay a centred 4:3 over the HUD.
@@ -1330,9 +1324,7 @@ impl Play {
             wide,
         )?;
         if resized {
-            self.canvas = self.layer.new_canvas();
-            self.layer.compose(&self.bank, &mut self.canvas);
-            self.canvas_dirty = true;
+            self.canvas.compose(&self.layer, &self.bank, None);
         }
         Ok(())
     }
@@ -1349,6 +1341,29 @@ impl Play {
         crate::presentation::band_top(rect, h, HUD_BAND_TOP)
     }
 
+    /// What the run shows, for the frame trace ([`shuppatsu_render::perf`]).
+    fn screen_name(&self) -> &'static str {
+        if self.demo.is_some() {
+            "demo"
+        } else if self.ending.is_some() {
+            "ending"
+        } else if self.opening.is_some() {
+            "opening"
+        } else if self.intro.is_some() {
+            "intro"
+        } else if self.flow.paused() {
+            "pause"
+        } else if self.world == WorldView::ResultReplay {
+            "result"
+        } else if !self.flow.hud_visible() {
+            "report"
+        } else if self.drive.rules().phase == shuppatsu_engine::rules::Phase::Coupling {
+            "coupling"
+        } else {
+            "drive"
+        }
+    }
+
     pub fn redraw(&mut self) -> Result<()> {
         self.fit_canvas()?;
         let now = Instant::now();
@@ -1358,7 +1373,10 @@ impl Play {
         self.accumulator += dt.min(Duration::from_millis(250));
         while self.accumulator >= TICK && !self.leave {
             self.accumulator -= TICK;
+            shuppatsu_render::perf::count(shuppatsu_render::perf::Counter::Ticks, 1);
+            let perf = shuppatsu_render::perf::scope(shuppatsu_render::perf::Section::Tick);
             self.tick()?;
+            drop(perf);
         }
         // Interpolate the track distance between the last two ticks (along the track, so the
         // camera follows curves), then evaluate the original's cab camera there. Frozen while
@@ -1381,10 +1399,10 @@ impl Play {
         // The wiper, snow scroll and needle follow the camera (1 = the last tick).
         let fx_alpha = if smooth { alpha } else { 1.0 };
         if self.world == WorldView::Cab && self.needle.frame(fx_alpha, &mut self.layer) {
-            self.layer.compose(&self.bank, &mut self.canvas);
-            self.canvas_dirty = true;
+            self.canvas.compose(&self.layer, &self.bank, None);
         }
 
+        let screen = self.screen_name();
         let band = self
             .gpu
             .as_ref()
@@ -1394,6 +1412,7 @@ impl Play {
         };
         let (width, height) = gpu.size();
         let band_aspect = width as f32 / (height as f32 * (1.0 - band)).max(1.0);
+        let build = shuppatsu_render::perf::scope(shuppatsu_render::perf::Section::Build3d);
         let mut camera = self.scene.cab_camera(pos);
         let custom = Self::custom_view(
             &self.drive,
@@ -1457,6 +1476,7 @@ impl Play {
             gpu.renderer.effects = Default::default();
             gpu.renderer.fog.enabled = false;
         }
+        drop(build);
         let Some(frame) = gpu.acquire() else {
             return Ok(());
         };
@@ -1497,10 +1517,8 @@ impl Play {
             },
         }
         let size = self.layer.canvas_size();
-        let resized = gpu.overlay.resize(&gpu.device, size);
-        if std::mem::take(&mut self.canvas_dirty) || resized {
-            gpu.overlay.upload(&gpu.queue, &self.canvas);
-        }
+        gpu.overlay.resize(&gpu.device, size);
+        gpu.overlay.sync(&gpu.queue, &mut self.canvas);
         gpu.overlay.scaling = self.opts.locale.ui_scaling;
         gpu.overlay.render(
             &gpu.device,
@@ -1509,6 +1527,7 @@ impl Play {
             gpu.overlay.rect(width, height),
         );
         gpu.present(frame);
+        shuppatsu_render::perf::frame(screen, size);
 
         if now - self.title_at >= Duration::from_millis(500) {
             let (frames, worst) = std::mem::take(&mut self.title_frames);

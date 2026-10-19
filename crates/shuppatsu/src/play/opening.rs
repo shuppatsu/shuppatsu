@@ -417,8 +417,7 @@ impl Play {
         }
         self.interpolate = o.phase == 4;
         self.poll();
-        self.layer.compose(&self.bank, &mut self.canvas);
-        self.canvas_dirty = true;
+        self.canvas.compose(&self.layer, &self.bank, None);
         self.opening = Some(o);
         Ok(())
     }
@@ -719,7 +718,7 @@ impl Play {
                     None => r.render(device, queue, view, (w, h), &camera),
                 }
             },
-            Some((&self.canvas, self.layer.canvas_size())),
+            Some((self.canvas.rgba(), self.layer.canvas_size())),
             out,
         )
     }

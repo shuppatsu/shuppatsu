@@ -182,8 +182,7 @@ pub struct App {
     down: [bool; 256],
     menu_input: MenuInput,
     script: Script,
-    canvas: Vec<u8>,
-    canvas_dirty: bool,
+    canvas: shuppatsu_render::sprites::Composer,
     ticks: u64,
     accumulator: Duration,
     last_frame: Instant,
@@ -202,7 +201,7 @@ struct Boot {
 }
 
 fn map_size(bank: &shuppatsu_render::sprites::SpriteBank, tbl: usize) -> (i16, i16) {
-    bank.tilemaps.get(tbl).map_or((0, 0), |m| {
+    bank.tilemaps().get(tbl).map_or((0, 0), |m| {
         (i16::from(m.width) * TILE_PX, i16::from(m.height) * TILE_PX)
     })
 }
@@ -285,7 +284,7 @@ impl App {
             scale: opts.locale.ui_scale,
             ..SpriteLayer::default()
         };
-        let canvas = layer.new_canvas();
+        let canvas = shuppatsu_render::sprites::Composer::blank(layer.canvas_size());
         crate::hud::Hud::install_palettes(&exe, &mut layer)?;
         front.map_rows = front
             .legend_maps()
@@ -340,7 +339,6 @@ impl App {
             menu_input: MenuInput::NONE,
             script,
             canvas,
-            canvas_dirty: true,
             ticks: 0,
             accumulator: Duration::ZERO,
             last_frame: now,
@@ -1133,12 +1131,10 @@ impl App {
         let Some(r) = self.res.as_mut() else {
             return;
         };
-        r.layer.compose(&r.bank, &mut self.canvas);
-        if matches!(self.screen, Screen::Records(_)) {
-            // `Records_Create` sets the grey clear colour (0x428990(0x70, 0x7070), menus.md §5).
-            crate::screens::fill_backdrop(&r.layer, &mut self.canvas, crate::screens::RANKING_GREY);
-        }
-        self.canvas_dirty = true;
+        // `Records_Create` sets the grey clear colour (0x428990(0x70, 0x7070), menus.md §5).
+        let backdrop =
+            matches!(self.screen, Screen::Records(_)).then_some(crate::screens::RANKING_GREY);
+        self.canvas.compose(&r.layer, &r.bank, backdrop);
     }
 
     /// A run's tick (headless) with the script's keys.
@@ -1205,6 +1201,29 @@ impl App {
         Ok(())
     }
 
+    /// The screen's name in the frame trace ([`shuppatsu_render::perf`]).
+    fn screen_name(&self) -> &'static str {
+        match &self.screen {
+            Screen::Language(_) => "language",
+            Screen::Attract(_) => "attract",
+            Screen::Title(_) => "title",
+            Screen::Options(_) => "options",
+            Screen::Control(_) => "control",
+            Screen::Value(_) => "value",
+            Screen::PortSettings(_) => "port",
+            Screen::Records(_) => "records",
+            Screen::Calibrate(_) => "calibrate",
+            Screen::Exit(_) => "exit",
+            Screen::RouteSelect(_) => "route",
+            Screen::LeverCheck(..) => "levercheck",
+            Screen::Board(..) => "board",
+            Screen::Wait(..) => "wait",
+            Screen::Play(_) => "play",
+            Screen::Movie(_) => "movie",
+            Screen::Quit => "quit",
+        }
+    }
+
     fn quitting(&self) -> bool {
         matches!(self.screen, Screen::Quit)
     }
@@ -1241,10 +1260,8 @@ impl App {
             self.opts.settings.wide_menus,
         )?;
         let (w, h) = r.layer.canvas_size();
-        if self.canvas.len() != w * h * 4 {
-            self.canvas = r.layer.new_canvas();
-            r.layer.compose(&r.bank, &mut self.canvas);
-            self.canvas_dirty = true;
+        if self.canvas.size() != (w, h) {
+            self.canvas.compose(&r.layer, &r.bank, None);
         }
         Ok(())
     }
@@ -1280,7 +1297,7 @@ impl App {
             }
             _ => {
                 let size = self.canvas_size();
-                let hud = Some((self.canvas.as_slice(), size));
+                let hud = Some((self.canvas.rgba(), size));
                 crate::shot::render_to_ppm(None, self.opts.size, |_| {}, hud, out)?
             }
         }
@@ -1303,7 +1320,10 @@ impl App {
         self.accumulator += dt.min(Duration::from_millis(250));
         while self.accumulator >= TICK && !self.quitting() {
             self.accumulator -= TICK;
+            shuppatsu_render::perf::count(shuppatsu_render::perf::Counter::Ticks, 1);
+            let perf = shuppatsu_render::perf::scope(shuppatsu_render::perf::Section::Tick);
             self.tick()?;
+            drop(perf);
             if matches!(self.screen, Screen::Play(_)) {
                 return Ok(());
             }
@@ -1312,6 +1332,7 @@ impl App {
         // The movie: the picture for the clock, and where it goes.
         let new_picture = match &mut self.screen {
             Screen::Movie(m) => {
+                let _perf = shuppatsu_render::perf::scope(shuppatsu_render::perf::Section::Movie);
                 m.player.update_display();
                 m.player.take_new_picture()
             }
@@ -1322,7 +1343,6 @@ impl App {
             _ => None,
         };
         let movie_scaling = self.opts.locale.movie_scaling;
-        let mut dirty = std::mem::take(&mut self.canvas_dirty);
         let size = self.canvas_size();
         let Some(gpu) = self.res.as_mut().and_then(|r| r.gpu.as_mut()) else {
             return Ok(());
@@ -1354,13 +1374,12 @@ impl App {
             }
             gpu.present(frame);
             m.player.trace_present(upload, now.elapsed());
+            shuppatsu_render::perf::frame("movie", m.player.size());
             return Ok(());
         }
         // A run may have left the overlay at its wide size.
-        dirty |= gpu.overlay.resize(&gpu.device, size);
-        if dirty {
-            gpu.overlay.upload(&gpu.queue, &self.canvas);
-        }
+        gpu.overlay.resize(&gpu.device, size);
+        gpu.overlay.sync(&gpu.queue, &mut self.canvas);
         gpu.overlay.scaling = self.opts.locale.ui_scaling;
         gpu.overlay.render(
             &gpu.device,
@@ -1369,6 +1388,7 @@ impl App {
             gpu.overlay.rect(width, height),
         );
         gpu.present(frame);
+        shuppatsu_render::perf::frame(self.screen_name(), size);
         Ok(())
     }
 
@@ -1502,6 +1522,7 @@ pub fn run(opts: AppOptions) -> Result<()> {
     event_loop.set_control_flow(ControlFlow::Poll);
     let mut app = app;
     event_loop.run_app(&mut app)?;
+    shuppatsu_render::perf::flush();
     // The save is written at exit (0x434f50 on WinMain's shutdown path).
     let save = match (&mut app.screen, app.res.as_ref()) {
         (Screen::Play(p), _) => p.save().write(),
@@ -1607,7 +1628,11 @@ mod tests {
         let want = app.opts.locale.ui_scale_fixed.unwrap();
         assert_eq!(app.res().layer.scale, want);
         let (w, h) = app.res().layer.canvas_size();
-        assert_eq!(app.canvas.len(), w * h * 4, "a canvas of the new size");
+        assert_eq!(
+            app.canvas.rgba().len(),
+            w * h * 4,
+            "a canvas of the new size"
+        );
 
         app.opts.settings.save_on_change = false;
         app.apply_port_setting(index("save_on_change")).unwrap();

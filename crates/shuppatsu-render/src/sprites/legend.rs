@@ -158,7 +158,7 @@ pub(super) fn draw_legend(
 /// Blends `rgb` at `cov` (0..=255) into the canvas pixel; over transparency the coverage
 /// becomes the alpha, as for label text (the overlay's alpha test decides).
 fn blend(canvas: &mut [u8], c: Canvas, px: usize, py: usize, rgb: Rgb, cov: u8) {
-    if px >= c.w || py >= c.h || cov == 0 {
+    if !c.has(px, py) || cov == 0 {
         return;
     }
     let o = (py * c.w + px) * 4;
@@ -337,7 +337,15 @@ mod tests {
     use crate::text::tests::BoxGlyphs;
 
     fn canvas(w: usize, h: usize) -> (Canvas, Vec<u8>) {
-        (Canvas { w, h, s: 1 }, vec![0; w * h * 4])
+        (
+            Canvas {
+                w,
+                h,
+                s: 1,
+                clip: [0, 0, w, h],
+            },
+            vec![0; w * h * 4],
+        )
     }
 
     fn round(label: &str, fill: Rgb) -> Glyph {

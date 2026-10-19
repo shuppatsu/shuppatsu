@@ -402,8 +402,7 @@ impl Play {
             self.layer.anchors[SLOT_CAPTION] = Anchor::Left;
         }
         self.poll();
-        self.layer.compose(&self.bank, &mut self.canvas);
-        self.canvas_dirty = true;
+        self.canvas.compose(&self.layer, &self.bank, None);
         self.intro = Some(o);
         Ok(())
     }

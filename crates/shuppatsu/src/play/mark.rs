@@ -227,6 +227,7 @@ pub(crate) mod tests {
         let r = p.drive.rules();
         let hash = if p.ticks.is_multiple_of(50) {
             p.canvas
+                .rgba()
                 .as_chunks::<8>()
                 .0
                 .iter()

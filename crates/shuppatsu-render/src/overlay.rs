@@ -11,7 +11,7 @@
 //! earlier builds. The canvas itself is 640×480 × `SpriteLayer::scale`; [`auto_multiple`] picks
 //! that multiple from the window height.
 
-use crate::sprites::{CANVAS_H, CANVAS_W};
+use crate::sprites::{CANVAS_H, CANVAS_W, Composer, Pending};
 
 /// How the canvas is presented in the window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -194,6 +194,9 @@ pub struct Overlay {
     texture: wgpu::Texture,
     bind_group: wgpu::BindGroup,
     size: (u32, u32),
+    /// The [`Composer`] whose canvas the texture holds ([`Overlay::sync`]); `None` after a
+    /// resize or a plain [`Overlay::upload`].
+    source: Option<u64>,
     /// How [`Overlay::render`] maps the canvas to its rectangle.
     pub scaling: UiScaling,
     /// Plain bilinear filtering instead of [`Overlay::scaling`]: for live-action pictures
@@ -294,6 +297,7 @@ impl Overlay {
             texture,
             bind_group,
             size,
+            source: None,
             scaling: UiScaling::default(),
             bilinear: false,
         }
@@ -354,11 +358,15 @@ impl Overlay {
         (self.texture, self.bind_group) =
             Self::canvas_texture(device, &self.layout, &self.params, size);
         self.size = size;
+        self.source = None;
         true
     }
 
     /// Uploads a composed canvas of this overlay's size (RGBA8).
-    pub fn upload(&self, queue: &wgpu::Queue, rgba: &[u8]) {
+    pub fn upload(&mut self, queue: &wgpu::Queue, rgba: &[u8]) {
+        self.source = None;
+        let _perf = crate::perf::scope(crate::perf::Section::Upload2d);
+        crate::perf::count(crate::perf::Counter::Upload2dBytes, rgba.len() as u64);
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &self.texture,
@@ -375,6 +383,67 @@ impl Overlay {
             wgpu::Extent3d {
                 width: self.size.0,
                 height: self.size.1,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
+    /// Brings the texture up to date with `canvas`: everything when it holds another canvas
+    /// (or none), else only the rectangles composed since the last sync. A canvas of another
+    /// size than the texture is not uploaded ([`Overlay::resize`] first).
+    pub fn sync(&mut self, queue: &wgpu::Queue, canvas: &mut Composer) {
+        let pending = canvas.take_pending();
+        let (w, h) = canvas.size();
+        if (w as u32, h as u32) != self.size {
+            self.source = None;
+            return;
+        }
+        if self.source != Some(canvas.id()) {
+            self.upload(queue, canvas.rgba());
+            self.source = Some(canvas.id());
+            return;
+        }
+        match pending {
+            Pending::None => {}
+            Pending::Full => self.upload_rect(queue, canvas.rgba(), [0, 0, w, h]),
+            Pending::Rects(rects) => {
+                for r in rects {
+                    self.upload_rect(queue, canvas.rgba(), r);
+                }
+            }
+        }
+    }
+
+    /// Uploads the `[x0, y0, x1, y1]` pixels of a whole canvas `rgba` of this overlay's size.
+    fn upload_rect(&self, queue: &wgpu::Queue, rgba: &[u8], [x0, y0, x1, y1]: [usize; 4]) {
+        let _perf = crate::perf::scope(crate::perf::Section::Upload2d);
+        let w = self.size.0 as usize;
+        let start = (y0 * w + x0) * 4;
+        let end = ((y1 - 1) * w + x1) * 4;
+        crate::perf::count(
+            crate::perf::Counter::Upload2dBytes,
+            ((x1 - x0) * (y1 - y0) * 4) as u64,
+        );
+        queue.write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d {
+                    x: x0 as u32,
+                    y: y0 as u32,
+                    z: 0,
+                },
+                aspect: wgpu::TextureAspect::All,
+            },
+            &rgba[start..end],
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(self.size.0 * 4),
+                rows_per_image: Some((y1 - y0) as u32),
+            },
+            wgpu::Extent3d {
+                width: (x1 - x0) as u32,
+                height: (y1 - y0) as u32,
                 depth_or_array_layers: 1,
             },
         );
@@ -397,6 +466,7 @@ impl Overlay {
         target: &wgpu::TextureView,
         rect: [f32; 4],
     ) {
+        let _perf = crate::perf::scope(crate::perf::Section::Render);
         let (tw, th) = (self.size.0 as f32, self.size.1 as f32);
         let whole = |dst: f32, src: f32| dst >= src && (dst / src).fract() == 0.0;
         let nearest = match self.scaling {
