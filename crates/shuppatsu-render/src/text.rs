@@ -247,7 +247,7 @@ pub struct Glyph {
 }
 
 /// A scalable glyph source (a font, or a stub in tests).
-pub trait GlyphSource {
+pub trait GlyphSource: Sync {
     /// `(ascent, descent)` at `px`, descent negative.
     fn vertical_metrics(&self, px: f32) -> (f32, f32);
     fn glyph(&self, ch: char, px: f32) -> Glyph;
@@ -676,6 +676,41 @@ impl GroupMin {
     }
 }
 
+/// `f` over `items` on all cores (each item on its own, results in order): the overrides are
+/// independent, and rasterising them all again for a new canvas multiple took seconds on one.
+fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let chunk = items.len().div_ceil(threads * 4).max(1);
+    if threads == 1 || items.len() <= chunk {
+        return items.iter().map(f).collect();
+    }
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let chunks = items.len().div_ceil(chunk);
+    let mut done: Vec<(usize, Vec<R>)> = std::thread::scope(|s| {
+        let workers: Vec<_> = (0..threads.min(chunks))
+            .map(|_| {
+                s.spawn(|| {
+                    let mut out = Vec::new();
+                    loop {
+                        let c = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        if c >= chunks {
+                            return out;
+                        }
+                        let range = c * chunk..((c + 1) * chunk).min(items.len());
+                        out.push((c, items[range].iter().map(&f).collect()));
+                    }
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().expect("text worker"))
+            .collect()
+    });
+    done.sort_by_key(|(c, _)| *c);
+    done.into_iter().flat_map(|(_, r)| r).collect()
+}
+
 impl TextOverlay {
     /// Renders every override against the bank's art. Overrides whose tilemap or rectangle
     /// does not exist are skipped (the art is then drawn as usual).
@@ -716,28 +751,29 @@ impl TextOverlay {
             size: (usize, usize),
             fitted: Vec<Option<(RenderedPart, f32)>>,
         }
-        let entries: Vec<Entry<'a>> = overrides
-            .into_iter()
-            .filter_map(|(tbl, rect, o)| {
-                let map = bank.tilemaps().get(usize::from(tbl))?;
-                let r = rect.resolve(map.width, map.height)?;
-                let art = bank.render_rect(tbl, r);
-                let (pw, ph) = (usize::from(r.2) * TILE_SIZE, usize::from(r.3) * TILE_SIZE);
-                let fitted = o
-                    .parts
-                    .iter()
-                    .map(|p| render_part_at(p, &art, pw, ph, fonts.get(p.font), scale, None))
-                    .collect();
-                Some(Entry {
-                    tbl,
-                    rect: r,
-                    o,
-                    art,
-                    size: (pw, ph),
-                    fitted,
-                })
+        let requests: Vec<(u16, SubRect, &'a TextOverride)> = overrides.into_iter().collect();
+        let entries: Vec<Entry<'a>> = par_map(&requests, |&(tbl, rect, o)| {
+            let map = bank.tilemaps().get(usize::from(tbl))?;
+            let r = rect.resolve(map.width, map.height)?;
+            let art = bank.render_rect(tbl, r);
+            let (pw, ph) = (usize::from(r.2) * TILE_SIZE, usize::from(r.3) * TILE_SIZE);
+            let fitted = o
+                .parts
+                .iter()
+                .map(|p| render_part_at(p, &art, pw, ph, fonts.get(p.font), scale, None))
+                .collect();
+            Some(Entry {
+                tbl,
+                rect: r,
+                o,
+                art,
+                size: (pw, ph),
+                fitted,
             })
-            .collect();
+        })
+        .into_iter()
+        .flatten()
+        .collect();
         let k_of = |p: &TextPart| cap_per_px(fonts.get(p.font));
         // The outline colours of the `group_outline` parts, per shared group and tilemap.
         let mut outlines: HashMap<(&str, u16), [u32; 256]> = HashMap::new();
@@ -764,8 +800,7 @@ impl TextOverlay {
                 }
             }
         }
-        let mut parts = HashMap::new();
-        for e in entries {
+        let done = par_map(&entries, |e| {
             // ... and of each group inside the entry.
             let mut smallest: HashMap<&str, GroupMin> = HashMap::new();
             for (p, f) in e.o.parts.iter().zip(&e.fitted) {
@@ -778,9 +813,10 @@ impl TextOverlay {
                 .o
                 .parts
                 .iter()
-                .zip(e.fitted)
+                .zip(&e.fitted)
                 .filter_map(|(p, f)| {
-                    let (part, px) = f?;
+                    let (part, px) = f.as_ref()?;
+                    let px = *px;
                     let outline = p
                         .group_outline
                         .then(|| plain_outline(p, &e.art, pw, ph).zip(group_outline(p, e.tbl)))
@@ -798,7 +834,7 @@ impl TextOverlay {
                             let g = fonts.get(p.font);
                             render_part_at(p, &e.art, pw, ph, g, scale, Some(min)).map(|(r, _)| r)
                         }
-                        _ => Some(part),
+                        _ => Some(part.clone()),
                     };
                     rendered.map(|mut r| {
                         if let Some((own, shared)) = outline {
@@ -810,10 +846,9 @@ impl TextOverlay {
                     })
                 })
                 .collect::<Vec<_>>();
-            if !rendered.is_empty() {
-                parts.insert((e.tbl, e.rect), rendered);
-            }
-        }
+            (!rendered.is_empty()).then_some(((e.tbl, e.rect), rendered))
+        });
+        let parts = done.into_iter().flatten().collect();
         Self { parts, scale }
     }
 
