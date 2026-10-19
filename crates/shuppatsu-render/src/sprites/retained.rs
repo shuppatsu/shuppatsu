@@ -262,9 +262,7 @@ impl Composer {
         match dirty {
             Some(rects) => {
                 for &r in &rects {
-                    clear(&mut self.rgba, size.0, r);
-                    let rc = Canvas { clip: r, ..c };
-                    layer.draw(bank, &slots, rc, &mut self.rgba);
+                    draw_rect(layer, bank, &slots, c, &mut self.rgba, r);
                     if let Some(rgb) = backdrop {
                         layer.put_backdrop(&mut self.rgba, rgb, r);
                     }
@@ -284,10 +282,8 @@ impl Composer {
                 if self.size != size || self.rgba.len() != size.0 * size.1 * 4 {
                     self.rgba = vec![0; size.0 * size.1 * 4];
                     self.size = size;
-                } else {
-                    self.rgba.fill(0);
                 }
-                layer.draw(bank, &slots, c, &mut self.rgba);
+                draw_rect(layer, bank, &slots, c, &mut self.rgba, c.clip);
                 if let Some(rgb) = backdrop {
                     layer.put_backdrop(&mut self.rgba, rgb, c.clip);
                 }
@@ -454,6 +450,54 @@ fn merge(mut rects: Vec<[usize; 4]>) -> Vec<[usize; 4]> {
             return rects;
         }
     }
+}
+
+/// Rectangles of more pixels than this are drawn in bands of rows on several threads.
+const PARALLEL_PIXELS: usize = 1 << 17;
+/// At most this many bands (memory bandwidth, not cores, limits a canvas fill).
+const MAX_BANDS: usize = 8;
+
+/// Clears the canvas rectangle `r` and draws everything reaching it, in bands of rows on their
+/// own threads when it is large: each band is a slice of whole rows, clipped to `r`. The bands
+/// share no pixel, and every pixel gets the same draws in the same order.
+fn draw_rect(
+    layer: &SpriteLayer,
+    bank: &SpriteBank,
+    slots: &[Option<SlotDraw<'_>>],
+    c: Canvas,
+    rgba: &mut [u8],
+    r: [usize; 4],
+) {
+    let [x0, y0, x1, y1] = r;
+    let rows = y1 - y0;
+    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let bands = if (x1 - x0) * rows < PARALLEL_PIXELS {
+        1
+    } else {
+        threads.min(MAX_BANDS).min(rows / 16).max(1)
+    };
+    let per = rows.div_ceil(bands);
+    let slice = &mut rgba[y0 * c.w * 4..y1 * c.w * 4];
+    let band = |k: usize, px: &mut [u8]| {
+        let top = y0 + k * per;
+        let bc = Canvas {
+            clip: [x0, top, x1, (top + per).min(y1)],
+            row0: top,
+            ..c
+        };
+        clear(px, c.w, [x0, 0, x1, bc.clip[3] - top]);
+        layer.draw(bank, slots, bc, px);
+    };
+    if bands == 1 {
+        band(0, slice);
+        return;
+    }
+    std::thread::scope(|s| {
+        for (k, px) in slice.chunks_mut(per * c.w * 4).enumerate() {
+            let band = &band;
+            s.spawn(move || band(k, px));
+        }
+    });
 }
 
 fn clear(rgba: &mut [u8], w: usize, [x0, y0, x1, y1]: [usize; 4]) {

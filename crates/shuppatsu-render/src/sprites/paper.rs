@@ -308,16 +308,18 @@ impl Side {
         ramp_start: i32,
         dir: i32,
         ramp: i32,
-        at: &impl Fn(usize, usize) -> Rgb,
+        at: &(impl Fn(usize, usize) -> Rgb + Sync),
     ) -> Self {
         let (first, cols) = (xs.start, xs.len());
-        let mut px = Vec::with_capacity(cols * near.len());
         let xw: Vec<usize> = xs
             .clone()
             .map(|x| x.rem_euclid(ex.w as i32) as usize)
             .collect();
-        for (y, (&n, &f)) in near.iter().zip(far).enumerate() {
+        // Rows are independent: built on all cores (a 4K title backdrop took 13-16 ms on one).
+        let rows = crate::par::par_range(near.len(), 8, |y| {
+            let (n, f) = (near[y], far[y]);
             let yh = y % ex.h;
+            let mut px = Vec::with_capacity(cols);
             for (x, &xw) in xs.clone().zip(&xw) {
                 // Columns from the inside of the ramp: 0 .. ramp in it, then the fill.
                 let k = (x - ramp_start) * dir;
@@ -335,7 +337,9 @@ impl Side {
                 };
                 px.push(quantise(c));
             }
-        }
+            px
+        });
+        let px = rows.concat();
         Self { first, cols, px }
     }
 }

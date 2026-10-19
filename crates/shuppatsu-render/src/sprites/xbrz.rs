@@ -168,7 +168,7 @@ pub fn scale(src: &[[u8; 3]], w: usize, h: usize, n: usize) -> Vec<[u8; 3]> {
 /// it lies beyond the edge. Palette effects keep working on the result. Low-contrast blocks
 /// (all four colours within [`EQUAL_TOLERANCE`] of each other: dithered texture, shading)
 /// keep their pixels, so only real edges are shaped.
-pub fn scale_indexed<T: Copy>(
+pub fn scale_indexed<T: Copy + Send + Sync>(
     colours: &[[u8; 3]],
     payload: &[T],
     w: usize,
@@ -244,13 +244,13 @@ pub fn scale_indices(idx: &[u8], w: usize, h: usize, n: usize, metric: &IndexMet
 /// The scaler: corners classified on `keys` (compared with `dist`); each pixel becomes an
 /// `n`×`n` block started from its payload (`start`) and blended towards a neighbour's payload
 /// with weight `a` (`mix`). With `flat`, blocks without contrast are left alone.
-fn scale_by<K: Copy + PartialEq, T: Copy, P: Copy>(
+fn scale_by<K: Copy + PartialEq + Sync, T: Copy + Sync, P: Copy + Send + Sync>(
     keys: &[K],
     payload: &[T],
     (w, h, n, flat): (usize, usize, usize, bool),
-    dist: impl Fn(K, K) -> f32,
-    start: impl Fn(T) -> P,
-    mix: impl Fn(&mut P, T, f32),
+    dist: impl Fn(K, K) -> f32 + Sync,
+    start: impl Fn(T) -> P + Sync,
+    mix: impl Fn(&mut P, T, f32) + Sync,
 ) -> Vec<P> {
     let clamp = |x: i32, y: i32| {
         let x = x.clamp(0, w as i32 - 1) as usize;
@@ -261,14 +261,17 @@ fn scale_by<K: Copy + PartialEq, T: Copy, P: Copy>(
     let px = |x: i32, y: i32| keys[clamp(x, y)];
     let eq = |a: K, b: K| dist(a, b) < EQUAL_TOLERANCE;
 
-    // 1. Corner classification of every 2×2 block (F G / J K, F at (x, y)).
-    let mut blend = vec![[Blend::None; 4]; w * h];
-    let mut set = |x: i32, y: i32, c: usize, b: Blend| {
-        if (0..w as i32).contains(&x) && (0..h as i32).contains(&y) {
-            blend[y as usize * w + x as usize][c] = b;
-        }
-    };
-    for y in -1..h as i32 {
+    // 1. Corner classification of every 2×2 block (F G / J K, F at (x, y)). Each corner of
+    // each pixel is decided by one block only, so the rows of blocks are classified on all
+    // cores and their decisions applied after.
+    let decided = crate::par::par_range(h + 1, 8, |row| {
+        let y = row as i32 - 1;
+        let mut out: Vec<(usize, usize, Blend)> = Vec::new();
+        let mut set = |x: i32, y: i32, c: usize, b: Blend| {
+            if (0..w as i32).contains(&x) && (0..h as i32).contains(&y) {
+                out.push((y as usize * w + x as usize, c, b));
+            }
+        };
         for x in -1..w as i32 {
             let k = |dx: i32, dy: i32| px(x + dx, y + dy);
             let (f, g, j, kk) = (k(0, 0), k(1, 0), k(0, 1), k(1, 1));
@@ -314,20 +317,27 @@ fn scale_by<K: Copy + PartialEq, T: Copy, P: Copy>(
                 }
             }
         }
+        out
+    });
+    let mut blend = vec![[Blend::None; 4]; w * h];
+    for (i, c, b) in decided.into_iter().flatten() {
+        blend[i][c] = b;
     }
 
-    // 2. Each pixel to an n×n block, blending its corners.
+    // 2. Each pixel to an n×n block, blending its corners; rows of pixels on all cores.
     let tables = cached_tables(n);
     let ow = w * n;
     let first = start(payload[0]);
-    let mut out = vec![first; ow * h * n];
-    let mut block = vec![first; n * n];
     let m = n as i32 - 1;
-    for y in 0..h as i32 {
+    let rows = crate::par::par_range(h, 8, |row| {
+        let y = row as i32;
+        // This row of blocks: `n` rows of the output.
+        let mut out = vec![first; ow * n];
+        let mut block = vec![first; n * n];
         for x in 0..w as i32 {
             let own = start(pay(x, y));
             let corners = blend[y as usize * w + x as usize];
-            let (x0, y0) = (x as usize * n, y as usize * n);
+            let (x0, y0) = (x as usize * n, 0);
             if corners == [Blend::None; 4] {
                 for row in out[y0 * ow..].chunks_mut(ow).take(n) {
                     row[x0..x0 + n].fill(own);
@@ -386,8 +396,9 @@ fn scale_by<K: Copy + PartialEq, T: Copy, P: Copy>(
                 out[o..o + n].copy_from_slice(row);
             }
         }
-    }
-    out
+        out
+    });
+    rows.concat()
 }
 
 #[cfg(test)]

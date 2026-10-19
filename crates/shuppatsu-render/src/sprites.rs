@@ -814,6 +814,7 @@ impl SpriteLayer {
             h,
             s: self.scale.max(1),
             clip: [0, 0, w, h],
+            row0: 0,
         }
     }
 
@@ -886,13 +887,14 @@ impl SpriteLayer {
     fn draw_framed(d: &SlotDraw<'_>, c: Canvas, canvas: &mut [u8]) {
         let s = c.s as i32;
         let top = d.sy0 * s;
-        let ys =
-            top.clamp(0, c.h as i32)..(top + d.rows * TILE_SIZE as i32 * s).clamp(0, c.h as i32);
+        // Only the rows of the clip can change.
+        let (r0, r1) = (c.clip[1] as i32, c.clip[3] as i32);
+        let ys = top.clamp(r0, r1)..(top + d.rows * TILE_SIZE as i32 * s).clamp(r0, r1);
         let (x0, x1) = (
             d.shift.clamp(0, c.w as i32) as usize,
             (d.shift + (CANVAS_W * c.s) as i32).clamp(0, c.w as i32) as usize,
         );
-        let row = |y: i32| y as usize * c.w * 4;
+        let row = |y: i32| c.at(0, y as usize);
         let saved: Vec<(Vec<u8>, Vec<u8>)> = ys
             .clone()
             .map(|y| {
@@ -1059,7 +1061,7 @@ impl SpriteLayer {
             if !c.has(px, py) {
                 return;
             }
-            let o = (py * c.w + px) * 4;
+            let o = c.at(px, py);
             canvas[o..o + 4].copy_from_slice(&rgba);
         };
         match &w.kind {
@@ -1150,7 +1152,7 @@ impl SpriteLayer {
                             }
                             let i = ((iy * dw + ix) * 4) as usize;
                             let src: [u8; 4] = pic.rgba[i..i + 4].try_into().expect("4 bytes");
-                            let o = (py * c.w + px) * 4;
+                            let o = c.at(px, py);
                             let under: [u8; 4] = canvas[o..o + 4].try_into().expect("4 bytes");
                             canvas[o..o + 4].copy_from_slice(&over(src, under, img.matte));
                         }
@@ -1241,7 +1243,7 @@ impl SpriteLayer {
                         if cov == 0 {
                             continue;
                         }
-                        let o = ((y0 + py) * c.w + x0 + px) * 4;
+                        let o = c.at(x0 + px, y0 + py);
                         let under: [u8; 4] = canvas[o..o + 4].try_into().expect("4 bytes");
                         let out = if under[3] == 0 {
                             // Over transparency the overlay's alpha test decides.
@@ -1386,7 +1388,7 @@ fn resample_sprite(
             // Coverage, and the straight colour of the covered part.
             let a = (sum[3] / 255.0 / area).min(1.0);
             let colour = [0, 1, 2].map(|i| (sum[i] * 255.0 / sum[3]).round() as u8);
-            let o = (py as usize * c.w + px as usize) * 4;
+            let o = c.at(px as usize, py as usize);
             let under: [u8; 4] = canvas[o..o + 4].try_into().expect("4 bytes");
             let out = if a >= 1.0 {
                 [colour[0], colour[1], colour[2], 255]
@@ -1431,7 +1433,7 @@ fn blit_hires(hi: &Hires, cell: &Cell, colours: &[[u8; 4]; 256], c: Canvas, canv
     let x1 = (ic * t + xs.end) as usize;
     for yy in ys {
         let row = hi.row(x0, x1, (ir * t + yy) as usize);
-        let line = ((oy + yy) as usize * c.w + (ox + xs.start) as usize) * 4;
+        let line = c.at((ox + xs.start) as usize, (oy + yy) as usize);
         let (dst, _) = canvas[line..line + row.len() * 4].as_chunks_mut::<4>();
         match &cell.open {
             None => {
@@ -1466,7 +1468,7 @@ fn draw_paper(p: &PaperFill, (x0, y0): (i32, i32), shift: i32, c: Canvas, canvas
     let right = ((x0 + b) * s + shift).clamp(cx0, cx1)..cx1;
     for y in c.clip[1] as i32..c.clip[3] as i32 {
         let py = y.div_euclid(s) - y0;
-        let row = y as usize * c.w;
+        let row = (y as usize - c.row0) * c.w;
         for range in [left.clone(), right.clone()] {
             // Runs of canvas pixels showing the same original pixel.
             let mut x = range.start;
@@ -1638,7 +1640,7 @@ impl SlotDraw<'_> {
                         }
                         let rgba = colours[usize::from(index)];
                         for y in ya..yb {
-                            let row = y as usize * c.w;
+                            let row = (y as usize - c.row0) * c.w;
                             let run = &mut canvas[(row + xa as usize) * 4..(row + xb as usize) * 4];
                             for px in run.as_chunks_mut::<4>().0 {
                                 *px = rgba;
@@ -1658,7 +1660,7 @@ impl SlotDraw<'_> {
                 sx0 * s + shift,
                 sy0 * s,
                 canvas,
-                c.w,
+                (c.w, c.row0),
                 c.clip,
             );
         }
@@ -1734,9 +1736,17 @@ struct Canvas {
     h: usize,
     s: usize,
     clip: [usize; 4],
+    /// The canvas row the drawn slice starts at: a band of rows can be drawn on its own
+    /// (on its own thread), its clip inside it.
+    row0: usize,
 }
 
 impl Canvas {
+    /// The byte offset of pixel `(x, y)` in the drawn slice.
+    fn at(&self, x: usize, y: usize) -> usize {
+        ((y - self.row0) * self.w + x) * 4
+    }
+
     fn has(&self, x: usize, y: usize) -> bool {
         (self.clip[0]..self.clip[2]).contains(&x) && (self.clip[1]..self.clip[3]).contains(&y)
     }
@@ -1763,7 +1773,7 @@ fn fill_triangle(t: [[f32; 2]; 3], rgba: [u8; 4], c: Canvas, canvas: &mut [u8]) 
                 edge(t[0], t[1], p),
             ];
             if w.iter().all(|&v| v * area >= 0.0) {
-                let o = (y * c.w + x) * 4;
+                let o = c.at(x, y);
                 canvas[o..o + 4].copy_from_slice(&rgba);
             }
         }

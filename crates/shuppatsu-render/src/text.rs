@@ -676,41 +676,6 @@ impl GroupMin {
     }
 }
 
-/// `f` over `items` on all cores (each item on its own, results in order): the overrides are
-/// independent, and rasterising them all again for a new canvas multiple took seconds on one.
-fn par_map<T: Sync, R: Send>(items: &[T], f: impl Fn(&T) -> R + Sync) -> Vec<R> {
-    let threads = std::thread::available_parallelism().map_or(1, |n| n.get());
-    let chunk = items.len().div_ceil(threads * 4).max(1);
-    if threads == 1 || items.len() <= chunk {
-        return items.iter().map(f).collect();
-    }
-    let next = std::sync::atomic::AtomicUsize::new(0);
-    let chunks = items.len().div_ceil(chunk);
-    let mut done: Vec<(usize, Vec<R>)> = std::thread::scope(|s| {
-        let workers: Vec<_> = (0..threads.min(chunks))
-            .map(|_| {
-                s.spawn(|| {
-                    let mut out = Vec::new();
-                    loop {
-                        let c = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        if c >= chunks {
-                            return out;
-                        }
-                        let range = c * chunk..((c + 1) * chunk).min(items.len());
-                        out.push((c, items[range].iter().map(&f).collect()));
-                    }
-                })
-            })
-            .collect();
-        workers
-            .into_iter()
-            .flat_map(|w| w.join().expect("text worker"))
-            .collect()
-    });
-    done.sort_by_key(|(c, _)| *c);
-    done.into_iter().flat_map(|(_, r)| r).collect()
-}
-
 impl TextOverlay {
     /// Renders every override against the bank's art. Overrides whose tilemap or rectangle
     /// does not exist are skipped (the art is then drawn as usual).
@@ -752,7 +717,7 @@ impl TextOverlay {
             fitted: Vec<Option<(RenderedPart, f32)>>,
         }
         let requests: Vec<(u16, SubRect, &'a TextOverride)> = overrides.into_iter().collect();
-        let entries: Vec<Entry<'a>> = par_map(&requests, |&(tbl, rect, o)| {
+        let entries: Vec<Entry<'a>> = crate::par::par_map(&requests, |&(tbl, rect, o)| {
             let map = bank.tilemaps().get(usize::from(tbl))?;
             let r = rect.resolve(map.width, map.height)?;
             let art = bank.render_rect(tbl, r);
@@ -800,7 +765,7 @@ impl TextOverlay {
                 }
             }
         }
-        let done = par_map(&entries, |e| {
+        let done = crate::par::par_map(&entries, |e| {
             // ... and of each group inside the entry.
             let mut smallest: HashMap<&str, GroupMin> = HashMap::new();
             for (p, f) in e.o.parts.iter().zip(&e.fitted) {
@@ -1342,14 +1307,15 @@ fn dilate(coverage: &[u8], w: usize, h: usize, r: usize, min: u8, mut f: impl Fn
 }
 
 /// Draws the parts of one slot whose source rectangle starts at canvas `(ox, oy)`, into the
-/// canvas pixels `[x0, y0, x1, y1]` of a canvas `canvas_w` pixels wide.
+/// canvas pixels `[x0, y0, x1, y1]` of a canvas `canvas_w` pixels wide whose slice `canvas` starts
+/// at row `row0`.
 pub(crate) fn draw_parts(
     parts: &[RenderedPart],
     palette: &Palette,
     ox: i32,
     oy: i32,
     canvas: &mut [u8],
-    canvas_w: usize,
+    (canvas_w, row0): (usize, usize),
     [cx0, cy0, cx1, cy1]: [usize; 4],
 ) {
     for p in parts {
@@ -1370,7 +1336,7 @@ pub(crate) fn draw_parts(
                 if b == 0 && c == 0 {
                     continue;
                 }
-                let o = (y as usize * canvas_w + x as usize) * 4;
+                let o = ((y as usize - row0) * canvas_w + x as usize) * 4;
                 let fg = p.fg_map.get(i).map_or(fg, |&f| palette.rgba(f));
                 let under: [u8; 4] = if b != 0 {
                     palette.rgba(b)

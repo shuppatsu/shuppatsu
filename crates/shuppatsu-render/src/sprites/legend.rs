@@ -161,7 +161,7 @@ fn blend(canvas: &mut [u8], c: Canvas, px: usize, py: usize, rgb: Rgb, cov: u8) 
     if !c.has(px, py) || cov == 0 {
         return;
     }
-    let o = (py * c.w + px) * 4;
+    let o = c.at(px, py);
     let under = [canvas[o], canvas[o + 1], canvas[o + 2], canvas[o + 3]];
     let out = if under[3] == 0 {
         [rgb[0], rgb[1], rgb[2], cov]
@@ -343,6 +343,7 @@ mod tests {
                 h,
                 s: 1,
                 clip: [0, 0, w, h],
+                row0: 0,
             },
             vec![0; w * h * 4],
         )
