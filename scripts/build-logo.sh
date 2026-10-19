@@ -69,9 +69,9 @@ ico_sizes=(16 32 48 256)
   for n in "${ico_sizes[@]}"; do cat "gen/icon-$n.png"; done
 } >gen/shuppatsu.ico
 
-# The language screen's board: the dark header without its backdrop and posts, cropped to the
+# The language screen's board: the dark header without its posts (the headers have no backdrop), cropped to the
 # board and its frame (x 24..1256, y 16..280).
-sed -e '/<rect width="1280" height="320"/d' -e '/<rect x="250" y="272"/d' \
+sed -e '/<rect x="250" y="272"/d' \
   -e 's/viewBox="0 0 1280 320" width="1280" height="320"/viewBox="24 16 1232 264" width="1232" height="264"/' \
   src/header-dark.svg >"$tmp/board.svg"
 resvg "${fonts[@]}" "$tmp/board.svg" "$tmp/board.png"

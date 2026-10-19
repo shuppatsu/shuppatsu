@@ -1,7 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 320" width="1280" height="320">
 <defs><clipPath id="Lb"><rect x="32" y="24" width="1216" height="248" rx="22"/></clipPath>
 <linearGradient id="Lbody" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#d6dce5"/></linearGradient></defs>
-<rect width="1280" height="320" fill="#f7f5f0"/>
 <rect x="250" y="272" width="26" height="48" fill="#6b7489"/><rect x="1004" y="272" width="26" height="48" fill="#6b7489"/>
 <g clip-path="url(#Lb)"><rect x="32" y="24" width="1216" height="248" fill="#fbfaf6"/><rect x="32" y="200" width="1216" height="72" fill="#1f58aa"/>
 </g>
