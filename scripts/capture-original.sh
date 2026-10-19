@@ -8,13 +8,13 @@
 #           (not out/traces: the replay tests expect complete driving recordings there)
 #   group   route-select line group 0..4 (docs/re/menus.md §6.1; 0 = 北陸 = stages 5, 6, 8, 9, 7)
 #   row     train row within the group (e.g. group 0 row 3 = stage 9, 485 series from 直江津)
-#   inputs  oracle input script (`tick notch brake`, hook driving ticks; crates/ddg-hook)
+#   inputs  oracle input script (`tick notch brake`, hook driving ticks; crates/shuppatsu-hook)
 #   tick    driving ticks at which to grab the screen (comma-separated; "-" for none)
-# Env:  DDG_CAP_DISPLAY  X display for Xvfb (default :77)
-#       DDG_CAP_SCHEMA   trace schema (default oracle/full.schema)
-#       DDG_CAP_STAGE    expected stage (0x8570a4); the run aborts if the trace shows another
-#       DDG_CAP_BOOT     seconds to wait before the first key (default 25)
-#       DDG_CAP_RECORD   seconds to record the screen right after the train is chosen (ffmpeg
+# Env:  SHUPPATSU_CAP_DISPLAY  X display for Xvfb (default :77)
+#       SHUPPATSU_CAP_SCHEMA   trace schema (default oracle/full.schema)
+#       SHUPPATSU_CAP_STAGE    expected stage (0x8570a4); the run aborts if the trace shows another
+#       SHUPPATSU_CAP_BOOT     seconds to wait before the first key (default 25)
+#       SHUPPATSU_CAP_RECORD   seconds to record the screen right after the train is chosen (ffmpeg
 #                        x11grab at 60 fps, out/captures/<name>.mkv plus PNG frames in
 #                        out/captures/<name>_rec/), for what comes before driving (stage intro,
 #                        departure board). Frames carry no tick; align them on content.
@@ -32,7 +32,7 @@
 # Difficulty: the original plays at the difficulty of the prefix's save, BIN\eeprom.dat (+6 bits
 # 14-15, docs/re/menus.md §13.1). With no eeprom.dat (the prefix as installed) it boots with the
 # exe's default save image (0x467768), whose difficulty is 1 (Normal): 0x40e910 sets 0x829d10
-# from it whether or not a file was read. `ddg-game play` defaults to difficulty 0 (Easy), so
+# from it whether or not a file was read. `shuppatsu play` defaults to difficulty 0 (Easy), so
 # pass the same `--difficulty N` to the port for comparisons; the trace's `difficulty` column
 # says which one the original used. Example: stage 5 starts with 30 s at difficulty 1 and 90 s
 # at 0 (start-time table 0x4599b0), so the same inputs left 015 s in the original and 080 s in
@@ -46,11 +46,11 @@ name=${1:?usage: see header}
 group=${2:?group}
 row=${3:?row}
 inputs=${4:?inputs}
-record=${DDG_CAP_RECORD:-}
+record=${SHUPPATSU_CAP_RECORD:-}
 ticks=${5:?ticks}
-disp=${DDG_CAP_DISPLAY:-:77}
-schema=${DDG_CAP_SCHEMA:-oracle/full.schema}
-boot=${DDG_CAP_BOOT:-25}
+disp=${SHUPPATSU_CAP_DISPLAY:-:77}
+schema=${SHUPPATSU_CAP_SCHEMA:-oracle/full.schema}
+boot=${SHUPPATSU_CAP_BOOT:-25}
 
 mkdir -p out/captures
 trace=out/captures/$name.csv
@@ -70,7 +70,7 @@ sleep 3
 
 export DISPLAY=$disp
 unset WAYLAND_DISPLAY
-DDG_ORACLE_DIR=out/captures DDG_WINE_DISPLAY=desktop DDG_WINE_DESKTOP=640x480 \
+SHUPPATSU_ORACLE_DIR=out/captures SHUPPATSU_WINE_DISPLAY=desktop SHUPPATSU_WINE_DESKTOP=640x480 \
   scripts/run-oracle.sh "$name" "$schema" "$inputs" >"$log" 2>&1 &
 
 key() { nix shell nixpkgs#xdotool -c xdotool key --delay 200 "$@"; }
@@ -116,9 +116,9 @@ for t in "${want[@]}"; do
   while :; do
     last=$(tail -n 1 "$trace")
     now=${last%%,*}
-    if [[ -n ${DDG_CAP_STAGE:-} && -n $col && $now != -1 && $now =~ ^[0-9]+$ ]]; then
+    if [[ -n ${SHUPPATSU_CAP_STAGE:-} && -n $col && $now != -1 && $now =~ ^[0-9]+$ ]]; then
       st=$(cut -d, -f"$col" <<<"$last")
-      [[ $st == "$DDG_CAP_STAGE" ]] || { echo "stage $st, expected $DDG_CAP_STAGE" >&2; exit 1; }
+      [[ $st == "$SHUPPATSU_CAP_STAGE" ]] || { echo "stage $st, expected $SHUPPATSU_CAP_STAGE" >&2; exit 1; }
     fi
     [[ $now =~ ^[0-9]+$ ]] && ((now >= t)) && break
     pgrep -f dengo3k.exe >/dev/null || { echo "game exited; see $log" >&2; exit 1; }

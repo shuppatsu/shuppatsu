@@ -5,6 +5,8 @@
 set -euo pipefail
 exe=$(realpath "$1"); name=$(basename "${exe%.*}")
 mkdir -p re/ghidra re/decomp/"$name"
+# The Ghidra project keeps its pre-rename name "densha": it lives in the user's re/ (never in
+# the repo), and renaming it would orphan an existing analysis.
 "$GHIDRA_HOME/support/analyzeHeadless" re/ghidra densha \
   -import "$exe" -overwrite \
   -scriptPath "$PWD/scripts/ghidra" \

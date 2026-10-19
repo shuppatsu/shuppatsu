@@ -1,5 +1,5 @@
 {
-  description = "Densha de GO! 2 Kousoku-hen 3000-bandai — native Rust reimplementation";
+  description = "Shuppatsu (出発): open-source engine for playing Densha de GO! 2 Kousoku-hen 3000-bandai from your own disc";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -64,7 +64,7 @@
         ];
       };
 
-      mkDdg =
+      mkShuppatsu =
         {
           pname,
           extra ? { },
@@ -88,14 +88,14 @@
               alsa-lib
               udev
             ];
-            # Data tests skip without DDG_DATA_DIR / DDG_TRACE_DIR; never let the sandbox see one.
+            # Data tests skip without SHUPPATSU_DATA_DIR / SHUPPATSU_TRACE_DIR; never let the sandbox see one.
             preCheck = ''
-              unset DDG_DATA_DIR DDG_TRACE_DIR
+              unset SHUPPATSU_DATA_DIR SHUPPATSU_TRACE_DIR
               export HOME=$TMPDIR XDG_CONFIG_HOME=$TMPDIR/config XDG_DATA_HOME=$TMPDIR/data
             '';
             # winit/wgpu/gilrs dlopen these. A RUNPATH rather than a wrapper script, so dlopen
             # from the binary finds them and current_exe() stays the real program (the Exec= of
-            # `ddg-game install-desktop`). Added after fixupPhase's --shrink-rpath, which would
+            # `shuppatsu install-desktop`). Added after fixupPhase's --shrink-rpath, which would
             # drop them as unused.
             postFixup = ''
               for f in $out/bin/*; do
@@ -107,7 +107,7 @@
               install -Dm644 assets/fonts/OFL-Mplus.txt -t $out/share/doc/${pname}
             '';
             meta = {
-              description = "Native reimplementation of Densha de GO! 2 Kousoku-hen 3000-bandai (bring your own disc)";
+              description = "Shuppatsu: an open-source engine for playing Densha de GO! 2 Kousoku-hen 3000-bandai from your own disc";
               license = pkgs.lib.licenses.gpl3Plus;
               platforms = pkgs.lib.platforms.linux;
               mainProgram = pname;
@@ -116,8 +116,8 @@
           // extra
         );
 
-      ddg-game = mkDdg {
-        pname = "ddg-game";
+      shuppatsu = mkShuppatsu {
+        pname = "shuppatsu";
         extra = {
           # The game's check runs every crate's tests (data tests skip in the sandbox).
           cargoTestFlags = [ "--workspace" ];
@@ -127,38 +127,38 @@
           ];
           desktopItems = [
             (pkgs.makeDesktopItem {
-              name = "ddg-game";
-              desktopName = "Densha de GO! 2 Kōsoku-hen 3000-bandai";
-              comment = "Native reimplementation; plays from your own disc";
-              exec = "ddg-game";
-              # The icon comes from the user's own exe: `ddg-game install-desktop` writes it per
+              name = "shuppatsu";
+              desktopName = "Shuppatsu";
+              comment = "Train driving engine for Densha de GO! 2 data from your own disc";
+              exec = "shuppatsu";
+              # The icon comes from the user's own exe: `shuppatsu install-desktop` writes it per
               # user under this name. The package ships none.
-              icon = "ddg-game";
+              icon = "shuppatsu";
               categories = [
                 "Game"
                 "Simulation"
               ];
-              startupWMClass = "ddg-game";
+              startupWMClass = "shuppatsu";
             })
           ];
         };
       };
-      ddg-tools = mkDdg { pname = "ddg-tools"; };
+      shuppatsu-tools = mkShuppatsu { pname = "shuppatsu-tools"; };
     in
     {
       packages.${system} = {
-        default = ddg-game;
-        inherit ddg-game ddg-tools;
+        default = shuppatsu;
+        inherit shuppatsu shuppatsu-tools;
       };
 
       apps.${system} = {
         default = {
           type = "app";
-          program = "${ddg-game}/bin/ddg-game";
+          program = "${shuppatsu}/bin/shuppatsu";
         };
-        ddg-tools = {
+        shuppatsu-tools = {
           type = "app";
-          program = "${ddg-tools}/bin/ddg-tools";
+          program = "${shuppatsu-tools}/bin/shuppatsu-tools";
         };
       };
 
@@ -206,8 +206,8 @@
 
         shellHook = ''
           # Default only when the extracted data exists, so data tests skip cleanly elsewhere.
-          if [ -z "''${DDG_DATA_DIR:-}" ] && [ -d "$PWD/data/extracted" ]; then
-            export DDG_DATA_DIR="$PWD/data/extracted"
+          if [ -z "''${SHUPPATSU_DATA_DIR:-}" ] && [ -d "$PWD/data/extracted" ]; then
+            export SHUPPATSU_DATA_DIR="$PWD/data/extracted"
           fi
           export WINEPREFIX="''${WINEPREFIX:-$PWD/wine/prefix}"
           # `cargo test/run --target x86_64-pc-windows-gnu` under Wine in its own prefix.

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# Extract the user's disc image into $DDG_DATA_DIR (default ./data/extracted).
+# Extract the user's disc image into $SHUPPATSU_DATA_DIR (default ./data/extracted).
 # Usage: scripts/extract-disc.sh <image.cue | image.mdf | image.iso>
 # Run inside `nix develop`. No root, no loop-mounting.
 set -euo pipefail
 
 img=$(realpath "$1")
-out=${DDG_DATA_DIR:-$PWD/data/extracted}
+out=${SHUPPATSU_DATA_DIR:-$PWD/data/extracted}
 work=$PWD/data/work
 mkdir -p "$out" "$work"
 

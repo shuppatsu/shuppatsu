@@ -4,11 +4,11 @@
 # and the disc presented by scripts/mount-disc.sh.
 #
 # Usage: scripts/run-original.sh [dengo3k.exe|DengoSetting.exe] [args...]
-# Env:   DDG_WINE_DISPLAY=gamescope|wayland|desktop (default: wayland if available, else desktop)
+# Env:   SHUPPATSU_WINE_DISPLAY=gamescope|wayland|desktop (default: wayland if available, else desktop)
 #          gamescope = windowed. The game ignores the window-manager close button (KWin then
 #          reports it as frozen); quit from the in-game menu or run `wineserver -k`.
-#        DDG_WINE_WINDOW_W/H                gamescope window size (default 1280x960)
-#        DDG_WINE_DESKTOP=WxH               virtual desktop size for "desktop" (default 640x480)
+#        SHUPPATSU_WINE_WINDOW_W/H                gamescope window size (default 1280x960)
+#        SHUPPATSU_WINE_DESKTOP=WxH               virtual desktop size for "desktop" (default 640x480)
 #
 # Why: the game calls SetDisplayMode(640x480x16) and creates a 640x480 Z-buffer. Under
 # winex11 on XWayland the real mode never changes, the back buffer stays desktop-sized, and
@@ -20,7 +20,7 @@ set -euo pipefail
 export LC_ALL=ja_JP.UTF-8 # ANSI code page 932; LANG alone can be overridden by the host
 exe=${1:-dengo3k.exe}
 shift || true
-mode=${DDG_WINE_DISPLAY:-$([[ -n ${WAYLAND_DISPLAY:-} ]] && echo wayland || echo desktop)}
+mode=${SHUPPATSU_WINE_DISPLAY:-$([[ -n ${WAYLAND_DISPLAY:-} ]] && echo wayland || echo desktop)}
 bin='C:\Program Files (x86)\TAITO\DENGO3K\BIN'
 cd "$WINEPREFIX/drive_c/Program Files (x86)/TAITO/DENGO3K/BIN" # game uses ..\data paths
 
@@ -39,14 +39,14 @@ case $mode in
     wineserver -w
     # The dev shell's LD_LIBRARY_PATH breaks gamescope (SDL3 load fails); restore it for Wine only.
     exec env -u LD_LIBRARY_PATH nix shell nixpkgs#gamescope -c gamescope -w 640 -h 480 \
-      -W "${DDG_WINE_WINDOW_W:-1280}" -H "${DDG_WINE_WINDOW_H:-960}" -- \
+      -W "${SHUPPATSU_WINE_WINDOW_W:-1280}" -H "${SHUPPATSU_WINE_WINDOW_H:-960}" -- \
       env LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}" wine "$exe" "$@"
     ;;
   desktop)
     wine reg add 'HKCU\Software\Wine\Drivers' /v Graphics /d x11 /f >/dev/null
     # explorer resolves the program on the Windows search path, not the cwd, so pass the
     # game directory explicitly via start.exe (/d also sets the working directory).
-    exec wine explorer "/desktop=dengo3k,${DDG_WINE_DESKTOP:-640x480}" start /wait /d "$bin" "$exe" "$@"
+    exec wine explorer "/desktop=dengo3k,${SHUPPATSU_WINE_DESKTOP:-640x480}" start /wait /d "$bin" "$exe" "$@"
     ;;
-  *) echo "DDG_WINE_DISPLAY must be gamescope, wayland or desktop" >&2; exit 1 ;;
+  *) echo "SHUPPATSU_WINE_DISPLAY must be gamescope, wayland or desktop" >&2; exit 1 ;;
 esac
