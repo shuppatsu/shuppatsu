@@ -225,6 +225,34 @@ The drive task created in 0x41cb00 runs 0x41d160 every tick:
   and classes ≥ 23 have their own draw (0x401260, 0x4012d0). **likely** (structure). The exact
   triggers are open. For a viewer, frame 0 is a safe stand-in.
 
+### 4.1 Overhead line equipment: masts and portals, no wires
+
+- **No contact or messenger wire is drawn anywhere.** Only the supports are: catenary masts
+  with their cantilevers and cross-arms, and portal / headspan beams (lattice girders with
+  braces, and the V-shaped hangers under the beams in stations). The lines are electrified,
+  but the original shows open sky above the track between the supports. **confirmed**:
+  - Wine captures of the unmodified original at 640×480 (`scripts/capture-original.sh`), on
+    four lines: stage 0 standing at 秋田 (`out/captures/cat0_400.png`) and running out
+    towards 四ッ小屋 (`cat0run_900.png`); stage 9 on the Hokuhoku viaduct
+    (`horizon9_6250.png`, a mast right next to the track and none of its wires); stage 11
+    Keihin-Tōhoku (`zfight11_300.png`); stage 13 Tōkaidō near 塚本 (`cat13_700.png`);
+    stage 17 Tazawako line (`coupling17_t25553.png`). Masts and portals in all, no wire
+    running along the track in any, nearby or far.
+  - The renderer issues no line primitives: 3D models are triangle lists only (renderer.md §8).
+  - Mesh scan (2026-10-19, a throwaway test over all 13 087 parts): no part has a long, thin
+    triangle (longer than 0.5 units, under 0.012 units across) above roughly 4 m. The long
+    thin triangles that exist are fence rails and kerbs low down. **likely** (heuristic
+    thresholds).
+- **Where the supports come from:** scenery placements (§4), not the track-side runs of §2.7.
+  With every non-rail run skipped (temporary hack in `kind_run`), the stage-0 masts and
+  portals at the shot of `out/explain/catenary/sbs_stage0.png` are all still drawn; only
+  ground strips and verges go. **likely** (one area checked).
+- **Port:** draws the same supports and, like the original, no wires. Side by sides at the
+  same position: `out/explain/catenary/sbs_stage0.png`, `sbs_stage13.png`; the default
+  settings at 3840×2160 keep the thin portal braces and hangers continuous
+  (`port0_4k.png`, `port0_4k_crop_portals.png`). Adding wires would be an enhancement
+  (its own setting, off by default); none exists. **decided** (port).
+
 ## 5. Visibility and widescreen
 
 ### 5.1 What depends on the view

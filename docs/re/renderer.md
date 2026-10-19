@@ -633,7 +633,8 @@ than 1 and 4 need the adapter's format features: the game requests
 `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES` when the adapter has it, and the renderer probes a
 count once (validation error scope) and falls back to the next lower power of two.
 
-Colour-keyed cut-outs (wires, fences, trees, signal masts) would get no edge antialiasing from
+Colour-keyed cut-outs (portal braces, fences, trees, signal masts; the original draws no
+overhead wires, scene.md §4.1) would get no edge antialiasing from
 MSAA with `discard`. With MSAA on, the world pipeline uses **alpha to coverage**: the coverage
 is the bilinear colour-key alpha sharpened to about one pixel (`(a − 0.5)/fwidth(a) + 0.5`),
 and where the nearest texel is the key but the coverage is not zero, the colour comes from the
