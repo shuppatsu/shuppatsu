@@ -1550,6 +1550,131 @@ mod tests {
         assert_eq!(app.res().layer.wide, 0, "the 4:3 menus");
     }
 
+    /// A headless app for the attract START harness. Needs `DDG_DATA_DIR`.
+    fn headless_app() -> Option<App> {
+        if std::env::var_os("DDG_DATA_DIR").is_none() {
+            eprintln!("skipped: DDG_DATA_DIR not set");
+            return None;
+        }
+        let opts = AppOptions {
+            size: (640, 480),
+            settings: crate::settings::Settings::default(),
+            mute: true,
+            pad: PadOptions::default(),
+            inputs: None,
+            shot: Some((0, std::env::temp_dir().join("ddg-unused.ppm"))),
+            locale: crate::locale::LocaleConfig::default(),
+            locks: crate::config::Locks::default(),
+            first_run: false,
+        };
+        Some(App::new(opts).unwrap())
+    }
+
+    impl App {
+        /// One tick as the headless `--shot` loop runs it.
+        fn step_headless(&mut self) {
+            if matches!(self.screen, Screen::Play(_)) {
+                self.step_play().unwrap();
+            } else {
+                self.tick().unwrap();
+            }
+        }
+
+        /// What the app shows now.
+        fn shown(&self) -> &'static str {
+            match &self.screen {
+                Screen::Play(p) if p.in_opening() => "opening",
+                Screen::Play(_) => "demo",
+                Screen::Attract(a) => a.shown(),
+                Screen::Title(_) => "title",
+                Screen::Movie(_) => "movie",
+                Screen::Wait(..) => "wait",
+                _ => "other",
+            }
+        }
+
+        /// Ticks until `what` shows; panics after `max` ticks.
+        fn run_until(&mut self, what: &str, max: u32) {
+            for _ in 0..max {
+                if self.shown() == what {
+                    return;
+                }
+                self.step_headless();
+            }
+            panic!("no {what} within {max} ticks (at {})", self.shown());
+        }
+
+        /// Enter on the next tick (the script key the poll at its end reads), then the
+        /// screens shown until the title picture or the title menu, at most 30 ticks.
+        fn press_start(&mut self) -> Vec<&'static str> {
+            self.script.keys.push((self.ticks + 1, 0x1c));
+            let mut seen = vec![self.shown()];
+            for _ in 0..30 {
+                self.step_headless();
+                let s = self.shown();
+                if seen.last() != Some(&s) {
+                    seen.push(s);
+                }
+                if seen.len() > 1 && (s == "picture" || s == "title") {
+                    break;
+                }
+            }
+            seen
+        }
+    }
+
+    /// START in each attract item, on the real data with the app's own loop (0x402700):
+    /// the cold-start opening, the route demo, a photo and the poster all land on the title
+    /// picture without the opening again; START on the picture goes to the title menu. The
+    /// lesson demo shares the route demo's path (`Attract::demo_done`).
+    #[test]
+    fn start_in_attract_never_replays_the_opening() {
+        let Some(mut app) = headless_app() else {
+            return;
+        };
+        app.run_until("opening", 600);
+        for _ in 0..100 {
+            app.step_headless();
+        }
+        assert_eq!(app.press_start(), ["opening", "attract", "picture"]);
+        for item in ["demo", "photo", "poster"] {
+            // The restarted walk reaches the item again from the picture.
+            app.run_until(item, 4000);
+            for _ in 0..30 {
+                app.step_headless();
+            }
+            assert_eq!(app.press_start(), [item, "attract", "picture"], "{item}");
+        }
+        for _ in 0..30 {
+            app.step_headless();
+        }
+        assert_eq!(app.press_start(), ["picture", "leaving", "title"]);
+    }
+
+    /// START in the logo: before its state 3 it only jumps there (the opening still
+    /// follows); afterwards (0x402a70 sets `0x855ffc |= 0x10`) the title picture follows.
+    #[test]
+    fn start_in_the_logo() {
+        let Some(mut app) = headless_app() else {
+            return;
+        };
+        app.run_until("logo", 10);
+        for _ in 0..10 {
+            app.step_headless();
+        }
+        app.script.keys.push((app.ticks + 1, 0x1c));
+        app.run_until("opening", 600);
+
+        let Some(mut app) = headless_app() else {
+            return;
+        };
+        app.run_until("logo", 10);
+        for _ in 0..400 {
+            app.step_headless();
+        }
+        assert_eq!(app.press_start(), ["logo", "attract", "picture"]);
+    }
+
     /// Setting `exit_no_to_menu` off: the original's いいえ, attract from the title picture
     /// after the same three ticks (0x42a1c0 case 0), like the title menu's cancel.
     #[test]

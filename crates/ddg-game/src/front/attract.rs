@@ -328,16 +328,28 @@ impl Attract {
         matches!(self.phase, Phase::Picture(_))
     }
 
-    /// The demo drive asked for by [`AttractStep::Demo`] has ended, by START or by its time.
+    /// What attract shows, for the app's START harness.
+    #[cfg(test)]
+    pub fn shown(&self) -> &'static str {
+        match self.phase {
+            Phase::Picture(_) => "picture",
+            Phase::Logo(..) => "logo",
+            Phase::Photo(_) => "photo",
+            Phase::Poster(_) => "poster",
+            Phase::Leaving(_) => "leaving",
+            _ => "attract",
+        }
+    }
+
     /// The opening has ended: by START (the walk restarts at the title, which then skips it)
     /// or into the title picture at once.
     pub fn opening_done(&mut self, start: bool) {
         if let Phase::Opening(i) = self.phase {
-            self.phase = if start {
-                Phase::Gap(ABORT_TICKS, RESTART_ITEM)
+            if start {
+                self.restart_at_title();
             } else {
-                Phase::Item(i)
-            };
+                self.phase = Phase::Item(i);
+            }
         }
     }
 
@@ -350,21 +362,20 @@ impl Attract {
         if let Phase::Movie(i) = self.phase {
             if skipped {
                 self.abort(l);
-                // `0x855ffc & 0x10`: the restarted title shows the picture, no opening.
-                self.skip_opening = true;
             } else {
                 self.phase = Phase::Item(i + 1);
             }
         }
     }
 
+    /// The demo drive asked for by [`AttractStep::Demo`] has ended, by START or by its time.
     pub fn demo_done(&mut self, start: bool) {
         if let Phase::Demo(next) = self.phase {
-            self.phase = if start {
-                Phase::Gap(ABORT_TICKS, RESTART_ITEM)
+            if start {
+                self.restart_at_title();
             } else {
-                Phase::Gap(1, next)
-            };
+                self.phase = Phase::Gap(1, next);
+            }
         }
     }
 
@@ -372,7 +383,15 @@ impl Attract {
     /// title (0x402700).
     fn abort(&mut self, l: &mut SpriteLayer) {
         super::clear_all(l);
+        self.restart_at_title();
+    }
+
+    /// 0x402700 after START ended an item (0x402829–0x402853): the walk counter `0x8573c8`
+    /// goes up and, the title picture not being up, `0x855ffc |= 0x10`, so the walk restarts
+    /// at item 2 and 0x402e80 goes straight to the title picture 0x4037f0, no opening.
+    fn restart_at_title(&mut self) {
         self.counters.walk += 1;
+        self.skip_opening = true;
         self.phase = Phase::Gap(ABORT_TICKS, RESTART_ITEM);
     }
 
@@ -416,6 +435,8 @@ impl Attract {
                     sfx.push(Sfx::Stop(OPENING_MUSIC));
                     super::clear_all(l);
                     self.fades.clear();
+                    // 0x402829 counts the walk on before the 0x20 test.
+                    self.counters.walk += 1;
                     self.phase = Phase::Leaving(START_TICKS);
                     return AttractStep::Running;
                 }
@@ -694,7 +715,9 @@ mod tests {
                 .contains(&Sfx::Play(SND_TITLE_CALL));
         }
         assert!(call);
+        let walk = a.counters.walk;
         let (s, sfx) = run(&mut a, &t, true);
+        assert_eq!(a.counters.walk, walk + 1);
         assert_eq!(
             (s, sfx),
             (
@@ -762,6 +785,122 @@ mod tests {
         }
         run(&mut a, &t, true);
         assert!(a.skip_opening);
+    }
+
+    /// Ticks without input until `pred` holds, the owner's opening and demos running to
+    /// their end at once.
+    fn walk_to(a: &mut Attract, t: &AttractTables, pred: impl Fn(&Phase) -> bool) {
+        for _ in 0..5000 {
+            if pred(&a.phase) {
+                return;
+            }
+            let step = run(a, t, false).0;
+            if pred(&a.phase) {
+                return;
+            }
+            match step {
+                AttractStep::Opening => a.opening_done(false),
+                AttractStep::Demo { .. } => a.demo_done(false),
+                _ => {}
+            }
+        }
+        panic!("not reached: {:?}", a.phase);
+    }
+
+    /// START now: the walk counts on and, within the abort gap, the title picture shows
+    /// with no opening asked for (0x402700 sets `0x855ffc |= 0x10`; 0x402e80 then goes
+    /// straight to 0x4037f0).
+    fn start_lands_on_the_picture(a: &mut Attract, t: &AttractTables) {
+        let walk = a.counters.walk;
+        match a.phase {
+            Phase::Opening(_) => a.opening_done(true),
+            Phase::Demo(_) => a.demo_done(true),
+            _ => assert_eq!(run(a, t, true).0, AttractStep::Running),
+        }
+        assert_eq!(a.counters.walk, walk + 1, "{:?}", a.phase);
+        for _ in 0..ABORT_TICKS + 1 {
+            assert_eq!(
+                run(a, t, false).0,
+                AttractStep::Running,
+                "the opening again"
+            );
+        }
+        assert!(a.showing_title(), "{:?}", a.phase);
+    }
+
+    /// START in every item but the title picture and the logo, in the first walk of a cold
+    /// boot (after the opening has played) and after a restart: always the title picture,
+    /// never the opening again.
+    #[test]
+    fn start_in_any_item_restarts_at_the_picture_without_the_opening() {
+        let t = tables();
+        type Pred = fn(&Phase) -> bool;
+        let cases: [(&str, Pred); 5] = [
+            ("opening", |p| matches!(p, Phase::Opening(_))),
+            ("demo", |p| matches!(p, Phase::Demo(_))),
+            ("photo", |p| matches!(p, Phase::Photo(50))),
+            ("poster", |p| matches!(p, Phase::Poster(150))),
+            (
+                "gap",
+                |p| matches!(p, Phase::Gap(1, n) if *n > RESTART_ITEM),
+            ),
+        ];
+        for (name, pred) in cases {
+            for cold in [true, false] {
+                let mut a = Attract::new(!cold, AttractCounters::default());
+                walk_to(&mut a, &t, pred);
+                eprintln!("{name}, cold {cold}");
+                start_lands_on_the_picture(&mut a, &t);
+                // The restarted walk goes on from the picture, and START again in the same
+                // item lands on the picture again.
+                walk_to(&mut a, &t, |p| !matches!(p, Phase::Picture(_)));
+                if name != "opening" {
+                    walk_to(&mut a, &t, pred);
+                    start_lands_on_the_picture(&mut a, &t);
+                }
+            }
+        }
+    }
+
+    /// Without START the walk returns to item 0 at the table's end, and its title item plays
+    /// the opening again (`0x855ffc & 0x10` clear: 0x402e80 consumed it).
+    #[test]
+    fn a_full_walk_plays_the_opening_again() {
+        let t = tables();
+        let mut a = Attract::new(true, AttractCounters::default());
+        let mut openings = 0;
+        let mut n = 0;
+        while a.counters.walk == 0 || !a.showing_title() {
+            n += 1;
+            assert!(n < 5000);
+            match run(&mut a, &t, false).0 {
+                AttractStep::Opening => {
+                    openings += 1;
+                    a.opening_done(false);
+                }
+                AttractStep::Demo { .. } => a.demo_done(false),
+                _ => {}
+            }
+        }
+        assert_eq!(openings, 1);
+        assert_eq!(a.counters.walk, 1);
+    }
+
+    /// START in the logo's states 4 to 7 ends the item with `0x855ffc |= 0x10`: the next
+    /// item, the title, shows the picture at once.
+    #[test]
+    fn late_start_in_the_logo_goes_to_the_picture() {
+        let t = tables();
+        let mut a = Attract::new(false, AttractCounters::default());
+        walk_to(&mut a, &t, |p| matches!(p, Phase::Logo(5, _)));
+        let walk = a.counters.walk;
+        run(&mut a, &t, true);
+        for _ in 0..2 {
+            assert_eq!(run(&mut a, &t, false).0, AttractStep::Running);
+        }
+        assert!(a.showing_title(), "{:?}", a.phase);
+        // Not an abort of the walk: the counter stays.
+        assert_eq!(a.counters.walk, walk);
     }
 
     #[test]
