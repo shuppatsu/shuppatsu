@@ -272,11 +272,11 @@ handle); the in-game controls page shows each.
 | LT / LB | power notch up / down | |
 | RT / RB | brake apply / release | |
 | A | ATS confirm, Pro-mode panel | confirm |
-| B or View | | cancel / back |
+| B | | cancel / back |
 | X | horn | |
 | Y | | automatic run (route select) |
 | Menu | pause | resume |
-| View + Y, held 1 s | [issue mark](docs/marks.md) | issue mark |
+| View (two squares) | [issue mark](docs/marks.md) | issue mark |
 
 The sticks step like the d-pad: push past half way for one notch, hold to repeat. Pulling the
 left stick toward you is more power; pushing the right stick away is more brake. The left
@@ -412,7 +412,7 @@ detail.
 * **A setting has no effect**: a bad value in `config.toml` is reported in the log and only
   that setting is ignored; a flag or environment variable overrides the file.
 * **Start over with the settings**: delete `config.toml` (keep `eeprom.dat`, your save).
-* **Reporting a visual or UI issue**: press **F12** (or hold View + Y on a pad) the moment you
+* **Reporting a visual or UI issue**: press **F12** (or **View**, the two-squares button, on a pad) the moment you
   see it. The game keeps running and saves a mark: the frame as a PNG, the state of the run,
   the settings and the inputs so far, in `~/.local/share/shuppatsu/marks/` (Windows:
   `%APPDATA%\shuppatsu\marks\`). Attach that folder to the report: its `reproduce.sh` renders

@@ -60,7 +60,8 @@ fn latch(on: &mut bool, v: f32, press: f32, release: f32) -> bool {
 /// | LT / LB | power + / − | — |
 /// | RT / RB | brake + / − | — |
 /// | A | the A button (Pro-mode panel, ATS confirm) | confirm |
-/// | B, View | — | cancel / back |
+/// | B | — | cancel / back |
+/// | View | issue mark (docs/marks.md) | issue mark |
 /// | X | horn | — |
 /// | Y | R (route select: automatic run) | — |
 /// | Menu | pause | pause |
@@ -116,7 +117,7 @@ impl ModernPad {
             (left, bits::LEFT),
             (right, bits::RIGHT),
             (i.south, bits::A | bits::MENU_CONFIRM),
-            (i.east || i.select, bits::CANCEL),
+            (i.east, bits::CANCEL),
             (i.west, bits::HORN),
             (i.start, bits::PAUSE),
         ] {
@@ -408,9 +409,9 @@ pub mod tests {
         assert_eq!(modern_pad(&pad(|i| i.east = true)).0, bits::CANCEL);
         assert_eq!(modern_pad(&pad(|i| i.west = true)).0, bits::HORN);
         assert_eq!(modern_pad(&pad(|i| i.start = true)).0, bits::PAUSE);
-        // Y is the R key, made from the edge by the caller; View is back like B.
+        // Y is the R key, made from the edge by the caller; View is the issue-mark button only.
         assert_eq!(modern_pad(&pad(|i| i.north = true)).0, 0);
-        assert_eq!(modern_pad(&pad(|i| i.select = true)).0, bits::CANCEL);
+        assert_eq!(modern_pad(&pad(|i| i.select = true)).0, 0);
         // D-pad down is power+ and the menu cursor down; → is brake+ and the cursor right.
         let (w, l) = modern_pad(&pad(|i| i.dpad_down = true));
         assert_eq!(w, bits::DOWN);

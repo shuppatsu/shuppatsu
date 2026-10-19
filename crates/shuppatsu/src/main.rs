@@ -177,8 +177,8 @@ play keys (mode 0): Down/Up power +/-, Right/Left brake +/- (one more press past
   Space horn, Enter ATS confirm / panel / menu confirm, Esc pause / cancel, Up/Down menu cursor
 pad (hybrid input, Xbox layout): d-pad or left stick down/up power +/-, d-pad right/left or
   right stick up/down brake +/-, LT/LB power +/-, RT/RB brake +/-, A ATS confirm / panel /
-  confirm, B or View cancel, X horn, Y R (auto run), Menu pause
-issue mark (docs/marks.md): F12, or View + Y held for a second, saves the frame, the state
+  confirm, B cancel, X horn, Y R (auto run), Menu pause, View issue mark
+issue mark (docs/marks.md): F12, or the pad's View button, saves the frame, the state
   and the inputs so far under $XDG_DATA_HOME/shuppatsu/marks (%APPDATA%\\shuppatsu\\marks)
 view keys: Space pause, Up/Down speed, Left/Right jump 100 m, L track lines, F fog, Esc quit";
 

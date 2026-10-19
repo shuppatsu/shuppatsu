@@ -7,7 +7,7 @@ element or wrong text. It is a port debugging aid and is always available.
 ## Taking one
 
 * **Keyboard:** press **F12**.
-* **Gamepad:** hold **View + Y** together for about a second.
+* **Gamepad:** press **View**, the button with two squares (hybrid input). It does nothing else on the pad, so a press never cancels a menu.
 
 The game does not pause and nothing in it changes. A toast reading "Mark 3 saved" shows in the
 window's top-right corner for two seconds, and the log prints the folder:
@@ -17,8 +17,7 @@ mark 3 saved: /home/you/.local/share/shuppatsu/marks/20261019-183012-3 (play, ti
 ```
 
 Marks work everywhere: while driving, in the pause menu and result screens, in the menus and in
-attract. The buttons of the pad combination also reach the game as usual. View is cancel, and Y
-is the R key, which only the route select reads.
+attract.
 
 ## Where they go
 

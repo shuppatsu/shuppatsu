@@ -277,9 +277,6 @@ pub fn pad_text(sample: Option<&PadSample>) -> String {
     out.join(" ")
 }
 
-/// Polls of the pad combination View + Y held together that request a mark (about 1 s).
-pub const MARK_COMBO_POLLS: u32 = 30;
-
 /// What a session's polls consumed, as edges: a key going down or up, the pad changing.
 /// Small: a two-hour run of key presses is a few thousand entries.
 #[derive(Debug, Default, Clone)]
@@ -290,8 +287,8 @@ pub struct InputLog {
     pads: Vec<(u64, Option<PadSample>)>,
     held: [u64; 4],
     pad: Option<PadSample>,
-    /// Consecutive polls with View and Y held.
-    combo: u32,
+    /// Whether View was held at the last poll (a mark is its press edge).
+    view: bool,
 }
 
 impl InputLog {
@@ -305,8 +302,8 @@ impl InputLog {
     }
 
     /// The poll at the end of `tick` read the keys `down` and the pad sample `pad`. Returns
-    /// true on the poll that completes the mark combination (View + Y for
-    /// [`MARK_COMBO_POLLS`] polls).
+    /// true on the poll where the pad's View button (the two squares) goes down: that
+    /// press saves an issue mark.
     pub fn record(&mut self, tick: u64, down: &[bool; 256], pad: Option<PadSample>) -> bool {
         for (code, &d) in down.iter().enumerate() {
             let (word, bit) = (code / 64, 1u64 << (code % 64));
@@ -319,9 +316,10 @@ impl InputLog {
             self.pads.push((tick, pad));
             self.pad = pad;
         }
-        let combo = pad.is_some_and(|(_, i)| i.select && i.north);
-        self.combo = if combo { self.combo + 1 } else { 0 };
-        self.combo == MARK_COMBO_POLLS
+        let view = pad.is_some_and(|(_, i)| i.select);
+        let pressed = view && !self.view;
+        self.view = view;
+        pressed
     }
 
     /// The recording from after tick `from` through `to` as a script whose tick 1 is
@@ -530,15 +528,24 @@ mod tests {
     }
 
     #[test]
-    fn combination_fires_once_after_a_second() {
+    fn view_press_fires_once() {
         let mut log = InputLog::default();
-        let (joy, mut i) = sample();
-        i.select = true;
-        i.north = true;
+        let (joy, mut rest) = sample();
+        rest.select = false;
+        let mut view = rest;
+        view.select = true;
+        // Held over ticks 10..=40, pressed again at 60.
         let fired: Vec<u64> = (1..=100)
-            .filter(|&t| log.record(t, &[false; 256], Some((joy, i))))
+            .filter(|&t| {
+                let i = if (10..=40).contains(&t) || t == 60 {
+                    view
+                } else {
+                    rest
+                };
+                log.record(t, &[false; 256], Some((joy, i)))
+            })
             .collect();
-        assert_eq!(fired, [u64::from(MARK_COMBO_POLLS)]);
+        assert_eq!(fired, [10, 60]);
     }
 
     #[test]

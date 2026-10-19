@@ -425,6 +425,7 @@ const UI_IDS: &[&str] = &[
     "pad_a",
     "pad_x",
     "pad_b",
+    "pad_view",
     "pad_menu",
     "pad_y",
     "pad_note",

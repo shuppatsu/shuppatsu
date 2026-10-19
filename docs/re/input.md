@@ -459,7 +459,8 @@ the mode falls back to keyboard mode 0 and a pad connected later is read in the 
 | LT / LB | power + / − | — |
 | RT / RB | brake + / − | — |
 | A | A bit 0x100000 (Pro-mode panel, ATS confirm) | menu confirm 0x1000 |
-| B, View | — | cancel 0x2000 |
+| B | — | cancel 0x2000 |
+| View | issue mark (docs/marks.md) | issue mark |
 | X | horn 0x100 | — |
 | Y | R 0x4000, press frame only, like the keyboard's | — |
 | Menu | pause 0x800000 | pause |

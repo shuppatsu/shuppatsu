@@ -1,5 +1,5 @@
-//! Issue marks (docs/marks.md), a port debugging aid: F12, or View + Y held together for about
-//! a second on a pad, saves the frame on screen and everything needed to get back to it
+//! Issue marks (docs/marks.md), a port debugging aid: F12, or the pad's View button (two squares).
+//! Saves the frame on screen and everything needed to get back to it
 //! headless in `<data dir>/marks/<YYYYMMDD-HHMMSS>-<n>/` (UTC):
 //!
 //! - `screenshot.png`: the presented frame at the window's size (before the toast);
