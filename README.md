@@ -1,53 +1,128 @@
 # densha: Densha de GO! 2 Kōsoku-hen 3000-bandai, native
 
 A native, open-source reimplementation of the Windows version of **Densha de GO! 2
-Kōsoku-hen 3000-bandai** (電車でGO！２ 高速編 ３０００番台), written from scratch in Rust. It
-plays the original game from **your own disc**: routes, models, textures, sounds, music and
-the original's own tables are read from the disc's files at runtime. It is a new engine, not
-a wrapper around the original exe, and it needs neither Windows nor Wine.
+Kōsoku-hen 3000-bandai** (電車でGO！２ 高速編 ３０００番台), written from scratch in Rust for
+Linux and Windows. It plays the original game from **your own disc**: the routes, models,
+textures, sounds, music and the original's own tables are read from the disc's files at
+runtime.
 
-What you get on top of the original, each one a setting you can turn off:
+It is a new engine. It is not an emulator, not a wrapper around the original exe and not a
+patch, and it needs neither Windows nor Wine on Linux. **No game files are included.**
 
-* any window size and aspect ratio (4:3, 16:10, 16:9, 21:9) with a wider view (Hor+), no
-  scenery pop-in at the edges, and an optional HUD laid out to the window's edges;
-* smooth motion at high refresh rates: the simulation keeps the original's 30 Hz tick, and
-  the picture is interpolated between ticks;
-* an English mode: menus, HUD, captions and station names in English over the original art,
-  plus English subtitles for the Japanese voices;
-* modern gamepads, and the Densha de GO! controllers.
+<!-- Screenshots: images of the running game are derived from game data, so they are not
+     committed to this repository (see "Legal"). Link to externally hosted ones here. -->
 
-Driving, signals, speed limits, stop scoring and penalties follow the original. They were
-measured from the original game, not guessed (see [docs/re/](docs/re/)).
+## Contents
 
-## Legal stance
+* [The original game](#the-original-game)
+* [Why a new engine](#why-a-new-engine): the original's limitations and what this one adds
+* [Status](#status)
+* [Getting started](#getting-started): extracting your disc, installing a release, first start
+* [Controls](#controls)
+* [Settings](#settings): every option, with what the original did
+* [Troubleshooting](#troubleshooting)
+* [Building from source and development](#building-from-source-and-development)
+* [Legal](#legal), [About the use of AI](#about-the-use-of-ai), [Credits](#credits),
+  [License](#license)
 
-* This is an unofficial fan project, not affiliated with or endorsed by TAITO, Unbalance or
-  JR East. *Densha de GO!* is a trademark of TAITO.
-* **No game files are included** in this repository, its releases or its Nix package, and the
-  program never downloads any. You need your own original disc.
-* The program only reads files you extracted from that disc. It contains no code or data
-  copied from the original; the original was studied to make the new engine behave the same.
-* The disc's CD check is never touched: the port reads the extracted files and does not need
-  the disc in a drive.
+## The original game
 
-## Requirements
+**Densha de GO! 2 Kōsoku-hen 3000-bandai** is the Windows PC version of TAITO's train driving
+game, published by **TAITO / Unbalance in 2000**. The *Densha de GO!* series started in the
+arcades in 1997; *Densha de GO! 2 Kōsoku-hen* ("high-speed edition") followed in the arcades
+in 1998 and came to Windows in 1999. The **3000-bandai** release ("3000 series") is the updated
+PC edition this project targets: disc volume label `DENGO3K`, executable `dengo3k.exe`.
 
-* **Linux** (x86-64; the main platform) or **Windows** (x86-64, 10 or later).
-* A GPU with **Vulkan** (Linux) or **DirectX 12 / Vulkan** (Windows). Any GPU from the last
-  ten years should do.
-* The **3000-bandai** disc (2000, volume label `DENGO3K`). The port is developed and tested
-  against it. The earlier *Kōsoku-hen* release (1999) is a goal, but not yet supported.
-* About 450 MB of disk space for the extracted files.
+You drive real Japanese lines from the cab, keeping to the timetable, obeying signals and speed
+limits, and stopping on the mark: the Akita Shinkansen *Komachi* with its coupling at Morioka,
+the Tōhoku Shinkansen, the Ōu Main Line and Tazawako Line, the Hokuhoku Line with its 160 km/h
+expresses, the Keihin-Tōhoku, Yamanote and Tōkaidō lines, and the EF63 on the Usui pass as a
+bonus.
 
-## Getting the game data
+Supported discs:
 
-You need the files from the disc, extracted into a folder. Do this once.
+* **3000-bandai (2000)**: supported, developed and tested against it. Your copy can be checked
+  against [`data-manifest/3000-bandai.toml`](data-manifest/3000-bandai.toml) (SHA-256 hashes
+  only).
+* **Kōsoku-hen (1999)**, the first PC release: a goal, not supported yet.
+
+## Why a new engine
+
+### What the original was limited by
+
+The original was written for Windows 98 and the hardware of 1999:
+
+* **4:3 only**, 640×480 by default and 1024×768 at most, in exclusive full screen
+  (DirectDraw and Direct3D 6). Its 3D view is horizontally stretched by about 7.9 %.
+* **30 frames per second**: the picture is drawn once per 30 Hz simulation tick.
+* **16-bit colour and a 16-bit depth buffer**, nearest-neighbour textures without mipmaps, so
+  distant ground and track shimmer and overlapping surfaces flicker.
+* **Short draw distance and pop-in**: the far plane is about 320 m, the track is built only
+  about 160 m ahead, scenery appears 40–200 m in front of the train, and track and trains switch
+  to coarser models with distance.
+* **Japanese only.**
+* **8-bit sound effects and voices**, mixed by Windows 9x DirectSound into a 22 kHz 8-bit
+  buffer.
+* **One input device at a time**, chosen in the options; no modern gamepads.
+* **The CD in the drive** and a Windows 9x-era installer; on current Windows and on Linux it
+  needs compatibility workarounds.
+
+### What this engine adds
+
+Driving, signals, speed limits, stop scoring and penalties **behave exactly like the
+original**. That was measured, not guessed: recorded runs of the original game are replayed
+through the new engine and match value for value (see
+[Building from source and development](#building-from-source-and-development)). On top of that,
+each improvement below is a setting you can turn off to get the original's behaviour back:
+
+* **Any window and aspect ratio** (4:3, 16:10, 16:9, 21:9): the view widens sideways (Hor+)
+  with no pop-in at the edges, the HUD can spread to the window's edges, and menus extend to
+  wide screens. Borderless full screen with Alt+Enter or F11.
+* **High refresh rates**: the simulation keeps the original's 30 Hz tick; the picture is
+  interpolated between ticks at your display's rate.
+* **English**: menus, HUD, captions, station names, messages and the staff roll in English
+  over the original art, and English subtitles for every Japanese voice line. Japanese remains
+  available, untouched.
+* **Graphics**: twice the draw distance with a soft far edge, no LOD switching or pop-in,
+  stable track without flicker, optional anti-aliasing, anisotropic filtering, ground
+  variation, HUD upscaling and texture packs.
+* **Sound**: band-limited resampling, so no metallic aliasing on pitched sounds.
+* **Input**: keyboard and gamepad at the same time with Xbox button prompts, hot-plugging, and
+  the Densha de GO! controllers.
+* **The Komachi music video** (LOVE特急こまち) plays with our own MPEG-1 decoder, in the
+  attract mode as in the original and from the title menu.
+* **Runs natively** on Linux and on current Windows, from extracted files; no CD in the drive.
+
+## Status
+
+Every route is playable from start to finish in English and Japanese.
+
+| | Status |
+|---|---|
+| Linux (x86-64), AMD GPU, Vulkan | tested, the main platform |
+| NixOS, `nix run` | tested |
+| Other Linux distributions via Nix | should work; may need [nixGL](https://github.com/nix-community/nixGL) |
+| Windows 10/11, DirectX 12 | built and its tests run under Wine; not yet tested on real Windows |
+| Xbox-style gamepads | implemented and unit-tested; not yet tested on hardware |
+| Densha de GO! controllers | implemented and unit-tested; not yet tested on hardware |
+| Kōsoku-hen (1999) disc | not supported yet |
+
+Reports from real hardware are very welcome (see [Contributing](#contributing)).
+
+## Getting started
+
+You need:
+
+* **Linux** (x86-64) or **Windows 10 or later** (x86-64);
+* a GPU with **Vulkan** (Linux) or **DirectX 12 / Vulkan** (Windows); any GPU from the last
+  ten years should do;
+* the **3000-bandai** disc, and about 450 MB of disk space for its extracted files.
 
 ### 1. Make an image of your disc
 
-Rip your disc to an image with any CD ripping tool, as **BIN/CUE**, **MDF/MDS** or **ISO**.
-A raw image (BIN/CUE or MDF) is best: it is a 1:1 copy, and the same image can also run the
-original game. On Linux, for example (with `cdrdao`; `/dev/sr0` is your drive):
+Rip your disc to an image with any CD ripping tool, as **BIN/CUE**, **MDF/MDS** or **ISO**. A
+raw image (BIN/CUE or MDF) is best: it is a 1:1 copy. On Linux, for example (with `cdrdao`;
+`/dev/sr0` is your drive):
 
 ```sh
 cdrdao read-cd --read-raw --datafile dengo3k.bin --device /dev/sr0 dengo3k.toc
@@ -56,308 +131,363 @@ toc2cue dengo3k.toc dengo3k.cue
 
 ### 2. Extract it
 
-`scripts/extract-disc.sh` unpacks an image without root or mounting. It needs `bchunk`, `7z`
-and `unshield`; the dev shell has all three (`nix develop`, see
-[Development](#development)).
+`scripts/extract-disc.sh` (in this repository) unpacks an image without root or mounting and
+without running the Windows installer. It needs `bchunk`, `7z` and `unshield`; the Nix dev
+shell has all three.
 
 ```sh
 nix develop                                  # or install bchunk, p7zip and unshield yourself
 scripts/extract-disc.sh /path/to/dengo3k.cue # also .mdf, .bin or .iso; for MDF/MDS pass the .mdf
 ```
 
-It writes to `$DDG_DATA_DIR`, by default `data/extracted` in the current directory, and uses
-`data/work` for temporary files. It unpacks the disc's file system into `disc/`, then the
-game's InstallShield cabinet into `install/`, so no Windows installer has to run.
+It writes to `data/extracted` in the current directory (or `$DDG_DATA_DIR`).
 
-Without the script: copy the installed game folder of a Windows install
-(`C:\Program Files\TAITO\DENGO3K`, with `BIN` and `DATA`) into
-`install/Program_Executable_Files/`. Either way, the game needs this layout:
+**On Windows without the script:** install the game from your disc as usual and copy the
+installed folder (`C:\Program Files\TAITO\DENGO3K`, holding `BIN` and `DATA`). The engine reads
+that layout too.
+
+Either way the engine needs:
 
 ```
-data/extracted/                          ← DDG_DATA_DIR points here
-  disc/                                  the disc's files (only needed for ddg-tools)
+data/extracted/
   install/Program_Executable_Files/
-    BIN/dengo3k.exe                      the original exe: tables, the icon
+    BIN/dengo3k.exe                      the original exe (its tables and icon are read)
     DATA/*.COM, cg.rom, tbl.rom, ...     routes, models, textures, sounds, music
 ```
 
+or an installed game folder with `BIN` and `DATA` directly inside.
+
 ### 3. Check it (optional)
 
-[`data-manifest/3000-bandai.toml`](data-manifest/3000-bandai.toml) lists the SHA-256 of every
-file on a good 3000-bandai disc (hashes only, no data). The quickest check is the exe:
+The quickest check is the exe's hash:
 
 ```sh
 sha256sum data/extracted/install/Program_Executable_Files/BIN/dengo3k.exe
 # a5a555efe3ee8089d2d60268f58e4c72fc673a0b3adf5a1e8cfa1bf039c9353c
 ```
 
-For the whole tree, `ddg-tools manifest` prints the same list for your files; no output from
-the `diff` means every file matches. `ddg-tools check` then confirms that every file is parsed
-or known (`0 failed, 0 unknown`):
+`ddg-tools check` confirms that every file is read or known (`0 failed, 0 unknown`), and
+`ddg-tools manifest` lists your files' hashes to compare with
+[`data-manifest/3000-bandai.toml`](data-manifest/3000-bandai.toml):
 
 ```sh
+DDG_DATA_DIR=data/extracted ddg-tools check
 ddg-tools manifest data/extracted 3000-bandai > mine.toml
 diff <(grep -E '^(path|sha256)' mine.toml) <(grep -E '^(path|sha256)' data-manifest/3000-bandai.toml)
-DDG_DATA_DIR=data/extracted ddg-tools check
 ```
 
-(`ddg-tools` is `nix run .#ddg-tools --` or `cargo run --release -p ddg-tools --`.)
+### 4. Install and run
 
-## Installing and running
+**Windows (release zip):** unzip `ddg-windows.zip` anywhere, put your extracted data in a
+folder named `data` next to `ddg-game.exe`, and start `ddg-game.exe`.
 
-The game looks for your extracted data in this order (the first that exists wins):
+```
+ddg-game\
+  ddg-game.exe
+  data\                  ← your extracted disc (holding install\), or an installed game folder
+```
+
+There is no console window; the log goes to `%APPDATA%\ddg\ddg-game.log` (or start with
+`--console`). The taskbar icon comes from your `dengo3k.exe`.
+
+**Linux with Nix:**
+
+```sh
+nix run github:<owner>/densha                # or `nix run .` in a checkout
+nix profile install github:<owner>/densha    # installs ddg-game with a desktop entry
+```
+
+On NixOS it works as is. On other distributions, Nix's Vulkan loader may not find your GPU
+driver; run it through [nixGL](https://github.com/nix-community/nixGL) if it reports no
+adapter.
+
+**Linux without Nix:** build from source (see
+[Building from source](#building-from-source-and-development)); a prebuilt Linux archive is not
+provided yet.
+
+**Where the game looks for your data**, first match wins:
 
 1. the `DDG_DATA_DIR` environment variable;
 2. `--data <dir>` on the command line;
-3. a folder `data/extracted` or `data` next to the `ddg-game` executable;
-4. a folder `data/extracted` or `data` in the current directory (e.g. `nix run .` in a checkout);
+3. a folder `data/extracted` or `data` next to the executable;
+4. a folder `data/extracted` or `data` in the current directory;
 5. `data_dir = "…"` in `config.toml` (see [Settings](#settings)).
 
-Each can point at an extracted disc (the folder holding `install/`) or at an installed copy of
-the original game (the folder holding `DATA` and `BIN`, e.g. `C:\Program Files\TAITO\DENGO3K`).
-For example:
+Each may point at an extracted disc or at an installed game folder.
 
-```sh
-export DDG_DATA_DIR=/path/to/data/extracted
-```
+### 5. First start
 
-### With Nix (Linux)
+The game asks for the language once: **English** or **日本語** (the original, untouched). The
+choice is saved; `--lang` overrides it for one run, and removing the `lang` line from
+`config.toml` brings the question back.
 
-```sh
-nix run .                                # in a checkout of this repository
-nix profile install .                    # installs ddg-game, with a desktop entry
-nix run .#ddg-tools -- check             # the tools
-```
-
-The package contains the game and its libraries only, no game data. On NixOS it works as is.
-On other distributions Nix's Vulkan loader may not find your system's GPU driver; run it
-through [nixGL](https://github.com/nix-community/nixGL) (`nixVulkanIntel` for Mesa drivers,
-`nixVulkanNvidia` for NVIDIA) if it reports no adapter.
-
-### From source
-
-You need a recent stable Rust toolchain and, on Linux, the development files of ALSA
-and libudev plus pkg-config. At run time, the Vulkan loader, Wayland or X11 and libxkbcommon.
-
-```sh
-cargo build --release -p ddg-game
-target/release/ddg-game
-```
-
-In `nix develop` everything is provided.
-
-### Windows
-
-Build the zip with `scripts/package-windows.sh` (cross-compiled from the Nix dev shell, see
-[docs/building.md](docs/building.md)); it writes `out/dist/ddg-windows.zip`. Unzip it and put your
-extracted data in a `data` folder next to `ddg-game.exe` (or use `--data` / `data_dir`). The game
-uses DirectX 12, falling back to Vulkan. There is no console window; the log goes to
-`%APPDATA%\ddg\ddg-game.log` (or run with `--console`). `install-desktop` is Linux-only; on
-Windows the taskbar icon comes from your `dengo3k.exe` automatically.
-
-### Command line
-
-`ddg-game` with no arguments starts the game at the title screen. `ddg-game --help` lists every
-option. Some useful ones:
+Useful command-line options (`ddg-game --help` lists them all):
 
 ```sh
 ddg-game --size 2560x1600         # window size (default 1280x800)
-ddg-game --lang en                # language for this run (en, or ja = the original art)
+ddg-game --fullscreen             # borderless full screen (Alt+Enter / F11 toggle it)
+ddg-game --lang en                # language for this run
 ddg-game play 0                   # straight into a stage (0..19), skipping the menus
-ddg-game install-desktop          # desktop entry with the game's own icon (from your exe)
+ddg-game install-desktop          # Linux: desktop entry with the game's own icon
 ```
-
-`install-desktop` writes a desktop entry and the icon from your `dengo3k.exe` to
-`~/.local/share`, so launchers show the game with its real icon (`--uninstall` removes them).
-It bakes the current `DDG_DATA_DIR` into the entry. After `nix profile install`, pass
-`--exec ddg-game` so the entry keeps working after updates.
-
-## First start
-
-On the first start the game asks for the language: **English** or **日本語** (the original,
-untouched). Pick with up/down and Enter. The choice is saved as `lang` in `config.toml`; to
-change it, use `--lang` for one run, or edit or remove the `lang` line (removing it brings the
-question back).
 
 ## Controls
 
-Choose the control mode in the game's options menu, as in the original. Modes 0 to 3 are
-keyboard modes, 4 to 6 controller modes:
+The game's options menu selects a control mode, as in the original: modes 0–3 are keyboard
+modes, 4–6 controller modes. With `hybrid_input` (on by default) the keyboard and a gamepad
+both work in every mode, and the on-screen button hints follow the device you used last.
 
-| Mode | Power | Brake |
+**Keyboard** (mode 0, the default):
+
+| Key | Driving | Menus |
 |---|---|---|
-| 0 (default) | ↓ more, ↑ less | → more, ← less (one press past B8 = emergency) |
-| 1 | Z more, A less | → more, ← less |
-| 2 | hold 1–5 for P1–P5 (nothing = neutral) | numpad 1–8 = B1–B8, 9 = emergency, 0 = release |
-| 3 | one handle: ↓ toward power, ↑ toward brake | |
-| 4 | gamepad, digital: stick or d-pad like mode 0 | |
-| 5 | gamepad, analog one-handle lever (stick Y) | |
-| 6 | two-handle controller (Densha de GO! controller), calibrated | |
+| ↓ / ↑ | power notch up / down | cursor |
+| → / ← | brake apply / release (one more press past B8 = emergency) | left / right |
+| Space | horn | |
+| Enter | ATS confirm, Pro-mode panel | confirm |
+| Esc | pause | cancel |
+| Alt+Enter, F11 | full screen on / off | full screen on / off |
 
-In every mode: **Space** horn, **Enter** ATS confirm and menu confirm, **Esc** pause and
-cancel, arrows in the menus.
+Modes 1–3 use other layouts (Z/A for power; number keys for direct notches; a single
+handle); the in-game controls page shows each.
 
-**Keyboard and controller together** (setting `hybrid_input`, on by default): the keyboard
-and a gamepad both work in every mode, like a modern PC game. Plug a pad in at any time; in
-a keyboard mode it works straight away with the Xbox layout below, and the on-screen button
-hints switch to Xbox glyphs as soon as you touch it (back to the keys when you type). Both
-devices step the same handles, and pressing the same direction on both counts once. With a
-real lever (modes 5 and 6), the last device used wins: a key press takes over until you
-move the lever. Turn `hybrid_input` off for the original's one-device behaviour; then
-`keyboard_with_controller` decides whether the keyboard's horn and ATS confirm still work in
-controller modes, and holding **Shift** lets the keyboard drive the menus there.
-
-**Gamepads** (anything SDL/gilrs knows), with `hybrid_input` (Xbox names; A = South):
+**Gamepad** (Xbox names, with `hybrid_input`):
 
 | Button | Driving | Menus |
 |---|---|---|
-| D-pad or left stick ↓ / ↑ | power notch up / down | cursor down / up |
-| D-pad or left stick → / ← | brake apply / release (one press past B8 = emergency) | right / left |
-| RT / RB | power notch up / down | — |
-| LT / LB | brake apply / release | — |
-| A | Pro-mode panel, ATS confirm | confirm |
-| B or View | — | cancel / back |
-| X | horn | — |
-| Y | — | automatic run (route select, the R key) |
-| Menu | pause | resume (pause menu) |
+| D-pad or left stick ↓ / ↑ | power notch up / down | cursor |
+| D-pad or left stick → / ← | brake apply / release (past B8 = emergency) | left / right |
+| RT / RB | power notch up / down | |
+| LT / LB | brake apply / release | |
+| A | ATS confirm, Pro-mode panel | confirm |
+| B or View | | cancel / back |
+| X | horn | |
+| Y | | automatic run (route select) |
+| Menu | pause | resume |
 
-Without `hybrid_input` a pad only works in mode 4 and 5: South (A / ✕) is ATS and menu
-confirm, East (B / ○) horn and cancel (one button, as the original's binding table has it),
-Start pause, and the left stick or d-pad drives the levers.
+Pressing the same direction on both devices counts once. Pads can be plugged in at any time.
 
-**Densha de GO! controllers**:
+**Densha de GO! controllers:**
 
 * Controllers that report their handles as two axes: mode 6. Calibrate them in the game's
-  options (ADJUSTMENT), as in the original, or from a terminal with
-  `ddg-game pad calibrate --joystick-dat ~/.config/ddg/joystick.dat`. The game keeps
-  `joystick.dat` next to its save.
-* The PS1/PS2 two-handle controllers on a USB adapter report the notches as button
-  combinations. Teach the game the combinations once, then pass the file when playing:
+  options (ADJUSTMENT), as in the original.
+* The PS1/PS2 two-handle controllers on a USB adapter report notches as button combinations.
+  Teach the game once and pass the file when playing:
 
   ```sh
-  ddg-game pad learn --combo ~/.config/ddg/combo.txt   # follow the prompts
+  ddg-game pad learn --combo ~/.config/ddg/combo.txt
   ddg-game --combo ~/.config/ddg/combo.txt
   ```
 
-* `ddg-game pad monitor` shows what the game reads from a controller.
-
-The original's game-port controller driver is not needed.
+* With a real lever, the last device used wins: a key or pad press takes over until you move
+  the lever again. `ddg-game pad monitor` shows what the game reads.
 
 ## Settings
 
-Settings live in `config.toml`:
+Change settings on the in-game **Port Settings** screen (title menu → Game Settings → Port
+settings), or in `config.toml`:
 
-* Linux: `$XDG_CONFIG_HOME/ddg/config.toml` (usually `~/.config/ddg/config.toml`)
+* Linux: `~/.config/ddg/config.toml` (`$XDG_CONFIG_HOME/ddg/`)
 * Windows: `%APPDATA%\ddg\config.toml`
 
-The same folder holds the save (`eeprom.dat`, the original's format) and `joystick.dat`.
-Every key is optional, and each can also be given as an environment variable (`DDG_<KEY>`)
-or a flag (`--<key>` / `--no-<key>`). Flags win over the environment, which wins over the
-file. [docs/settings.md](docs/settings.md) lists every setting with what the original did.
+The same folder holds your save (`eeprom.dat`, in the original's format). Every setting can
+also be given as an environment variable (`DDG_<KEY>`) or a flag (`--<key>` / `--no-<key>`).
+Flags win over the environment, which wins over the file.
 
 ```toml
 lang = "en"
-hud_layout = "enhanced"   # HUD at the window's edges
-ui_scaling = "integer"    # crisp whole-pixel 2D
-texture_filtering = true  # no shimmering textures
+hud_layout = "enhanced"
+msaa = 4
+anisotropic = 16
 ```
 
-Every enhancement is a named setting, so you can go back to the original's behaviour one
-thing at a time.
+**Every improvement is a named setting**, so you can go back to the original's behaviour one
+thing at a time. The tables give the defaults; [docs/settings.md](docs/settings.md) has every
+detail.
 
-### English mode
+### Display
 
-With `lang = "en"` the game draws English text over the original Japanese art: menus, the
-HUD, signal and station captions and messages. Some extras, all on by default:
+| Setting | Default | What it does |
+|---|---|---|
+| `hud_layout` | `original` | `original`: the 640×480 HUD centred, as in the original. `enhanced`: the driving HUD spread to the window's edges, with wider bilingual station plates in English. |
+| `ui_scaling` | `smooth` | How the 2D layer (HUD, menus) is enlarged: `smooth` (sharp bilinear), `integer` (whole multiples, crispest, with borders) or `nearest`. |
+| `ui_scale` | follows the window | A fixed multiple of 640×480 (1–4) instead. |
+| `wide_menus` | on | Menu backgrounds and the title picture continue to the edges of a wide window. Off: the 4:3 menus over black. |
+| `hud_upscale` | off | Smooths the HUD and menu pixel art with xBRZ at 2×–4×, keeping every colour effect. Off: the original pixels. |
+| `interpolate` | on | Camera, trains, wiper, snow and needle drawn between the 30 Hz ticks at your display's rate. Off: 30 distinct pictures per second, as the original. |
+| `vsync` | on | Frames in step with the display. Off: uncapped. |
+| `fullscreen` | off | Borderless full screen on the current monitor. Alt+Enter and F11 toggle it at any time, and the choice is remembered. |
+| `movie_scaling` | `smooth` | Filter for the Komachi movie: `smooth`, `sharp` or `nearest`. |
 
-* `subtitles`: English subtitles for the spoken station, signal and speed-limit calls,
-  announcements and the navigator.
-* `one_line_captions`, `landmark_names`, `board_names`: station captions as one line, English
-  names under the landmark plates, romaji under the route board.
-* `staff_kanji`: the staff roll's names followed by their kanji, as in the original credits.
+### 3D and effects
 
-The text uses the bundled M+ 2 font; `--font` / `font` takes your own TTF/OTF list.
-Translations live in [`locales/`](locales/) (see [docs/localisation.md](docs/localisation.md)
-to add a language).
+| Setting | Default | What it does |
+|---|---|---|
+| `wide_visibility` | on | Keeps scenery and side tracks for the wider view, so nothing pops in at the sides. Off: the original's 4:3 visibility. |
+| `square_pixels` | off | Drops the original's 7.9 % horizontal stretch of the 3D view. |
+| `draw_distance` | `2x` | How far you see: `original` (320 m), `2x` (640 m), `3x` or `max` (1280 m). |
+| `distance_fade` | on | The world dissolves into the background before the far edge instead of ending abruptly. |
+| `max_lod` | on | Track and trains always use their most detailed model. Off: the original's coarser models at distance (visible switching). |
+| `early_activation` | on | Scenery and track appear as soon as they could be in view. Off: the original's pop-in 40–200 m ahead. |
+| `fine_depth` | on | Depth precision suited to the longer draw distance, with overlapping track and ground resolved in the original's order. Off: the original's 16-bit depth. |
+| `stable_track_variants` | off | Side tracks keep one model instead of flickering between variants as the original does. |
+| `texture_filtering` | off | Smooth textures with mipmaps. Off: the original's sharp, unfiltered texels. |
+| `anisotropic` | off | Anisotropic filtering (2–16): sharp distant ground without shimmer. On its own it keeps close textures pixel-sharp. |
+| `msaa` | off | Anti-aliasing (2, 4 or 8 samples) for smooth edges on wires, rails and fences. |
+| `ground_variation` | off | Subtle large-scale light and colour variation on fields, snow and ballast, so they don't look uniform. |
+| `ground_detiling` | off | Hides the visible grid of repeating ground textures. |
+| `texture_pack` | unset | A folder of upscaled textures made with `ddg-tools upscale-textures` from your own disc ([docs/texture-packs.md](docs/texture-packs.md)). |
+| `fog` | on | The snow fog, as the original's own fog option. |
+| `wide_weather` | on | Rain and snow over the whole width. Off: the original's 4:3 area. |
+| `far_traffic` | on | Other trains drawn out to the far plane. Off: up to 150 m, as the original. |
+| `wide_coupling_band` | on | The coupling minigame's black panel band spans the whole window width. |
 
-### Widescreen and scaling
+### Language and text
 
-* The 3D view keeps the original's vertical field of view and widens to the window
-  (`wide_visibility` keeps scenery from popping in at the sides). `square_pixels` drops the
-  original's 7.9 % horizontal stretch.
-* The 2D layer (HUD, menus) is the original's 640×480 design, scaled up. `ui_scaling`:
-  `smooth` (default, sharp bilinear), `integer` (whole multiples, centred, crispest) or
-  `nearest`. `ui_scale` fixes the multiple (1–4).
-* `hud_layout = "enhanced"` moves the driving HUD to the window's edges on wide screens;
-  `original` keeps the centred 4:3 layout. `wide_menus` extends the menu backdrops to the
-  edges.
-* `interpolate` and `vsync` control smoothness: by default the picture is interpolated between
-  the 30 Hz ticks and presented with vsync at your display's rate; `--uncapped` turns vsync
-  off.
-* The **Komachi movie** (LOVE特急こまち) plays from its own file with our own MPEG-1 decoders:
-  in attract once every stage is cleared, as in the original, and from the title menu as item 6
-  (`movie_in_menu`, on by default). Enter skips it. It is shown at its true 2.03:1 shape;
-  `movie_scaling` (smooth, sharp, nearest) picks the filter (docs/re/movie.md).
+| Setting | Default | What it does |
+|---|---|---|
+| `lang` | asked on first start | `en` (English) or `ja` (the original Japanese art). |
+| `subtitles` | on | English subtitles for every Japanese voice line: station, signal and speed-limit calls, announcements, the navigator and the coupling radio. |
+| `one_line_captions` | on | Station captions and banners as one line of text ("Ōmagari · Stop"); also the staff roll as clean text. |
+| `landmark_names` | on | English names under the landmark plates. |
+| `board_names` | on | Romanised names under the route board's kanji. |
+| `staff_kanji` | on | Each staff member's name in kanji after the English in the end credits. |
+| `font`, `display_font` | bundled M+ 2 | Your own TTF/OTF fonts for the translated text. |
 
-## Not supported
+### Sound
 
-* The original *Kōsoku-hen* release (not 3000-bandai), see Requirements.
+| Setting | Default | What it does |
+|---|---|---|
+| `audio_resampler` | `sinc` | How sounds are converted to your device's rate: `sinc` (band-limited, no aliasing), `linear` or `nearest` (the two candidates for what the original's DirectSound did). |
+
+### Saves and controls
+
+| Setting | Default | What it does |
+|---|---|---|
+| `hybrid_input` | on | Keyboard and gamepad together in every mode, with button hints that follow the last device. Off: one device at a time, as the original. |
+| `keyboard_with_controller` | on | With `hybrid_input` off: the keyboard's horn and ATS confirm still work in controller modes. |
+| `save_on_change` | on | The save is written after every ranking entry, clear or option change. Off: only at exit, as the original. |
+| `save_timed_out_names` | on | A ranking name entry that times out is saved too. |
+| `exit_no_to_menu` | on | "No" in the exit dialog returns to the title menu instead of the attract mode. |
+| `movie_in_menu` | on | The Komachi movie playable from the title menu (the original's hidden item 6). |
 
 ## Troubleshooting
 
 * **`the game data was not found`**: put the extracted data where the game looks for it (see
-  [Installing and running](#installing-and-running)), e.g. `--data /path/to/data/extracted`.
-* **`… not found in …/DATA`**: the extraction is incomplete or the layout differs. Check
-  that `install/Program_Executable_Files/DATA` and `BIN/dengo3k.exe` exist, and run the
-  checks in [Getting the game data](#3-check-it-optional).
-* **No window, or "no adapter" / Vulkan errors**: check `vulkaninfo --summary`. Outside
-  NixOS, run the Nix package through nixGL (above).
-* **No sound**: the game plays through ALSA (PipeWire and PulseAudio provide it). `--mute`
-  starts silent.
-* **The controller does nothing**: choose a controller mode (4–6) in the options; without a
-  connected pad the game falls back to keyboard mode 0. Check what arrives with
-  `ddg-game pad monitor --mode 6`.
-* **A setting has no effect**: a bad value in `config.toml` is reported on the terminal and
-  only that setting is ignored. A file that does not parse is reported and ignored as a whole.
-* **Start over with the settings**: delete `config.toml` (your save is `eeprom.dat`, keep it).
+  [Install and run](#4-install-and-run)), or pass `--data /path/to/data/extracted`.
+* **`… not found in …/DATA`**: the extraction is incomplete or laid out differently. Check that
+  `DATA` and `BIN/dengo3k.exe` exist and run the [checks](#3-check-it-optional).
+* **No window, or "no adapter" / Vulkan errors**: check `vulkaninfo --summary`. Outside NixOS,
+  run the Nix package through nixGL.
+* **No sound**: the game plays through ALSA on Linux (PipeWire and PulseAudio provide it).
+  `--mute` starts silent.
+* **The controller does nothing**: check what arrives with `ddg-game pad monitor`. With
+  `hybrid_input` off, choose a controller mode (4–6) in the options.
+* **A setting has no effect**: a bad value in `config.toml` is reported in the log and only
+  that setting is ignored; a flag or environment variable overrides the file.
+* **Start over with the settings**: delete `config.toml` (keep `eeprom.dat`, your save).
 
-## Development
-
-This repository holds code and documentation only. **Never commit game data**: no disc
-images, extracted files, exes, decompiler output or traces. They live in the gitignored
-`data/`, `re/`, `out/` and `wine/`. Read [CLAUDE.md](CLAUDE.md) for the project's rules.
+## Building from source and development
 
 ```sh
 nix develop                     # Rust, Vulkan, Wayland/X11, bchunk, 7z, Ghidra, Wine, mingw
+cargo build --release -p ddg-game
+target/release/ddg-game
+```
+
+Without Nix you need a recent stable Rust toolchain and, on Linux, the ALSA and libudev
+development files plus pkg-config; at run time the Vulkan loader, Wayland or X11 and
+libxkbcommon. The Windows zip is cross-compiled from the dev shell with
+`scripts/package-windows.sh` ([docs/building.md](docs/building.md)).
+
+```sh
 cargo test                      # data tests skip unless DDG_DATA_DIR is set
 cargo clippy --all-targets -- -D warnings
 cargo fmt
-nix build                       # the package; runs the tests without data
+nix build                       # the package
 ```
 
-The dev shell sets `DDG_DATA_DIR` to `data/extracted` when it exists, so the data tests run.
+The workspace:
 
-Crates: `ddg-formats` (file formats), `ddg-engine` (the deterministic simulation),
-`ddg-render` (wgpu), `ddg-audio`, `ddg-game` (the program), `ddg-tools` (inspection and
-export: `ddg-tools` lists the commands) and `ddg-hook`.
+| Crate | |
+|---|---|
+| `ddg-formats` | parsers for every original file format, and the MPEG-1 decoders |
+| `ddg-engine` | the deterministic simulation: physics, signals, timetable, scoring |
+| `ddg-render` | the wgpu renderer: route, scenery, cab, HUD, text |
+| `ddg-audio` | mixer, sound effects, music |
+| `ddg-game` | the program: window, input, menus, settings, localisation |
+| `ddg-tools` | inspection and export (`ddg-tools` lists the commands) |
+| `ddg-hook` | a 32-bit proxy DLL used only to measure the original under Wine |
 
-Fidelity is checked against the original: `ddg-hook` is a 32-bit proxy DLL that runs inside
-the original game under Wine and logs its state every tick (`scripts/run-oracle.sh`, schemas in
-`oracle/`). `ddg-tools trace-replay` and the tests replay those traces through the engine and
-compare (traces in `DDG_TRACE_DIR`, default `out/traces`; they are derived from game data and
-stay out of the repo). The reverse-engineering notes, each claim with its evidence, are in
-[docs/re/](docs/re/), and the disc analysis is [docs/recon.md](docs/recon.md).
+**How fidelity is checked.** `ddg-hook` runs inside the original game under Wine and logs its
+state every tick. `ddg-tools trace-replay` and the tests replay those recordings through the
+new engine from the logged inputs alone and compare every value. The reverse-engineering notes,
+each claim with its evidence and confidence, are in [docs/re/](docs/re/); the disc analysis is
+[docs/recon.md](docs/recon.md).
+
+### Contributing
+
+* **Bug reports**: describe what happened, attach the log (Linux: the terminal; Windows:
+  `%APPDATA%\ddg\ddg-game.log`) and, if useful, a screenshot. Reports from real Windows
+  machines, gamepads and Densha de GO! controllers are especially welcome.
+* **Translations**: the strings live in [`locales/`](locales/);
+  [docs/localisation.md](docs/localisation.md) explains the format and how to add a language.
+  Corrections to the English are welcome too, as are confirmed readings of the staff names
+  marked `reading?` in [`locales/en.toml`](locales/en.toml).
+* **Never commit game data**: no disc images, extracted files, executables, decompiler output,
+  traces or screenshots of the game. They belong in the gitignored `data/`, `re/`, `out/` and
+  `wine/`. [CLAUDE.md](CLAUDE.md) has the project's rules.
+
+## Legal
+
+* This is an unofficial fan project. It is **not affiliated with, endorsed by or connected to
+  TAITO Corporation, Square Enix, Unbalance Corporation, East Japan Railway Company, JR East
+  Marketing & Communications or any other rights holder.** *Densha de GO!* is a trademark of
+  TAITO Corporation; all other trademarks belong to their owners.
+* **No game files are included** in this repository, its releases or its Nix package, and the
+  program never downloads any. You need your own original disc. All game content (art, sound,
+  music, routes, video) comes from that disc at runtime.
+* The engine is new code. The original was studied to document its behaviour (in
+  [docs/re/](docs/re/)), and the engine was written fresh from those notes, not copied from the
+  original program.
+* The disc's copy protection is neither analysed nor bypassed: the engine reads the files you
+  extracted and does not need the disc in a drive.
+
+## About the use of AI
+
+This project was built with extensive help from an AI coding assistant (Anthropic's Claude,
+through Claude Code), working under the direction of the maintainer, who set the goals and the
+rules, made the design decisions and reviewed the results. Most of the code, the
+reverse-engineering notes and the English translation were written by the assistant.
+
+Correctness was checked rather than assumed: the game rules are verified by replaying
+recordings of the original game value for value, there are several hundred automated tests,
+and the visual and audio work was compared against the original in screenshots and captures.
+
+Some parts are machine-made and less certain, and corrections are welcome:
+
+* the **English translation** was not written by a professional translator;
+* the **subtitles** were transcribed from the voice clips with a speech-recognition model
+  (Whisper) and then translated; a few short, radio-filtered lines are best guesses (marked
+  in [docs/localisation.md](docs/localisation.md));
+* about twenty **staff-name readings** could not be confirmed from any source and are marked
+  `reading?` in [`locales/en.toml`](locales/en.toml).
 
 ## Credits
 
-* **Densha de GO! 2 Kōsoku-hen 3000-bandai**: © TAITO 1996, 2000, Windows version sold by
-  Unbalance, with JR East Planning. All game content (art, sound, routes) is theirs and comes
-  from your disc.
-* **M+ FONTS** (M+ 2 Medium), bundled for the translated text, under the SIL Open Font
-  License 1.1 ([assets/fonts/OFL-Mplus.txt](assets/fonts/OFL-Mplus.txt)).
-* Built with Rust and [wgpu](https://wgpu.rs), winit, glam, cpal, gilrs, fontdue,
-  encoding_rs, pelite and serde; reverse engineering with Ghidra, Wine, bchunk, 7-Zip and
-  unshield.
+* **Densha de GO! 2 Kōsoku-hen 3000-bandai**: © TAITO 1996, 2000; Windows version by
+  Unbalance, with the cooperation of JR East Marketing & Communications, Hokuetsu Express and
+  others. The original staff are credited in the game's own staff roll, which this engine
+  shows in full.
+* **M+ FONTS** (M+ 2 Medium), bundled for the translated text, under the SIL Open Font License
+  1.1 ([assets/fonts/OFL-Mplus.txt](assets/fonts/OFL-Mplus.txt)).
+* Built with Rust and [wgpu](https://wgpu.rs), winit, glam, bytemuck, cpal, gilrs, fontdue,
+  encoding_rs, pelite, serde, toml, thiserror and anyhow. Reverse engineering with Ghidra,
+  Wine, bchunk, 7-Zip and unshield; subtitles transcribed with
+  [whisper.cpp](https://github.com/ggml-org/whisper.cpp).
+* Staff names and background: the [shmuplations.com](https://shmuplations.com/densha/)
+  developer interview, [MobyGames](https://www.mobygames.com/game/29765/densha-de-go-2/) and
+  [raido.moe](https://raido.moe/staff/n64/n64_densha_de_go_64.html).
 
 ## License
 
