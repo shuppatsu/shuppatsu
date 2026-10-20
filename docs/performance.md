@@ -12,15 +12,16 @@ CPU time of each part of it:
 | Column | What |
 |---|---|
 | `tick` | the 33 ms ticks run in the frame (simulation, screens), without the compose inside them |
-| `compose` | the 2D layer drawn on the CPU (`Composer::compose`) |
-| `upload2d` | 2D pixels copied to the GPU (`Overlay::sync`) |
+| `compose` | the 2D layer drawn on the CPU (`Composer::compose`); in GPU mode (§3) its draw list built |
+| `upload2d` | 2D pixels copied to the GPU (`Overlay::sync`); in GPU mode the frame's data uploaded and the compose dispatched |
 | `build3d` | the 3D frame's geometry built (scene compose, effects) |
 | `upload3d` | that geometry copied to the GPU (`Renderer::set_geometry`) |
 | `render` | render passes encoded and submitted |
 | `acquire`, `present` | waiting for the surface and presenting |
 | `movie` | the movie's decoding |
 
-then the counters `ticks`, `composes`, `upload2d_kb`, `full_composes`, the screen's name and the
+then the counters `ticks`, `composes`, `upload2d_kb`, `full_composes` (in GPU mode: frames that
+changed, so were composed again on the GPU), the screen's name and the
 2D canvas size. Sections are exclusive: a compose inside a tick counts as compose only. Work on
 helper threads is inside the section that waits for it.
 
@@ -30,7 +31,9 @@ periods, rounded, misses n − 1), a histogram of intervals in periods, the CPU 
 (all sections but acquire and present) and each section's average / p99 / max.
 
 **Composer check.** `SHUPPATSU_VERIFY_COMPOSE=1` composes every partial 2D update a second time in
-full and panics at the first differing pixel (a debug aid: it costs a full compose per tick).
+full and panics at the first differing pixel (a debug aid: it costs a full compose per tick); in
+GPU mode it checks every GPU-composed frame against a CPU compose (§3). `SHUPPATSU_COMPOSE=cpu`
+or `gpu` picks where the layer is composed (default `gpu`).
 
 A measurement run, muted, in throwaway config and data directories, stopped after a time:
 
@@ -87,7 +90,79 @@ whenever the canvas multiple changes; the lettering analysis of the original art
 bitmap and summed-area-table shadow search) is kept for the process, so a window going full screen
 re-rasterises in about 0.1 s (3 s before).
 
-## 3. Frame pacing
+## 3. GPU 2D compositing
+
+The retained CPU compose (§2) still redraws and uploads the whole canvas whenever a palette
+changes, since every pixel's colour then changes: the attract fades composed 26 MB in about
+3.7 ms and uploaded it in about 0.9 ms, and missed about 1.5 % of the refreshes. The default is
+now to compose the layer on the GPU; `SHUPPATSU_COMPOSE=cpu` keeps the CPU compose, which stays
+the reference (tests, `SHUPPATSU_VERIFY_COMPOSE`, and a fallback for a GPU without compute
+shaders).
+
+**What the CPU does** (`sprites/gpu.rs`, `Composer::compose` in GPU mode). The same
+`SpriteLayer::prepare` as a CPU compose (so the bank's paper-fill and xBRZ caches see the same
+calls), then a list of draw records in the CPU's draw order: slots layer 3 → 0, high → low, the
+widgets of each layer after its slots, then the fans. A record is 32 words: its kind, the canvas
+box it may change, the columns a framed slot keeps out of on its rows, and its parameters.
+Nothing is drawn on the CPU per frame; the frame is compared with the previous one, and only a
+different frame is composed again on the GPU.
+
+| Record | Per-pixel data on the GPU | Kept |
+|---|---|---|
+| Slot (one per run of columns) | tiles and tilemaps as indices; xBRZ index images (`hud_upscale`); the regions of the translated text over it (art under them is not drawn) | bank art per art id; images while used |
+| Paper fill | the fill's two sides, RGBA | per fill |
+| Translated text part | base index, coverage, text colour index per pixel | per bank generation |
+| Fill | — (one colour) | — |
+| Triangle / fan | a byte mask, rasterised by the CPU's edge test | per frame |
+| Label text | coverage, outline and backdrop bits (the CPU's mask and dilation) | by text, style and size |
+| Legend | one coverage raster per group of blends (shape, rim, letters), recorded from the CPU's legend drawing | by legend, colours and place |
+| Picture (logo board) | the scaled picture, RGBA | by picture and size |
+| Resampled sprite | per pixel the id of its list of (index, weight) contributions; per palette each list's colour, coverage and its complement as the CPU's `f32` values | lists by map, rectangle and scale; colours by palette |
+
+Palette-indexed art is coloured on the GPU from the frame's 128 palettes (rewritten only where
+they changed), so a fade uploads palettes, not pixels.
+
+**What the GPU does** (`gpu2d.rs`, `gpu2d.wgsl`). The canvas is split into 64 × 64 bins, each
+with the list of records whose box reaches it and a hash of what its pixels are made of (its
+records in order, the data they read, the palettes they colour with, the canvas size and
+backdrop); only bins whose hash changed since the texture's last frame are composed again (the
+needle moving recomposes a few bins, a palette fade the bins that use the palette). One compute
+dispatch runs a thread per pixel of those bins: it starts from transparent, applies every
+record of its bin that holds the pixel, in order, puts the backdrop colour under the design
+rectangle (`put_backdrop`) and stores the result into the overlay's canvas texture (an
+`Rgba8Unorm` storage texture, sampled through an sRGB view as before). Each record reproduces
+the CPU's arithmetic exactly: whole canvas pixels per art pixel by integer division (no
+sampling, so no filtering or texel-centre questions), index 0 transparent, the integer blends
+of text (`(u·(255 − t) + f·t) / 255`), legends and pictures, and for resampled sprites the
+CPU's `f32` products, kept from being fused into a multiply-add by an opaque bit operation,
+with Rust's round-half-away. The presentation (§2, `overlay.rs`) is unchanged.
+
+Data a record reads lives in a pool buffer, uploaded once and kept while it is used (by the
+identity of the data); a full pool is emptied and filled with the current frame's data again.
+
+**Checking.** `SHUPPATSU_VERIFY_COMPOSE=1` in GPU mode also composes each frame on the CPU from
+the same prepared slots and compares the GPU's canvas, read back, with it byte for byte
+(panicking at the first difference). A randomized test (`sprites/gpu_tests.rs`) composes random
+layers with every kind of record on both and compares them; it is skipped without a GPU.
+
+**Results** (CPU compose → GPU compose, same binary; 4K full screen on a 3840×2160 60 Hz monitor
+and the 2560×1600 180 Hz panel, as the 120 Hz TV was not connected; CPU work does not depend on
+the display):
+
+| Screen (4K) | 2D upload per frame | `compose` p99 | Work p99 |
+|---|---|---|---|
+| Attract (palette fades) | 3.9 MB → 88 KB | 4.3–4.9 → 2.8–3.4 ms | 5.7–6.7 → 3.3–3.9 ms |
+| Title, route select, board | 0.2–1.7 MB → 30–50 KB | 0.9–4.3 → 0.1 ms | 1.4–6.0 → 0.6–0.8 ms |
+| Driving | 200–270 → 18 KB | 2.6 → 0.2 ms | 5.4 → 4.0 ms |
+| Ending (staff roll) | 372 → 11 KB | 2.2 → 0.06 ms | 5.7 → 4.1 ms |
+
+At 180 Hz the attract fades miss 0.5–1 % of the refreshes instead of 2–3 %, driving 0.1–0.3 %
+instead of 0.6–0.7 %. What remains of the attract's compose is the paper fill rebuilt per fade
+step inside `SpriteLayer::prepare`, which both modes share. The 68 reference shots are
+byte-identical in both modes, and the verify mode found no difference in about 26 000 GPU frames
+over every reference session (with `hud_upscale` and the first-start language screen).
+
+## 4. Frame pacing
 
 With vsync the runs present with Fifo and the event loop polls (`ControlFlow::Poll`). A run's
 simulation advances by whole refresh periods of the display's reported rate, phase-locked to the
@@ -100,13 +175,13 @@ Polling keeps one core busy between frames. Waiting instead (`ControlFlow::Wait`
 about 6 % but made every part of the frame slower (the core clocks down between frames) and
 driving missed 1.2 % of the refreshes instead of 0.1 %, so the loop polls.
 
-## 4. Run start
+## 5. Run start
 
 A run's start reads the departure boards' diagrams on all cores (`board_en.rs`); the frame that
 starts a stage takes about 45 ms (95 ms before), most of it the route scene and the cab's
 translated captions.
 
-## 5. Results
+## 6. Results
 
 Missed refreshes at 120 Hz, 4K full screen (windowed 2560×1440 where marked), default settings,
 English, before the work and after it:

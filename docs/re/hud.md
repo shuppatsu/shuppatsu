@@ -19,8 +19,8 @@ Confidence: **confirmed** means read from code or bytes. **likely** means a stro
 ### 1.1 Sprite slots — confirmed
 
 The HUD is made of **sprite slots**: 207 records of 16 bytes at `0x816f88`, rendered by
-`Sprite_RenderLayer` (0x430fb0, renderer.md §11). (The port composes them on the CPU and redraws
-only what changed between composes: docs/performance.md §2.) Slot record:
+`Sprite_RenderLayer` (0x430fb0, renderer.md §11). (The port composes them on the GPU from palette indices,
+or on the CPU redrawing only what changed: docs/performance.md §2–3.) Slot record:
 
 | Off | Type | Field |
 |---|---|---|

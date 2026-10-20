@@ -759,7 +759,7 @@ fn run_main() -> Result<()> {
     // The 2D layer: composed on the GPU unless `SHUPPATSU_COMPOSE=cpu` (the CPU reference).
     {
         use shuppatsu_render::sprites::{ComposeMode, set_default_mode};
-        set_default_mode(ComposeMode::from_env().unwrap_or(ComposeMode::Cpu));
+        set_default_mode(ComposeMode::from_env().unwrap_or(ComposeMode::Gpu));
     }
     let first = cli_args().into_iter().nth(1);
     if matches!(first.as_deref(), Some("-h" | "--help")) {
