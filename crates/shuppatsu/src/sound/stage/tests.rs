@@ -853,3 +853,27 @@ fn demo_drives_with_game_data() {
         }
     }
 }
+
+/// A weather start split by the sky fade's `Task_Tick`: the rain starts in the split tick at
+/// level 1 / 2; 0x40c4e0 (pitch level / 2) only runs in the tick that finishes the body.
+#[test]
+fn rain_start_across_the_sky_fade_tick() {
+    let mut r = Rig::new(5);
+    let b = Snap::default();
+    let split = Snap {
+        weather_on: true,
+        weather_level: 1,
+        fade_pending: Some(FadeSplit::CourseEvent),
+        ..b
+    };
+    assert_eq!(
+        r.tick(b, split, &[]),
+        [Command::Play(RAIN), Command::SetPitch(RAIN, 0)]
+    );
+    let resumed = Snap {
+        weather_level: 2,
+        fade_pending: None,
+        ..split
+    };
+    assert_eq!(r.tick(split, resumed, &[]), [Command::SetPitch(RAIN, 1)]);
+}

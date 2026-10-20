@@ -16,7 +16,9 @@ use crate::navigator::{Effect, NaviState, NaviTables, NaviTick, Navigator};
 use anyhow::{Context, Result};
 use shuppatsu_audio::{AmbientSound, SoundSystem, TrainSound, TurnoutClatter};
 use shuppatsu_engine::drive::{Drive, DrivePhase};
-use shuppatsu_engine::rules::{AfterHold, Phase, RuleEvent, STAT_COUNT, TimeReason, weather_kind};
+use shuppatsu_engine::rules::{
+    AfterHold, FadeSplit, Phase, RuleEvent, STAT_COUNT, TimeReason, weather_kind,
+};
 use shuppatsu_formats::exe::Exe;
 use shuppatsu_formats::hud::HudTables;
 
@@ -222,6 +224,8 @@ pub struct Snap {
     pub obstacle: i16,
     pub weather_on: bool,
     pub weather_level: i32,
+    /// A sky fade split the loop body ([`shuppatsu_engine::rules::Rules::fade_pending`]).
+    pub fade_pending: Option<FadeSplit>,
     pub departure_counter: i32,
     pub departure_base: i32,
     pub departure_done: bool,
@@ -268,6 +272,7 @@ impl Default for Snap {
             obstacle: 0,
             weather_on: false,
             weather_level: 0,
+            fade_pending: None,
             departure_counter: 0,
             departure_base: 0,
             departure_done: false,
@@ -314,6 +319,7 @@ impl Snap {
             obstacle: r.obstacle,
             weather_on: r.weather_on(),
             weather_level: r.weather_level,
+            fade_pending: r.fade_pending(),
             departure_counter: r.departure_counter,
             departure_base: r.departure_base,
             departure_done: r.departure_done,
@@ -490,7 +496,17 @@ impl StageSound {
         // The demo tasks run 0x40dad0 (and in the lesson 0x40acd0, 0x40c010, 0x40b780) but not
         // 0x40c4e0 or the stopped-train handler 0x40a0a0, so no ATS chime, approach call or
         // rain from there (docs/re/audio-text.md §10.2).
-        let tail_runs = loop_body && !t.demo;
+        // A sky fade's `Task_Tick` (0x40f320) splits the body: 0x40c4e0 runs in the tick it
+        // falls in (the split tick for a weather end, the next one for a start), 0x40a0a0 in
+        // the tick that finishes the body.
+        let tail_runs = loop_body
+            && !t.demo
+            && !matches!(
+                a.fade_pending,
+                Some(FadeSplit::StationPassed | FadeSplit::CourseEvent)
+            )
+            && b.fade_pending != Some(FadeSplit::WeatherEnd);
+        let handler_runs = loop_body && !t.demo && a.fade_pending.is_none();
         // 0x407c10: ambient sounds, and the probe-4 transitions the rain uses.
         let mut entered = 0;
         let mut left = 0;
@@ -511,9 +527,12 @@ impl StageSound {
             .iter()
             .any(|e| matches!(e, RuleEvent::StationPassed { .. }));
         for e in t.events {
-            if tail_runs && !late_done && is_from_stop_handler(e) {
+            if handler_runs && !late_done && is_from_stop_handler(e) {
                 late_done = true;
-                self.loop_tail(snd, t, entered, left, station_passed);
+                self.rain_start(snd, t, station_passed);
+                if tail_runs {
+                    self.loop_tail(snd, t, entered, left, station_passed);
+                }
                 self.stop_handler_start(snd, t);
             }
             match *e {
@@ -593,9 +612,16 @@ impl StageSound {
                     snd.release(ATS_CHIME);
                 }
             }
-            if tail_runs && !late_done {
-                self.loop_tail(snd, t, entered, left, station_passed);
-                self.stop_handler_start(snd, t);
+            if !late_done {
+                if !t.demo {
+                    self.rain_start(snd, t, station_passed);
+                }
+                if tail_runs {
+                    self.loop_tail(snd, t, entered, left, station_passed);
+                }
+                if handler_runs {
+                    self.stop_handler_start(snd, t);
+                }
             }
         }
         self.holds(snd, train, t);
@@ -823,6 +849,18 @@ impl StageSound {
         snd.call_signal(prefix, 0, word);
     }
 
+    /// The rain of a weather start (0x40acd0 kind 21 / 0x40d620, not in a tunnel), before the
+    /// sky fade's `Task_Tick`: started at the old level / 2.
+    fn rain_start(&mut self, snd: &mut SoundSystem, t: &TickInfo<'_>, station_passed: bool) {
+        let (b, a) = (&t.before, &t.after);
+        let started = b.weather_level <= 0 && a.weather_level > 0;
+        if self.rain() && started && !(station_passed && t.track_classes.is_some_and(|c| c[1] == 3))
+        {
+            snd.request(RAIN);
+            snd.set_pitch(RAIN, 0);
+        }
+    }
+
     /// 0x40c4e0's sounds: approach announcement, EB-in-approach reaction, overrun reaction,
     /// ATS chime, rain.
     fn loop_tail(
@@ -856,12 +894,6 @@ impl StageSound {
         }
         // Rain.
         if self.rain() {
-            let started = b.weather_level <= 0 && a.weather_level > 0;
-            if started && !(station_passed && t.track_classes.is_some_and(|c| c[1] == 3)) {
-                // 0x40acd0 kind 21 / 0x40d620 (not in a tunnel): start at the old level / 2.
-                snd.request(RAIN);
-                snd.set_pitch(RAIN, 0);
-            }
             let pitch = ((a.weather_level / 2) & 0x7f) as i16;
             // In a tunnel (class 3 at probe +4) the rain stops; it resumes on leaving.
             let tunnel = |snd: &mut SoundSystem| {
