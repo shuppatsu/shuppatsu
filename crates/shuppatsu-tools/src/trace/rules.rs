@@ -25,7 +25,7 @@ use shuppatsu_formats::exe::Exe;
 use shuppatsu_formats::stages::{Stage, StageTables};
 use std::path::Path;
 
-use super::Trace;
+use super::{NotchTiming, Trace};
 
 const DRIVING: i64 = 0x200;
 const PRE_DEPARTURE: i64 = 0x800;
@@ -107,7 +107,7 @@ pub(super) fn engine_fields(r: &Rules, bases: (u32, u32)) -> Vec<(&'static str, 
     use Out::{Float as F, Int as I};
     let b = |v: bool| I(i64::from(v));
     let (course, limits) = r.event_cursors();
-    vec![
+    let mut fields = vec![
         ("remaining_time", I(r.remaining_s.into())),
         ("pending_time", I(r.pending_s.into())),
         ("stage_clock", I(r.clock.into())),
@@ -179,7 +179,17 @@ pub(super) fn engine_fields(r: &Rules, bases: (u32, u32)) -> Vec<(&'static str, 
         ("stat9", I(r.stats_total[9].into())),
         ("stat10", I(r.stats_total[10].into())),
         ("stat11", I(r.stats_total[11].into())),
-    ]
+    ];
+    // The departure task (0x413370, list 3): compared while it counts down the wait. After the
+    // wait the original's task counts on until the train moves; the engine's stops.
+    if r.phase == Phase::PreDeparture && !r.departure_done {
+        fields.extend([
+            ("dep_counter", I(r.departure_counter.into())),
+            ("dep_freeze", I(r.departure_freeze.into())),
+            ("dep_released", I(r.departure_released.into())),
+        ]);
+    }
+    fields
 }
 
 /// Columns a trace must have for a rules replay.
@@ -308,6 +318,8 @@ pub fn replay(
             report.gap(gap);
         }
     }
+    // HUD counter of the last stretch start (row, value), carried to stretches without a transfer.
+    let mut hud_carry = None;
     let mut r = 0;
     while r < t.rows.len() {
         let starts =
@@ -323,7 +335,7 @@ pub fn replay(
             bases,
             verbose,
         };
-        let (next, arrived) = replay_stretch(t, &cx, r, &mut report)?;
+        let (next, arrived) = replay_stretch(t, &cx, r, &mut hud_carry, &mut report)?;
         r = next;
         if let Some(mut done) = arrived {
             check_result(t, r, &mut done, &mut report);
@@ -355,6 +367,7 @@ fn replay_stretch(
     t: &Trace,
     cx: &Ctx<'_>,
     s: usize,
+    hud_carry: &mut Option<(usize, u32)>,
     report: &mut RulesReport,
 ) -> Result<(usize, Option<Rules>)> {
     let Ctx {
@@ -373,10 +386,21 @@ fn replay_stretch(
         return Ok((s + 1, None)); // e.g. the final station: nothing to drive
     };
     sync_from_row(&mut e, t, s, base);
-    e.hud_counter = hud_phase(t, s);
+    // The HUD counter steps once per unpaused row since the stage load, across stretches.
+    let hud = hud_phase(t, s)
+        .or_else(|| {
+            hud_carry.map(|(row, c)| {
+                let rows = (row + 1..=s).filter(|&k| !paused(t, k)).count();
+                (c + (rows % 3) as u32) % 3
+            })
+        })
+        .unwrap_or(0);
+    *hud_carry = Some((s, hud));
+    e.hud_counter = hud;
     report.stretches += 1;
     compare(t, s, &e, base, report, verbose);
 
+    let lag = t.notch_timing() == NotchTiming::NextRow;
     let mut prev = s;
     let mut r = s + 1;
     while r < t.rows.len() {
@@ -388,7 +412,7 @@ fn replay_stretch(
             let arrived = (e.phase == Phase::Arrived).then_some(e);
             return Ok((r, arrived));
         }
-        let input = tick_input(t, prev, r, report);
+        let input = tick_input(t, prev, r, lag, report);
         let flags = phase(t, r);
         let mut out = e.step(&input);
         let readout = train_readout(t, r, train);
@@ -612,8 +636,8 @@ fn sync_from_row(e: &mut Rules, t: &Trace, r: usize, base: (u32, u32)) {
 }
 
 /// HUD transfer phase: the first tick in the stretch whose row shows a ±1 s transfer had the HUD
-/// counter at 2 (mod 3); the counter steps once per unpaused row.
-fn hud_phase(t: &Trace, s: usize) -> u32 {
+/// counter at 2 (mod 3); the counter steps once per unpaused row. `None` without a transfer.
+fn hud_phase(t: &Trace, s: usize) -> Option<u32> {
     let mut n = 0u32;
     let mut prev = s;
     for r in s + 1..t.rows.len() {
@@ -630,15 +654,18 @@ fn hud_phase(t: &Trace, s: usize) -> u32 {
             let d = b - a;
             if (d == 1 && pend > 0) || (d == -1 && pend < 0) {
                 // Counter before this (n-th) tick ≡ 2: start = 2 − (n − 1).
-                return (2 + 3 * 1000 - (n - 1) % 3) % 3;
+                return Some((2 + 3 * 1000 - (n - 1) % 3) % 3);
             }
         }
         prev = r;
     }
-    0
+    None
 }
 
-fn tick_input(t: &Trace, prev: usize, r: usize, report: &mut RulesReport) -> TickInput {
+/// The inputs of the tick logged in row `r` (`prev`: the previous unpaused row). With `lag`
+/// ([`NotchTiming::NextRow`]) the notches come from `prev`.
+fn tick_input(t: &Trace, prev: usize, r: usize, lag: bool, report: &mut RulesReport) -> TickInput {
+    let notches = if lag { prev } else { r };
     let f = |k: usize, n: &str| t.get(k, n).f32().unwrap_or(0.0);
     let dist = match t.get(prev, "units_to_stop").f32() {
         // 0x40dad0: fld units; fmul 10.0 (double); fiadd 0; fst.
@@ -652,8 +679,8 @@ fn tick_input(t: &Trace, prev: usize, r: usize, report: &mut RulesReport) -> Tic
         dist_to_stop_m: dist,
         dist_to_following_stop_m: f(r, "dist_to_stop"),
         odometer_m: f(prev, "odometer"),
-        power: int_or(t, r, "power_notch", 0) as i32,
-        brake: int_or(t, r, "brake_notch", 0) as i32,
+        power: int_or(t, notches, "power_notch", 0) as i32,
+        brake: int_or(t, notches, "brake_notch", 0) as i32,
         in_tunnel: int_or(t, r, "track_class_ahead", 0) == 3,
         ..TickInput::default()
     };

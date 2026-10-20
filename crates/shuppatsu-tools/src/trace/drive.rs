@@ -37,7 +37,7 @@ use shuppatsu_formats::stages::StageTables;
 use std::path::{Path, PathBuf};
 
 use super::rules::{FieldReport, ListBases, Out, engine_fields, list_bases, paused, phase};
-use super::{Trace, Value};
+use super::{NotchTiming, Trace, Value};
 
 const DRIVING: i64 = 0x200;
 const PRE_DEPARTURE: i64 = 0x800;
@@ -215,15 +215,27 @@ fn before(t: &Trace, r: usize) -> Option<usize> {
     (0..r).rev().find(|&i| !paused(t, i))
 }
 
-fn input(t: &Trace, r: usize) -> DriverInput {
+/// The inputs of the tick logged in row `r`. In [`NotchTiming::NextRow`] traces (`lag`) the
+/// notches come from the previous unpaused row, except on a segment's setup row: 0x4080d0
+/// forces them to N / EB before that tick (`input_force_notches(0, 9)`, 0x4332c0; input.md).
+fn input(t: &Trace, r: usize, lag: bool) -> DriverInput {
     let int = |n: &str| t.get(r, n).int();
     let held = int("buttons_held");
     let pressed = int("buttons_pressed");
+    let setup = phase(t, r) & PRE_DEPARTURE != 0
+        && before(t, r).is_none_or(|p| phase(t, p) & PRE_DEPARTURE == 0);
+    // The row whose notches tick `r` used; `None`: the setup's forced N / EB.
+    let source = match (lag, before(t, r)) {
+        (true, Some(_)) if setup => None,
+        (true, Some(p)) => Some(p),
+        _ => Some(r),
+    };
+    let notch = |n: &str, forced: i64| source.map_or(Some(forced), |k| t.get(k, n).int());
     DriverInput {
-        power: int("power_notch")
+        power: notch("power_notch", 0)
             .and_then(|v| u8::try_from(v).ok())
             .unwrap_or(0),
-        brake: int("brake_notch")
+        brake: notch("brake_notch", 9)
             .and_then(|v| u8::try_from(v).ok())
             .unwrap_or(0),
         // Active-low words: a clear bit means pressed (input.md §6).
@@ -470,6 +482,7 @@ fn replay_once(
         drive.set_global_tick((g as u32).wrapping_sub(1));
     }
     let bases = tables.bases.get(stage).copied().unwrap_or((0, 0));
+    let lag = t.notch_timing() == NotchTiming::NextRow;
 
     let mut finish_at: Option<usize> = None;
     let mut continue_at: Option<usize> = None;
@@ -496,7 +509,7 @@ fn replay_once(
                 Err(e) => return Err(e.into()),
             }
         }
-        let mut inp = input(t, r);
+        let mut inp = input(t, r, lag);
         inp.horn_held |= horn.iter().any(|&(a, b)| (a..=b).contains(&r));
         let tick = drive.tick(inp);
         if tick

@@ -317,6 +317,24 @@ heading is the exception: the camera task writes it after the physics, so the ph
 *k* sees the heading of row *k−1*. `shuppatsu-tools trace-replay` (`crates/shuppatsu-tools/src/trace.rs`)
 replays the trace with this alignment.
 
+**Two notch timings.** The notches of a scripted run are written by the hook in the same call
+that logs the row. `Task_Tick` (0x4253c0) runs the task lists, then `0x84c494++`, then
+`PumpMessages` (0x42a130, whose `PeekMessageA` the hook redirects), then the input poll
+0x407ac0; the physics task reads `0x829d00`/`0x829d04` directly (0x422c20). A value the hook
+writes in row *k* is therefore first used by tick *k+1*. That is what every capture made with
+`scripts/capture-original.sh` (Xvfb, Wine virtual desktop) shows: at a logged notch change the
+physics task's copy of the notches it used (`t_last_power` / `t_last_brake`, task+0x60/+0x64)
+still holds the old value (depart13-*.csv, rails13.csv; the hook log names a single thread for
+all rows). The traces of 2026-10-15 (hilly, stops, yamate; run with `run-oracle.sh` on the
+desktop) show the new value in the same row instead. Why is **open** (which `PeekMessageA`
+caller saw the new tick first is the likely difference; the hook now logs the thread that
+writes rows). The replays read the timing from the trace (`Trace::notch_timing`: the first
+driving row whose notch changed) and, for the later kind, take tick *k*'s notches from row
+*k−1*, except on a segment's setup row, where 0x4080d0 has forced N / EB (`0x4332c0(0, 9)`)
+before that tick. Buttons are read by the game in the pump after the hook (0x4333d0) and keep
+the row-*k* alignment. **confirmed** (all three replays of depart13-mark.csv are exact with it,
+and miss on the first notch change without it)
+
 ## 8a. Whole-run replay: `shuppatsu_engine::drive::Drive`
 
 `Drive` (`crates/shuppatsu-engine/src/drive.rs`) runs one stage from the route load to the end:

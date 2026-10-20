@@ -50,6 +50,16 @@ impl Value {
     }
 }
 
+/// When the notches logged in a row take effect (physics.md §8, "Row alignment").
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotchTiming {
+    /// Row k's notches are the ones tick k used (the traces of 2026-10-15).
+    SameRow,
+    /// Row k's notches were set after tick k's tasks and are used by tick k+1 (the hook writes
+    /// its script inputs in the same call that logs the row; `scripts/capture-original.sh`).
+    NextRow,
+}
+
 pub struct Trace {
     columns: HashMap<String, usize>,
     pub rows: Vec<Vec<Value>>,
@@ -75,6 +85,43 @@ impl Trace {
             .map(|l| l.split(',').map(Value::parse).collect())
             .collect();
         Ok(Self { columns, rows })
+    }
+
+    /// When the logged notches take effect (physics.md §8, "Row alignment"), read from the
+    /// physics task's copy of the notches it used (`t_last_power` / `t_last_brake`) at the first
+    /// driving row whose logged notch changed. [`NotchTiming::SameRow`] when the trace cannot
+    /// tell (no physics columns, no change).
+    pub fn notch_timing(&self) -> NotchTiming {
+        let flags = |r: usize| self.get(r, "phase_flags").int().unwrap_or(0);
+        for r in 1..self.rows.len() {
+            // The train task copies the notches in its driving branch only.
+            if flags(r) & DRIVING == 0 || flags(r - 1) & DRIVING == 0 {
+                continue;
+            }
+            for (notch, used) in [
+                ("power_notch", "t_last_power"),
+                ("brake_notch", "t_last_brake"),
+            ] {
+                let (Some(old), Some(new), Some(used)) = (
+                    self.get(r - 1, notch).f32(),
+                    self.get(r, notch).f32(),
+                    self.get(r, used).f32(),
+                ) else {
+                    continue;
+                };
+                if old == new {
+                    continue;
+                }
+                // Neither (e.g. an emergency brake the train task applied itself): look further.
+                if used == new {
+                    return NotchTiming::SameRow;
+                }
+                if used == old {
+                    return NotchTiming::NextRow;
+                }
+            }
+        }
+        NotchTiming::SameRow
     }
 
     /// Whether the trace has a column.
@@ -255,6 +302,8 @@ pub fn replay(
         let flags = |r: usize| t.get(r, "phase_flags").int().unwrap_or(0);
         r > 0 && flags(r - 1) & 0x10 != 0 && flags(r) & 0x10 == 0
     };
+    // Which row's notches the physics of a tick used (physics.md §8).
+    let lag = t.notch_timing() == NotchTiming::NextRow;
     let mut report = Report::default();
     let mut r = 0;
     while r < t.rows.len() {
@@ -270,10 +319,12 @@ pub fn replay(
             // so its notches are the ones the physics used, and the driving-loop globals
             // (gradient, flags, limits, clock) were set before the physics ran. Only the heading
             // is written after the physics (by the camera task), so it comes from row r.
+            // In `NotchTiming::NextRow` traces the notches were logged one row earlier.
             let k = r + 1;
+            let n = if lag { r } else { k };
             let controls = Controls {
-                power: u8::try_from(t.i(k, "power_notch")?).unwrap_or(0),
-                brake: u8::try_from(t.i(k, "brake_notch")?).unwrap_or(0),
+                power: u8::try_from(t.i(n, "power_notch")?).unwrap_or(0),
+                brake: u8::try_from(t.i(n, "brake_notch")?).unwrap_or(0),
             };
             let mut ctx = context(t, k)?;
             ctx.heading = t.f(r, "heading")?;
