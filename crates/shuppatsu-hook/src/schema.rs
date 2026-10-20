@@ -83,6 +83,10 @@ pub enum Address {
     /// An offset into the physics task object (the task in list 2 whose update function is
     /// 0x422c20; docs/re/physics.md §8). Written `task+0x38`.
     PhysicsTask(u32),
+    /// An offset into the first task of a task list with the given update function, written
+    /// `task@<list>:<update>+<offset>`, e.g. the departure task `task@0x84c1a4:0x413370+0x34`
+    /// (docs/re/rules.md §8). Logged as `?` while no such task exists.
+    Task { list: u32, update: u32, offset: u32 },
 }
 
 /// Parses a schema file. Errors name the offending line.
@@ -101,9 +105,19 @@ pub fn parse(text: &str) -> Result<Vec<Field>, String> {
             u32::from_str_radix(h.trim_start_matches("0x"), 16)
                 .map_err(|e| format!("line {}: address {addr}: {e}", n + 1))
         };
-        let address = match addr.strip_prefix("task+") {
-            Some(off) => Address::PhysicsTask(hex(off)?),
-            None => Address::Global(hex(addr)?),
+        let address = if let Some(off) = addr.strip_prefix("task+") {
+            Address::PhysicsTask(hex(off)?)
+        } else if let Some(rest) = addr.strip_prefix("task@") {
+            let bad = || format!("line {}: expected task@<list>:<update>+<offset>", n + 1);
+            let (list, rest) = rest.split_once(':').ok_or_else(bad)?;
+            let (update, offset) = rest.split_once('+').ok_or_else(bad)?;
+            Address::Task {
+                list: hex(list)?,
+                update: hex(update)?,
+                offset: hex(offset)?,
+            }
+        } else {
+            Address::Global(hex(addr)?)
         };
         let ty =
             FieldType::parse(ty).ok_or_else(|| format!("line {}: unknown type {ty}", n + 1))?;
@@ -138,6 +152,14 @@ mod tests {
         assert_eq!(
             parse("fade task+0x38 f32").unwrap()[0].address,
             Address::PhysicsTask(0x38)
+        );
+        assert_eq!(
+            parse("dep task@0x84c1a4:413370+0x34 i32").unwrap()[0].address,
+            Address::Task {
+                list: 0x84c1a4,
+                update: 0x413370,
+                offset: 0x34
+            }
         );
         assert_eq!(f[1].ty, FieldType::I32);
         assert_eq!(header(&f), "hook_tick,speed,notch");

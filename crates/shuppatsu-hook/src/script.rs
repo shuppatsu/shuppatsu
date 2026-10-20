@@ -7,6 +7,11 @@
 //! A line `leg` ends the current leg's lines: the lines after it drive the next leg. A script
 //! without `leg` lines drives every leg the same way. A leg after the script's last section
 //! has no inputs (the levers stay as they are).
+//!
+//! A line `from wait` (anywhere) counts each leg's ticks from the first tick of its
+//! pre-departure wait (`0x855ff8 & 0x800`) instead, and also sets the levers during the wait,
+//! so power can be applied while the doors close (false start, rules.md §8). The count runs on
+//! through the setup tick between the wait and driving.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Step {
@@ -21,11 +26,14 @@ pub struct Script {
     legs: Vec<Vec<Step>>,
     /// No `leg` line: the one section drives every leg.
     every_leg: bool,
+    /// `from wait`: leg ticks start with the pre-departure wait.
+    from_wait: bool,
 }
 
 impl Script {
     pub fn parse(text: &str) -> Result<Self, String> {
         let mut legs = vec![Vec::new()];
+        let mut from_wait = false;
         for (n, line) in text.lines().enumerate() {
             let line = line.split('#').next().unwrap_or("").trim();
             if line.is_empty() {
@@ -33,6 +41,10 @@ impl Script {
             }
             if line == "leg" {
                 legs.push(Vec::new());
+                continue;
+            }
+            if line == "from wait" {
+                from_wait = true;
                 continue;
             }
             let v: Vec<&str> = line.split_whitespace().collect();
@@ -61,7 +73,16 @@ impl Script {
             steps.push(step);
         }
         let every_leg = legs.len() == 1;
-        Ok(Self { legs, every_leg })
+        Ok(Self {
+            legs,
+            every_leg,
+            from_wait,
+        })
+    }
+
+    /// Whether leg ticks count from the pre-departure wait (`from wait`).
+    pub fn from_wait(&self) -> bool {
+        self.from_wait
     }
 
     /// The inputs held at driving tick `tick` of leg `leg` (0 = the first leg the hook sees),
@@ -98,5 +119,7 @@ mod tests {
         assert_eq!(s.at(1, 10), Some((0, 9)));
         assert_eq!(s.at(1, 60), Some((3, 0)));
         assert_eq!(s.at(2, 60), None, "no inputs after the last leg");
+        assert!(!s.from_wait());
+        assert!(Script::parse("from wait\n0 0 9\n").unwrap().from_wait());
     }
 }

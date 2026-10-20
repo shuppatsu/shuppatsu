@@ -30,6 +30,7 @@ unsafe extern "system" {
     fn LoadLibraryA(name: *const u8) -> Hmodule;
     fn GetProcAddress(module: Hmodule, name: *const u8) -> *mut c_void;
     fn VirtualProtect(addr: *mut c_void, size: usize, prot: u32, old: *mut u32) -> i32;
+    fn GetCurrentThreadId() -> u32;
 }
 
 const PAGE_READWRITE: u32 = 0x04;
@@ -41,6 +42,8 @@ const GLOBAL_TICK: u32 = 0x84c494;
 const PHASE_FLAGS: u32 = 0x855ff8;
 /// Phase flag bit set while the driving loop runs (main-loop.md §5, likely).
 const PHASE_DRIVING: u32 = 0x200;
+/// Phase flag bit set during the pre-departure wait (doors, countdown; main-loop.md §5).
+const PHASE_WAITING: u32 = 0x800;
 const POWER_NOTCH: u32 = 0x829d00;
 /// Task list 2 (head, tail, disabled; main-loop.md §2) and the physics task's update function.
 const TASK_LIST_2: u32 = 0x84c198;
@@ -58,9 +61,14 @@ struct HookState {
     script: Option<Script>,
     log: Option<File>,
     last_tick: Option<u32>,
+    /// Thread that logged the last row (logged to the diagnostics log when it changes: which
+    /// `PeekMessageA` caller sees a new tick first decides the row alignment, physics.md §8).
+    last_thread: u32,
     driving_tick: Option<u32>,
     /// Driving legs started so far (the script section in use is `legs − 1`).
     legs: usize,
+    /// The last tick had the pre-departure flag (`from wait` scripts start a leg on its rise).
+    was_waiting: bool,
     rows: u64,
 }
 
@@ -100,13 +108,18 @@ impl HookState {
 
     /// Walks task list 2 for the task whose update function is the physics task's.
     fn find_physics_task(&self) -> Option<u32> {
-        let mut node = self.read_u32(TASK_LIST_2)?;
+        self.find_task(TASK_LIST_2, PHYSICS_UPDATE)
+    }
+
+    /// Walks a task list (its head at `list`) for the first task with update function `update`.
+    fn find_task(&self, list: u32, update_fn: u32) -> Option<u32> {
+        let mut node = self.read_u32(list)?;
         for _ in 0..1024 {
             if node == 0 {
                 return None;
             }
             let update = self.read_heap(node + 8, 4)?;
-            if u32::from_le_bytes([update[0], update[1], update[2], update[3]]) == PHYSICS_UPDATE {
+            if u32::from_le_bytes([update[0], update[1], update[2], update[3]]) == update_fn {
                 return Some(node);
             }
             let next = self.read_heap(node + 4, 4)?;
@@ -143,18 +156,39 @@ impl HookState {
             return;
         }
         self.last_tick = Some(tick);
-        let driving = self
-            .read_u32(PHASE_FLAGS)
-            .is_some_and(|f| f & PHASE_DRIVING != 0);
-        if driving && self.driving_tick.is_none() {
-            self.legs += 1;
+        // SAFETY: GetCurrentThreadId has no preconditions.
+        let thread = unsafe { GetCurrentThreadId() };
+        if thread != self.last_thread {
+            self.last_thread = thread;
+            self.log(&format!("tick {tick}: rows from thread {thread:#x}"));
         }
-        self.driving_tick = if driving {
-            Some(self.driving_tick.map_or(0, |t| t + 1))
+        let flags = self.read_u32(PHASE_FLAGS).unwrap_or(0);
+        let driving = flags & PHASE_DRIVING != 0;
+        let waiting = flags & PHASE_WAITING != 0;
+        let from_wait = self.script.as_ref().is_some_and(Script::from_wait);
+        let mut levers = driving;
+        if from_wait {
+            // Legs start with the pre-departure wait; the count runs on through the setup tick
+            // between the wait and driving, and the levers are only set while waiting or driving.
+            if waiting && !self.was_waiting {
+                self.legs += 1;
+                self.driving_tick = Some(0);
+            } else {
+                self.driving_tick = self.driving_tick.map(|t| t + 1);
+            }
+            levers = waiting || driving;
         } else {
-            None
-        };
-        if let (Some(dt), Some(script)) = (self.driving_tick, &self.script)
+            if driving && self.driving_tick.is_none() {
+                self.legs += 1;
+            }
+            self.driving_tick = if driving {
+                Some(self.driving_tick.map_or(0, |t| t + 1))
+            } else {
+                None
+            };
+        }
+        self.was_waiting = waiting;
+        if let (true, Some(dt), Some(script)) = (levers, self.driving_tick, &self.script)
             && let Some((notch, brake)) = script.at(self.legs.saturating_sub(1), dt)
         {
             self.write_i32(POWER_NOTCH, notch);
@@ -173,6 +207,13 @@ impl HookState {
                         Address::Global(va) => self.read(va, f.ty.size()),
                         Address::PhysicsTask(off) => physics_task
                             .and_then(|t| self.read_heap(t.wrapping_add(off), f.ty.size())),
+                        Address::Task {
+                            list,
+                            update,
+                            offset,
+                        } => self
+                            .find_task(list, update)
+                            .and_then(|t| self.read_heap(t.wrapping_add(offset), f.ty.size())),
                     }
                 };
                 match value {
@@ -306,8 +347,10 @@ fn install() {
         script: None,
         log,
         last_tick: None,
+        last_thread: 0,
         driving_tick: None,
         legs: 0,
+        was_waiting: false,
         rows: 0,
     };
     state.log(&format!(

@@ -133,3 +133,10 @@ traffic_state      0x857216 i16   # event mask bit: 1 fresh / 0 after a continue
 signal_model       0x85744c i32   # frame the animated 3D signals show
 scripted_train     0x857000 i16   # passing-train spawn of the armed scripted signal
 scripted_train_m   0x8570cc i16   # its distance
+# --- departure task (list 3, update 0x413370; rules.md §8) and the cab-signal lamp (hud.md §3.15) ---
+dep_counter        task@0x84c1a4:0x413370+0x34 i32
+dep_offset         task@0x84c1a4:0x413370+0x38 i32
+dep_released       task@0x84c1a4:0x413370+0x40 i32
+dep_freeze         task@0x84c1a4:0x413370+0x50 i32
+lamp               0x829d16 u8
+lamp_hold          0x829d14 i16
