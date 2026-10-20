@@ -86,8 +86,20 @@ For each of `count` consecutive slots *p* (next slot *q*), with `k` counting fro
   the same spot (stage 13, 578 m before 甲子園口, engine index 1849) matches the port drawn
   with the original settings, jogs included. **confirmed** (code; data test
   `main_line_singles_join_on_the_centre_line_and_scale_width_with_the_chord`; issue mark 4;
-  `out/explain/rails/`). A possible enhancement (not implemented): set |x| to 1, which
-  removes the steps (checked in an experiment).
+  `out/explain/rails/`).
+  **Port option `even_track_width`** (on by default; `TrackOptions::even_width`): local +x is
+  rescaled to the nominal width while its direction, the up axis, the along-track axis and the
+  position stay the original's, so the pieces still join on the centre line and only the
+  gauge steps go. Nominal = the width of a piece over full 0.125-unit points: |x| = 1 for
+  singles and every band (§2.4: scale·step = 1). Over all routes every rail chord is
+  0.889–1.000 of a full point (main line and side tracks, all track types, turnouts
+  included), so no rail piece is meant to be narrower. Track-side pieces (§2.7, P0–P4) are
+  evened per run, to the run's median one-point chord × step × scale: their runs use several
+  spacings (most about 1 unit, others 1–6 points), so a fixed nominal would distort them;
+  within a run 95 % of the chords lie within ±3 % of the median. A piece more than 25 % off
+  its nominal width keeps the original's (zero-length pieces, the §2.7 gap bridges, the few
+  short pieces at run ends). Identical with `max_lod` on and off. Data test
+  `even_track_width_gives_adjacent_pieces_one_width`; shots in `out/explain/rails/even_width/`.
 - If h_q ≠ h_p: pitch `s = (h_q − h_p)/512`, `c = 1.1`. On a gradient the piece's local y and z
   come out 10 % longer.
 - Cull: drawn only if the piece origin's camera-space z (camera forward = −z) is ≤ **0.625**

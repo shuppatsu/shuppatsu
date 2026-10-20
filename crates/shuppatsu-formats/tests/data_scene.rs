@@ -1057,3 +1057,153 @@ fn main_line_singles_join_on_the_centre_line_and_scale_width_with_the_chord() {
     eprintln!("toukai1b.com at 1822: widest gauge step between pieces {worst_step}");
     assert!((1.02..1.08).contains(&worst_step), "{worst_step}");
 }
+
+/// Enhancement `even_track_width` (scene.md §2.3) at issue mark 4's spot: with it on, the
+/// main line's single pieces are all one width (gauge step 1.000) and still join on the centre
+/// line; with it off the pieces are exactly the original's. On every route, with `max_lod`
+/// on and off, the option changes only the length of local +x: positions, up and along-track
+/// axes, parts and the set of pieces stay the original's, every rail piece comes out 1 wide,
+/// and neighbouring track-side pieces of a run share one width.
+#[test]
+fn even_track_width_gives_adjacent_pieces_one_width() {
+    let dir = require_data!();
+    let w = load(&dir);
+    let width = |a: &scene::Affine| a.x_axis[0].hypot(a.x_axis[2]);
+    let com = (1..)
+        .take_while(|&c| c < w.stages.com_files.len() as u32)
+        .find(|&c| {
+            w.stages
+                .com_file(c)
+                .is_some_and(|f| f.eq_ignore_ascii_case("toukai1b.com"))
+        })
+        .expect("toukai1b.com");
+    let (route, area) = &w.routes[&com];
+    let pos = scene::TrackPos {
+        engine_index: 1822,
+        t: 0.089,
+    };
+    let cam = scene::cab_camera(route, pos, w.tables.eye_height(*area, com), 0.0);
+    let main_singles = |even_width| {
+        let options = scene::TrackOptions {
+            max_lod: true,
+            even_width,
+            ..Default::default()
+        };
+        let mut v: Vec<_> =
+            scene::track_instances_with(route, &w.tables, ctx_for(&w, com, 4), pos, &cam, options)
+                .into_iter()
+                .filter(|i| matches!(i.source, PieceSource::MainLine { band: 0 }))
+                .collect();
+        v.sort_by_key(|i| i.slot);
+        v
+    };
+    // Off: the original (f246905's test pins its chord-scaled widths).
+    let original = scene::TrackOptions {
+        max_lod: true,
+        ..Default::default()
+    };
+    let mut plain: Vec<_> =
+        scene::track_instances_with(route, &w.tables, ctx_for(&w, com, 4), pos, &cam, original)
+            .into_iter()
+            .filter(|i| matches!(i.source, PieceSource::MainLine { band: 0 }))
+            .collect();
+    plain.sort_by_key(|i| i.slot);
+    assert_eq!(main_singles(false), plain);
+    let even = main_singles(true);
+    let mut joins = 0;
+    for pair in even.windows(2).take(160) {
+        let (a, b) = (&pair[0], &pair[1]);
+        if b.slot != a.slot + 1 {
+            continue;
+        }
+        joins += 1;
+        let front = a.transform.transform_point([0.0, 0.0, -1.0 / 16.0]);
+        let back = b.transform.transform_point([0.0, 0.0, 1.0 / 16.0]);
+        let (p, q) = (route.slots[b.slot], route.slots[b.slot + 1]);
+        let len = (q.x - p.x).hypot(q.z - p.z);
+        let side = [-(q.z - p.z) / len, (q.x - p.x) / len];
+        let lateral = (front[0] - back[0]) * side[0] + (front[2] - back[2]) * side[1];
+        assert!(lateral.abs() < 1e-4, "slot {}: {lateral} apart", a.slot);
+        let r = width(&a.transform) / width(&b.transform);
+        assert!((r - 1.0).abs() < 1e-5, "slot {}: gauge step {r}", a.slot);
+        assert!((width(&a.transform) - 1.0).abs() < 1e-5);
+    }
+    assert!(joins >= 100, "only {joins} joins");
+
+    // Every route: only |x| changes.
+    let (mut rails, mut kinds, mut kind_joins) = (0, 0, 0);
+    let mut kind_steps = [0; 2];
+    for (&com, (route, area)) in &w.routes {
+        let eye_h = w.tables.eye_height(*area, com);
+        let ctx = ctx_for(&w, com, 1);
+        let (lo, hi) = scene::camera_limits(route);
+        for e in (lo + 300..hi.saturating_sub(300)).step_by(1499) {
+            let pos = scene::TrackPos {
+                engine_index: e,
+                t: 0.0,
+            };
+            let cam = scene::cab_camera(route, pos, eye_h, 0.0);
+            for max_lod in [false, true] {
+                let get = |even_width| {
+                    let o = scene::TrackOptions {
+                        max_lod,
+                        even_width,
+                        ..Default::default()
+                    };
+                    scene::track_instances_with(route, &w.tables, ctx, pos, &cam, o)
+                };
+                let (off, on) = (get(false), get(true));
+                assert_eq!(off.len(), on.len());
+                for (a, b) in off.iter().zip(&on) {
+                    assert_eq!((a.part_id, a.slot, a.source), (b.part_id, b.slot, b.source));
+                    let (ta, tb) = (&a.transform, &b.transform);
+                    assert_eq!(
+                        (ta.translation, ta.y_axis, ta.z_axis),
+                        (tb.translation, tb.y_axis, tb.z_axis)
+                    );
+                    // Same direction.
+                    let cross = ta.x_axis[0] * tb.x_axis[2] - ta.x_axis[2] * tb.x_axis[0];
+                    assert!(cross.abs() < 1e-3 * width(ta).max(1.0), "{a:?} / {b:?}");
+                    match b.source {
+                        PieceSource::MainLine { .. } | PieceSource::Rail { .. } => {
+                            rails += 1;
+                            assert!((width(tb) - 1.0).abs() < 1e-4, "COM {com}: {b:?}");
+                        }
+                        PieceSource::Kind { .. } => kinds += 1,
+                        _ => assert_eq!(ta, tb),
+                    }
+                }
+                // Neighbouring pieces of a track-side run (same kind and band, consecutive).
+                for (k, list) in [&off, &on].into_iter().enumerate() {
+                    let mut side: Vec<_> = list
+                        .iter()
+                        .filter(|i| matches!(i.source, PieceSource::Kind { .. }))
+                        .collect();
+                    side.sort_by_key(|i| (i.slot, i.part_id));
+                    for pair in side.windows(2) {
+                        let (a, b) = (pair[0], pair[1]);
+                        let step = b.slot - a.slot;
+                        if a.source != b.source
+                            || a.part_id != b.part_id
+                            || !(1..=4).contains(&step)
+                        {
+                            continue;
+                        }
+                        kind_joins += k;
+                        let r = width(&a.transform) / width(&b.transform);
+                        kind_steps[k] += usize::from((r - 1.0).abs() > 1e-4);
+                    }
+                }
+            }
+        }
+    }
+    eprintln!(
+        "{rails} rail pieces at width 1; {kinds} track-side pieces; {} of {kind_joins} track-side joins step (original: {})",
+        kind_steps[1], kind_steps[0]
+    );
+    assert!(rails > 10_000 && kinds > 5_000);
+    assert!(
+        kind_steps[1] * 50 < kind_joins,
+        "{kind_steps:?} of {kind_joins}"
+    );
+}

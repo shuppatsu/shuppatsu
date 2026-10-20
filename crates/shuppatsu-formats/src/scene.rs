@@ -155,6 +155,11 @@ const CAMERA_END_MARGIN_SLOTS: usize = 23;
 /// At segment start the camera begins up to 300 points behind the stop (0x41cb00: 0x12d, 37.5).
 pub const START_RUN_UP_POINTS: usize = 300;
 
+/// Enhancement `even_track_width`: a piece is evened out only when its chord-scaled width is
+/// within this factor of the nominal one. Every rail piece on the disc is (0.889–1.000); the
+/// rest are degenerate or bridge segment gaps and keep the original's width (scene.md §2.3).
+const EVEN_WIDTH_TOLERANCE: f32 = 1.25;
+
 /// Model transform: `world = l.x·x_axis + l.y·y_axis + l.z·z_axis + translation` for a local
 /// point `l` (raw part coordinates / 256). The original's row-vector model matrix.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -184,6 +189,15 @@ impl Affine {
         for i in 0..3 {
             self.y_axis[i] = c * y[i] + s * z[i];
             self.z_axis[i] = c * z[i] - s * y[i];
+        }
+    }
+
+    /// Enhancement `even_track_width`: local +x rescaled to length `width` when its length is
+    /// within [`EVEN_WIDTH_TOLERANCE`] of it; direction, y, z and the position unchanged.
+    fn even_width(&mut self, width: f32) {
+        let len = self.x_axis.iter().map(|v| v * v).sum::<f32>().sqrt();
+        if len > 0.0 && width > 0.0 && (len / width).max(width / len) <= EVEN_WIDTH_TOLERANCE {
+            self.x_axis = self.x_axis.map(|v| v * (width / len));
         }
     }
 
@@ -923,6 +937,13 @@ pub struct TrackOptions {
     /// model at every distance (rails: single-point pieces instead of the 2–32-point bands;
     /// other kinds: part P2 at one point per piece instead of P0/P3/P4), over the same slots.
     pub max_lod: bool,
+    /// Enhancement `even_track_width`: every rail piece as wide as a piece one full point
+    /// (0.125 units) long, and every track-side piece as wide as its run's typical piece, so
+    /// the gauge, sleepers and ballast edges no longer step at the joins. The original scales
+    /// a piece's width with its chord, and the point spacing varies by up to 11 % (scene.md
+    /// §2.3). Position, up axis and the along-track axis (the joins) are unchanged; pieces
+    /// far off the nominal width (gap bridges, zero-length pieces) keep the original's.
+    pub even_width: bool,
     /// Enhancements `early_activation` / `draw_distance`: build track this far ahead
     /// (world units) instead of the original's fixed windows: the main line past its 130
     /// points, and the side-track runs of the buckets ahead of the camera's at slots its own
@@ -937,6 +958,34 @@ fn h(p: &TrackPoint) -> i32 {
 impl TrackBuilder<'_> {
     fn pair(&self, i: usize, step: usize) -> Option<(TrackPoint, TrackPoint)> {
         (i + step < self.limit).then(|| (self.slots[i], self.slots[i + step]))
+    }
+
+    /// `even_track_width`: the width of a rail piece over `step` points drawn at `scale` if
+    /// the points were a full 0.125 units apart (the longest chord on the disc; 1 for every
+    /// band, as the exe's band scales are 1/step).
+    fn rail_width(&self, step: usize, scale: f32) -> f32 {
+        step as f32 * UNITS_PER_POINT * scale * CHORD_SCALE
+    }
+
+    /// `even_track_width`: the median chord of one point of a track-side run, the width
+    /// its pieces are evened to (scaled by step × scale); `None` when off or no chord.
+    fn run_point_chord(&self, run: &TrackRun) -> Option<f32> {
+        if !self.options.even_width {
+            return None;
+        }
+        let end = run.slots.end.min(self.limit.saturating_sub(1));
+        let mut chords: Vec<f32> = (run.slots.start..end)
+            .map(|i| {
+                let (p, q) = (self.slots[i], self.slots[i + 1]);
+                (q.x - p.x).hypot(q.z - p.z)
+            })
+            .filter(|&c| c > 0.0)
+            .collect();
+        if chords.is_empty() {
+            return None;
+        }
+        let mid = chords.len() / 2;
+        Some(*chords.select_nth_unstable_by(mid, f32::total_cmp).1)
     }
 
     /// 0x41d890: `count` single-point rail pieces from slot `start`.
@@ -956,6 +1005,9 @@ impl TrackBuilder<'_> {
                 (q.z - p.z) * 0.5 + p.z,
             ];
             let mut m = Affine::yaw(pos, -(q.x - p.x) * CHORD_SCALE, -(q.z - p.z) * CHORD_SCALE);
+            if self.options.even_width {
+                m.even_width(self.rail_width(1, 1.0));
+            }
             let dh = h(&q) - h(&p);
             if dh != 0 {
                 m.pitch(dh as f32 * RAIL_PITCH_SCALE, PITCH_COS_SINGLE);
@@ -1003,6 +1055,9 @@ impl TrackBuilder<'_> {
                     _ => {
                         let mut m =
                             Affine::yaw(pos, -dx * scale * CHORD_SCALE, -dz * scale * CHORD_SCALE);
+                        if self.options.even_width {
+                            m.even_width(self.rail_width(step, scale));
+                        }
                         if dh != 0 {
                             m.pitch(dh as f32 * scale * RAIL_PITCH_SCALE, PITCH_COS_BAND);
                         }
@@ -1059,6 +1114,7 @@ impl TrackBuilder<'_> {
         out_band: u8,
         ctx: SceneContext,
         engine: usize,
+        point_chord: Option<f32>,
     ) {
         let step = self.tables.kind_band_step[band];
         let scale = self.tables.kind_band_scale[band];
@@ -1077,6 +1133,9 @@ impl TrackBuilder<'_> {
                 (p.z + q.z) * 0.5,
             ];
             let mut m = Affine::yaw(pos, bx * scale, bz * scale);
+            if let Some(chord) = point_chord {
+                m.even_width(chord * step as f32 * scale);
+            }
             if h(&q) != h(&p) {
                 m.pitch((h(&q) - h(&p)) as f32 * scale * HEIGHT_SCALE, 1.0);
             }
@@ -1103,7 +1162,18 @@ impl TrackBuilder<'_> {
             let end = bands_end.max(run.slots.end.saturating_sub(1));
             let part = parts[self.tables.kind_band_model[0]];
             let count = end - run.slots.start;
-            self.kind_band(run.slots.start, count, 0, part, run.kind, 0, ctx, engine);
+            let chord = self.run_point_chord(run);
+            self.kind_band(
+                run.slots.start,
+                count,
+                0,
+                part,
+                run.kind,
+                0,
+                ctx,
+                engine,
+                chord,
+            );
         } else {
             self.kind_bands(run, parts, ctx, engine);
         }
@@ -1118,17 +1188,30 @@ impl TrackBuilder<'_> {
 
     /// 0x41d7d0's bands 0..=3 and the coarse remainder.
     fn kind_bands(&mut self, run: &TrackRun, parts: [u32; 5], ctx: SceneContext, engine: usize) {
+        let chord = self.run_point_chord(run);
         let mut i = run.slots.start;
         for band in 0..4 {
             let count = usize::from(run.lod[band]);
             let part = parts[self.tables.kind_band_model[band]];
-            self.kind_band(i, count, band, part, run.kind, band as u8, ctx, engine);
+            self.kind_band(
+                i, count, band, part, run.kind, band as u8, ctx, engine, chord,
+            );
             i += self.tables.kind_band_step[band] * count;
         }
         let end = run.slots.end;
         let rest = (end as isize - i as isize) - 1;
         if rest > 0 {
-            self.kind_band(i, rest as usize, 1, parts[0], run.kind, 4, ctx, engine);
+            self.kind_band(
+                i,
+                rest as usize,
+                1,
+                parts[0],
+                run.kind,
+                4,
+                ctx,
+                engine,
+                chord,
+            );
         }
     }
 
