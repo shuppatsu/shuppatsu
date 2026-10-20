@@ -10,9 +10,11 @@
 #   row     train row within the group (e.g. group 0 row 3 = stage 9, 485 series from 直江津)
 #   inputs  oracle input script (`tick notch brake`, hook driving ticks; crates/shuppatsu-hook)
 #   tick    driving ticks at which to grab the screen (comma-separated; "-" for none)
+#           (ticks count from 0 again on each leg; `leg` lines in the inputs drive later legs)
 # Env:  SHUPPATSU_CAP_DISPLAY  X display for Xvfb (default :77)
 #       SHUPPATSU_CAP_SCHEMA   trace schema (default oracle/full.schema)
 #       SHUPPATSU_CAP_STAGE    expected stage (0x8570a4); the run aborts if the trace shows another
+#       SHUPPATSU_CAP_LEG      leg (1 = first) the capture ticks belong to (default 1)
 #       SHUPPATSU_CAP_BOOT     seconds to wait before the first key (default 25)
 #       SHUPPATSU_CAP_RECORD   seconds to record the screen right after the train is chosen (ffmpeg
 #                        x11grab at 60 fps, out/captures/<name>.mkv plus PNG frames in
@@ -120,6 +122,9 @@ for t in "${want[@]}"; do
       st=$(cut -d, -f"$col" <<<"$last")
       [[ $st == "$SHUPPATSU_CAP_STAGE" ]] || { echo "stage $st, expected $SHUPPATSU_CAP_STAGE" >&2; exit 1; }
     fi
+    # Legs started so far: one row with hook_tick 0 each.
+    legs=$(grep -c "^0," "$trace" || true)
+    ((legs >= ${SHUPPATSU_CAP_LEG:-1})) || { sleep 0.5; continue; }
     [[ $now =~ ^[0-9]+$ ]] && ((now >= t)) && break
     pgrep -f dengo3k.exe >/dev/null || { echo "game exited; see $log" >&2; exit 1; }
     sleep 0.5

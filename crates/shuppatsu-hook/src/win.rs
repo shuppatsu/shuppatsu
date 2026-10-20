@@ -59,6 +59,8 @@ struct HookState {
     log: Option<File>,
     last_tick: Option<u32>,
     driving_tick: Option<u32>,
+    /// Driving legs started so far (the script section in use is `legs − 1`).
+    legs: usize,
     rows: u64,
 }
 
@@ -144,13 +146,16 @@ impl HookState {
         let driving = self
             .read_u32(PHASE_FLAGS)
             .is_some_and(|f| f & PHASE_DRIVING != 0);
+        if driving && self.driving_tick.is_none() {
+            self.legs += 1;
+        }
         self.driving_tick = if driving {
             Some(self.driving_tick.map_or(0, |t| t + 1))
         } else {
             None
         };
         if let (Some(dt), Some(script)) = (self.driving_tick, &self.script)
-            && let Some((notch, brake)) = script.at(dt)
+            && let Some((notch, brake)) = script.at(self.legs.saturating_sub(1), dt)
         {
             self.write_i32(POWER_NOTCH, notch);
             self.write_i32(BRAKE_NOTCH, brake);
@@ -302,6 +307,7 @@ fn install() {
         log,
         last_tick: None,
         driving_tick: None,
+        legs: 0,
         rows: 0,
     };
     state.log(&format!(
