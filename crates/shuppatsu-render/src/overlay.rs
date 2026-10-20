@@ -501,7 +501,9 @@ impl Overlay {
         let gpu = self
             .gpu2d
             .get_or_insert_with(|| crate::gpu2d::Compositor::new(device));
-        if !gpu.render(device, queue, frame, storage) {
+        // The texture holds this composer's last frame: only what changed is composed.
+        let keep = self.gpu_source.is_some_and(|(id, _)| id == canvas.id());
+        if !gpu.render(device, queue, frame, storage, keep) {
             return false;
         }
         self.gpu_source = Some((canvas.id(), version));

@@ -159,7 +159,9 @@ pub struct GpuCache {
     parts: Vec<(usize, Blob, Vec<Blob>)>,
     text: Vec<(TextKey, Blob)>,
     legends: Vec<(LegendKey, Arc<[LegendGroup]>)>,
-    sprites: Vec<(SpriteKey, Blob)>,
+    sprites: Vec<(SpriteKey, Arc<Resampled>)>,
+    /// Colours of resampled sprites, by sprite (its address) and palette.
+    sprite_colours: Vec<(ColoursKey, Blob)>,
     images: Vec<(ImageKey, Blob)>,
 }
 
@@ -192,13 +194,91 @@ struct LegendGroup {
     cov: Blob,
 }
 
+/// A resampled sprite (the address of its [`Resampled`]) and a palette's colours.
+type ColoursKey = (usize, Vec<[u8; 4]>);
+
 #[derive(PartialEq)]
 struct SpriteKey {
     generation: u64,
     tilemap: u16,
     src: [usize; 4],
     z: u32,
-    colours: Vec<[u8; 4]>,
+}
+
+/// A resampled sprite widget independent of its palette: for each canvas pixel of the
+/// `w × h` sprite, the id of its list of art pixels (palette index, weight) in the order
+/// [`resample_at`] sums them (`u32::MAX`: none), and the distinct lists.
+struct Resampled {
+    ids: Blob,
+    w: usize,
+    lists: Vec<Vec<(u8, f32)>>,
+    z: f32,
+}
+
+impl Resampled {
+    fn new(art: &Art<'_>, z: f32, (w, h): (usize, usize)) -> Self {
+        let [ax, ay, sw, sh] = art.rect;
+        let mut known: std::collections::HashMap<Vec<(u8, u32)>, u32> = Default::default();
+        let mut lists = Vec::new();
+        let mut ids = vec![u32::MAX; w * h];
+        for ry in 0..h {
+            let rows: Vec<(usize, f32)> = footprint(ry as i64, z, sh).collect();
+            for rx in 0..w {
+                let mut list = Vec::new();
+                for (col, wx) in footprint(rx as i64, z, sw) {
+                    for &(row, wy) in &rows {
+                        let index = art.px[(ay + row) * art.stride + ax + col];
+                        if index != 0 {
+                            list.push((index, wx * wy));
+                        }
+                    }
+                }
+                if list.is_empty() {
+                    continue;
+                }
+                let key: Vec<(u8, u32)> = list.iter().map(|&(i, w)| (i, w.to_bits())).collect();
+                ids[ry * w + rx] = *known.entry(key).or_insert_with(|| {
+                    lists.push(list);
+                    (lists.len() - 1) as u32
+                });
+            }
+        }
+        Self {
+            ids: Blob::Words(ids.into()),
+            w,
+            lists,
+            z,
+        }
+    }
+
+    /// Per list, as [`resample_at`] works it out with `colours`: the colour and the coverage
+    /// rounded to a byte, the coverage, its complement (four words).
+    fn colours(&self, colours: &[[u8; 4]]) -> Blob {
+        let area = 1.0 / (self.z * self.z);
+        let mut out = Vec::with_capacity(self.lists.len() * 4);
+        for list in &self.lists {
+            let mut sum = [0.0f32; 4];
+            for &(index, w) in list {
+                for (s, v) in sum.iter_mut().zip(colours[usize::from(index)]) {
+                    *s += f32::from(v) * w;
+                }
+            }
+            if sum[3] <= 0.0 {
+                out.extend([0, 0, 0, 0]);
+                continue;
+            }
+            let a = (sum[3] / 255.0 / area).min(1.0);
+            let c = [0, 1, 2].map(|i| (sum[i] * 255.0 / sum[3]).round() as u8);
+            let a255 = (a * 255.0).round() as u8;
+            out.extend([
+                pack([c[0], c[1], c[2], a255]),
+                a.to_bits(),
+                (1.0 - a).to_bits(),
+                1,
+            ]);
+        }
+        Blob::Words(out.into())
+    }
 }
 
 struct ImageKey {
@@ -642,34 +722,27 @@ impl SpriteLayer {
                     tilemap: *tilemap,
                     src: [ax, ay, sw, sh],
                     z: z.to_bits(),
-                    colours,
                 };
-                let blob = cached(&mut cache.sprites, key, 16, || {
+                let sprite = cached(&mut cache.sprites, key, 16, || {
                     let art = bank.map_art(*tilemap);
-                    let colours: Vec<[u8; 4]> = (0..=255u8).map(|i| pal.rgba(i)).collect();
                     let src = Art {
                         px: &art,
                         stride: aw,
                         rect: [ax, ay, sw, sh],
                     };
-                    let area = 1.0 / (z * z);
-                    let mut out = vec![0u32; (dwc * dhc) as usize * 4];
-                    for ry in 0..dhc {
-                        let rows: Vec<(usize, f32)> = footprint(ry, z, sh).collect();
-                        for rx in 0..dwc {
-                            let Some((colour, a)) = resample_at(&src, &colours, z, area, &rows, rx)
-                            else {
-                                continue;
-                            };
-                            let o = ((ry * dwc + rx) * 4) as usize;
-                            let a255 = (a * 255.0).round() as u8;
-                            out[o] = pack([colour[0], colour[1], colour[2], a255]);
-                            out[o + 1] = a.to_bits();
-                            out[o + 2] = (1.0 - a).to_bits();
-                            out[o + 3] = 1;
-                        }
-                    }
-                    Blob::Words(out.into())
+                    Arc::new(Resampled::new(&src, z, (dwc as usize, dhc as usize)))
+                });
+                let ckey = (Arc::as_ptr(&sprite) as usize, colours);
+                let table = cached(&mut cache.sprite_colours, ckey, 32, || {
+                    sprite.colours(&(0..=255u8).map(|i| pal.rgba(i)).collect::<Vec<_>>())
+                });
+                // A sprite dropped from the cache may leave its colours behind under an
+                // address another one reuses: keep only those of cached sprites.
+                cache.sprite_colours.retain(|((p, _), _)| {
+                    cache
+                        .sprites
+                        .iter()
+                        .any(|(_, s)| Arc::as_ptr(s) as usize == *p)
                 });
                 let bbox = [
                     (x0 as i64).max(cx),
@@ -681,8 +754,9 @@ impl SpriteLayer {
                     return;
                 }
                 let bbox = bbox.map(|v| v as usize);
-                let params = [w(cx as i32), w(cy as i32), dwc as u32, 0];
-                b.push(kind::RESAMPLE, bbox, [0; 4], &params, &[(3, blob)]);
+                let params = [w(cx as i32), w(cy as i32), sprite.w as u32, 0, 0];
+                let blobs = [(3, sprite.ids.clone()), (4, table)];
+                b.push(kind::RESAMPLE, bbox, [0; 4], &params, &blobs);
             }
             WidgetKind::Image(img) => {
                 let (iw, ih) = (img.image.width as f32, img.image.height as f32);

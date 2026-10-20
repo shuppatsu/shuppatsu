@@ -17,8 +17,12 @@ const GROUP: u32 = 16;
 const GLOBALS_SIZE: u64 = 64;
 const PALETTE_BYTES: u64 = 256 * 4;
 
-/// The device can run the compositor: compute shaders and enough storage buffers.
+/// The device can run the compositor: compute shaders, enough storage buffers, and texture
+/// views of another format (the sRGB view of the canvas; not on GL).
 pub fn supported(device: &wgpu::Device) -> bool {
+    if device.adapter_info().backend == wgpu::Backend::Gl {
+        return false;
+    }
     let l = device.limits();
     l.max_compute_invocations_per_workgroup >= GROUP * GROUP
         && l.max_compute_workgroup_size_x >= GROUP
@@ -49,6 +53,10 @@ pub struct Compositor {
     resident: Vec<Resident>,
     frame_buf: wgpu::Buffer,
     frames: u64,
+    /// What each bin of the last composed canvas was composed from (a hash), and the
+    /// canvas size: a bin whose inputs are the same is not composed again.
+    bins: Vec<u64>,
+    bins_size: (u32, u32),
 }
 
 fn storage(device: &wgpu::Device, label: &str, size: u64) -> wgpu::Buffer {
@@ -141,17 +149,22 @@ impl Compositor {
             resident: Vec::new(),
             frame_buf: storage(device, "2d frame", 64 << 10),
             frames: 0,
+            bins: Vec::new(),
+            bins_size: (0, 0),
         }
     }
 
     /// Composes `frame` into `target` (a storage view of an `Rgba8Unorm` texture of the
-    /// frame's size). Returns false when the frame's data does not fit the device's limits.
+    /// frame's size). With `keep`, the target holds this compositor's last canvas, and only
+    /// the bins whose inputs changed are composed again. Returns false when the frame's data
+    /// does not fit the device's limits.
     pub fn render(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         frame: &GpuFrame,
         target: &wgpu::TextureView,
+        keep: bool,
     ) -> bool {
         self.frames += 1;
         let mut uploaded = 0u64;
@@ -223,12 +236,26 @@ impl Compositor {
                 }
             }
         }
+        // The bins to compose: those whose inputs changed.
+        let hashes = bin_hashes(frame, &draws, &counts, &entries);
+        let keep = keep && self.bins_size == frame.size && self.bins.len() == hashes.len();
+        let dirty: Vec<u32> = (0..nbins as u32)
+            .filter(|&i| !keep || self.bins[i as usize] != hashes[i as usize])
+            .collect();
+        self.bins = hashes;
+        self.bins_size = frame.size;
+        if dirty.is_empty() {
+            crate::perf::count(crate::perf::Counter::Upload2dBytes, uploaded);
+            return true;
+        }
         let bins_off = (draws.len() * DRAW_WORDS) as u32;
         let entries_off = bins_off + counts.len() as u32;
-        let mut words_out: Vec<u32> = Vec::with_capacity(entries_off as usize + total);
+        let dirty_off = entries_off + total as u32;
+        let mut words_out: Vec<u32> = Vec::with_capacity(dirty_off as usize + dirty.len());
         words_out.extend(draws.iter().flatten());
         words_out.extend(&counts);
         words_out.extend(&entries);
+        words_out.extend(&dirty);
         let bytes: &[u8] = bytemuck::cast_slice(&words_out);
         if bytes.len() as u64 > self.frame_buf.size() {
             if bytes.len() as u64 > device.limits().max_storage_buffer_binding_size {
@@ -256,7 +283,7 @@ impl Compositor {
             bd_y1,
             bins_off,
             entries_off,
-            0,
+            dirty_off,
             0,
             0,
         ];
@@ -303,7 +330,9 @@ impl Compositor {
             });
             pass.set_pipeline(&self.pipeline);
             pass.set_bind_group(0, &bind_group, &[]);
-            pass.dispatch_workgroups(cw.div_ceil(GROUP), ch.div_ceil(GROUP), 1);
+            // Each bin is (64 / 16)² workgroups; one row of them per dirty bin.
+            let per = (1 << BIN_SHIFT) / GROUP;
+            pass.dispatch_workgroups(per * per, dirty.len() as u32, 1);
         }
         queue.submit([encoder.finish()]);
         true
@@ -339,6 +368,7 @@ impl Compositor {
             }
             self.resident.clear();
             self.top = 0;
+            self.bins.clear();
         }
         let mut uploaded = 0;
         let mut words = Vec::with_capacity(blobs.len());
@@ -371,7 +401,65 @@ impl Compositor {
         let frames = self.frames;
         if self.resident.len() > 4096 {
             self.resident.retain(|r| frames - r.frame < 600);
+            self.bins.clear();
         }
         Some((words, uploaded))
     }
+}
+
+/// What each bin's pixels are made from: the size and global inputs, then every record
+/// reaching it in order, with the identity of the data it reads and the palette it colours
+/// with. Equal hashes mean equal pixels (barring a 64-bit collision).
+fn bin_hashes(
+    frame: &GpuFrame,
+    draws: &[[u32; DRAW_WORDS]],
+    counts: &[u32],
+    entries: &[u32],
+) -> Vec<u64> {
+    use crate::sprites::gpu::kind;
+    use std::hash::{Hash, Hasher};
+    let hasher = std::collections::hash_map::DefaultHasher::new;
+    let mut palettes: Vec<Option<u64>> = vec![None; frame.palettes.len()];
+    let mut palette = |p: u32| -> u64 {
+        let p = p as usize;
+        if palettes.get(p).is_some_and(Option::is_none) {
+            let mut h = hasher();
+            frame.palettes[p].as_ref().map(|q| q.0).hash(&mut h);
+            palettes[p] = Some(h.finish());
+        }
+        palettes.get(p).copied().flatten().unwrap_or(0)
+    };
+    let mut blobs_of: Vec<Vec<(usize, usize)>> = vec![Vec::new(); draws.len()];
+    for &(d, _, b) in &frame.patches {
+        blobs_of[d as usize].push(frame.blobs[b as usize].id());
+    }
+    let per_draw: Vec<u64> = draws
+        .iter()
+        .zip(&blobs_of)
+        .map(|(d, blobs)| {
+            let mut h = hasher();
+            d.hash(&mut h);
+            blobs.hash(&mut h);
+            match d[0] {
+                kind::SLOT => palette(d[9 + 12]).hash(&mut h),
+                kind::PART => palette(d[9 + 7]).hash(&mut h),
+                _ => {}
+            }
+            h.finish()
+        })
+        .collect();
+    let mut base = hasher();
+    (frame.size, frame.scale, frame.backdrop, frame.art.id).hash(&mut base);
+    let base = base.finish();
+    counts
+        .windows(2)
+        .map(|w| {
+            let mut h = hasher();
+            base.hash(&mut h);
+            for &e in &entries[w[0] as usize..w[1] as usize] {
+                per_draw[e as usize].hash(&mut h);
+            }
+            h.finish()
+        })
+        .collect()
 }

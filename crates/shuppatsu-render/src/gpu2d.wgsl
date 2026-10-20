@@ -17,7 +17,8 @@ struct Globals {
     bd_y1: u32,
     bins_off: u32,
     entries_off: u32,
-    pad0: u32,
+    // The bins to compose.
+    dirty_off: u32,
     pad1: u32,
     pad2: u32,
 };
@@ -282,7 +283,12 @@ fn fmix(u: u32, v: u32, a: f32, oma: f32) -> u32 {
 
 // A resampled sprite widget (sprites.rs `resample_sprite`).
 fn resample(b: u32, x: i32, y: i32, cur: vec4<u32>) -> vec4<u32> {
-    let o = p(b, 3u) + 4u * u32((y - pi(b, 1u)) * pi(b, 2u) + x - pi(b, 0u));
+    // The pixel's list of art pixels, then that list's colour with this palette.
+    let list = blobs[p(b, 3u) + u32((y - pi(b, 1u)) * pi(b, 2u) + x - pi(b, 0u))];
+    if (list == 0xffffffffu) {
+        return cur;
+    }
+    let o = p(b, 4u) + 4u * list;
     if (blobs[o + 3u] == 0u) {
         return cur;
     }
@@ -298,15 +304,20 @@ fn resample(b: u32, x: i32, y: i32, cur: vec4<u32>) -> vec4<u32> {
     return vec4<u32>(fmix(cur.r, c.r, a, oma), fmix(cur.g, c.g, a, oma), fmix(cur.b, c.b, a, oma), max(cur.a, c.a));
 }
 
+// One row of 16 workgroups per bin to compose (its 64 × 64 pixels).
 @compute @workgroup_size(16, 16)
-fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) local: vec3<u32>) {
+    let bin = frame[g.dirty_off + wg.y];
+    let id = vec2<u32>(
+        (bin % g.bins_x) * 64u + (wg.x % 4u) * 16u + local.x,
+        (bin / g.bins_x) * 64u + (wg.x / 4u) * 16u + local.y,
+    );
     if (id.x >= g.cw || id.y >= g.ch) {
         return;
     }
     let x = i32(id.x);
     let y = i32(id.y);
     var px = vec4<u32>(0u);
-    let bin = (id.y >> BIN_SHIFT) * g.bins_x + (id.x >> BIN_SHIFT);
     let first = frame[g.bins_off + bin];
     let last = frame[g.bins_off + bin + 1u];
     for (var e = first; e < last; e++) {

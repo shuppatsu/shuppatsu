@@ -28,30 +28,37 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     crate::gpu2d::supported(&device).then_some((device, queue))
 }
 
-/// Composes `frame` on the GPU and reads the canvas back (RGBA rows).
+/// Composes `frame` on the GPU into `target` (made at the frame's size when it is not, else
+/// only the changed bins are composed) and reads the canvas back (RGBA rows).
 fn render(
     device: &wgpu::Device,
     queue: &wgpu::Queue,
     gpu: &mut crate::gpu2d::Compositor,
     frame: &gpu::GpuFrame,
+    target: &mut Option<wgpu::Texture>,
 ) -> Vec<u8> {
     let (w, h) = frame.size;
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
-        label: None,
-        size: wgpu::Extent3d {
-            width: w,
-            height: h,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: wgpu::TextureDimension::D2,
-        format: wgpu::TextureFormat::Rgba8Unorm,
-        usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
-        view_formats: &[],
+    let keep = target
+        .as_ref()
+        .is_some_and(|t| (t.width(), t.height()) == (w, h));
+    let texture = target.take().filter(|_| keep).unwrap_or_else(|| {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        })
     });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    assert!(gpu.render(device, queue, frame, &view));
+    assert!(gpu.render(device, queue, frame, &view, keep));
     let row = (w * 4).next_multiple_of(256);
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: None,
@@ -83,6 +90,7 @@ fn render(
     for y in 0..h as usize {
         out.extend_from_slice(&data[y * row as usize..][..w as usize * 4]);
     }
+    *target = Some(texture);
     out
 }
 
@@ -325,6 +333,7 @@ fn gpu_composes_the_same_pixels() {
             layer.palettes[p] = Some(random_palette(&mut rng));
         }
         let mut cache = gpu::GpuCache::default();
+        let mut target = None;
         for step in 0..60 {
             match rng.next(8) {
                 0..=2 => {
@@ -407,7 +416,7 @@ fn gpu_composes_the_same_pixels() {
             for d in &frame.draws {
                 kinds[d[0] as usize] += 1;
             }
-            let got = render(&device, &queue, &mut gpu, &frame);
+            let got = render(&device, &queue, &mut gpu, &frame, &mut target);
             if let Some(i) = want.iter().zip(&got).position(|(a, b)| a != b) {
                 let p = i / 4;
                 panic!(
