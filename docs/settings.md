@@ -1,3 +1,4 @@
+| `even_track_width` | on | `--[no-]even-track-width` | each rail piece is as wide as its chord × 8 (0x4186a0 gets the unnormalised chord), and the point spacing varies (0.889–1.000 of a full point), so neighbouring pieces differ in gauge by up to 7 % on a straight line: the rails and ballast edges step sideways at every join, plainly visible at 4K (scene.md §2.3) | every rail piece (single or 2–32-point band, main line and side tracks) as wide as a piece over full 0.125-unit points (\|x\| = 1), every track-side piece (P0–P4) as wide as its run's median point chord gives; position, up axis and the along-track axis unchanged, so the joins and turnouts meet as before. Pieces more than 25 % off the nominal width (gap bridges, zero-length pieces) keep the original's. The same with `max_lod` on or off |
 # Port settings
 
 Every enhancement and every decided deviation from the original has one named setting
@@ -73,8 +74,8 @@ Code: `crates/shuppatsu/src/front/port_settings.rs` (screen, items, values),
   `wide_menus`, `hud_upscale`, `interpolate`, `vsync`, `fullscreen`, `movie_scaling`); 3D & effects (`wide_visibility`, `square_pixels`,
   `stable_track_variants`, `texture_filtering`, `anisotropic`, `msaa`, `ground_variation`,
   `ground_detiling`, `texture_pack`, `fog`, `wide_weather`, `wide_coupling_band`, `far_traffic`, `max_lod`,
-  `early_activation`, `draw_distance`, `distance_fade`, `fine_depth`); Sound (`audio_resampler`); Saves & controls (`save_on_change`,
-  `save_timed_out_names`, `hybrid_input`, `keyboard_with_controller`, `exit_no_to_menu`, `movie_in_menu`, `unique_routes`). All 43 keys of
+  `even_track_width`, `early_activation`, `draw_distance`, `distance_fade`, `fine_depth`); Sound (`audio_resampler`); Saves & controls (`save_on_change`,
+  `save_timed_out_names`, `hybrid_input`, `keyboard_with_controller`, `exit_no_to_menu`, `movie_in_menu`, `unique_routes`). All 44 keys of
   the table below.
 * **Keys**: up/down move (no wrap, repeat on hold), left/right step the value (switches flip,
   `ui_scale` runs Auto, 1×…4×, the others wrap), Enter (confirm) steps it on, Esc (cancel)

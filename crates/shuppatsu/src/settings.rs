@@ -116,6 +116,10 @@ settings! {
     /// The most detailed model of every track piece and AI-train car at every distance
     /// (scene.md §5.3); off = the original's distance bands (LOD pop).
     max_lod = true;
+    /// Rail and track-side pieces of even width, so the rails run straight through the joins
+    /// (scene.md §2.3); off = the original's widths, which follow each piece's chord and step
+    /// by up to 7 % between neighbours.
+    even_track_width = true;
     /// Scenery and side tracks activated as soon as they come within the far plane (scene.md
     /// §5.3); off = the original's activation points, 40–200 m ahead.
     early_activation = true;

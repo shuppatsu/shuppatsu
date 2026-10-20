@@ -142,6 +142,9 @@ pub struct Geometry {
     /// `max_lod`: the most detailed model of every track piece and AI-train car at every
     /// distance (scene.md §5.3).
     pub max_lod: bool,
+    /// `even_track_width`: rail and track-side pieces of even width, so the rails do not step
+    /// sideways at the joins (scene.md §2.3).
+    pub even_track_width: bool,
     /// `early_activation`: scenery and side tracks from where they come within the far plane
     /// instead of the original's activation points (scene.md §5.3).
     pub early_activation: bool,
@@ -349,6 +352,7 @@ impl RouteScene {
         let options = scene::TrackOptions {
             anchor_side_variants: self.stable_track_variants,
             max_lod: self.geometry.max_lod,
+            even_width: self.geometry.even_track_width,
             reach: self.geometry.reach(),
         };
         let pieces = match self.visibility {

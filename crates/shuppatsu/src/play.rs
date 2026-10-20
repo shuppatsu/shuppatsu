@@ -750,6 +750,7 @@ fn visibility(opts: &PlayOptions) -> Visibility {
 pub fn geometry(opts: &PlayOptions) -> crate::scene::Geometry {
     crate::scene::Geometry {
         max_lod: opts.settings.max_lod,
+        even_track_width: opts.settings.even_track_width,
         early_activation: opts.settings.early_activation,
         draw_distance: opts.locale.draw_distance,
         distance_fade: opts.settings.distance_fade,

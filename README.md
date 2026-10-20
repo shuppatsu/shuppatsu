@@ -1,3 +1,4 @@
+| `even_track_width` | on | Rails and ballast keep one width, so they run straight through the joins. Off: the original's widths, which step slightly from piece to piece. |
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/logo/header-dark.svg">
   <img alt="Shuppatsu 出発" src="assets/logo/header-light.svg">

@@ -559,6 +559,7 @@ mod tests {
         ("wide_coupling_band", true),
         ("far_traffic", true),
         ("max_lod", true),
+        ("even_track_width", true),
         ("early_activation", true),
         ("distance_fade", true),
         ("fine_depth", true),

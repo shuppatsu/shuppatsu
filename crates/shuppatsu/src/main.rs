@@ -144,6 +144,7 @@ switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml
   --wide-coupling-band     the coupling game's black band over the whole width [on]
   --far-traffic            AI trains drawn to the far plane, not 150 m [on] (--original-traffic)
   --max-lod                track and trains in their most detailed models at any distance [on]
+  --even-track-width       rails and ballast of even width, no steps at the joins [on]
   --early-activation       scenery and side tracks activated at the far plane [on]
   --distance-fade          the far edge dissolves into the background [on]
   --fine-depth             depth steps that stay fine with distance (16-bit Z: off) [on]
@@ -416,6 +417,7 @@ fn configure_renderer(renderer: &mut Renderer, opts: &Options) {
 fn geometry(opts: &Options) -> scene::Geometry {
     scene::Geometry {
         max_lod: opts.settings.max_lod,
+        even_track_width: opts.settings.even_track_width,
         early_activation: opts.settings.early_activation,
         draw_distance: opts.locale.draw_distance,
         distance_fade: opts.settings.distance_fade,

@@ -154,6 +154,7 @@ pub const ITEMS: &[Item] = {
         switch("wide_coupling_band", Effects, NextStage),
         switch("far_traffic", Effects, NextStage),
         switch("max_lod", Effects, NextStage),
+        switch("even_track_width", Effects, NextStage),
         switch("early_activation", Effects, NextStage),
         item("draw_distance", Effects, Kind::DrawDistance, NextStage),
         switch("distance_fade", Effects, NextStage),
