@@ -51,7 +51,7 @@ Values are a string, or a table with `text` and options:
 | `style` | `auto` (default), `plain` (lettering on transparency: the old art is removed), `boxed` (a plate or box: the backdrop is kept, the old lettering painted over). `auto` picks `boxed` when more than 35 % of the region's edge is opaque. |
 | `vertical` | Rotate 90° clockwise (reads top to bottom). |
 | `layout` | `ink` (default): the text is laid out in the original lettering's ink box with its own ink centred. `cell`: in the whole region, with the baseline set by the font (a capital's top to a descender's bottom centred; a full-height kanji for Japanese text), so the items of a column share a left edge and a baseline whatever the art's margins and whatever letters they have (the options labels and values: "m" under "Normal"). The size still follows the lettering. |
-| `outline` | Plain style: 1-px outline in the art's second colour (default on). An outline found in the original lettering ("Shadows, outlines and gradients" below) is drawn instead, in either style; `false` turns both off. |
+| `outline` | Plain style: 1-px outline in the art's second colour (default on). An outline found in the original lettering ("Shadows, outlines and gradients" below), with its outer outline if any, is drawn instead, in either style; `false` turns them off. |
 | `shadow` | The drop shadow under the text: `true` (default: as found in the original lettering), `false` (none), `[dx, dy]` (a copy that many original pixels away, in the shadow colour found in the art, else its second lettering colour) or `[dx, dy, "extrude"]` (the strokes swept there, a solid extrusion like 時間切れ's). |
 | `shadow_ink = [x, y, w, h]` | Look for the lettering's shadow and outline in this rectangle of the sprite instead of the part's region. |
 | `gradient` | `false`: one text colour even where the original strokes are a vertical gradient (default `true`). |
@@ -139,6 +139,17 @@ still recolour it) and at its offsets and widths in original pixels (scaled to t
   found outline is drawn in boxes too (the station-name and departure banners, 急制動, ATS作動,
   非常ブレーキ使え), and at its width; plain parts with a one-pixel outline keep the plain
   outline above.
+* **Outer outline.** A second rim round the outlined strokes in a third colour, found the same
+  way round the fill and its outline, with two allowances: at least 60 % of the ring (not 80 %:
+  the rim has gaps where strokes meet), and clear pixels within 2 px of the region's edge left
+  out (lettering cut by its 32-px row lost the rim there). Only without a shadow. The station
+  result's lettering is yellow, a 1-px red outline, then 1–2 px of black (停止位置, 駅構内再加速,
+  非常制動停車, 合計, オーバーラン, 減点, なし, 秒, and the time messages' 減点 and 秒). Before,
+  such a part got the plain outline in the rim's commonest colour, which was the black where the
+  black rim was complete and the red where the art touches the row's edge (非常制動停車), so one
+  row of the result came out red and the others black. Both rims are drawn now (`paint`: the
+  outer rim over the strokes dilated by both widths, then the outline), and the text keeps both
+  widths inside the ink box.
 * **Gradient.** Lettering on transparency whose strokes run through bands of colour from top to
   bottom (準備, 開始, 運転評価, 仕業検査, 連結失敗, 危険回避合格, the line-group headers): per
   row, the commonest interior colour in even and in odd columns (dithered bands keep their
@@ -151,7 +162,8 @@ gradient's row colours).
 Measured over `en.toml` (867 parts): 52 shadows of (3, 3) (the options' labels in both
 colourings, the press-START line), one swept (−2, −2) (時間切れ), 1-px shadows on the line
 plates (1, 0), the coupling balloon (1, 1), 乗務記録 (1, 1) and the 難易度 header's highlight
-(0, −1); 110 outlines in boxes (now drawn), 128 plain outlines (drawn as before); 19 gradients.
+(0, −1); 110 outlines in boxes (now drawn), 128 plain outlines (drawn as before, except the 23
+with an outer outline, which draw both rims; counted at 866 parts); 19 gradients.
 The thresholds are the constants in `lettering.rs`.
 
 ## Configuration

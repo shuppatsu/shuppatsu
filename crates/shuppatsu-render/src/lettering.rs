@@ -14,7 +14,9 @@
 //!   drawn under them, in its own colour: every shadow pixel lies `(dx, dy)` from the strokes,
 //!   and few lie `(−dx, −dy)` from them (which tells it from an outline);
 //! - *outline*: a rim around the fill on every side, one or more pixels wide: no fill pixel
-//!   touches non-lettering.
+//!   touches non-lettering;
+//! - *outer outline*: a second rim around the outlined strokes, in another colour (the
+//!   station result's labels: yellow strokes, a red outline, then two pixels of black).
 
 use crate::text::{RegionScan, TextPart};
 
@@ -44,6 +46,8 @@ pub struct Effects {
     /// The commonest other lettering colour (a shadow given by hand takes it).
     pub second: Option<u8>,
     pub outline: Option<Outline>,
+    /// A second rim round the outline (only with an outline and no shadow).
+    pub outer: Option<Outline>,
     /// Of the outlined strokes when there is an outline too.
     pub shadow: Option<Shadow>,
 }
@@ -52,6 +56,28 @@ impl Effects {
     /// Whether there is any effect.
     pub fn any(&self) -> bool {
         self.outline.is_some() || self.shadow.is_some()
+    }
+
+    /// Both rims: the outline, then the outer outline round it.
+    pub fn rims(&self) -> Rims {
+        Rims {
+            outline: self.outline,
+            outer: self.outline.and(self.outer),
+        }
+    }
+}
+
+/// The rims [`paint`] draws round the strokes: an outline and, round it, an outer outline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Rims {
+    pub outline: Option<Outline>,
+    pub outer: Option<Outline>,
+}
+
+impl Rims {
+    /// How far the rims reach beyond the strokes, original pixels.
+    pub fn width(&self) -> u8 {
+        self.outline.map_or(0, |o| o.width) + self.outer.map_or(0, |o| o.width)
     }
 }
 
@@ -87,6 +113,14 @@ const OUTLINE_ENCLOSED: f32 = 0.9;
 const OUTLINE_NEAR: f32 = 0.85;
 /// Outline: the share of the ring around the fill in the rim colour.
 const OUTLINE_RING: f32 = 0.8;
+/// Outer outline: clear pixels this close to the region's border are left out of its ring.
+/// The station result's labels lose their two-pixel black rim where the strokes reach the
+/// 32-pixel row's top or bottom (非常制動停車, 停止位置 tbl 0x1ca / 0x1c9).
+const OUTER_EDGE_SLACK: i32 = 2;
+/// Outer outline: the share of the ring round the outlined strokes in the rim colour. Lower
+/// than [`OUTLINE_RING`]: the black rim of the result labels has gaps where strokes meet
+/// (measured 66–84 % over tbl 0x1a3, 0x1a9, 0x1ad, 0x1c0, 0x1ca).
+const OUTER_RING: f32 = 0.6;
 
 /// A `w × h` grid of lettering colours (0 = none) with reads outside it as 0.
 struct Grid<'a> {
@@ -149,6 +183,7 @@ pub fn analyse(px: &[u8], w: usize, h: usize) -> Option<Effects> {
         fill: fill0,
         second: second(fill0),
         outline: None,
+        outer: None,
         shadow: None,
     };
     if colours.len() < 2 {
@@ -168,6 +203,7 @@ pub fn analyse(px: &[u8], w: usize, h: usize) -> Option<Effects> {
                     fill,
                     second: Some(colour),
                     outline: None,
+                    outer: None,
                     shadow: Some(s),
                 };
                 best = Some((score, e));
@@ -196,10 +232,22 @@ pub fn analyse(px: &[u8], w: usize, h: usize) -> Option<Effects> {
             .filter_map(|&c| find_shadow(&g, &body, n_body, c))
             .max_by(|a, b| a.0.total_cmp(&b.0))
             .map(|(_, s)| s);
+        // A second rim round the outlined strokes, in a third colour.
+        let outer = if shadow.is_none() {
+            let others: Vec<u8> = colours
+                .iter()
+                .copied()
+                .filter(|&c| c != fill && c != outline.colour)
+                .collect();
+            find_rim(&g, &body, &others, OUTER_RING, OUTER_EDGE_SLACK)
+        } else {
+            None
+        };
         return Some(Effects {
             fill,
             second: second(fill),
             outline: Some(outline),
+            outer,
             shadow,
         });
     }
@@ -247,6 +295,7 @@ pub fn for_part(
     };
     Some(Effects {
         outline: found.outline.filter(|_| part.outline),
+        outer: found.outer.filter(|_| part.outline),
         shadow,
         ..found
     })
@@ -454,45 +503,61 @@ fn find_outline(g: &Grid<'_>, fill: u8, colours: &[u8]) -> Option<Outline> {
     if enclosed < OUTLINE_ENCLOSED {
         return None;
     }
-    // The rim: the colour most often next to the fill, outside it.
+    find_rim(g, &|x, y| g.at(x, y) == fill, colours, OUTLINE_RING, 0)
+}
+
+/// The rim round the lettering `body` (the fill, or the fill with its outline): the colour of
+/// `colours` most often 4-adjacent to it outside it, if it rings the body nearly all round and
+/// lies within 1–3 pixels of it: at least `min_ring` of the pixels round the body are that
+/// colour. Clear pixels less than `edge_slack` from the grid's border do not count against
+/// the ring (art cut by its tile's edge lost its rim there).
+fn find_rim(
+    g: &Grid<'_>,
+    body: &dyn Fn(i32, i32) -> bool,
+    colours: &[u8],
+    min_ring: f32,
+    edge_slack: i32,
+) -> Option<Outline> {
+    let (gw, gh) = (g.w as i32, g.h as i32);
+    let near_edge = |x: i32, y: i32| x.min(y).min(gw - 1 - x).min(gh - 1 - y) < edge_slack;
+    let next_to_body = |x: i32, y: i32| {
+        [(-1, 0), (1, 0), (0, -1), (0, 1)]
+            .iter()
+            .any(|&(dx, dy)| body(x + dx, y + dy))
+    };
     let mut next = [0usize; 256];
-    for &(x, y) in &fill_px {
+    let (mut ring, mut ringed_by) = (0usize, [0usize; 256]);
+    for (x, y) in g.coords() {
+        if body(x, y) || !next_to_body(x, y) {
+            continue;
+        }
+        let v = g.at(x, y);
+        if v == 0 && near_edge(x, y) {
+            continue;
+        }
+        ring += 1;
+        ringed_by[usize::from(v)] += 1;
         for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
-            next[usize::from(g.at(x + dx, y + dy))] += 1;
+            next[usize::from(v)] += usize::from(body(x + dx, y + dy));
         }
     }
     let colour = colours
         .iter()
         .copied()
-        .filter(|&c| c != fill)
         .max_by_key(|&c| next[usize::from(c)])?;
     if next[usize::from(colour)] == 0 {
         return None;
     }
-    // The ring around the fill (pixels 4-adjacent to it) is the rim colour nearly all round:
+    // The ring around the body (pixels 4-adjacent to it) is the rim colour nearly all round:
     // antialiasing is a mix of greys there, with the backdrop between them.
-    let (mut ring, mut ringed) = (0usize, 0usize);
-    for (x, y) in g.coords() {
-        let v = g.at(x, y);
-        if v == fill {
-            continue;
-        }
-        if [(-1, 0), (1, 0), (0, -1), (0, 1)]
-            .iter()
-            .any(|&(dx, dy)| g.at(x + dx, y + dy) == fill)
-        {
-            ring += 1;
-            ringed += usize::from(v == colour);
-        }
-    }
-    let ring_share = ringed as f32 / ring.max(1) as f32;
-    if ring_share < OUTLINE_RING {
+    let ring_share = ringed_by[usize::from(colour)] as f32 / ring.max(1) as f32;
+    if ring_share < min_ring {
         return None;
     }
     let rim: Vec<(i32, i32)> = g.coords().filter(|&(x, y)| g.at(x, y) == colour).collect();
     let near = |r: i32| {
         rim.iter()
-            .filter(|&&(x, y)| (-r..=r).any(|dy| (-r..=r).any(|dx| g.at(x + dx, y + dy) == fill)))
+            .filter(|&&(x, y)| (-r..=r).any(|dy| (-r..=r).any(|dx| body(x + dx, y + dy))))
             .count() as f32
             / rim.len() as f32
     };
@@ -677,15 +742,15 @@ pub fn shadow_room(shadow: Option<Shadow>, scale: usize) -> [usize; 4] {
 
 /// Paints the effects under text `coverage` (a `w × h` mask at `scale` canvas pixels per
 /// original pixel) into `base` (palette indices; 0 = nothing): the shadow of the strokes (with
-/// their outline), then the outline. Pixels are taken as strokes from half coverage, so the
-/// effects stay crisp like the art's.
+/// their rims), then the outer outline, then the outline. Pixels are taken as strokes from
+/// half coverage, so the effects stay crisp like the art's.
 pub fn paint(
     coverage: &[u8],
     base: &mut [u8],
     w: usize,
     h: usize,
     scale: usize,
-    outline: Option<Outline>,
+    rims: Rims,
     shadow: Option<Shadow>,
 ) {
     let inked = |x: i32, y: i32| {
@@ -695,15 +760,20 @@ pub fn paint(
             && (y as usize) < h
             && coverage[y as usize * w + x as usize] >= 128
     };
-    // The strokes with their outline (a square of `width` original pixels round each).
-    let r = outline.map_or(0, |o| i32::from(o.width) * scale as i32);
-    let mut body = vec![false; w * h];
-    for y in 0..h as i32 {
-        for x in 0..w as i32 {
-            body[y as usize * w + x as usize] =
-                (-r..=r).any(|dy| (-r..=r).any(|dx| inked(x + dx, y + dy)));
+    // The strokes with their rims (a square of the rims' width in original pixels round each).
+    let dilated = |width: u8| {
+        let r = i32::from(width) * scale as i32;
+        let mut body = vec![false; w * h];
+        for y in 0..h as i32 {
+            for x in 0..w as i32 {
+                body[y as usize * w + x as usize] =
+                    (-r..=r).any(|dy| (-r..=r).any(|dx| inked(x + dx, y + dy)));
+            }
         }
-    }
+        body
+    };
+    let inner = rims.outline.map(|o| dilated(o.width));
+    let body = dilated(rims.width());
     let in_body = |x: i32, y: i32| {
         x >= 0
             && y >= 0
@@ -727,8 +797,15 @@ pub fn paint(
             }
         }
     }
-    if let Some(o) = outline {
+    if let Some(o) = rims.outer {
         for (i, b) in body.iter().enumerate() {
+            if *b {
+                base[i] = o.colour;
+            }
+        }
+    }
+    if let (Some(o), Some(inner)) = (rims.outline, inner) {
+        for (i, b) in inner.iter().enumerate() {
             if *b {
                 base[i] = o.colour;
             }
@@ -828,6 +905,7 @@ mod tests {
                 width: 1
             })
         );
+        assert_eq!(e.outer, None);
     }
 
     #[test]
@@ -859,7 +937,7 @@ mod tests {
             colour: 3,
             extrude: false,
         };
-        paint(&coverage, &mut base, w, h, 2, None, Some(shadow));
+        paint(&coverage, &mut base, w, h, 2, Rims::default(), Some(shadow));
         let painted: Vec<usize> = (0..w * h).filter(|&i| base[i] != 0).collect();
         assert_eq!(painted, vec![4 * w + 4]);
         // Swept, every offset up to (2, 2) canvas pixels is painted (not the strokes).
@@ -868,7 +946,7 @@ mod tests {
             extrude: true,
             ..shadow
         };
-        paint(&coverage, &mut base, w, h, 2, None, Some(swept));
+        paint(&coverage, &mut base, w, h, 2, Rims::default(), Some(swept));
         assert_eq!(base.iter().filter(|&&b| b == 3).count(), 8);
         assert_eq!(base[2 * w + 2], 0);
     }
@@ -883,8 +961,64 @@ mod tests {
             colour: 4,
             width: 1,
         };
-        paint(&coverage, &mut base, w, h, 1, Some(outline), None);
+        let rims = Rims {
+            outline: Some(outline),
+            outer: None,
+        };
+        paint(&coverage, &mut base, w, h, 1, rims, None);
         assert_eq!(base.iter().filter(|&&b| b == 4).count(), 9);
+        // With an outer outline of 1 round it: the 5×5 square, 9 of them in the outline.
+        let mut base = vec![0u8; w * h];
+        let rims = Rims {
+            outer: Some(Outline {
+                colour: 2,
+                width: 1,
+            }),
+            ..rims
+        };
+        paint(&coverage, &mut base, w, h, 1, rims, None);
+        assert_eq!(base.iter().filter(|&&b| b == 4).count(), 9);
+        assert_eq!(base.iter().filter(|&&b| b == 2).count(), 16);
+    }
+
+    #[test]
+    fn a_second_rim_round_the_outline_is_found() {
+        // Strokes of 5, a one-pixel outline of 3, then two pixels of 1 (the station result's
+        // labels: yellow, red, black).
+        let (px, w, h) = grid(&[
+            "....................",
+            ".111111111111111111.",
+            ".111111111111111111.",
+            ".113333333333333311.",
+            ".113555555555555311.",
+            ".113555555555555311.",
+            ".113555555555555311.",
+            ".113555555555555311.",
+            ".113555555555555311.",
+            ".113555555555555311.",
+            ".113333333333333311.",
+            ".111111111111111111.",
+            ".111111111111111111.",
+            "....................",
+        ]);
+        let e = analyse(&px, w, h).unwrap();
+        assert_eq!(e.fill, 5);
+        assert_eq!(e.shadow, None);
+        assert_eq!(
+            e.outline,
+            Some(Outline {
+                colour: 3,
+                width: 1
+            })
+        );
+        assert_eq!(
+            e.outer,
+            Some(Outline {
+                colour: 1,
+                width: 2
+            })
+        );
+        assert_eq!(e.rims().width(), 3);
     }
 
     #[test]

@@ -668,6 +668,9 @@ pub fn effects_text(e: &shuppatsu_render::lettering::Effects) -> String {
     if let Some(o) = e.outline {
         write!(s, ", outline {} px in {}", o.width, o.colour).expect("string");
     }
+    if let Some(o) = e.outer {
+        write!(s, ", outer {} px in {}", o.width, o.colour).expect("string");
+    }
     if let Some(d) = e.shadow {
         let how = if d.extrude { "swept " } else { "" };
         write!(s, ", shadow {how}({},{}) in {}", d.dx, d.dy, d.colour).expect("string");

@@ -1076,19 +1076,23 @@ fn render_part_at(
         (m, w - m, y0, y1)
     };
     // The shadow or outline of the original lettering, repeated under the English: a shadow
-    // anywhere; an outline found in a box, with a shadow, or wider than the plain one-pixel
-    // outline drawn below.
+    // anywhere; an outline found in a box, with a shadow, with a second rim round it, or wider
+    // than the plain one-pixel outline drawn below.
     let effects = crate::lettering::for_part(part, &scan, art, art_w, art_h);
     let shadow = effects.and_then(|e| e.shadow);
-    let fx_outline = effects
-        .and_then(|e| e.outline)
-        .filter(|o| boxed || shadow.is_some() || o.width > 1);
-    let drawn = shadow.is_some() || fx_outline.is_some();
+    let rims = effects
+        .map(|e| e.rims())
+        .filter(|r| {
+            r.outline
+                .is_some_and(|o| boxed || shadow.is_some() || r.outer.is_some() || o.width > 1)
+        })
+        .unwrap_or_default();
+    let drawn = shadow.is_some() || rims.outline.is_some();
     // A plain outline is one original pixel wide and the original's ink box includes its
     // outline: keep the fill that far inside (the rasteriser already pads one canvas pixel).
-    // So for a found outline's width, and for the shadow on its side.
-    let inset = if let Some(o) = fx_outline {
-        (usize::from(o.width) * s).saturating_sub(PAD)
+    // So for a found outline's width (with its outer rim), and for the shadow on its side.
+    let inset = if rims.outline.is_some() {
+        (usize::from(rims.width()) * s).saturating_sub(PAD)
     } else if !boxed && part.outline && !drawn {
         s.saturating_sub(PAD)
     } else {
@@ -1170,7 +1174,7 @@ fn render_part_at(
     };
     let fg = match effects {
         Some(e) if drawn => {
-            crate::lettering::paint(&coverage, &mut base, sw, sh, s, fx_outline, shadow);
+            crate::lettering::paint(&coverage, &mut base, sw, sh, s, rims, shadow);
             e.fill
         }
         _ => fg,
