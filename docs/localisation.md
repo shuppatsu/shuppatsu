@@ -807,17 +807,17 @@ whose gist the context settles.
 | 0xff..0x146, 0x159..0x167 | the announcer's station names (pairs 95..179) | part of the above and of the announcements | confirmed |
 | 0x111/0x112, 0x147/0x148, 0x168/0x169 | 次は / に止まります around an announcer name | part of "The next station is …" | confirmed |
 | 0x1a4, 0x1a7 | chimes before announcements | — (music) | confirmed |
-| 0x420320 kind + aspect | signal sightings and repeaters (0x40c010) | "{Home signal / Starting signal / Repeater / Home repeater / Starting repeater}: {Clear / Reduce / Caution / Restricted / Stop / High-speed clear / Limit}." | confirmed |
+| 0x420320 kind + aspect | signal sightings and repeaters (0x40c010) | "{Entry signal / Departure signal / Repeater / Entry repeater / Departure repeater}: {Clear / Reduce / Caution / Restricted / Stop / High-speed clear / Limit}." | confirmed |
 | 0xd4 本線 (prefix 3) | sightings on passing-station routes when the train passes | "Main-line home signal: …" / "Main-line starting signal: …" | confirmed (word); "main line" by context |
 | 0xa8, 0xa9, 0xaa, 0xd2 alone | block signal aspects (0x40c010); 0xd2 also departure at stop | "Signal: Reduce / Caution / Restricted / Stop." | confirmed (0xd2 停止: Whisper heard ティッシュ, the table position decides) |
-| 0x97 出発進行 | departure (aspect 0), green at block 0, recovery calls | "Starting signal: Clear." | confirmed |
-| 0x99 場内進行 | green at blocks 1–2 | "Home signal: Clear." | confirmed |
+| 0x97 出発進行 | departure (aspect 0), green at block 0, recovery calls | "Departure signal: Clear." | confirmed |
+| 0x99 場内進行 | green at blocks 1–2 | "Entry signal: Clear." | confirmed |
 | 0x98 閉塞進行 | green from block 8 on | "Block signal: Clear." | confirmed |
 | 0x9a 中継進行 | not played in a stage | "Repeater: Clear." | confirmed |
 | sequences 5..0xb (0x9b..0xa1 第1..7閉塞 + 0xa7) | green at blocks 3..9 | "Block signal {n}: Clear." | confirmed (words); n's block by JR numbering likely |
-| sequences 0xc..0x10 (0xa2..0xa6 第1..5場内 + 0xa7) | not played in a stage | "Home signal {n}: Clear." | confirmed |
+| sequences 0xc..0x10 (0xa2..0xa6 第1..5場内 + 0xa7) | not played in a stage | "Entry signal {n}: Clear." | confirmed |
 | 0xbe 高速進行 | green with the high-speed display variant (Hokuhoku) | "Signal: High-speed clear." | confirmed |
-| 0xce 出発減速, 0xcf 出発注意, 0xd0 出発警戒 | departure by aspect 1–3 (0x413370) | "Starting signal: Reduce / Caution / Restricted." | confirmed |
+| 0xce 出発減速, 0xcf 出発注意, 0xd0 出発警戒 | departure by aspect 1–3 (0x413370) | "Departure signal: Reduce / Caution / Restricted." | confirmed |
 | 0xc2 制限 + 0xae..0xbb, 0xc4..0xcd | speed-limit call 10..125 km/h | "Speed limit {kmh} km/h." | confirmed (0xc2: Whisper failed; table position and the limit sign) |
 | 0xc2 + 0xc3 解除 | limit lifted | "Speed limit lifted." | confirmed |
 | 0xc2 alone | limit kind 4 on stages 0–2, or no number phrase | "Speed limit." | likely |

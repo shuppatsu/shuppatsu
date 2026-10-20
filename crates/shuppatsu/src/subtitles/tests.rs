@@ -181,22 +181,28 @@ fn station_calls_name_the_station() {
 
 #[test]
 fn signal_and_limit_calls() {
-    assert_eq!(texts(|s| s.call_signal(0, 1, 2)), ["Home signal: Caution."]);
+    assert_eq!(
+        texts(|s| s.call_signal(0, 1, 2)),
+        ["Entry signal: Caution."]
+    );
     assert_eq!(
         texts(|s| s.call_signal(0, 2, 0)),
-        ["Starting signal: Clear."]
+        ["Departure signal: Clear."]
     );
     // Prefix 3 (0xd4 本線): the main-line signal.
     assert_eq!(
         texts(|s| s.call_signal(3, 1, 4)),
-        ["Main-line home signal: Stop."]
+        ["Main-line entry signal: Stop."]
     );
     assert_eq!(
         texts(|s| s.call_signal(3, 2, 0)),
-        ["Main-line starting signal: Clear."]
+        ["Main-line departure signal: Clear."]
     );
     // Repeater calls: kind 0, with the repeated signal as the prefix.
-    assert_eq!(texts(|s| s.call_signal(1, 0, 6)), ["Home repeater: Limit."]);
+    assert_eq!(
+        texts(|s| s.call_signal(1, 0, 6)),
+        ["Entry repeater: Limit."]
+    );
     assert_eq!(
         texts(|s| s.call_signal(0, 0, 5)),
         ["Repeater: High-speed clear."]
@@ -216,12 +222,12 @@ fn signal_and_limit_calls() {
     assert_eq!(texts(|s| s.call_prefix_speed(0, 7)), ["Speed limit."]);
     // Numbered calls: sequence 5 = block 1, sequence 0xc = home signal 1.
     assert_eq!(texts(|s| s.request(0x1005)), ["Block signal 1: Clear."]);
-    assert_eq!(texts(|s| s.request(0x100c)), ["Home signal 1: Clear."]);
+    assert_eq!(texts(|s| s.request(0x100c)), ["Entry signal 1: Clear."]);
 }
 
 #[test]
 fn single_clips_and_sequences() {
-    assert_eq!(texts(|s| s.request(0x97)), ["Starting signal: Clear."]);
+    assert_eq!(texts(|s| s.request(0x97)), ["Departure signal: Clear."]);
     assert_eq!(texts(|s| s.request(0xbc)), ["On-time pass."]);
     assert_eq!(
         texts(|s| s.request(0xd5)),
@@ -346,7 +352,7 @@ fn events_become_lines_in_time() {
     s.call_signal(0, 1, 0);
     subs.feed(s.take_voice_events());
     subs.tick();
-    assert_eq!(subs.lines().collect::<Vec<_>>(), ["Home signal: Clear."]);
+    assert_eq!(subs.lines().collect::<Vec<_>>(), ["Entry signal: Clear."]);
     let mut shown = 1;
     subs.tick();
     while subs.lines().count() > 0 {
@@ -354,10 +360,10 @@ fn events_become_lines_in_time() {
         subs.tick();
     }
     // Two phrases: the aspect word 31 sequencer ticks after the kind, 1 s long, then the
-    // linger; the reading time of 19 characters is longer.
+    // linger; the reading time of 20 characters ("Entry signal: Clear.") is longer.
     let audio = ((31.0 + 2.0 * TICKS_PER_S) / 2.0f32).ceil() as u32;
-    assert!(audio + LINGER_TICKS < READ_BASE_TICKS + 19 * READ_TICKS_PER_CHAR);
-    assert_eq!(shown, READ_BASE_TICKS + 19 * READ_TICKS_PER_CHAR);
+    assert!(audio + LINGER_TICKS < READ_BASE_TICKS + 20 * READ_TICKS_PER_CHAR);
+    assert_eq!(shown, READ_BASE_TICKS + 20 * READ_TICKS_PER_CHAR);
 }
 
 #[test]
@@ -465,7 +471,7 @@ fn book_from_the_data() {
     }
     for id in 0xc..=0x10 {
         let cues = b.cues(&seq(id));
-        assert_eq!(cues[0].text, format!("Home signal {}: Clear.", id - 0xb));
+        assert_eq!(cues[0].text, format!("Entry signal {}: Clear.", id - 0xb));
     }
     // Every phrase of the announcements, the navigator and the result sequences is in a
     // sentence with a line; only the chime 0x1a7 is not.
