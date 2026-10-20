@@ -338,23 +338,34 @@ name = "English"
 0x3fe = { region = [3, 22, 188, 84], text = "Aim for\nprecise driving!" }                    # 正確な運転を心掛けて下さいね
 
 # ---------------------------------------------------------------------------------------------
-# Station result (menus.md §9). Rows are 480 px wide with gaps where the game draws digits,
-# so only the words are replaced; Latin art (Cm, EXCELLENT!, m×N) stays.
+# Station result (menus.md §9). Every row is a slot at x 80 (table 0x464298); the 480-px rows
+# have gaps where the game draws digits, so only the words are replaced and Latin art (Cm,
+# EXCELLENT!, m×N) stays. All the words share one size, as all the original's lettering does
+# (`shared_group` result.rows; 減点 "minus" in its 64-px sprite sets it), and a left edge and
+# baseline per column (`layout = "cell"`): the row labels at the rows' x 0 (停止位置 and 合計
+# are drawn 15 px further in; the English keeps one column), "minus" where 減点 starts (x 320),
+# "None" where なし and the tens digit start (448), "sec" where 秒 starts (512, right after the
+# digits), and "OK!" ending at the row's right edge (560). Measured ink, sprite pixels:
+# 停止位置 15–144, Cm 320–358, 合格! 390–473 (0x1c9) / 366–449 (0x1a6) / 375–472 (0x1cc),
+# オーバーラン 0–177, 秒 432–468. The lettering is yellow with a red outline and a black rim
+# round it, which the English repeats (lettering.rs `outer`).
 
 0x1a0 = { text = "Result", font = "display" }                     # 運転評価 header, 176×48
-0x1c9 = { parts = [{ region = [12, 0, 196, 32], text = "Stop point", align = "left" }, { region = [384, 0, 96, 32], text = "OK!" }] }   # 停止位置 nn Cm 合格!
-0x1a6 = { parts = [{ region = [12, 0, 196, 32], text = "Stop point", align = "left" }, { region = [360, 0, 120, 32], text = "OK!" }] }   # 停止位置 … 合格!
-0x1cc = { parts = [{ region = [0, 0, 129, 32], text = "Stop point", align = "left" }, { region = [372, 0, 104, 32], text = "OK!!" }] }   # 停止位置 EXCELLENT! … Cm 合格!!
-0x1c0 = "Re-powered at station"     # 駅構内再加速 re-power penalty row, 192×32
-0x1c4 = "Penalty"                    # 減点, 64×32
-0x1bf = "sec"                        # 秒, 48×32
-0x1ca = "Emergency stop"             # 非常制動停車 EB row, 192×32
-0x1c3 = "None"                       # なし no penalty, 64×32
-0x1a9 = { parts = [{ region = [8, 14, 80, 34], text = "Total" }, { region = [96, 14, 144, 34], text = "minus" }, { region = [428, 14, 52, 34], text = "sec" }] }  # 合計 マイナス … 秒, 480×48
-0x1a3 = { parts = [{ region = [0, 0, 180, 32], text = "Overrun", align = "left" }, { region = [428, 0, 52, 32], text = "sec" }] }  # オーバーラン … m×1秒
-0x1a4 = { parts = [{ region = [0, 0, 180, 32], text = "Overrun", align = "left" }, { region = [431, 0, 49, 32], text = "sec" }] }  # オーバーラン … m×2秒 (the digit before 秒 reaches x 430, measured)
-0x1a5 = { parts = [{ region = [0, 0, 180, 32], text = "Overrun", align = "left" }, { region = [431, 0, 49, 32], text = "sec" }] }  # オーバーラン … m×3秒 (the digit before 秒 reaches x 430, measured)
-# Result words whose caller was not traced (same sheet family):
+0x1c9 = { parts = [{ region = [0, 0, 212, 32], text = "Stop point", align = "left", shared_group = "result.rows", layout = "cell" }, { region = [384, 0, 96, 32], text = "OK!", align = "right", shared_group = "result.rows", layout = "cell" }] }   # 停止位置 nn Cm 合格! (< 50 cm)
+0x1a6 = { parts = [{ region = [0, 0, 212, 32], text = "Stop point", align = "left", shared_group = "result.rows", layout = "cell" }, { region = [360, 0, 120, 32], text = "OK!", align = "right", shared_group = "result.rows", layout = "cell" }] }   # 停止位置 … 合格! (≥ 50 cm, no digits)
+0x1cc = { parts = [{ region = [0, 0, 129, 32], text = "Stop point", align = "left", shared_group = "result.rows", layout = "cell" }, { region = [372, 0, 108, 32], text = "OK!!", align = "right", shared_group = "result.rows", layout = "cell" }] }   # 停止位置 EXCELLENT! … Cm 合格!!
+0x1c0 = { text = "Re-accelerated", align = "left", shared_group = "result.rows", layout = "cell" }   # 駅構内再加速 re-power penalty row, 192×32
+0x1c4 = { text = "minus", align = "left", shared_group = "result.rows", layout = "cell" }            # 減点 (deduction), 64×32
+0x1bf = { text = "sec", align = "left", shared_group = "result.rows", layout = "cell" }              # 秒, 48×32
+0x1ca = { text = "Emergency stop", align = "left", shared_group = "result.rows", layout = "cell" }   # 非常制動停車 EB row, 192×32
+0x1c3 = { text = "None", align = "left", shared_group = "result.rows", layout = "cell" }             # なし no penalty, 64×32
+0x1a9 = { parts = [{ region = [0, 14, 240, 34], text = "Total penalty", align = "left", shared_group = "result.rows", layout = "cell" }, { region = [432, 14, 48, 34], text = "sec", align = "left", shared_group = "result.rows", layout = "cell" }] }  # 合計 マイナス … 秒, 480×48 (rule above y 14)
+0x1a3 = { parts = [{ region = [0, 0, 212, 32], text = "Overrun", align = "left", shared_group = "result.rows", layout = "cell" }, { region = [432, 0, 48, 32], text = "sec", align = "left", shared_group = "result.rows", layout = "cell" }] }  # オーバーラン … m×1秒
+0x1a4 = { parts = [{ region = [0, 0, 212, 32], text = "Overrun", align = "left", shared_group = "result.rows", layout = "cell" }, { region = [432, 0, 48, 32], text = "sec", align = "left", shared_group = "result.rows", layout = "cell" }] }  # オーバーラン … m×2秒 (the digit before 秒 reaches x 430, measured)
+0x1a5 = { parts = [{ region = [0, 0, 212, 32], text = "Overrun", align = "left", shared_group = "result.rows", layout = "cell" }, { region = [432, 0, 48, 32], text = "sec", align = "left", shared_group = "result.rows", layout = "cell" }] }  # オーバーラン … m×3秒 (the digit before 秒 reaches x 430, measured)
+# Result words not drawn by the station result (0x413f30 shows only the tilemaps above and the
+# overrun banners of table 0x4654ec, whose entry 0, 0x1a2, needs a factor 0 that no stage has);
+# no caller found among the code's immediates:
 0x1a1 = { region = [16, 0, 104, 32], text = "Timetable" }       # ダイヤ, 128×32
 0x1a2 = { parts = [{ region = [16, 0, 104, 32], text = "Timetable" }, { region = [236, 0, 76, 32], style = "plain", text = "late" }, { region = [428, 0, 52, 32], text = "sec" }] }  # ダイヤ … 遅れ … 秒 (遅れ fills its region top to bottom, so `auto` took it for a box)
 0x1a7 = "On time!"                   # 定刻!, 80×32
