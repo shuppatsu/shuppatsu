@@ -485,6 +485,19 @@ same 13 marks and the same waiting set (`out/explain/coupling_panel/cap17_port_i
     moves at ≥ 0.04 m/s.
   **confirmed** (code 0x4133c5–0x413790; oracle hilly-drive.csv: 381 waiting rows at offset 180,
   stat 2 = 1 at counter 380, a false start with ATS = 2 on the last waiting row of the continue).
+  * **Per leg** nothing changes: the task is new at every segment setup, the counter starts at
+    0 and the offset is 0 at every later station, also on stages 17–19. In wait ticks (0 = the
+    setup tick, whose update runs with counter 0), power used in wait tick *j* is a false start
+    for **33 ≤ *j* ≤ offset + 199**; the lamp `0x829d16` lights in the update of tick offset +
+    200 and the wait ends after tick offset + 200 (201 / 381 waiting rows). The hold at 199 is
+    the literal 199, so a false start at counter ≥ 200 (offset 180) does not lengthen the wait.
+    **confirmed** (oracle, `from wait` probes with a one-tick power blip on each leg, logging the
+    task's counter, freeze and brake count and the lamp): *j* = 199 false start and 200 not, both
+    on every leg of stage 13 (legs 1–4), stage 3 (legs 1–4) and stage 17 (legs 2–4, offset 0);
+    stage 17 leg 1 (offset 180): 379 false start (wait still 381 rows), 380 not; lower bound: 32
+    not (stage 13 legs 1 and 3, stage 3 leg 5), 33 false start (stage 13 legs 2 and 4, stage 3
+    leg 5). A false start at offset 0 adds 69 waiting rows (270). Traces: depart13-*.csv,
+    depart17g/h.csv, depart3e/f.csv (§14; the stage-3 leg-5 probes are only in the raw captures).
 * **Ride comfort** (train task, after the physics step; inputs `TrainReadout`):
   * jolt: remaining > 0, ATS ≤ 1, no obstacle, spec jolt limit (+0x38) ≤ `0x84c3f8` and
     ≤ `0x84c420` → stat 3 += 1. **confirmed** (oracle: stat 3 matches).
@@ -668,6 +681,15 @@ Hook points for event-level traces: 0x415080 (every time message: kind, seconds)
 * The horn deadline `0x856d6a` is an i16: with an odometer above 32 767 m a whistle sign would
   expire immediately. No whistle sign lies that far in the shipped data (only the Akita bonus
   section beyond 32 km), so it is latent.
+* **Weather start / end runs an extra `Task_Tick`** that the engine does not model:
+  0x40f320 (the palette fade, called by course event 21, by the random start in 0x40d620 and by
+  the weather end in 0x40c4e0) calls `Task_Tick` itself when the stage's palette index
+  `0x463c18[stage]` is < 7 (code 0x40f320 tail). The oracle shows that tick as an extra row in the
+  middle of the loop body: on depart3e.csv row 16447 `0x84c3a0` is already 5 (it holds the
+  weather kind + 1, set by 0x424740, not a flag) and the level 1, while the course cursor and the
+  stage clock only move on the next row. Every later row is one tick off in the engine. The
+  stage-3 traces are therefore cut before the weather starts. **confirmed** (code + oracle); not
+  fixed.
 * Meaning of display variant `0x8570c2`.
 * Difficulty names for columns 0–3.
 
@@ -721,3 +743,35 @@ Now exercised: arrival evaluation (two stops, neither clean), stop error sum and
 result-screen overrun deduction (24 s) and the EB-in-approach deduction and stat 4 += 2, re-power
 in the approach, approach states 2–4, EB-in-approach ticks, notch slam (stat 11) and jolt
 (stat 3), the horn-bonus zone timing (entered and expired, no press). Not exercised: see §13.
+
+### depart*.csv (departures on later legs)
+
+Issue mark 4 suggested that the original allowed an earlier departure on later legs: the mark's
+notches, replayed in the original leg by leg, gave a false start in the port on leg 4 (Tachibana)
+and none in the original. The cause was the measurement: the hook's input scripts then counted
+each leg from its first **driving** tick and could not set the levers during the
+pre-departure wait, so every leg of the replay started about 200 ticks later than in the port
+(stop errors do not depend on a constant shift, which is why legs 1–3 matched). With `from wait`
+scripts (crates/shuppatsu-hook `script.rs`) the original false-starts on leg 4 exactly as the
+port does: power used in wait tick 197 (counter 196), ATS 1 and stat 8 += 2 in the next update,
+69 more waiting rows. **confirmed**
+
+New traces (`scripts/capture-original.sh`, `oracle/full.schema` with the departure task and the
+lamp, difficulty 0 unless noted). They all have `NotchTiming::NextRow` (physics.md §8). Each run
+is cut where the stage leaves the run (the attract demo after the game over); the stage-3 runs
+are cut before the weather starts (§13).
+
+| trace | stage | legs | what | physics / rules / drive mismatches |
+|---|---|---|---|---|
+| depart13-mark.csv | 13 | 4 | the mark's notches; leg 4 false start | 0 / 0 / 0 |
+| depart13-mark-d1.csv | 13 | 4 | every notch of the port's mark run, difficulty 1 (the mark's own); odometer equal to the port's run on every tick of legs 1–4 up to the mark | 0 / 0 / 0 |
+| depart13-b / -c.csv | 13 | 4 | blips at *j* = 199 / 200, alternating | 0 / 0 / 0 |
+| depart13-d.csv | 13 | 4 | blips at *j* = 32 / 33, alternating | 0 / 0 / 0 |
+| depart17g / h.csv | 17 | 4 | leg 1 (offset 180) *j* = 380 / 379, then 200 / 199 alternating | 0 / 0 / 0 |
+| depart3e / f.csv | 3 | 4 | *j* = 199 / 200 alternating (cut at the weather start in leg 4) | 0 / 0 / 0 |
+
+The drive and rules replays also compare the departure task's counter, freeze and brake count
+(`dep_counter`, `dep_freeze`, `dep_released`) on every waiting row. The rules replay carries
+the HUD transfer phase from the previous stretch when a stretch shows no transfer of its own
+(depart13-mark.csv leg 3: a −1 s penalty drained in the same tick). The stage-17 runs and the
+stage-3 runs were driven by scripts generated in the port and checked there first.

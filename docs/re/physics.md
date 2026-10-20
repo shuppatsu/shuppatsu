@@ -350,6 +350,9 @@ notches and buttons plus stage, difficulty and start station, and compares every
 | hilly-drive.csv | 0 | 7 155 | 815 657 | 0 | 2 segments, passing stations, red-signal/ATS recovery, game over while driving, continue |
 | stops-drive.csv | 13 | 10 522 | 1 170 663 | 0 | 3 segments, 2 arrivals with results, game over on the result screen, continue, final time over |
 | yamate-drive.csv | 5 (hokuho1a) | 6 771 | 338 537 | 0 | passing station, recovery, game over inside the approach, continue to the next station |
+| depart13-mark.csv, -mark-d1, -b, -c, -d | 13 | 13 673–13 963 each | ≈ 1.6 M each | 0 | 4 legs, 3–4 results, false starts on later legs, notches set during the wait (rules.md §14) |
+| depart17g.csv, depart17h.csv | 17 | 24 604 / 24 577 | 2.84 M each | 0 | 4 legs from station 0 (offset 180), passing stations, horn signs missed |
+| depart3e.csv, depart3f.csv | 3 | 14 457 each | 1.65 M each | 0 | 4 legs, cut at the weather start (rules.md §13) |
 
 Not compared: the camera globals before the first setup tick (they belong to the stage
 intro's camera, as does the physics copy of the heading on the first setup row), and rule
