@@ -988,3 +988,72 @@ fn max_lod_and_reach_track_pieces() {
         }
     }
 }
+
+/// Issue mark 4 ("the main rails aren't straight", stage 13 between 立花 and 甲子園口, engine
+/// index 1822 of toukai1b.com, 2026-10-20; scene.md §2.3): on that straight main line the
+/// single rail pieces join on the track's centre line, but each piece's width is its chord
+/// length × 8 (0x4186a0 gets the unnormalised chord), and the route's point spacing varies
+/// (0.117–0.125 units there). Adjacent pieces therefore differ in gauge by up to ~6 %: the
+/// visible steps at the joins, which the original draws too.
+#[test]
+fn main_line_singles_join_on_the_centre_line_and_scale_width_with_the_chord() {
+    let dir = require_data!();
+    let w = load(&dir);
+    let com = (1..)
+        .take_while(|&c| c < w.stages.com_files.len() as u32)
+        .find(|&c| {
+            w.stages
+                .com_file(c)
+                .is_some_and(|f| f.eq_ignore_ascii_case("toukai1b.com"))
+        })
+        .expect("toukai1b.com");
+    let (route, area) = &w.routes[&com];
+    let pos = scene::TrackPos {
+        engine_index: 1822,
+        t: 0.089,
+    };
+    let cam = scene::cab_camera(route, pos, w.tables.eye_height(*area, com), 0.0);
+    let options = scene::TrackOptions {
+        max_lod: true,
+        ..Default::default()
+    };
+    let mut main: Vec<_> =
+        scene::track_instances_with(route, &w.tables, ctx_for(&w, com, 4), pos, &cam, options)
+            .into_iter()
+            .filter(|i| matches!(i.source, PieceSource::MainLine { band: 0 }))
+            .collect();
+    main.sort_by_key(|i| i.slot);
+    let width = |a: &scene::Affine| a.x_axis[0].hypot(a.x_axis[2]);
+    let mut worst_step = 1f32;
+    let mut joins = 0;
+    for pair in main.windows(2).take(160) {
+        let (a, b) = (&pair[0], &pair[1]);
+        if b.slot != a.slot + 1 {
+            continue;
+        }
+        joins += 1;
+        // Local +z points backwards: a's front end meets b's back end.
+        let front = a.transform.transform_point([0.0, 0.0, -1.0 / 16.0]);
+        let back = b.transform.transform_point([0.0, 0.0, 1.0 / 16.0]);
+        let (p, q) = (route.slots[b.slot], route.slots[b.slot + 1]);
+        let len = (q.x - p.x).hypot(q.z - p.z);
+        let side = [-(q.z - p.z) / len, (q.x - p.x) / len];
+        let lateral = (front[0] - back[0]) * side[0] + (front[2] - back[2]) * side[1];
+        assert!(
+            lateral.abs() < 1e-4,
+            "slot {}: centre lines {lateral} apart",
+            a.slot
+        );
+        // The width follows the chord exactly (8 × |d|).
+        let chord = |s: usize| {
+            let (p, q) = (route.slots[s], route.slots[s + 1]);
+            8.0 * (q.x - p.x).hypot(q.z - p.z)
+        };
+        assert!((width(&a.transform) - chord(a.slot)).abs() < 1e-4);
+        let r = width(&a.transform) / width(&b.transform);
+        worst_step = worst_step.max(r.max(1.0 / r));
+    }
+    assert!(joins >= 100, "only {joins} joins");
+    eprintln!("toukai1b.com at 1822: widest gauge step between pieces {worst_step}");
+    assert!((1.02..1.08).contains(&worst_step), "{worst_step}");
+}

@@ -77,6 +77,17 @@ For each of `count` consecutive slots *p* (next slot *q*), with `k` counting fro
 - Position: XZ midpoint of p and q, y = (h_p + h_q)/2/4096.
 - Axes: 0x4186a0 with `(s, c) = (−8·dx, −8·dz)`, d = q − p. **Local +z points backwards
   along the track** and has length |d|·8 ≈ 1 (the piece is stretched to the chord).
+  Local +x has the same length, so **a piece's width (gauge, sleepers, ballast) scales with
+  its chord too**. The point spacing in the data is uneven (toukai1b.com engine 1822–2000, a
+  dead-straight line: |d| = 0.117–0.125), so neighbouring pieces differ in width by up to 7 %.
+  The pieces still join on the centre line, but each rail steps sideways at the joins, which
+  reads as kinked, unevenly converging rails at high resolution. At the original's 640×480
+  a step is at most about one pixel. A Wine capture of the unmodified original standing at
+  the same spot (stage 13, 578 m before 甲子園口, engine index 1849) matches the port drawn
+  with the original settings, jogs included. **confirmed** (code; data test
+  `main_line_singles_join_on_the_centre_line_and_scale_width_with_the_chord`; issue mark 4;
+  `out/explain/rails/`). A possible enhancement (not implemented): set |x| to 1, which
+  removes the steps (checked in an experiment).
 - If h_q ≠ h_p: pitch `s = (h_q − h_p)/512`, `c = 1.1`. On a gradient the piece's local y and z
   come out 10 % longer.
 - Cull: drawn only if the piece origin's camera-space z (camera forward = −z) is ≤ **0.625**
