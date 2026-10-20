@@ -11,7 +11,7 @@
 //! earlier builds. The canvas itself is 640×480 × `SpriteLayer::scale`; [`auto_multiple`] picks
 //! that multiple from the window height.
 
-use crate::sprites::{CANVAS_H, CANVAS_W, Composer, Pending};
+use crate::sprites::{CANVAS_H, CANVAS_W, ComposeMode, Composer, Pending};
 
 /// How the canvas is presented in the window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -197,6 +197,15 @@ pub struct Overlay {
     /// The [`Composer`] whose canvas the texture holds ([`Overlay::sync`]); `None` after a
     /// resize or a plain [`Overlay::upload`].
     source: Option<u64>,
+    /// The device runs the GPU compositor (`gpu2d.rs`): the texture is then also a storage
+    /// texture (`Rgba8Unorm`, sampled through an sRGB view).
+    compute: bool,
+    /// Its storage view.
+    storage: Option<wgpu::TextureView>,
+    /// The compositor, made on first use.
+    gpu2d: Option<crate::gpu2d::Compositor>,
+    /// The GPU-composed frame the texture holds: composer id and frame version.
+    gpu_source: Option<(u64, u64)>,
     /// How [`Overlay::render`] maps the canvas to its rectangle.
     pub scaling: UiScaling,
     /// Plain bilinear filtering instead of [`Overlay::scaling`]: for live-action pictures
@@ -254,7 +263,9 @@ impl Overlay {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let (texture, bind_group) = Self::canvas_texture(device, &layout, &params, size);
+        let compute = crate::gpu2d::supported(device);
+        let (texture, bind_group, storage) =
+            Self::canvas_texture(device, &layout, &params, size, compute);
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("overlay"),
             bind_group_layouts: &[Some(&layout)],
@@ -298,6 +309,10 @@ impl Overlay {
             bind_group,
             size,
             source: None,
+            compute,
+            storage,
+            gpu2d: None,
+            gpu_source: None,
             scaling: UiScaling::default(),
             bilinear: false,
         }
@@ -308,7 +323,8 @@ impl Overlay {
         layout: &wgpu::BindGroupLayout,
         params: &wgpu::Buffer,
         size: (u32, u32),
-    ) -> (wgpu::Texture, wgpu::BindGroup) {
+        compute: bool,
+    ) -> (wgpu::Texture, wgpu::BindGroup, Option<wgpu::TextureView>) {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("overlay canvas"),
             size: wgpu::Extent3d {
@@ -319,13 +335,39 @@ impl Overlay {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            // sRGB, so the palette colours reach the sRGB target unchanged (and blending
-            // happens in linear light).
-            format: wgpu::TextureFormat::Rgba8UnormSrgb,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
+            // Sampled as sRGB, so the palette colours reach the sRGB target unchanged (and
+            // blending happens in linear light). The GPU compositor writes the same bytes
+            // through a plain view (storage textures cannot be sRGB).
+            format: if compute {
+                wgpu::TextureFormat::Rgba8Unorm
+            } else {
+                wgpu::TextureFormat::Rgba8UnormSrgb
+            },
+            usage: if compute {
+                wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::COPY_SRC
+                    | wgpu::TextureUsages::STORAGE_BINDING
+            } else {
+                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST
+            },
+            view_formats: if compute {
+                &[wgpu::TextureFormat::Rgba8UnormSrgb]
+            } else {
+                &[]
+            },
         });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(wgpu::TextureFormat::Rgba8UnormSrgb),
+            usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
+            ..Default::default()
+        });
+        let storage = compute.then(|| {
+            texture.create_view(&wgpu::TextureViewDescriptor {
+                usage: Some(wgpu::TextureUsages::STORAGE_BINDING),
+                ..Default::default()
+            })
+        });
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("overlay"),
             layout,
@@ -340,7 +382,7 @@ impl Overlay {
                 },
             ],
         });
-        (texture, bind_group)
+        (texture, bind_group, storage)
     }
 
     /// The canvas size in pixels.
@@ -355,16 +397,18 @@ impl Overlay {
         if size == self.size {
             return false;
         }
-        (self.texture, self.bind_group) =
-            Self::canvas_texture(device, &self.layout, &self.params, size);
+        (self.texture, self.bind_group, self.storage) =
+            Self::canvas_texture(device, &self.layout, &self.params, size, self.compute);
         self.size = size;
         self.source = None;
+        self.gpu_source = None;
         true
     }
 
     /// Uploads a composed canvas of this overlay's size (RGBA8).
     pub fn upload(&mut self, queue: &wgpu::Queue, rgba: &[u8]) {
         self.source = None;
+        self.gpu_source = None;
         let _perf = crate::perf::scope(crate::perf::Section::Upload2d);
         crate::perf::count(crate::perf::Counter::Upload2dBytes, rgba.len() as u64);
         queue.write_texture(
@@ -391,9 +435,20 @@ impl Overlay {
     /// Brings the texture up to date with `canvas`: everything when it holds another canvas
     /// (or none), else only the rectangles composed since the last sync. A canvas of another
     /// size than the texture is not uploaded ([`Overlay::resize`] first).
-    pub fn sync(&mut self, queue: &wgpu::Queue, canvas: &mut Composer) {
+    pub fn sync(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, canvas: &mut Composer) {
+        if canvas.mode() == ComposeMode::Gpu {
+            if self.show_gpu(device, queue, canvas) {
+                return;
+            }
+            // No GPU compositor here: compose on the CPU from now on (shown from the next
+            // compose).
+            eprintln!("2d: the GPU cannot compose the 2D layer; composing it on the CPU");
+            canvas.set_mode(ComposeMode::Cpu);
+            return;
+        }
         let pending = canvas.take_pending();
         let (w, h) = canvas.size();
+        self.gpu_source = None;
         if (w as u32, h as u32) != self.size {
             self.source = None;
             return;
@@ -412,6 +467,98 @@ impl Overlay {
                 }
             }
         }
+    }
+
+    /// Brings the texture up to date with `canvas` without taking its pending rectangles
+    /// (a fresh overlay, as for a headless shot): its whole canvas, or its GPU frame.
+    pub fn show(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, canvas: &Composer) {
+        if canvas.mode() == ComposeMode::Gpu {
+            if !self.show_gpu(device, queue, canvas) {
+                eprintln!("2d: the GPU cannot compose the 2D layer (SHUPPATSU_COMPOSE=cpu)");
+            }
+            return;
+        }
+        if canvas.size() == (self.size.0 as usize, self.size.1 as usize) {
+            self.upload(queue, canvas.rgba());
+            self.source = Some(canvas.id());
+        }
+    }
+
+    /// Composes a GPU-mode `canvas`'s frame into the texture unless it already holds it.
+    /// False when this device cannot.
+    fn show_gpu(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, canvas: &Composer) -> bool {
+        self.source = None;
+        let Some((frame, version)) = canvas.gpu_frame() else {
+            return true;
+        };
+        if frame.size != self.size || self.gpu_source == Some((canvas.id(), version)) {
+            return true;
+        }
+        let Some(storage) = self.storage.as_ref() else {
+            return false;
+        };
+        let _perf = crate::perf::scope(crate::perf::Section::Upload2d);
+        let gpu = self
+            .gpu2d
+            .get_or_insert_with(|| crate::gpu2d::Compositor::new(device));
+        if !gpu.render(device, queue, frame, storage) {
+            return false;
+        }
+        self.gpu_source = Some((canvas.id(), version));
+        if let Some(reference) = canvas.reference() {
+            self.check(device, queue, reference);
+        }
+        true
+    }
+
+    /// Debug aid (`SHUPPATSU_VERIFY_COMPOSE=1`): the GPU's canvas must equal the CPU's.
+    fn check(&self, device: &wgpu::Device, queue: &wgpu::Queue, reference: &[u8]) {
+        let (w, h) = self.size;
+        let row = (w * 4).next_multiple_of(256);
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("2d check"),
+            size: u64::from(row * h),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor::default());
+        encoder.copy_texture_to_buffer(
+            self.texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(h),
+                },
+            },
+            wgpu::Extent3d {
+                width: w,
+                height: h,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.submit([encoder.finish()]);
+        let slice = buffer.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |r| r.expect("map the 2d check buffer"));
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("waiting for the 2d check");
+        let data = slice.get_mapped_range().expect("2d check mapped");
+        let w = w as usize;
+        for y in 0..h as usize {
+            let got = &data[y * row as usize..][..w * 4];
+            let want = &reference[y * w * 4..][..w * 4];
+            if let Some(i) = got.iter().zip(want).position(|(a, b)| a != b) {
+                let x = i / 4;
+                panic!(
+                    "GPU 2D compose differs at pixel ({x}, {y}): CPU {:?}, GPU {:?}",
+                    &want[x * 4..x * 4 + 4],
+                    &got[x * 4..x * 4 + 4],
+                );
+            }
+        }
+        eprintln!("2d: GPU compose checked ({w}×{h})");
     }
 
     /// Uploads the `[x0, y0, x1, y1]` pixels of a whole canvas `rgba` of this overlay's size.

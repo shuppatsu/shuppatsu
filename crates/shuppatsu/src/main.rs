@@ -649,7 +649,7 @@ impl App {
         );
         if let Some(h) = self.hud.as_mut() {
             gpu.overlay.resize(&gpu.device, h.layer.canvas_size());
-            gpu.overlay.sync(&gpu.queue, &mut h.canvas);
+            gpu.overlay.sync(&gpu.device, &gpu.queue, &mut h.canvas);
             gpu.overlay.scaling = h.locale.ui_scaling;
             let rect = gpu.overlay.rect(gpu.config.width, gpu.config.height);
             gpu.overlay.render(&gpu.device, &gpu.queue, &view, rect);
@@ -756,6 +756,11 @@ impl ApplicationHandler for App {
 }
 
 fn run_main() -> Result<()> {
+    // The 2D layer: composed on the GPU unless `SHUPPATSU_COMPOSE=cpu` (the CPU reference).
+    {
+        use shuppatsu_render::sprites::{ComposeMode, set_default_mode};
+        set_default_mode(ComposeMode::from_env().unwrap_or(ComposeMode::Cpu));
+    }
     let first = cli_args().into_iter().nth(1);
     if matches!(first.as_deref(), Some("-h" | "--help")) {
         println!("{USAGE}");
@@ -852,8 +857,7 @@ fn run_main() -> Result<()> {
                     r.band_top = band;
                 }
             },
-            hud.as_ref()
-                .map(|h| (h.canvas.rgba(), h.layer.canvas_size())),
+            hud.as_ref().map(|h| &h.canvas),
             &out,
         )?;
         eprintln!("wrote {}", out.display());

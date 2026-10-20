@@ -13,13 +13,14 @@
 //! The rest is global: the bank ([`SpriteBank::generation`]), the canvas size, the shake
 //! offset and the backdrop colour; a change there redraws everything.
 
+use super::gpu::{GpuCache, GpuFrame};
 use super::{
     Canvas, Fan, Hires, LAYERS, PALETTE_COUNT, PaperFill, SLOT_COUNT, Slot, SlotDraw, SpriteBank,
     SpriteLayer, Widget, WidgetKind, fan_bbox, widget_bbox,
 };
 use shuppatsu_formats::cg::Palette;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// A composed canvas and what it was composed from.
 pub struct Composer {
@@ -29,8 +30,14 @@ pub struct Composer {
     prev: Option<Prev>,
     pending: Pending,
     /// Debug aid (env `SHUPPATSU_VERIFY_COMPOSE=1`): every partial compose is checked against
-    /// a full one.
+    /// a full one; in GPU mode the CPU compose is kept in [`Composer::rgba`] for the overlay
+    /// to check the GPU's pixels against.
     verify: bool,
+    mode: ComposeMode,
+    /// GPU mode: the last frame, its version (counting changes) and what it is built from.
+    frame: Option<GpuFrame>,
+    version: u64,
+    cache: GpuCache,
 }
 
 /// The canvas rectangles changed since the last [`Composer::take_pending`].
@@ -185,6 +192,53 @@ fn widget_palettes(w: &Widget) -> [Option<u8>; 3] {
     }
 }
 
+/// Where [`Composer`] composes the 2D layer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ComposeMode {
+    /// On the CPU into an RGBA canvas ([`Composer::rgba`]), redrawing the changed rectangles:
+    /// the reference.
+    Cpu,
+    /// A list of draws ([`GpuFrame`]) the overlay composes on the GPU (`gpu2d.rs`), with the
+    /// same pixels.
+    Gpu,
+}
+
+impl ComposeMode {
+    /// `cpu` or `gpu`.
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "cpu" => Some(Self::Cpu),
+            "gpu" => Some(Self::Gpu),
+            _ => None,
+        }
+    }
+
+    /// The mode set by env `SHUPPATSU_COMPOSE` (`cpu` / `gpu`), if any.
+    pub fn from_env() -> Option<Self> {
+        std::env::var("SHUPPATSU_COMPOSE")
+            .ok()
+            .and_then(|v| Self::parse(&v))
+    }
+}
+
+/// The mode of composers made from now on ([`set_default_mode`]): CPU unless a program asks
+/// for the GPU (tests and tools read the CPU canvas).
+static DEFAULT_GPU: AtomicBool = AtomicBool::new(false);
+
+/// Sets the mode of composers made from now on.
+pub fn set_default_mode(mode: ComposeMode) {
+    DEFAULT_GPU.store(mode == ComposeMode::Gpu, Ordering::Relaxed);
+}
+
+/// The mode of composers made now.
+pub fn default_mode() -> ComposeMode {
+    if DEFAULT_GPU.load(Ordering::Relaxed) {
+        ComposeMode::Gpu
+    } else {
+        ComposeMode::Cpu
+    }
+}
+
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 impl Default for Composer {
@@ -202,6 +256,10 @@ impl Composer {
             prev: None,
             pending: Pending::Full,
             verify: std::env::var("SHUPPATSU_VERIFY_COMPOSE").is_ok_and(|v| v == "1"),
+            mode: default_mode(),
+            frame: None,
+            version: 0,
+            cache: GpuCache::default(),
         }
     }
 
@@ -238,6 +296,33 @@ impl Composer {
         self.prev = None;
     }
 
+    pub fn mode(&self) -> ComposeMode {
+        self.mode
+    }
+
+    /// Composes on the CPU or the GPU from the next compose on (which draws everything).
+    pub fn set_mode(&mut self, mode: ComposeMode) {
+        if mode != self.mode {
+            self.mode = mode;
+            self.prev = None;
+            self.frame = None;
+            self.rgba = vec![0; self.size.0 * self.size.1 * 4];
+            self.pending = Pending::Full;
+        }
+    }
+
+    /// GPU mode: the last composed frame and its version, which changes whenever the frame
+    /// draws something else.
+    pub fn gpu_frame(&self) -> Option<(&GpuFrame, u64)> {
+        Some((self.frame.as_ref()?, self.version))
+    }
+
+    /// GPU mode with `SHUPPATSU_VERIFY_COMPOSE=1`: the CPU's pixels of the last frame.
+    pub fn reference(&self) -> Option<&[u8]> {
+        (self.mode == ComposeMode::Gpu && self.verify && !self.rgba.is_empty())
+            .then_some(&self.rgba[..])
+    }
+
     /// Composes `layer` as [`SpriteLayer::compose`] does, then puts `backdrop` under it in the
     /// design rectangle ([`SpriteLayer::put_backdrop`]); only the changed rectangles are drawn
     /// again.
@@ -247,6 +332,28 @@ impl Composer {
         let size = layer.canvas_size();
         let c = layer.full_canvas();
         let slots = layer.prepare(bank, c);
+        if self.mode == ComposeMode::Gpu {
+            let frame = layer.gpu_frame(bank, &slots, c, &mut self.cache, backdrop);
+            if !self.frame.as_ref().is_some_and(|f| f.same(&frame)) {
+                self.version += 1;
+                crate::perf::count(crate::perf::Counter::FullComposes, 1);
+            }
+            self.frame = Some(frame);
+            self.size = size;
+            self.prev = None;
+            if self.verify {
+                // The reference the overlay checks the GPU's pixels against.
+                self.rgba = vec![0; size.0 * size.1 * 4];
+                layer.draw(bank, &slots, c, &mut self.rgba);
+                if let Some(rgb) = backdrop {
+                    layer.put_backdrop(&mut self.rgba, rgb, c.clip);
+                }
+            } else {
+                self.rgba = Vec::new();
+            }
+            return;
+        }
+        self.frame = None;
         let ops = ops(layer, &slots, c);
         let dirty = self.prev.as_ref().and_then(|prev| {
             let same = prev.bank == bank.generation()

@@ -718,7 +718,7 @@ impl Play {
                     None => r.render(device, queue, view, (w, h), &camera),
                 }
             },
-            Some((self.canvas.rgba(), self.layer.canvas_size())),
+            Some(&self.canvas),
             out,
         )
     }

@@ -8,10 +8,13 @@ use crate::text::{Align, FontRole, SubRect, TextOverlay, draw_parts};
 use hires::{Hires, View};
 pub use paper::Paper;
 use paper::{PaperCache, PaperFill};
-pub use retained::{Composer, Pending};
+pub use retained::{ComposeMode, Composer, Pending, default_mode, set_default_mode};
 use shuppatsu_formats::cg::{CgFile, Palette, TILE_PIXELS, TILE_SIZE, Tilemap};
 use std::sync::{Arc, Mutex};
 
+pub mod gpu;
+#[cfg(test)]
+mod gpu_tests;
 pub mod hires;
 #[cfg(test)]
 mod hires_tests;
@@ -35,6 +38,12 @@ const MAP_ART: usize = 16;
 type MapArt = ((u16, u64), Arc<[u8]>);
 /// A built paper fill: map, bank generation, palette, reach.
 type PaperMemo = (u16, u64, Palette, usize, PaperCache);
+/// A new [`SpriteBank`] art id.
+fn next_art_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Rect layer capacity (0x816b00, 16 fans of ≤ 4 points).
 pub const MAX_FANS: usize = 16;
 const LAYERS: u8 = 4;
@@ -246,6 +255,9 @@ pub struct SpriteBank {
     tilemaps: Vec<Tilemap>,
     /// Counts the changes to what the bank draws ([`SpriteBank::generation`]).
     generation: u64,
+    /// Identifies the tiles and tilemaps: a new id for every change to them, unique in the
+    /// process (the GPU compositor uploads them once per id).
+    art: u64,
     /// Opt-in translated text drawn instead of the art of some sprites (`text.rs`); `None`
     /// draws the original art everywhere.
     text: Option<TextOverlay>,
@@ -336,6 +348,7 @@ impl SpriteBank {
             tiles,
             tilemaps,
             generation: 0,
+            art: next_art_id(),
             text: None,
             labels: None,
             display_labels: None,
@@ -365,6 +378,7 @@ impl SpriteBank {
     /// Replaces tilemap `tbl` (no effect past the end).
     pub fn set_tilemap(&mut self, tbl: usize, map: Tilemap) {
         self.generation += 1;
+        self.art = next_art_id();
         if let Some(m) = self.tilemaps.get_mut(tbl) {
             *m = map;
         }
@@ -532,6 +546,7 @@ impl SpriteBank {
     /// before drawing: upscaled images already built are not rebuilt.
     pub fn add_tile(&mut self, px: [u8; TILE_PIXELS]) -> Option<u16> {
         self.generation += 1;
+        self.art = next_art_id();
         let id = u16::try_from(self.tiles.len()).ok()?;
         self.tiles.push(Some(Box::new(px)));
         Some(id)
@@ -1235,8 +1250,7 @@ impl SpriteLayer {
                     backdrop,
                     font,
                     [x0, y0, x1, y1],
-                    c,
-                    canvas,
+                    &mut legend::Direct { c, canvas },
                 );
             }
             WidgetKind::Text { text, style } => {
@@ -1246,43 +1260,31 @@ impl SpriteLayer {
                     return;
                 };
                 let (mw, mh) = (x1 - x0, y1 - y0);
-                let mask = font.mask(
-                    text,
-                    mw,
-                    mh,
-                    style.cap.map(|v| v * s),
-                    style.align,
-                    style.vertical,
-                );
                 let backdrop = style
                     .backdrop
                     .and_then(|b| Some(palette(b.palette)?.rgba(b.index)));
-                // The inked columns: the backdrop spans them.
-                let mut inked = vec![false; if backdrop.is_some() { mw } else { 0 }];
-                if backdrop.is_some() {
-                    for row in mask.chunks_exact(mw.max(1)).take(mh) {
-                        for (i, &v) in inked.iter_mut().zip(row) {
-                            *i |= v > 0;
-                        }
-                    }
-                }
-                let first = inked.iter().position(|&i| i);
-                let last = inked.iter().rposition(|&i| i);
-                if let (Some(b), Some(first), Some(last)) = (backdrop, first, last) {
-                    let pad = BACKDROP_PAD * c.s;
-                    let (bx0, bx1) = (first.saturating_sub(pad), (last + 1 + pad).min(mw));
+                let outline = style
+                    .outline
+                    .and_then(|o| Some(palette(o.palette)?.rgba(o.index)));
+                let layers = TextLayers::new(
+                    font,
+                    text,
+                    style,
+                    (mw, mh),
+                    c.s,
+                    backdrop.is_some(),
+                    outline.is_some(),
+                );
+                let mask = &layers.mask;
+                if let (Some(b), Some((bx0, bx1))) = (backdrop, layers.backdrop) {
                     for py in 0..mh {
                         for px in bx0..bx1 {
                             put(canvas, x0 + px, y0 + py, b);
                         }
                     }
                 }
-                let outline = style
-                    .outline
-                    .and_then(|o| Some(palette(o.palette)?.rgba(o.index)));
-                if let Some(o) = outline {
+                if let (Some(o), Some(near)) = (outline, &layers.near) {
                     // One original pixel around the solid part of the text, under it.
-                    let near = crate::text::dilated(&mask, mw, mh, c.s, 128);
                     for py in (ky0 - y0)..(ky1.max(ky0) - y0) {
                         for px in (kx0 - x0)..(kx1.max(kx0) - x0) {
                             if near[py * mw + px] {
@@ -1319,6 +1321,58 @@ impl SpriteLayer {
                     }
                 }
             }
+        }
+    }
+}
+
+/// What a [`WidgetKind::Text`] of `mw × mh` canvas pixels draws, independent of its place and
+/// colours: the letters' coverage, the columns its backdrop spans and its outline's pixels.
+struct TextLayers {
+    mask: Arc<[u8]>,
+    /// `[x0, x1)` of the backdrop (asked for and some column inked).
+    backdrop: Option<(usize, usize)>,
+    /// One original pixel around the solid part of the text (asked for).
+    near: Option<Vec<bool>>,
+}
+
+impl TextLayers {
+    fn new(
+        font: &LabelFont,
+        text: &str,
+        style: &TextStyle,
+        (mw, mh): (usize, usize),
+        s: usize,
+        backdrop: bool,
+        outline: bool,
+    ) -> Self {
+        let mask = font.mask(
+            text,
+            mw,
+            mh,
+            style.cap.map(|v| v * s as f32),
+            style.align,
+            style.vertical,
+        );
+        // The inked columns: the backdrop spans them.
+        let mut inked = vec![false; if backdrop { mw } else { 0 }];
+        if backdrop {
+            for row in mask.chunks_exact(mw.max(1)).take(mh) {
+                for (i, &v) in inked.iter_mut().zip(row) {
+                    *i |= v > 0;
+                }
+            }
+        }
+        let first = inked.iter().position(|&i| i);
+        let last = inked.iter().rposition(|&i| i);
+        let backdrop = first.zip(last).map(|(first, last)| {
+            let pad = BACKDROP_PAD * s;
+            (first.saturating_sub(pad), (last + 1 + pad).min(mw))
+        });
+        let near = outline.then(|| crate::text::dilated(&mask, mw, mh, s, 128));
+        Self {
+            mask,
+            backdrop,
+            near,
         }
     }
 }
@@ -1384,33 +1438,16 @@ fn resample_sprite(
     c: Canvas,
     canvas: &mut [u8],
 ) {
-    let [ax, ay, sw, sh] = art.rect;
+    let [_, _, sw, sh] = art.rect;
     let (dw, dh) = ((sw as f32 * z).ceil() as i64, (sh as f32 * z).ceil() as i64);
     let area = 1.0 / (z * z);
     let xs = (x0 as i64).max(ox)..(x1 as i64).min(ox + dw);
     for py in (y0 as i64).max(oy)..(y1 as i64).min(oy + dh) {
         let rows: Vec<(usize, f32)> = footprint(py - oy, z, sh).collect();
         for px in xs.clone() {
-            let mut sum = [0.0f32; 4];
-            for (col, wx) in footprint(px - ox, z, sw) {
-                for &(row, wy) in &rows {
-                    let index = art.px[(ay + row) * art.stride + ax + col];
-                    if index == 0 {
-                        continue;
-                    }
-                    let w = wx * wy;
-                    let rgba = colours[usize::from(index)];
-                    for (s, v) in sum.iter_mut().zip(rgba) {
-                        *s += f32::from(v) * w;
-                    }
-                }
-            }
-            if sum[3] <= 0.0 {
+            let Some((colour, a)) = resample_at(art, colours, z, area, &rows, px - ox) else {
                 continue;
-            }
-            // Coverage, and the straight colour of the covered part.
-            let a = (sum[3] / 255.0 / area).min(1.0);
-            let colour = [0, 1, 2].map(|i| (sum[i] * 255.0 / sum[3]).round() as u8);
+            };
             let o = c.at(px as usize, py as usize);
             let under: [u8; 4] = canvas[o..o + 4].try_into().expect("4 bytes");
             let out = if a >= 1.0 {
@@ -1430,6 +1467,41 @@ fn resample_sprite(
             canvas[o..o + 4].copy_from_slice(&out);
         }
     }
+}
+
+/// The resampled sprite at canvas column `rx` (relative to its left edge) of a row whose art
+/// rows are `rows` ([`footprint`]): the straight colour of the covered part and the coverage
+/// (`area` is `1 / z²`); `None` where no art covers it ([`resample_sprite`]).
+fn resample_at(
+    art: &Art<'_>,
+    colours: &[[u8; 4]],
+    z: f32,
+    area: f32,
+    rows: &[(usize, f32)],
+    rx: i64,
+) -> Option<([u8; 3], f32)> {
+    let [ax, ay, sw, _] = art.rect;
+    let mut sum = [0.0f32; 4];
+    for (col, wx) in footprint(rx, z, sw) {
+        for &(row, wy) in rows {
+            let index = art.px[(ay + row) * art.stride + ax + col];
+            if index == 0 {
+                continue;
+            }
+            let w = wx * wy;
+            let rgba = colours[usize::from(index)];
+            for (s, v) in sum.iter_mut().zip(rgba) {
+                *s += f32::from(v) * w;
+            }
+        }
+    }
+    if sum[3] <= 0.0 {
+        return None;
+    }
+    // Coverage, and the straight colour of the covered part.
+    let a = (sum[3] / 255.0 / area).min(1.0);
+    let colour = [0, 1, 2].map(|i| (sum[i] * 255.0 / sum[3]).round() as u8);
+    Some((colour, a))
 }
 
 /// One tile cell of an upscaled image: its tile column and row in the image, the canvas
@@ -1776,6 +1848,15 @@ impl Canvas {
 }
 
 fn fill_triangle(t: [[f32; 2]; 3], rgba: [u8; 4], c: Canvas, canvas: &mut [u8]) {
+    triangle_cover(t, c.clip, |x, y| {
+        let o = c.at(x, y);
+        canvas[o..o + 4].copy_from_slice(&rgba);
+    });
+}
+
+/// Calls `f` with every pixel of `clip` (`[x0, y0, x1, y1]`) whose centre is inside the
+/// triangle `t` (either winding).
+fn triangle_cover(t: [[f32; 2]; 3], clip: [usize; 4], mut f: impl FnMut(usize, usize)) {
     let edge = |a: [f32; 2], b: [f32; 2], p: [f32; 2]| {
         (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
     };
@@ -1783,10 +1864,10 @@ fn fill_triangle(t: [[f32; 2]; 3], rgba: [u8; 4], c: Canvas, canvas: &mut [u8]) 
     if area == 0.0 {
         return;
     }
-    let min_x = (t.iter().map(|p| p[0]).fold(f32::MAX, f32::min).max(0.0) as usize).max(c.clip[0]);
-    let max_x = (t.iter().map(|p| p[0]).fold(f32::MIN, f32::max).ceil() as usize).min(c.clip[2]);
-    let min_y = (t.iter().map(|p| p[1]).fold(f32::MAX, f32::min).max(0.0) as usize).max(c.clip[1]);
-    let max_y = (t.iter().map(|p| p[1]).fold(f32::MIN, f32::max).ceil() as usize).min(c.clip[3]);
+    let min_x = (t.iter().map(|p| p[0]).fold(f32::MAX, f32::min).max(0.0) as usize).max(clip[0]);
+    let max_x = (t.iter().map(|p| p[0]).fold(f32::MIN, f32::max).ceil() as usize).min(clip[2]);
+    let min_y = (t.iter().map(|p| p[1]).fold(f32::MAX, f32::min).max(0.0) as usize).max(clip[1]);
+    let max_y = (t.iter().map(|p| p[1]).fold(f32::MIN, f32::max).ceil() as usize).min(clip[3]);
     for y in min_y..max_y {
         for x in min_x..max_x {
             let p = [x as f32 + 0.5, y as f32 + 0.5];
@@ -1796,8 +1877,7 @@ fn fill_triangle(t: [[f32; 2]; 3], rgba: [u8; 4], c: Canvas, canvas: &mut [u8]) 
                 edge(t[0], t[1], p),
             ];
             if w.iter().all(|&v| v * area >= 0.0) {
-                let o = c.at(x, y);
-                canvas[o..o + 4].copy_from_slice(&rgba);
+                f(x, y);
             }
         }
     }
@@ -1816,6 +1896,7 @@ mod tests {
                 height: 1,
                 tiles: vec![1],
             }],
+            art: next_art_id(),
             generation: 0,
             text: None,
             labels: None,

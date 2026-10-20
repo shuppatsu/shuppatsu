@@ -66,6 +66,9 @@ struct Side {
     px: Vec<[u8; 4]>,
 }
 
+/// One side of a [`PaperFill`] for the GPU compositor: first column, column count, pixels.
+pub(super) type SideRef<'a> = (i32, usize, &'a [[u8; 4]]);
+
 /// A synthesised paper continuation of a `width × height` picture ([`PaperFill::build`]).
 pub(super) struct PaperFill {
     width: i32,
@@ -299,6 +302,20 @@ impl PaperFill {
     /// of `a` and from `b` on.
     pub(super) fn inner(&self) -> (i32, i32) {
         (self.ramp, self.width - self.ramp)
+    }
+
+    /// For the GPU compositor: the picture's width and height, the ramp, and each side's first
+    /// column, column count and pixels (row-major), left then right.
+    pub(super) fn sides(&self) -> (i32, i32, i32, [SideRef<'_>; 2]) {
+        fn side(s: &Side) -> SideRef<'_> {
+            (s.first, s.cols, &s.px)
+        }
+        (
+            self.width,
+            self.height,
+            self.ramp,
+            [side(&self.left), side(&self.right)],
+        )
     }
 }
 

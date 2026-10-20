@@ -23,6 +23,7 @@ fn bank(map: Tilemap) -> SpriteBank {
         tiles: tiles(),
         tilemaps: vec![map],
         generation: 0,
+        art: super::next_art_id(),
         text: None,
         labels: None,
         display_labels: None,

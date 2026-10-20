@@ -6,6 +6,7 @@
 pub mod camera;
 pub mod effects;
 pub mod gpu;
+pub mod gpu2d;
 pub mod ground;
 pub mod label;
 pub mod lettering;

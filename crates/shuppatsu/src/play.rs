@@ -621,7 +621,7 @@ impl Play {
                         None => crate::shot::clear_black(device, queue, view),
                     }
                 },
-                Some((self.canvas.rgba(), self.layer.canvas_size())),
+                Some(&self.canvas),
                 out,
             );
         }
@@ -664,7 +664,7 @@ impl Play {
             render(None, &out.with_extension("world.ppm"))?;
             crate::shot::write_layer_dump(&self.layer, &out.with_extension("layer.txt"))?;
         }
-        render(Some((self.canvas.rgba(), self.layer.canvas_size())), out)
+        render(Some(&self.canvas), out)
     }
 
     /// Window events other than redraws: keys, focus, resize.
@@ -1574,7 +1574,7 @@ impl Play {
         }
         let size = self.layer.canvas_size();
         gpu.overlay.resize(&gpu.device, size);
-        gpu.overlay.sync(&gpu.queue, &mut self.canvas);
+        gpu.overlay.sync(&gpu.device, &gpu.queue, &mut self.canvas);
         gpu.overlay.scaling = self.opts.locale.ui_scaling;
         gpu.overlay.render(
             &gpu.device,

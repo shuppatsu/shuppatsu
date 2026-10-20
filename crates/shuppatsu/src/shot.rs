@@ -5,8 +5,8 @@ use anyhow::{Context, Result};
 use shuppatsu_render::Renderer;
 use shuppatsu_render::overlay::UiScaling;
 
-/// A composed sprite canvas (RGBA8) and its size in pixels.
-pub type Canvas<'a> = (&'a [u8], (usize, usize));
+/// The composed 2D layer (on the CPU or, as a list of draws, for the GPU).
+pub type Canvas<'a> = &'a shuppatsu_render::sprites::Composer;
 
 /// How shots present the canvas (`--ui-scaling`, set once at startup by the subcommand, so
 /// every shot path honours it without threading it through each caller).
@@ -88,10 +88,10 @@ pub fn render_to_ppm_with(
     });
     let view = target.create_view(&wgpu::TextureViewDescriptor::default());
     draw(&device, &queue, &view, format);
-    if let Some((canvas, size)) = hud {
+    if let Some(canvas) = hud {
         let mut overlay = shuppatsu_render::overlay::Overlay::new(&device, format);
-        overlay.resize(&device, size);
-        overlay.upload(&queue, canvas);
+        overlay.resize(&device, canvas.size());
+        overlay.show(&device, &queue, canvas);
         overlay.scaling = ui_scaling();
         overlay.render(&device, &queue, &view, overlay.rect(width, height));
     }

@@ -1296,8 +1296,7 @@ impl App {
                 eprintln!("movie picture {:?}", m.player.shown());
             }
             _ => {
-                let size = self.canvas_size();
-                let hud = Some((self.canvas.rgba(), size));
+                let hud = Some(&self.canvas);
                 crate::shot::render_to_ppm(None, self.opts.size, |_| {}, hud, out)?
             }
         }
@@ -1379,7 +1378,7 @@ impl App {
         }
         // A run may have left the overlay at its wide size.
         gpu.overlay.resize(&gpu.device, size);
-        gpu.overlay.sync(&gpu.queue, &mut self.canvas);
+        gpu.overlay.sync(&gpu.device, &gpu.queue, &mut self.canvas);
         gpu.overlay.scaling = self.opts.locale.ui_scaling;
         gpu.overlay.render(
             &gpu.device,
