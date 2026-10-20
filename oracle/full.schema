@@ -140,3 +140,8 @@ dep_released       task@0x84c1a4:0x413370+0x40 i32
 dep_freeze         task@0x84c1a4:0x413370+0x50 i32
 lamp               0x829d16 u8
 lamp_hold          0x829d14 i16
+# --- weather and the sky fade (rules.md §8.1, renderer.md §13.5) ---
+weather_ticks      0x856fa8 i16   # ticks the weather has been on (ends at 0x459dc0[stage]; wraps)
+weather_kind       0x857210 i16   # weather type (0x40d040); 0x84c3a0 = type + 1 once 0x424740 ran
+sky_fade_frame     task@0x84c1d4:0x436ad0+0x34 i32   # palette-3 fade task (0x436a60, list 7): frame
+wiper_dir          task@0x84c1bc:0x4248d0+0x44 i32   # wiper task (list 5): swing direction; ? = no wiper

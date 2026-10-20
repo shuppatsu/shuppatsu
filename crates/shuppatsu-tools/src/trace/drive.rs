@@ -362,10 +362,10 @@ fn compare(
             continue;
         }
         let mut theirs = t.get(r, name);
-        if name == "pass_streak"
+        if matches!(name, "pass_streak" | "weather_ticks")
             && let Value::Int(v) = theirs
         {
-            // 0x857094 is an i16; the next short is a separate flag (rules.md §14).
+            // 0x857094 and 0x856fa8 are i16s; the next shorts are other globals (rules.md §14).
             theirs = Value::Int(i64::from(v as u16 as i16));
         }
         let (ok, shown) = match (mine, theirs) {
@@ -552,6 +552,11 @@ fn replay_once(
                 "row {r}: horn outcome without logged buttons; compared up to the row before"
             ));
             report.ticks -= 1;
+            break;
+        }
+        if drive.phase() == DrivePhase::Cleared {
+            // The final station: the original goes on to the ending, the engine stops here.
+            report.ended = Some(format!("row {r}, cleared"));
             break;
         }
         report.ticks += 1;

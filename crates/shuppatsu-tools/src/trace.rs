@@ -338,6 +338,27 @@ pub fn replay(
                 .and_then(|s| stage_ranks.get(s).copied())
                 .unwrap_or(i32::MAX);
             state.leg_marker(rank);
+            // Ticks in which the stage clock stands still are `Task_Tick`s outside the loop
+            // body's own: the blocking loops of 0x40a0a0 (which zero 0x857234 before each of
+            // them, for a length the rules decide) and the sky fade's (0x40f320). The drive
+            // replay covers them; here the stretch goes on from the logged state.
+            if i64::from(clock) == t.i(r, "stage_clock")? {
+                state = state_from_row(t, k, tables)?;
+                r = k;
+                continue;
+            }
+            // The red-signal / ATS recovery of 0x40a0a0 starts with `input_force_notches(0,
+            // 9)`: the train task of that tick sees N / EB (the logged notches are the hook's,
+            // written after it). It runs when the train stood at an ATS stop or a red and
+            // clears both.
+            let red = |row: usize| -> Result<bool> {
+                Ok(t.i(row, "overrun_state")? >= 4 || t.get(row, "aspect").int() == Some(4))
+            };
+            let controls = if t.f(r, "speed")?.abs() <= 1e-4 && red(r)? && !red(k)? {
+                Controls { power: 0, brake: 9 }
+            } else {
+                controls
+            };
             state.step(&spec, controls, &ctx, clock);
             r = k;
             for (name, mine) in outputs(&state) {

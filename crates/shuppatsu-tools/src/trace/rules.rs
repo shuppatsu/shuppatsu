@@ -160,6 +160,7 @@ pub(super) fn engine_fields(r: &Rules, bases: (u32, u32)) -> Vec<(&'static str, 
         ("derail_kmh", F(r.derail_kmh)),
         ("weather_on", I(r.weather_flag.into())),
         ("weather_level", I(r.weather_level.into())),
+        ("weather_ticks", I(r.weather_ticks.into())),
         ("wet_rails", b(r.wet_rails)),
         ("last_lateness", I(r.late_s.into())),
         ("stop_streak", I(r.stop_streak.into())),
@@ -414,6 +415,9 @@ fn replay_stretch(
         }
         let input = tick_input(t, prev, r, lag, report);
         let flags = phase(t, r);
+        // `0x84c494` as the loop body sees it: the previous row's (the station-based weather
+        // starts test it).
+        e.global_tick = t.get(prev, "global_tick").int().map(|g| g as u32);
         let mut out = e.step(&input);
         let readout = train_readout(t, r, train);
         if readout.is_none() {
@@ -554,6 +558,9 @@ fn sync_from_row(e: &mut Rules, t: &Trace, r: usize, base: (u32, u32)) {
     }
     if let Some(v) = i("signal_display") {
         e.signal_variant = v as i16;
+    }
+    if let Some(v) = i("weather_ticks") {
+        e.weather_ticks = v as i16;
     }
     if let Some(v) = i("weather_level") {
         e.weather_level = v as i32;
@@ -704,9 +711,9 @@ fn compare(
 ) {
     for (name, mine) in engine_fields(e, base) {
         let mut theirs = t.get(r, name);
-        // 0x857094 is an i16; the next short (0x857096, turnout flag of 0x407c10) shares the
-        // dword when a schema logs it as i32.
-        if name == "pass_streak"
+        // 0x857094 and 0x856fa8 are i16s; the next shorts (0x857096, turnout flag of 0x407c10;
+        // 0x856faa) share the dword when a schema logs them as i32.
+        if matches!(name, "pass_streak" | "weather_ticks")
             && let super::Value::Int(v) = theirs
         {
             theirs = super::Value::Int(i64::from(v as u16 as i16));
