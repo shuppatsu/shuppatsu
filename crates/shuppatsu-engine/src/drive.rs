@@ -33,8 +33,8 @@ use crate::bonus::{self, BonusEvent, BonusGame};
 use crate::demo::{DemoInputs, DemoKind, DemoTables};
 use crate::physics::{Controls, TickContext, TrainSpec, TrainState, TrainTables, gradient_at};
 use crate::rules::{
-    Buttons, Phase, RuleEvent, RuleTables, Rules, RulesError, StationOutcome, StationResult,
-    TickInput, TickOutput, TrainReadout,
+    Buttons, FadeSplit, Phase, RuleEvent, RuleTables, Rules, RulesError, StationOutcome,
+    StationResult, TickInput, TickOutput, TrainReadout,
 };
 use crate::traffic::{CarPose, PlacedTrain, SpawnRequest, Traffic, TrafficEnv, TrafficSound};
 use shuppatsu_formats::FormatError;
@@ -236,6 +236,8 @@ pub struct Drive {
     bonus: Option<BonusGame>,
     bonus_saved_vehicle: Option<u32>,
     bonus_horn: bool,
+    /// The sky fade 0x40f320 that ran in the last tick (that tick was its `Task_Tick`).
+    sky_fade: Option<FadeSplit>,
 }
 
 impl std::fmt::Debug for Drive {
@@ -326,6 +328,7 @@ impl Drive {
             bonus: None,
             bonus_saved_vehicle: None,
             bonus_horn: false,
+            sky_fade: None,
         })
     }
 
@@ -640,6 +643,7 @@ impl Drive {
 
     /// Runs one 1/30 s tick.
     pub fn tick(&mut self, input: DriverInput) -> DriveTick {
+        self.sky_fade = None;
         if self.demo.is_some() {
             return self.demo_tick();
         }
@@ -677,6 +681,14 @@ impl Drive {
         // `Task_Tick` counts the tick after the task lists ran (main-loop.md §2).
         self.global_tick = self.global_tick.wrapping_add(1);
         out
+    }
+
+    /// The sky fade 0x40f320 started in the last tick: the weather start (to the darker
+    /// gradient set) or end (back), and the last tick was the fade's own `Task_Tick` in the
+    /// middle of the driving loop's body (the fade task 0x436a60 had its first update). The
+    /// next tick finishes that body; both ticks are ordinary 1/30 s ticks.
+    pub fn sky_fade(&self) -> Option<FadeSplit> {
+        self.sky_fade
     }
 
     /// The global tick counter `0x84c494` after the last tick: every unpaused `Task_Tick`
@@ -754,6 +766,7 @@ impl Drive {
         self.pending_continue = Some(CONTINUE_REWIND_DELAY);
         // Task list 5 is cleared when the continue screen closes (0x4080d0).
         self.traffic.clear();
+        self.rules.clear_overlay_tasks();
         self.coasting = false;
         self.game_over_ticks = 0;
         Ok(())
@@ -1151,11 +1164,15 @@ impl Drive {
                     self.settle_odometer();
                     // Task list 5 is cleared right after (0x4080d0).
                     self.traffic.clear();
+                    self.rules.clear_overlay_tasks();
                 }
             }
             _ => {}
         }
-        if loop_body {
+        // A sky fade (0x40f320) runs a `Task_Tick` inside the loop body: the tick that
+        // finishes the body does not repeat the parts before the split.
+        let resumed = self.rules.fade_pending();
+        if loop_body && resumed.is_none() {
             self.track_lookup();
         }
         let rin = self.rule_input(&input);
@@ -1168,8 +1185,18 @@ impl Drive {
         {
             self.pass_station();
         }
-        self.traffic_events(loop_body);
-        if loop_body {
+        // 0x40b710 (step 6) comes after a split in 0x40dad0 / 0x40acd0 and before one in
+        // 0x40c4e0; the leg marker and the hints at the end of 0x40c4e0 after all of them.
+        let split = out.fade_split;
+        self.sky_fade = split;
+        let ai_events = loop_body
+            && !matches!(
+                split,
+                Some(FadeSplit::StationPassed | FadeSplit::CourseEvent)
+            )
+            && resumed != Some(FadeSplit::WeatherEnd);
+        self.traffic_events(ai_events);
+        if loop_body && split.is_none() {
             let rank = self.rules.stage_rank();
             let fired = self.train.leg_marker(rank);
             self.rules.advice_hints(&mut out, fired);

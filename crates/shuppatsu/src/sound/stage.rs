@@ -16,7 +16,7 @@ use crate::navigator::{Effect, NaviState, NaviTables, NaviTick, Navigator};
 use anyhow::{Context, Result};
 use shuppatsu_audio::{AmbientSound, SoundSystem, TrainSound, TurnoutClatter};
 use shuppatsu_engine::drive::{Drive, DrivePhase};
-use shuppatsu_engine::rules::{AfterHold, Phase, RuleEvent, STAT_COUNT, TimeReason};
+use shuppatsu_engine::rules::{AfterHold, Phase, RuleEvent, STAT_COUNT, TimeReason, weather_kind};
 use shuppatsu_formats::exe::Exe;
 use shuppatsu_formats::hud::HudTables;
 
@@ -139,17 +139,6 @@ const OBSTACLE_RESTART_AT: u32 = 32;
 /// Departure jingle per stage, i16 (0x466be0, copied to the departure task by 0x4124f0).
 const DEPART_JINGLE_TABLE: u32 = 0x466be0;
 const STAGES: usize = 20;
-
-/// Weather type `0x857210`, a switch on the stage in 0x40d040; rain sounds only below 3.
-fn weather_type(stage: usize) -> i16 {
-    match stage {
-        0..=2 | 17..=19 => 5,
-        3 | 4 => 4,
-        7 => 2,
-        8..=11 => 1,
-        _ => 0,
-    }
-}
 
 /// Signal display mode of block `block` as 0x40c010 computes it (0 block, 1 home, 2 starting).
 fn signal_mode(stage: usize, block: usize) -> i32 {
@@ -323,7 +312,7 @@ impl Snap {
             eb_ticks: r.eb_ticks,
             eb_approach_ticks: r.eb_approach_ticks,
             obstacle: r.obstacle,
-            weather_on: r.weather_on,
+            weather_on: r.weather_on(),
             weather_level: r.weather_level,
             departure_counter: r.departure_counter,
             departure_base: r.departure_base,
@@ -475,7 +464,7 @@ impl StageSound {
     }
 
     fn rain(&self) -> bool {
-        weather_type(self.stage()) < 3
+        weather_kind(self.stage()) < 3
     }
 
     fn after(&mut self, ticks: u32, action: Timed) {

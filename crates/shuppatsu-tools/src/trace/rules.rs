@@ -158,7 +158,7 @@ pub(super) fn engine_fields(r: &Rules, bases: (u32, u32)) -> Vec<(&'static str, 
         ("obstacle_used", b(r.obstacle_used)),
         ("obstacle_target", F(r.obstacle_odo)),
         ("derail_kmh", F(r.derail_kmh)),
-        ("weather_on", b(r.weather_on)),
+        ("weather_on", I(r.weather_flag.into())),
         ("weather_level", I(r.weather_level.into())),
         ("wet_rails", b(r.wet_rails)),
         ("last_lateness", I(r.late_s.into())),
@@ -555,11 +555,11 @@ fn sync_from_row(e: &mut Rules, t: &Trace, r: usize, base: (u32, u32)) {
     if let Some(v) = i("signal_display") {
         e.signal_variant = v as i16;
     }
-    if let Some(v) = i("weather_on") {
-        e.weather_on = v != 0;
-    }
     if let Some(v) = i("weather_level") {
         e.weather_level = v as i32;
+    }
+    if let Some(v) = i("weather_on") {
+        e.sync_weather(v as i16);
     }
     if let Some(v) = i("wet_rails") {
         e.wet_rails = v != 0;

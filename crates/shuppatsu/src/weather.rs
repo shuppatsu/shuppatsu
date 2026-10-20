@@ -13,7 +13,7 @@
 use crate::scene::{RouteScene, ScreenMap};
 use anyhow::Result;
 use shuppatsu_engine::drive::{Drive, DrivePhase};
-use shuppatsu_engine::rules::{AfterHold, Phase};
+use shuppatsu_engine::rules::{AfterHold, FadeSplit, Phase, weather_kind};
 use shuppatsu_formats::exe::Exe;
 use shuppatsu_formats::reader::Bytes;
 use shuppatsu_formats::scene::{PALETTE_FADE_TICKS, SpriteTexture};
@@ -65,17 +65,6 @@ const CRASH_JOLT: f32 = f32::from_bits(0xbc93_74bc);
 /// (f64 at 0x4594e8) on even values of the global tick counter.
 const JOLT_MIN: f64 = 1e-4;
 const JOLT_DAMP: f64 = -0.8;
-
-/// Weather type `0x857210`, a switch on the stage in 0x40d040.
-fn weather_type(stage: usize) -> i16 {
-    match stage {
-        0..=2 | 17..=19 => 5,
-        3 | 4 => 4,
-        7 => 2,
-        8..=11 => 1,
-        _ => 0,
-    }
-}
 
 /// The shape and swing table each weather type uses (0x424740's first switch) and its extras
 /// (second switch): drops for types 0–2, the snow layers and fog for 4–5, nothing for 3.
@@ -417,9 +406,6 @@ pub struct Weather {
     /// sequence.
     side_rng: [CrtRand; 2 * WIDE_TILES as usize],
     overlay: Option<Overlay>,
-    /// Created by a segment start while the rules have the event off (0x424740 sets
-    /// `0x84c3a0` again): alive until the next driving tick.
-    revived: bool,
     /// The wiper flag `0x84c2e0` as the overlay sees it.
     wipe: bool,
     sky_variant: usize,
@@ -427,8 +413,6 @@ pub struct Weather {
     jolt: Option<f32>,
     /// The jolt the camera uses this tick (the value written to `0x850140` before the decay).
     jolt_now: f32,
-    prev_on: bool,
-    prev_level: i32,
     prev_phase: Phase,
 }
 
@@ -441,19 +425,16 @@ impl Weather {
         Ok(Self {
             tables: EffectTables::read(exe)?,
             stage,
-            kind: weather_type(stage),
+            kind: weather_kind(stage),
             rng: CrtRand(1),
             wide,
             side_rng: std::array::from_fn(|i| CrtRand(2 + i as u32)),
             overlay: None,
-            revived: false,
             wipe: false,
             sky_variant: 0,
             sky_fade: None,
             jolt: None,
             jolt_now: 0.0,
-            prev_on: false,
-            prev_level: 0,
             prev_phase: Phase::PreDeparture,
         })
     }
@@ -462,7 +443,7 @@ impl Weather {
     /// (re)start flag (0x4080d0's restart path).
     pub fn tick(&mut self, drive: &Drive, segment_started: bool) {
         let r = drive.rules();
-        let (on, level) = (r.weather_on, r.weather_level);
+        let (on, level) = (r.weather_on(), r.weather_level);
         let driving = drive.phase() == DrivePhase::Driving;
         if level == 0 && !on {
             // A fresh run (restart from the first station).
@@ -485,23 +466,26 @@ impl Weather {
             }
             if level > 0 {
                 self.create(camera_type);
-                self.revived = !on;
                 // 0x4080d0 sets 0x84c2e0 above level 199.
                 self.wipe = level > 199;
             }
-        } else if on && !self.prev_on {
-            // Course event 0x15 (0x40acd0) or the station-reached start (0x40d620): the
-            // overlay and a 150-tick fade to the darker gradient set.
+        } else if matches!(
+            drive.sky_fade(),
+            Some(FadeSplit::CourseEvent | FadeSplit::StationPassed)
+        ) {
+            // Course event 0x15 (0x40acd0) or the station-passed start (0x40d620): the overlay
+            // and a 150-tick fade to the darker gradient set. This tick is the fade's own
+            // `Task_Tick` (0x40f320), so the overlay and the fade take their first step in it.
+            // The start on moving on from a stop (0x40d340) has neither; the next segment
+            // setup builds the overlay without a fade.
             self.create(camera_type);
-            self.revived = false;
             self.wipe = false;
             self.sky_fade = Some(SkyFade { from: 0, frame: 0 });
             self.sky_variant = 1;
         } else if self.overlay.is_some() && driving {
-            self.revived = false;
             self.wipe = r.wet_rails;
         }
-        if level == -1 && self.prev_level > 0 {
+        if drive.sky_fade() == Some(FadeSplit::WeatherEnd) {
             // 0x40c4e0: the level reached 1; fade back to the normal set.
             self.sky_fade = Some(SkyFade { from: 1, frame: 0 });
             self.sky_variant = 0;
@@ -512,10 +496,8 @@ impl Weather {
             }
         }
 
-        self.step_overlay(on || self.revived, camera_type);
+        self.step_overlay(on, camera_type);
         self.step_jolt(drive);
-        self.prev_on = on;
-        self.prev_level = level;
         self.prev_phase = r.phase;
     }
 
@@ -784,11 +766,11 @@ mod tests {
 
     #[test]
     fn weather_types_by_stage() {
-        assert_eq!(overlay_kind(weather_type(0)), (2, Extra::Snow));
-        assert_eq!(overlay_kind(weather_type(3)), (0, Extra::Snow));
-        assert_eq!(overlay_kind(weather_type(7)), (2, Extra::Drops));
-        assert_eq!(overlay_kind(weather_type(9)), (1, Extra::Drops));
-        assert_eq!(overlay_kind(weather_type(16)), (0, Extra::Drops));
+        assert_eq!(overlay_kind(weather_kind(0)), (2, Extra::Snow));
+        assert_eq!(overlay_kind(weather_kind(3)), (0, Extra::Snow));
+        assert_eq!(overlay_kind(weather_kind(7)), (2, Extra::Drops));
+        assert_eq!(overlay_kind(weather_kind(9)), (1, Extra::Drops));
+        assert_eq!(overlay_kind(weather_kind(16)), (0, Extra::Drops));
     }
 
     #[test]

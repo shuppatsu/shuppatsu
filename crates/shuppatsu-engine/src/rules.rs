@@ -74,6 +74,9 @@ const DERAIL_FACTOR: f64 = 0.277_777_77;
 /// Default ATC / derailment speed: 0x4479c000 = 999.0 km/h (0x40b970), i.e. none. Oracle:
 /// `derail_kmh` reads 999 (hilly-drive.csv).
 const DERAIL_NONE_KMH: f32 = 999.0;
+/// The sky fade 0x40f320 runs its own `Task_Tick` when its area argument is below this
+/// (0x40f76f: `cmp eax, 7; jge`). Every stage's area (`0x463c18`) is 1–5.
+const SKY_FADE_TICK_AREAS: u32 = 7;
 /// Jolt / notch-slam cooldown `0x8571f8`: 100 at segment start (0x40cf40), +1 per driving tick up
 /// to 200 (0x40cc04), a slam needs > 150 (0x42349e).
 const COOLDOWN_START: i32 = 100;
@@ -808,6 +811,43 @@ pub struct TickOutput {
     pub force_stop: bool,
     /// ATS emergency: the physics must apply B9 and P0 (`0x857206 >= 4`, 0x422e3b).
     pub emergency_brake: bool,
+    /// The loop body stopped in the sky fade 0x40f320, whose own `Task_Tick` is this tick:
+    /// run the tick's tasks (train, camera, AI trains, [`Rules::end_tick`]) as usual, but not
+    /// the loop-body parts after the split point. The next [`Rules::step`] finishes the body.
+    pub fade_split: Option<FadeSplit>,
+    /// This step finished a loop body that a sky fade split (the tick after `fade_split`): the
+    /// loop-body parts before the split point ran in the previous tick.
+    pub resumed: Option<FadeSplit>,
+}
+
+/// Where the sky fade 0x40f320 runs its `Task_Tick` inside a driving-loop iteration. The fade
+/// is started by the weather start and end; the iteration goes on after that tick with the
+/// input it polled and the train state it produced (rules.md §8.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FadeSplit {
+    /// The station-based weather start at the end of 0x40d620 (passing a station, inside
+    /// 0x40dad0, step 2). The rest of 0x40dad0 follows: the distance to the stop from the
+    /// camera's new position, the signal blocks, the approach latch and the rounding.
+    StationPassed,
+    /// Course event 21 in 0x40acd0 (step 4). The cursor step and the horn / no-power checks
+    /// of 0x40acd0 follow, then 0x40b4a0 onwards.
+    CourseEvent,
+    /// The weather end in 0x40c4e0 (step 9, the level reached 1). The rest of 0x40c4e0
+    /// follows (weather ticks, approach states, hints), then the clock and 0x40a0a0.
+    WeatherEnd,
+}
+
+/// Weather type `0x857210` of a stage, the switch in 0x40d040: 5 for stages 0–2 and 17–19,
+/// 4 for 3–4, 2 for 7, 1 for 8–11, 0 otherwise. 0x424740 builds the overlay for it: drops for
+/// 0–2, snow and fog for 4–5 (renderer.md §13.1).
+pub fn weather_kind(stage: usize) -> i16 {
+    match stage {
+        0..=2 | 17..=19 => 5,
+        3 | 4 => 4,
+        7 => 2,
+        8..=11 => 1,
+        _ => 0,
+    }
 }
 
 /// Where the rules are in the stage flow.
@@ -886,6 +926,14 @@ pub struct Rules {
     timetable: Vec<TimetableRow>,
     course: Vec<CourseEvent>,
     limits: Vec<CourseEvent>,
+    /// Area R-index of the stage (`0x463c18[stage]`): the sky fade 0x40f320 runs its own
+    /// `Task_Tick` only for areas below 7.
+    area: u32,
+    /// Weather type of the stage (`0x857210`, set by 0x40d040).
+    weather_kind: i16,
+    /// An attract demo drive runs ([`Rules::start_demo`]); its task's nested `Task_Tick` in a
+    /// sky fade is not modelled.
+    demo: bool,
 
     pub phase: Phase,
     /// Station index of the segment's start (`0x856d78`); the target is `station + 1`.
@@ -1012,11 +1060,23 @@ pub struct Rules {
     pub waiting_set: Option<WaitingSet>,
     /// Derailment speed, km/h (`0x84c424`).
     pub derail_kmh: f32,
-    /// Weather: active (`0x84c3a0`), level (`0x857230`), ticks (`0x856fa8`), wet rails (`0x84c2e0`).
-    pub weather_on: bool,
+    /// Weather: the event word `0x84c3a0` (0 = off; 1 when a start function sets it, the
+    /// weather type + 1 once 0x424740 has built the overlay), level (`0x857230`), ticks
+    /// (`0x856fa8`), wet rails (`0x84c2e0`). See [`Rules::weather_on`].
+    pub weather_flag: i16,
     pub weather_level: i32,
     pub weather_ticks: i32,
     pub wet_rails: bool,
+    /// The wiper task of the weather overlay (list 5, 0x4248d0) is alive. Its destroy callback
+    /// 0x424940 clears `0x84c3a0` and `0x84c2e0`: when its update finds `0x84c3a0` clear and
+    /// when list 5 is cleared (arrival, continue).
+    wiper: bool,
+    /// 0x4080d0 sets `0x84c2e0` after the segment setup's `Task_Tick` when the level is
+    /// above 199.
+    setup_wet: bool,
+    /// The driving-loop iteration stopped in the sky fade 0x40f320, which ran a `Task_Tick` of
+    /// its own; the next [`Rules::step`] finishes the iteration (rules.md §8.1).
+    fade_resume: Option<FadeSplit>,
     /// The global tick counter `0x84c494` as the loop body sees it (before this tick's
     /// `Task_Tick` increments it); set by [`crate::drive::Drive`]. `None` = unknown: the
     /// station-based weather starts of 0x40d340 / 0x40d620, which test it, are skipped.
@@ -1124,6 +1184,9 @@ impl Rules {
             timetable,
             course: stage_data.course_events.clone(),
             limits: stage_data.limit_events.clone(),
+            area: stage_data.area,
+            weather_kind: weather_kind(stage),
+            demo: false,
             phase: Phase::PreDeparture,
             station: start_station,
             clock: 0,
@@ -1197,13 +1260,16 @@ impl Rules {
             departure_freeze: 0,
             departure_released: 0,
             departure_done: false,
-            weather_on: false,
+            weather_flag: 0,
             global_tick: None,
             signal_model: 0,
             platform_red: false,
             weather_level: 0,
             weather_ticks: 0,
             wet_rails: false,
+            wiper: false,
+            setup_wet: false,
+            fade_resume: None,
             late_s: 0,
             stop_streak: 0,
             pass_streak: 0,
@@ -1307,7 +1373,10 @@ impl Rules {
         self.clock_skew = 0;
         self.weather_level = 0;
         self.weather_ticks = 0;
-        self.weather_on = false;
+        self.weather_flag = 0;
+        self.wiper = false;
+        self.setup_wet = false;
+        self.fade_resume = None;
         self.obstacle_used = false;
         self.signal_variant = 0;
         self.reset_segment_state();
@@ -1320,7 +1389,8 @@ impl Rules {
         let start = self.timetable[self.station].position_m - self.timetable[0].position_m;
         self.odometer_m = start as f32;
         if self.tables.weather_station[self.stage] == 0 {
-            self.weather_on = true;
+            // 0x40d040: on from the start; the first segment setup builds the overlay.
+            self.weather_flag = 1;
             self.weather_level = 1;
         }
         self.final_station = self.is_final_next();
@@ -2091,7 +2161,11 @@ impl Rules {
         self.dist_m = input.dist_to_stop_m;
         if self.dist_m < 0.0 {
             if self.target_row().stops == 0 {
-                self.pass_station(out, input.in_tunnel);
+                self.pass_station(out);
+                if self.fade_resume.is_some() {
+                    // 0x40d620 ended in the sky fade's `Task_Tick`.
+                    return;
+                }
                 self.dist_m = input.dist_to_following_stop_m;
                 self.build_blocks();
             } else if self.dist_m < ATS_OVERRUN_M {
@@ -2101,6 +2175,21 @@ impl Rules {
                 }
             }
         }
+        self.distance_tail();
+    }
+
+    /// The rest of 0x40dad0 after a 0x40d620 that ended in the sky fade's `Task_Tick`:
+    /// `0x85708c = 0x8500c8 × 10` from the camera position after that tick (the next leg
+    /// already added by 0x41c820), the signal blocks (0x40b970), the approach latch with the
+    /// speed after that tick, and the rounding.
+    fn distance_after_pass(&mut self, input: &TickInput) {
+        self.dist_m = input.dist_to_stop_m;
+        self.build_blocks();
+        self.distance_tail();
+    }
+
+    /// 0x40dad0's approach latch and rounded distance.
+    fn distance_tail(&mut self) {
         let f6 = self.target_row().params[2];
         if self.approach == 0 && self.dist_m < f6 as f32 && self.target_stops {
             self.approach_kmh = (f64::from(self.speed_mps) * MPS_TO_KMH) as f32;
@@ -2122,9 +2211,9 @@ impl Rules {
             && first <= self.station as i32
             && tick.is_multiple_of(modulus)
             && min <= self.remaining_s
-            && !self.weather_on
+            && self.weather_flag == 0
         {
-            self.weather_on = true;
+            self.weather_flag = 1;
             self.weather_level = 1;
             self.weather_ticks = 0;
             return true;
@@ -2132,8 +2221,69 @@ impl Rules {
         false
     }
 
+    /// 0x424740: the weather overlay (wiper, drops or snow) on list 5; `0x84c3a0` becomes the
+    /// weather type + 1 and the wet-rails flag is cleared.
+    fn weather_overlay(&mut self) {
+        self.weather_flag = self.weather_kind + 1;
+        self.wet_rails = false;
+        self.wiper = true;
+    }
+
+    /// 0x40f320: the sky palette fade (task 0x436a60 on list 7, presentation). For areas below
+    /// 7 (`0x463c18[stage]`, every stage) it then runs a `Task_Tick` itself, in the middle of
+    /// the loop body: returns true when the iteration stops here for that tick.
+    fn sky_fade(&mut self, at: FadeSplit) -> bool {
+        if self.area >= SKY_FADE_TICK_AREAS || self.demo {
+            return false;
+        }
+        self.fade_resume = Some(at);
+        true
+    }
+
+    /// The wiper task's destroy callback 0x424940: `0x84c3a0 = 0`, `0x84c2e0 = 0`.
+    fn kill_wiper(&mut self) {
+        if std::mem::take(&mut self.wiper) {
+            self.weather_flag = 0;
+            self.wet_rails = false;
+        }
+    }
+
+    /// List 5 of a `Task_Tick`, the rule-relevant part: the wiper update (0x4248d0) ends its
+    /// task once `0x84c3a0` is clear.
+    fn weather_tasks_tick(&mut self) {
+        if self.wiper && self.weather_flag == 0 {
+            self.kill_wiper();
+        }
+    }
+
+    /// `TaskList_KillAll(0x84c1bc)` (list 5: weather overlay and AI trains) in 0x4080d0 at the
+    /// arrival and when the continue screen closes: the wiper's destroy callback clears the
+    /// weather word and the wet rails.
+    pub fn clear_overlay_tasks(&mut self) {
+        self.kill_wiper();
+    }
+
+    /// The weather event is active (`0x84c3a0 != 0`).
+    pub fn weather_on(&self) -> bool {
+        self.weather_flag != 0
+    }
+
+    /// Sets the weather word `0x84c3a0` as found on a segment's setup row (a replay's first
+    /// pre-departure row), after [`Rules::weather_level`]: non-zero there means the setup has
+    /// built the overlay, and the rails get wet after that tick above level 199.
+    pub fn sync_weather(&mut self, flag: i16) {
+        self.weather_flag = flag;
+        self.wiper = flag != 0;
+        self.setup_wet = self.weather_level > 199;
+    }
+
+    /// A sky fade split the last tick's loop body; the next [`Rules::step`] finishes it.
+    pub fn fade_pending(&self) -> Option<FadeSplit> {
+        self.fade_resume
+    }
+
     /// 0x40d620: passing a non-stop station.
-    fn pass_station(&mut self, out: &mut TickOutput, in_tunnel: bool) {
+    fn pass_station(&mut self, out: &mut TickOutput) {
         self.late_s = self.clock / TICKS_PER_SECOND - self.scheduled / TICKS_PER_SECOND;
         self.stat(1, self.late_s.abs());
         if let Some(a) = self.arrivals.get_mut(self.station) {
@@ -2159,14 +2309,15 @@ impl Rules {
         self.station += 1;
         self.scheduled = self.target_row().time_ticks;
         self.final_station = self.final_leg(false);
-        // 0x40d620 tail: weather may start on every third global tick; in a tunnel the rails
-        // stay dry for now (0x84c2e0 = 0).
-        if self.station_weather(3) && in_tunnel {
-            self.wet_rails = false;
-        }
         out.events.push(RuleEvent::StationPassed {
             station: self.station,
         });
+        // 0x40d620 tail: weather may start on every third global tick. 0x424740 builds the
+        // overlay (dry rails), then the sky fade runs its `Task_Tick`.
+        if self.station_weather(3) {
+            self.weather_overlay();
+            self.sky_fade(FadeSplit::StationPassed);
+        }
     }
 
     /// 0x409fc0: forced stops (buffer stop past f8, obstacle).
@@ -2284,13 +2435,19 @@ impl Rules {
                 16 => self.signal_variant = 0,
                 21 => {
                     let min = self.table(&self.tables.weather_min_time_s);
-                    if self.weather_level == 0 && min <= self.remaining_s && !self.weather_on {
-                        self.weather_on = true;
+                    if self.weather_level == 0 && min <= self.remaining_s && self.weather_flag == 0
+                    {
+                        self.weather_flag = 1;
                         self.weather_level = 1;
                         self.weather_ticks = 0;
+                        self.weather_overlay();
+                        if self.sky_fade(FadeSplit::CourseEvent) {
+                            // The cursor step and the rest of 0x40acd0 come after its tick.
+                            return;
+                        }
                     }
                 }
-                22 => self.weather_on = false,
+                22 => self.weather_flag = 0,
                 20 => self.green_hint = a,
                 12 => {
                     // 0x40acd0: the waiting set for the coupling game; 13 or more marks so far
@@ -2317,6 +2474,11 @@ impl Rules {
             }
             self.course_cursor += 1;
         }
+        self.course_event_tail(out, input);
+    }
+
+    /// The end of 0x40acd0 after the event: no-power section left under power, horn checks.
+    fn course_event_tail(&mut self, out: &mut TickOutput, input: &TickInput) {
         if self.coasting == 1 && input.power > 0 {
             self.coasting = 2;
         }
@@ -2513,12 +2675,17 @@ impl Rules {
         }
 
         // Weather (0x40c4e0 tail): level ramps 1..254 while on, down while off.
-        if !self.weather_on {
+        if self.weather_flag == 0 {
             if self.weather_level > 0 {
                 self.weather_level -= 1;
             }
             if self.weather_level == 1 {
+                // The sound stops, the level becomes −1 (no more weather this run) and the sky
+                // fades back, with its own `Task_Tick`.
                 self.weather_level = -1;
+                if self.sky_fade(FadeSplit::WeatherEnd) {
+                    return;
+                }
             }
         } else {
             if self.weather_level > 0 && self.weather_level < 0xfe {
@@ -2531,10 +2698,16 @@ impl Rules {
                 self.wet_rails = false;
             }
         }
+        self.misc_after_weather();
+    }
+
+    /// The rest of 0x40c4e0 after the weather ramp: the weather's tick count and end, the
+    /// station HUD's red signals and the approach states.
+    fn misc_after_weather(&mut self) {
         if self.weather_level > 0 {
             self.weather_ticks += 1;
             if self.tables.weather_ticks[self.stage] <= self.weather_ticks {
-                self.weather_on = false;
+                self.weather_flag = 0;
             }
         }
 
@@ -3029,6 +3202,13 @@ impl Rules {
             self.build_blocks();
         }
         self.distance_step(&mut out, input);
+        // 0x4080d0 after the priming calls: while the level is above 0 the weather overlay
+        // comes back (0x424740 sets `0x84c3a0` to the weather type + 1 and dries the rails);
+        // after the setup's `Task_Tick` the rails are wet again above level 199.
+        if self.weather_level > 0 {
+            self.weather_overlay();
+        }
+        self.setup_wet = self.weather_level > 199;
         out
     }
 
@@ -3042,6 +3222,7 @@ impl Rules {
         lesson_course: Option<Vec<CourseEvent>>,
     ) -> TickOutput {
         let mut out = TickOutput::default();
+        self.demo = true;
         self.latch_input(input);
         self.distance_step(&mut out, input);
         self.build_blocks();
@@ -3100,6 +3281,7 @@ impl Rules {
         self.latch_input(input);
         self.train_task_tick(&mut out, train);
         self.hud_tick();
+        self.weather_tasks_tick();
         self.signal_hud_pending = true;
         out
     }
@@ -3175,6 +3357,19 @@ impl Rules {
     /// physics afterwards, then [`Rules::end_tick`].
     pub fn step(&mut self, input: &TickInput) -> TickOutput {
         let mut out = TickOutput::default();
+        if std::mem::take(&mut self.setup_wet) {
+            self.wet_rails = true;
+        }
+        if let Some(at) = self.fade_resume.take() {
+            // The rest of a loop body that the sky fade's `Task_Tick` interrupted. That tick
+            // polled the input and moved the train, so this tick's input and train state are
+            // the ones the rest of the body sees; the track lookup 0x407c10 does not run again.
+            self.latch_input(input);
+            out.resumed = Some(at);
+            self.drive(&mut out, input, Some(at));
+            out.emergency_brake = self.ats >= 4;
+            return out;
+        }
         // Callers that skip `segment_setup` get the blocks on the first tick of the segment.
         if self.signals_pending && matches!(self.phase, Phase::PreDeparture | Phase::Driving) {
             self.build_blocks();
@@ -3188,7 +3383,7 @@ impl Rules {
             out.events.push(RuleEvent::SignalHidden);
         }
         match self.phase {
-            Phase::Driving => self.drive(&mut out, input),
+            Phase::Driving => self.drive(&mut out, input, None),
             Phase::Holding { ticks, then } => {
                 if then == AfterHold::Resume && ticks == RECOVERY_RELEASE_TICKS {
                     self.recovery_signal(&mut out);
@@ -3259,17 +3454,54 @@ impl Rules {
             self.departure_task(out, speed, brake);
         }
         self.hud_tick();
+        self.weather_tasks_tick();
         self.signal_hud_pending = true;
     }
 
-    fn drive(&mut self, out: &mut TickOutput, input: &TickInput) {
-        self.distance_step(out, input);
-        self.forced_stop_step(out);
-        self.course_event_step(out, input);
-        self.limit_event_step(out);
-        self.enforcement_step(out);
-        self.signal_step(out);
-        self.misc_step(out, input);
+    /// The driving loop body (0x4084f5), from the start or, after a sky fade's `Task_Tick`,
+    /// from where it stopped (`resume`). A step that starts a sky fade returns right there with
+    /// [`TickOutput::fade_split`] set.
+    fn drive(&mut self, out: &mut TickOutput, input: &TickInput, resume: Option<FadeSplit>) {
+        use FadeSplit::{CourseEvent, StationPassed, WeatherEnd};
+        let split = |r: &mut Self, out: &mut TickOutput| {
+            out.fade_split = r.fade_resume;
+            r.fade_resume.is_some()
+        };
+        match resume {
+            None => {
+                self.distance_step(out, input);
+                if split(self, out) {
+                    return;
+                }
+            }
+            Some(StationPassed) => self.distance_after_pass(input),
+            Some(CourseEvent | WeatherEnd) => {}
+        }
+        match resume {
+            None | Some(StationPassed) => {
+                self.forced_stop_step(out);
+                self.course_event_step(out, input);
+                if split(self, out) {
+                    return;
+                }
+            }
+            Some(CourseEvent) => {
+                self.course_cursor += 1;
+                self.course_event_tail(out, input);
+            }
+            Some(WeatherEnd) => {}
+        }
+        if resume == Some(WeatherEnd) {
+            self.misc_after_weather();
+        } else {
+            self.limit_event_step(out);
+            self.enforcement_step(out);
+            self.signal_step(out);
+            self.misc_step(out, input);
+            if split(self, out) {
+                return;
+            }
+        }
         if self.obstacle == 0 {
             self.clock += 1;
         }
@@ -3416,7 +3648,7 @@ impl Rules {
         self.train_type = Some(0xc);
         self.final_station = false;
         self.weather_level = -1;
-        self.weather_on = false;
+        self.weather_flag = 0;
         self.bonus_jump = true;
     }
 
@@ -3455,7 +3687,7 @@ impl Rules {
         if self.stage == 0 {
             self.weather_level = 0;
             self.weather_ticks = 0;
-            self.weather_on = false;
+            self.weather_flag = 0;
         }
         self.signals_pending = true;
         self.phase = Phase::PreDeparture;
@@ -4146,12 +4378,78 @@ mod tests {
         assert!(!r.station_weather(4));
         r.global_tick = Some(4001);
         assert!(!r.station_weather(4));
-        assert!(!r.weather_on);
+        assert!(!r.weather_on());
         r.global_tick = Some(4000);
         assert!(r.station_weather(4));
-        assert!(r.weather_on && r.weather_level == 1 && r.weather_ticks == 0);
+        assert!(r.weather_on() && r.weather_level == 1 && r.weather_ticks == 0);
         // Only once: the started flag stays set.
         r.weather_level = 0;
         assert!(!r.station_weather(4));
+    }
+
+    /// Course event 21 stops the loop body in the sky fade's `Task_Tick`: that tick neither
+    /// steps the cursor nor the clock; the next one finishes the body.
+    #[test]
+    fn weather_start_splits_the_loop_body() {
+        let mut r = rules(vec![ev(0, 1000, 21, [-1; 3])], Vec::new());
+        r.remaining_s = 60;
+        let clock = r.clock;
+        let out = r.tick(&input(20.0, 900.0, 1100.0));
+        assert_eq!(out.fade_split, Some(FadeSplit::CourseEvent));
+        assert_eq!(
+            (r.weather_flag, r.weather_level),
+            (5, 1),
+            "stage 3: type 4 + 1"
+        );
+        assert_eq!((r.course_cursor, r.clock), (0, clock));
+        let out = r.tick(&input(20.0, 899.0, 1101.0));
+        assert_eq!(
+            (out.fade_split, out.resumed),
+            (None, Some(FadeSplit::CourseEvent))
+        );
+        assert_eq!((r.course_cursor, r.clock), (1, clock + 1));
+        assert_eq!(r.weather_level, 2, "0x40c4e0 ran in the second tick only");
+        let out = r.tick(&input(20.0, 898.0, 1102.0));
+        assert_eq!((out.fade_split, out.resumed), (None, None));
+        assert_eq!((r.weather_level, r.clock), (3, clock + 2));
+    }
+
+    /// The level reaching 1 fades back with a `Task_Tick` inside 0x40c4e0; the wiper task ends
+    /// once the weather word is clear and takes the wet rails with it.
+    #[test]
+    fn weather_end_splits_and_the_wiper_dries_the_rails() {
+        let mut r = rules(Vec::new(), Vec::new());
+        r.remaining_s = 60;
+        r.weather_level = 1;
+        r.weather_overlay();
+        r.wet_rails = true;
+        r.weather_flag = 0;
+        r.weather_level = 3;
+        let clock = r.clock;
+        let out = r.tick(&input(20.0, 900.0, 1100.0));
+        assert_eq!(out.fade_split, None);
+        assert_eq!(r.weather_level, 2);
+        assert!(!r.wet_rails, "the wiper's destroy callback 0x424940");
+        let out = r.tick(&input(20.0, 899.0, 1101.0));
+        assert_eq!(out.fade_split, Some(FadeSplit::WeatherEnd));
+        assert_eq!((r.weather_level, r.clock), (-1, clock + 1));
+        let out = r.tick(&input(20.0, 898.0, 1102.0));
+        assert_eq!(out.resumed, Some(FadeSplit::WeatherEnd));
+        assert_eq!(r.clock, clock + 2);
+    }
+
+    /// The studio area 8 of the menus fades without a `Task_Tick` of its own (0x40f76f).
+    #[test]
+    fn sky_fade_ticks_only_below_area_7() {
+        let mut r = rules(vec![ev(0, 1000, 21, [-1; 3])], Vec::new());
+        r.area = 8;
+        r.remaining_s = 60;
+        let clock = r.clock;
+        let out = r.tick(&input(20.0, 900.0, 1100.0));
+        assert_eq!(out.fade_split, None);
+        assert_eq!(
+            (r.course_cursor, r.clock, r.weather_level),
+            (1, clock + 1, 2)
+        );
     }
 }
