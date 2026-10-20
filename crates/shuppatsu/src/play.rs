@@ -936,7 +936,10 @@ impl Play {
             self.draw_frozen(frozen);
             return Ok(());
         }
-        if self.flow.try_pause(&input, self.drive.phase(), &mut sfx) {
+        // The pause test sits at the top of the loop body (0x4084f5); the tick that finishes a
+        // body split by a sky fade's `Task_Tick` (0x40f320) does not pass it.
+        let mid_body = self.drive.rules().fade_pending().is_some();
+        if !mid_body && self.flow.try_pause(&input, self.drive.phase(), &mut sfx) {
             self.saved_levers = (self.controls.power(), self.controls.brake());
             if let Some(s) = self.sound.as_mut() {
                 s.set_paused(true);
@@ -949,6 +952,7 @@ impl Play {
 
         let kmh_before = self.drive.speed_kmh();
         let before = crate::sound::Before::of(&self.drive);
+        self.drive.set_analog_levers(self.controls.is_analog());
         let out = self.drive.tick(self.latched);
         self.scene.traffic = self.drive.traffic_poses(1.0);
         self.scene.signal_model = usize::from(self.drive.rules().signal_model);
@@ -962,8 +966,9 @@ impl Play {
             );
         }
         self.interpolate = !out.segment_started;
-        if out.segment_started {
-            // Digital modes force P0 / EB at each station start (0x4332c0, input.md §4.1).
+        if out.segment_started || out.notches_forced {
+            // Digital modes force P0 / EB at each station start and in the red-signal / ATS
+            // recovery (0x4332c0, input.md §4.1).
             self.controls.reset_levers();
         }
         // Some messages are re-raised every tick while their condition holds (the overrun

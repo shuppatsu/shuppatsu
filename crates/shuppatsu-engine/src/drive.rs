@@ -135,6 +135,10 @@ pub struct DriveTick {
     /// This tick was a segment's setup tick: the route or the track position jumped, so the
     /// renderer must not interpolate from [`Drive::prev_pos`] (it equals [`Drive::pos`]).
     pub segment_started: bool,
+    /// The rules forced the notches to N / EB for this tick (`input_force_notches(0, 9)`,
+    /// 0x4332c0, in the red-signal / ATS recovery of 0x40a0a0; not with analog levers): the
+    /// caller resets its digital levers as at a segment start.
+    pub notches_forced: bool,
 }
 
 /// Ticks from the route load (0x4229c0) to the first segment's setup tick: the tick in
@@ -238,6 +242,8 @@ pub struct Drive {
     bonus_horn: bool,
     /// The sky fade 0x40f320 that ran in the last tick (that tick was its `Task_Tick`).
     sky_fade: Option<FadeSplit>,
+    /// The levers are analog (joystick modes 5/6): `input_force_notches` leaves them alone.
+    analog_levers: bool,
 }
 
 impl std::fmt::Debug for Drive {
@@ -329,6 +335,7 @@ impl Drive {
             bonus_saved_vehicle: None,
             bonus_horn: false,
             sky_fade: None,
+            analog_levers: false,
         })
     }
 
@@ -523,6 +530,12 @@ impl Drive {
     /// Only needed to line up with a recording of the original.
     pub fn set_hud_counter(&mut self, counter: u32) {
         self.rules.hud_counter = counter;
+    }
+
+    /// Analog levers (joystick modes 5/6, input.md §4.1): `input_force_notches` (0x4332c0)
+    /// does not touch them, so the red-signal / ATS recovery keeps the driver's notches.
+    pub fn set_analog_levers(&mut self, analog: bool) {
+        self.analog_levers = analog;
     }
 
     // ----------------------------------------------------------------------------------------
@@ -1031,6 +1044,7 @@ impl Drive {
             events: out.events,
             atc_tripped: atc,
             segment_started: false,
+            notches_forced: false,
         }
     }
 
@@ -1084,6 +1098,7 @@ impl Drive {
             events: out.events,
             atc_tripped: false,
             segment_started: false,
+            notches_forced: false,
         }
     }
 
@@ -1101,6 +1116,7 @@ impl Drive {
             events: out.events,
             atc_tripped: atc,
             segment_started: false,
+            notches_forced: false,
         }
     }
 
@@ -1137,6 +1153,7 @@ impl Drive {
             events: out.events,
             atc_tripped: atc,
             segment_started: true,
+            notches_forced: false,
         }
     }
 
@@ -1209,6 +1226,17 @@ impl Drive {
         }
         let game_over = self.rules.phase == Phase::GameOver;
         let driving = self.rules.train_driving() || (game_over && self.coasting);
+        // `input_force_notches(0, 9)` in the rules: N / EB for this tick's train task.
+        let forced = out.force_notches && !self.analog_levers;
+        let input = if forced {
+            DriverInput {
+                power: 0,
+                brake: 9,
+                ..input
+            }
+        } else {
+            input
+        };
         let atc = self.physics(&input, driving, game_over);
         self.camera();
         self.traffic_task();
@@ -1223,6 +1251,7 @@ impl Drive {
             events: out.events,
             atc_tripped: atc,
             segment_started: false,
+            notches_forced: forced,
         }
     }
 }

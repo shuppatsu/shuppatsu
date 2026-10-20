@@ -818,6 +818,10 @@ pub struct TickOutput {
     /// This step finished a loop body that a sky fade split (the tick after `fade_split`): the
     /// loop-body parts before the split point ran in the previous tick.
     pub resumed: Option<FadeSplit>,
+    /// `input_force_notches(0, 9)` (0x4332c0) ran before this tick's `Task_Tick`: the train
+    /// task sees N / EB in the digital control modes; the next input poll brings the levers
+    /// back. The red-signal / ATS recovery of 0x40a0a0 does it.
+    pub force_notches: bool,
 }
 
 /// Where the sky fade 0x40f320 runs its `Task_Tick` inside a driving-loop iteration. The fade
@@ -1065,7 +1069,8 @@ pub struct Rules {
     /// (`0x856fa8`), wet rails (`0x84c2e0`). See [`Rules::weather_on`].
     pub weather_flag: i16,
     pub weather_level: i32,
-    pub weather_ticks: i32,
+    /// An i16 that wraps (0x40cb4d: `inc ax`): the 299 970-tick stages (0–2, 17–19) never end.
+    pub weather_ticks: i16,
     pub wet_rails: bool,
     /// The wiper task of the weather overlay (list 5, 0x4248d0) is alive. Its destroy callback
     /// 0x424940 clears `0x84c3a0` and `0x84c2e0`: when its update finds `0x84c3a0` clear and
@@ -2705,8 +2710,8 @@ impl Rules {
     /// station HUD's red signals and the approach states.
     fn misc_after_weather(&mut self) {
         if self.weather_level > 0 {
-            self.weather_ticks += 1;
-            if self.tables.weather_ticks[self.stage] <= self.weather_ticks {
+            self.weather_ticks = self.weather_ticks.wrapping_add(1);
+            if self.tables.weather_ticks[self.stage] <= i32::from(self.weather_ticks) {
                 self.weather_flag = 0;
             }
         }
@@ -2775,6 +2780,8 @@ impl Rules {
         self.clear_signals();
         self.ats = 0;
         self.ats_chime_from = -1;
+        // 0x40a0a0: `input_force_notches(0, 9)` before the standstill ticks.
+        out.force_notches = true;
         out.events.push(RuleEvent::SignalsReset);
         // The first of the standstill ticks (0x40a238: 0x857234 = 0 before each `Task_Tick`).
         self.speed_mps = 0.0;
