@@ -496,11 +496,23 @@ texels write nothing, so the result is the three layers back to front.
 mountains vanish into the fog while it snows. **The fog therefore only exists during snow**: the
 only `Gfx_SetFog(1)` call is here.
 
-### 13.5 Sky gradient fades — confirmed (code), see scene.md §6.2
+### 13.5 Sky gradient fades — confirmed (code, oracle), see scene.md §6.2
 
 Course event 0x15 and 0x40d620 fade palette 3 to the darker set over 150 ticks (0x40f320 →
 0x436a60 on list 7, which list clears do not touch); the drive restart rebuilds it without a
-fade for `level ≥ 1`; the level reaching 1 fades back.
+fade for `level ≥ 1`; the level reaching 1 fades back. The start on moving on from a stop
+(0x40d340) does not fade: the next segment setup builds the dark set directly.
+
+**Timing.** For every stage area (below 7) 0x40f320 then runs a `Task_Tick` of its own in the
+middle of the driving loop's body (rules.md §8.1). That tick is a full frame: the new fade task
+and the new weather overlay take their first update in it (fade frame 0 → 1, written after the
+draw, since list 7 runs after the render list), it is drawn and paced like any other, and the
+input is polled. The fade task updates 151 times (frames 0–150, `out = from + (to − from) ·
+frame / 150`), ending on the update that finds frame 151 (oracle: weather0-ev21.csv rows 9 564–
+9 714 show frames 1–151). The port takes the start from `Drive::sky_fade` (the tick that was
+the fade's own), so the sky, the overlay and the rain start on that tick; as every
+`Drive::tick` is one 1/30 s tick, the extra tick needs no special case in the frame pacing or
+the interpolation: the train moves in it as in any other.
 
 ### 13.6 Camera jolt (0x40e370 / 0x40e3d0) — confirmed
 

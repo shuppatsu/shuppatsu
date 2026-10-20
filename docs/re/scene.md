@@ -477,7 +477,9 @@ diffuse, `z = depth/32768` with 1/32768 at 0x47c968; screen = virtual × resolut
   - Fades: 0x40f320 builds both palettes and starts task 0x436a60(palette 3, 150 ticks):
     `out = trunc(from + (to − from)·frame/150)` per channel (0x436ad0). Variant 1 is
     selected without fading when the drive (re)starts with level ≥ 1 (0x4080d0 passes the
-    level as the variant). **likely** that the 0x40d340 start becomes visible only there.
+    level as the variant). The 0x40d340 start becomes visible only there: **confirmed** (oracle,
+    no fade task after it, rules.md §8.1). The fades run a `Task_Tick` of their own in the
+    middle of the loop body (rules.md §8.1, renderer.md §13.5).
   - Data: `from_station` is 0 for stages 1–2, 7 for 6–9, 5 for 12/14/16, 99 (course event
     only) elsewhere. Sound 0x28 loops at volume `level/2` while it runs, and 0x84c2e0 is set
     above level 199. 0x424740 builds the weather overlay: a wiper plus raindrops (rain

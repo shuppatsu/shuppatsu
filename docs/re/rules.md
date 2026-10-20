@@ -38,6 +38,11 @@ One loop iteration per tick (0x4084f5, see main-loop.md §5). Order and roles:
 During them the rule functions don't run and the clock (`0x8570b0`) does not advance, but the HUD
 keeps transferring time. The engine models them as `Phase::Holding`.
 
+When the weather starts (steps 2 and 4) or ends (step 9), the sky fade 0x40f320 runs **one more
+`Task_Tick` in the middle of the loop body**; the iteration then goes on where it stopped and ends
+with its own `Task_Tick`. One iteration therefore spans two ticks, and the clock advances once
+(§8.1).
+
 ## 2. Tables
 
 `[stage][difficulty]` i16 unless noted. Names are ours.
@@ -464,7 +469,7 @@ same 13 marks and the same waiting set (`out/explain/coupling_panel/cap17_port_i
 | 14 / 15 / 16 | repeater, display variant | §4.3 | likely |
 | 18 / 19 | `0x84c400 = 1 / 0` | flange-squeal / departure-sound flag, read by the train sounds (audio-text.md §10) | likely |
 | 20 | `0x857224 = a` | message shown at the next green | confirmed |
-| 21 / 22 | weather on / off | 21 starts only if `remaining ≥ 0x459d20`; level `0x857230` ramps to 254, > 199 sets wet rails `0x84c2e0` (cleared in tunnels); ends after 0x459dc0 ticks | confirmed (physics effect: physics agent) |
+| 21 / 22 | weather on / off | 21 starts only if `remaining ≥ 0x459d20`; level `0x857230` ramps to 254, > 199 sets wet rails `0x84c2e0` (cleared in tunnels); ends after 0x459dc0 ticks. Start and end run the sky fade with its own `Task_Tick` (§8.1) | confirmed (oracle) |
 
 * **EB penalty** (0x40c4e0 with counters from the train task): `0x8571e0` counts EB
   applications (B < 9 → B ≥ 9), `0x856d64` counts ticks with B ≥ 9 at ≥ 4 m/s. The penalty
@@ -509,6 +514,93 @@ same 13 marks and the same waiting set (`out/explain/coupling_panel/cap17_port_i
     exercised).
   * EB applications also count the B9 the game forces at run start (input_force_notches(0, 9)):
     `0x8571e0` = 1 already on the first waiting row. **likely** (oracle)
+
+### 8.1 Weather and the sky fade's `Task_Tick`
+
+**State** — confirmed (code, oracle). `0x84c3a0` is the weather *word*, not a flag: the start
+functions set it to 1, and 0x424740 (the overlay: wiper task 0x4248d0 on list 5 plus drops or
+snow, renderer.md §13.1) sets it to the weather type `0x857210` + 1 and clears the wet rails
+`0x84c2e0`. Types per stage (switch in 0x40d040): 5 for 0–2 and 17–19, 4 for 3–4, 2 for 7, 1 for
+8–11, 0 otherwise. `0x857230` is the level (0 none yet, 1–254, −1 = over for this run) and
+`0x856fa8` the tick count, an **i16** (0x40cb4d `inc ax`, `movsx` before the compare with
+`0x459dc0[stage]`), so the 299 970-tick weather of stages 0–2 and 17–19 never ends.
+
+| Where | Trigger | 0x424740 | Sky fade (0x40f320) | Conf. |
+|---|---|---|---|---|
+| 0x40d040 stage start | `0x459cf8[stage] == 0` (stages 1, 2): word 1, level 1 | at the first segment setup | no | confirmed |
+| 0x40acd0 course event 21 | level 0, word 0, remaining ≥ `0x459d20` | yes | to the dark set (`(area, 1)`) | confirmed (oracle) |
+| 0x40d620 passing a station | as 0x40d340 below, `0x84c494 % 3 == 0` | yes | to the dark set | confirmed (oracle) |
+| 0x40d340 moving on from a stop | level 0, word 0, station ≥ `0x459cf8`, remaining ≥ `0x459d20`, `0x84c494 % 4 == 0`: word 1, level 1 | at the next segment setup | **no** (the setup builds the dark palette with 0x40eed0) | confirmed (oracle) |
+| 0x4080d0 segment setup | level > 0 (after the priming 0x40dad0 / 0x40b710) | yes; after the setup's `Task_Tick` the rails are wet again if level > 199 | no | confirmed (oracle) |
+| 0x40c4e0 | word 0 (course event 22 or `0x856fa8 ≥ 0x459dc0`): level −1 per tick; when it reaches 1: sound 0x28 off, level −1 | — | back to the light set (`(area, 0)`) | confirmed (oracle) |
+
+Stages with weather (exe tables, read by `RuleTables`): course event 21 on stage 0 (station 3,
+920 m) and stage 3 (station 3, 900 m; event 22 at station 4, 900 m); event 22 on stage 2
+(station 23, 95 m; its weather is on from the start); station-based starts from station 7 on
+stages 6–9 and from station 5 on 12, 14 and 16 (duration 9000 ticks, 10 500 on 16). Stages 4, 5,
+10, 11, 13, 15, 17–19 have none.
+
+**The wiper task ends the word** — confirmed (code 0x424940, oracle). The wiper's update
+returns 0 once `0x84c3a0` is 0, and its destroy callback 0x424940 sets `0x84c3a0 = 0` and
+`0x84c2e0 = 0`. It also runs when list 5 is cleared (`TaskList_KillAll(0x84c1bc)` at the arrival,
+after the stop error is added to the odometer, and when the continue screen closes). So the word
+reads 0 during every station stop and comes back at the next setup while the level is above 0
+(weather16-stop.csv row 32 401: word 1 → 0 and wet 1 → 0 at the list clear; depart3e.csv row
+18 198 likewise, then 5 again on the setup row 18 412 and wet 1 on the row after). A setup during
+the decay (level > 0, word 0 after the duration) brings the word back for one driving tick: the
+first 0x40c4e0 finds the tick count at its limit and clears it again.
+
+**The extra `Task_Tick`** — confirmed (code 0x40f320 tail, oracle). 0x40f320(area, variant)
+builds both palette-3 gradients, starts the fade task 0x436a60(3, 150) on list 7 and then, at
+0x40f76f, `cmp eax, 7; jge` on its area argument: for areas below 7 it calls `Task_Tick`
+(0x4253c0). The area is `0x463c18[stage]`, 1–5 for every stage (8 is the menus' white studio,
+which uses 0x40eed0 only), so the tick happens on every stage. It is a complete tick:
+
+* all task lists run: the train task 0x422c20 (physics, EB counters, comfort statistics), the
+  camera task (`0x8500c8 −= 0x850208`), the HUD (remaining-time transfer, signal display), the
+  AI trains and the weather overlay on list 5 (the new wiper's and snow's first update), the
+  render task (one frame is drawn and paced like any other), and the new fade task on list 7
+  (its first update, frame 0 → 1);
+* `0x84c494` is incremented (the station-based starts and the jolt task's parity see it);
+* the input is polled: the rest of the loop body reads the new notches and buttons;
+* the departure task does not exist while driving.
+
+The rest of the loop body then runs from the call site with the train state that tick produced:
+
+| Split in | Before the tick | After it (next row) |
+|---|---|---|
+| 0x40d620 (step 2) | lateness drain, 0x41c820 (next leg added to `0x8500c8`), the pass (station, schedule, bonus, marks) | rest of 0x40dad0: `0x85708c = 0x8500c8 × 10` from the camera's new position, 0x40b970 (blocks), approach latch, rounding; then steps 3–12 |
+| 0x40acd0 event 21 (step 4) | steps 1–3, the event | cursor step (`0x857088 += 6`), the no-power and horn checks of 0x40acd0; steps 5–12 |
+| 0x40c4e0 weather end (step 9) | steps 1–8, 0x40c4e0 up to the weather | rest of 0x40c4e0 (tick count, approach states, the 50 m leg marker and hints); clock, 0x40a0a0, `Task_Tick` |
+
+The track lookup 0x407c10 is not repeated, the clock advances once for the two ticks, and the
+pause test (top of the body) is not passed in between.
+
+Oracle evidence (rows are `Task_Tick`s; `full.schema` logs the word, level, tick count and the
+fade task's frame since weather0/8/16):
+
+* course event 21 — depart3e.csv row 16 447: word 5, level 1, clock and course cursor unchanged;
+  row 16 448: cursor +1 event, clock +1, level 2. weather0-ev21.csv row 9 564: word 6, level 1,
+  tick count 0, fade frame 1, clock unchanged; row 9 565: cursor +1, clock +1, level 2, count 1.
+  The fade task lives for 151 rows (frames 1–151; the update that finds frame 151 > 150 ends it).
+* passing a station — weather8-pass.csv row 22 134 (station 10, `0x84c494` = 22 134 before the
+  tick, a multiple of 3): station 10 already, word 2, level 1, fade frame 1, `0x8500c8` already
+  holds the next leg less one camera step (86.843), but `0x85708c` still −0.12 m and the block
+  index 0; row 22 135: `0x85708c` = 868.43 (= 86.843 × 10), blocks rebuilt (index 4), clock +1.
+* weather end — depart3e.csv row 20 551: level 2 → −1, clock unchanged; the clock moves on the
+  next row.
+* no split for 0x40d340 — weather16-stop.csv row 28 980: word 1, level 1 at the move-on from
+  station 9 (`0x84c494` = 28 980 before it, a multiple of 4), no fade task, no wiper; from the
+  setup on, word 1 (type 0 + 1) with the wiper.
+
+Before the fix the engine ran one tick ahead from the split on (late drain, clock, level and
+wet rails one row early on depart3e/f). Port: `Rules::step` stops the body at the split and
+reports `TickOutput::fade_split`; the caller runs that tick's tasks as usual, and the next `step`
+finishes the body (`TickOutput::resumed`); `Drive` skips the track lookup, 0x40b710 and the leg
+marker where they fall on the other side of the split and exposes the fade as
+`Drive::sky_fade` for the sky gradient, the overlay and the sounds (renderer.md §13.5). Every
+`Drive::tick` is still one 1/30 s `Task_Tick`, so the presentation needs no special case: the
+fade's tick is drawn as its own frame, as in the original.
 
 ## 9. Statistics, grades and ranking
 
@@ -601,7 +693,9 @@ Sum `0x856c88` (0–100). **Ranking value** (0x4080d0 → 0x41e8d0):
 | 0x8570b4 | i16 | forced stop |
 | 0x856d80, 0x856d76, 0x85721e, 0x856dac | i16, i16, i16, f32 | obstacle state, armed, used, target |
 | 0x84c424 | f32 | derail speed, km/h |
-| 0x84c3a0, 0x857230, 0x84c2e0 | i16, i16, i32 | weather on, level, wet rails |
+| 0x84c3a0, 0x857230, 0x84c2e0 | i16, i16, i32 | weather word (type + 1), level, wet rails (§8.1) |
+| 0x856fa8, 0x857210 | i16, i16 | weather tick count, weather type |
+| list-7 task 0x436ad0 +0x34, list-5 task 0x4248d0 +0x44 | i32, i32 | sky fade frame, wiper swing (`?` while the task is absent) |
 | 0x856fc0, 0x8570c0, 0x857094 | i32, i16, i32 | last lateness, stop streak, pass streak |
 | 0x856fa4, 0x856fc8 | f32, i16 | stop error sum, stop count |
 | 0x857020[12], 0x857050[12] | i32 | statistics |
@@ -667,6 +761,19 @@ Hook points for event-level traces: 0x415080 (every time message: kind, seconds)
 * Not modelled: hint messages other than the green-signal hint (0x40c4e0 tail, 0x422990), the station-approach HUD state
   `0x856d68`, the presentation of the coupling
   set (0x406c50). The stage endings, the bonus section and the coupling minigame are in §7.5.
+* Sky fade (§8.1): `Rules::step` returns at 0x40f320 with `TickOutput::fade_split` and finishes
+  the loop body on the next call (`resumed`); one `Drive::tick` stays one `Task_Tick`. The
+  weather word is `Rules::weather_flag` (type + 1), the wiper task's life is tracked for its
+  destroy callback (`Rules::clear_overlay_tasks` at the list-5 clears, the update in
+  `end_tick` / `idle_tick`), and `segment_setup` rebuilds the overlay. **confirmed** (oracle,
+  §14). The attract demo, whose task would run the fade's `Task_Tick` nested inside its own
+  update, never splits in the port; the route demo runs 1600 ticks from station 0, short of any
+  station-based start (station 5 or later; **likely**), and the lesson course (0x459338) has no
+  event 21 (**confirmed**).
+* The red-signal / ATS recovery forces N / EB for its first tick (`input_force_notches(0, 9)`,
+  0x40a0a0 → 0x4332c0; `TickOutput::force_notches`, `Drive` applies it unless
+  `set_analog_levers(true)`). **confirmed** (weather0-ev21.csv row 6 764: ATS stop under P5,
+  the train task used P0 / B9 on the recovery's first tick, P5 again on the next)
 * x87 extended-precision intermediates are computed in f64 then stored to f32 where the original
   stores; rare double-rounding differences are possible.
 
@@ -676,20 +783,15 @@ Hook points for event-level traces: 0x415080 (every time message: kind, seconds)
   streak, the exact-stop bonus, the EB penalty (`% 4` rule), the **horn bonus award and the
   missed-horn penalty** (stops-drive.csv has one bonus zone, horn state 2 at odometer 850–879 m,
   with no press inside it, and no required whistle sign), the **ATS confirmation** (no ATS
-  acknowledged in time in either trace), forced stop, weather, obstacle, the 95 % check, clock
-  skew, the drain with pending ≠ 0 at arrival, and the hold lengths.
+  acknowledged in time in either trace), forced stop, obstacle, the 95 % check, clock skew,
+  the weather ending by its duration (with wet rails, for the wiper's destroy callback inside
+  the loop; only event 22 and the list clears are traced), the drain with pending ≠ 0 at
+  arrival, and the hold lengths.
 * The horn deadline `0x856d6a` is an i16: with an odometer above 32 767 m a whistle sign would
   expire immediately. No whistle sign lies that far in the shipped data (only the Akita bonus
   section beyond 32 km), so it is latent.
-* **Weather start / end runs an extra `Task_Tick`** that the engine does not model:
-  0x40f320 (the palette fade, called by course event 21, by the random start in 0x40d620 and by
-  the weather end in 0x40c4e0) calls `Task_Tick` itself when the stage's palette index
-  `0x463c18[stage]` is < 7 (code 0x40f320 tail). The oracle shows that tick as an extra row in the
-  middle of the loop body: on depart3e.csv row 16447 `0x84c3a0` is already 5 (it holds the
-  weather kind + 1, set by 0x424740, not a flag) and the level 1, while the course cursor and the
-  stage clock only move on the next row. Every later row is one tick off in the engine. The
-  stage-3 traces are therefore cut before the weather starts. **confirmed** (code + oracle); not
-  fixed.
+* The weather start and end run an extra `Task_Tick` inside the loop body (0x40f320): resolved,
+  §8.1.
 * Meaning of display variant `0x8570c2`.
 * Difficulty names for columns 0–3.
 
@@ -758,8 +860,8 @@ port does: power used in wait tick 197 (counter 196), ATS 1 and stat 8 += 2 in t
 
 New traces (`scripts/capture-original.sh`, `oracle/full.schema` with the departure task and the
 lamp, difficulty 0 unless noted). They all have `NotchTiming::NextRow` (physics.md §8). Each run
-is cut where the stage leaves the run (the attract demo after the game over); the stage-3 runs
-are cut before the weather starts (§13).
+is cut where the stage leaves the run (the attract demo after the game over). The stage-3 runs
+were first cut before the weather started; since the sky fade fix (§8.1) they run to the end.
 
 | trace | stage | legs | what | physics / rules / drive mismatches |
 |---|---|---|---|---|
@@ -768,10 +870,36 @@ are cut before the weather starts (§13).
 | depart13-b / -c.csv | 13 | 4 | blips at *j* = 199 / 200, alternating | 0 / 0 / 0 |
 | depart13-d.csv | 13 | 4 | blips at *j* = 32 / 33, alternating | 0 / 0 / 0 |
 | depart17g / h.csv | 17 | 4 | leg 1 (offset 180) *j* = 380 / 379, then 200 / 199 alternating | 0 / 0 / 0 |
-| depart3e / f.csv | 3 | 4 | *j* = 199 / 200 alternating (cut at the weather start in leg 4) | 0 / 0 / 0 |
+| depart3e / f.csv | 3 | 5 | *j* = 199 / 200 alternating; weather (type 4) from course event 21 in leg 4, on through the stop, off by event 22 in leg 5 and the fade back, then time over | 0 / 0 / 0 |
 
 The drive and rules replays also compare the departure task's counter, freeze and brake count
 (`dep_counter`, `dep_freeze`, `dep_released`) on every waiting row. The rules replay carries
 the HUD transfer phase from the previous stretch when a stretch shows no transfer of its own
 (depart13-mark.csv leg 3: a −1 s penalty drained in the same tick). The stage-17 runs and the
 stage-3 runs were driven by scripts generated in the port and checked there first.
+
+### weather*.csv (weather starts and ends, §8.1)
+
+Recorded like the depart traces (difficulty 0, `from wait` scripts from a crude auto-driver in
+the port, `full.schema` with the weather tick count, the weather type, the fade task's frame and
+the wiper task), in a scratch copy of the Wine prefix with the sound drivers disabled. Each run
+is cut where the stage leaves the run; the drive replay stops at a cleared final station.
+
+| trace | stage (type) | what | physics / rules / drive mismatches |
+|---|---|---|---|
+| depart3e / f.csv | 3 (4, snow) | course event 21 start with the fade's tick, the word across a stop and setup, event 22, the decay and the fade back with its tick | 0 / 0 / 0 |
+| weather0-ev21.csv | 0 (5, snow) | course event 21 start (word 6, fade frames 1–151 on rows 9 564–9 714), an ATS stop under P5 and its recovery (forced N / EB), cleared at the final station | 0 / 0 / 0 |
+| weather8-pass.csv | 8 (1, rain) | station-passed start at station 10 (`0x84c494 % 3 == 0`): the split inside 0x40dad0 | 0 / 0 / 0 |
+| weather12-stop.csv | 12 (0, rain) | start on moving on from station 7 (0x40d340, no fade, no wiper until the setup), wet rails from level 200, list clear at the arrival | 0 / 0 / 0 |
+| weather16-stop.csv | 16 (0, rain) | the same from station 9 | 0 / 0 / 0 |
+| weather16-overrun.csv | 16 (0, rain) | the same from station 5, then a 71 m overrun on wet rails that the result screen turns into time over | 0 / 0 / 0 |
+
+Fixes the traces required: the sky fade's `Task_Tick` (§8.1); the weather word as the original
+holds it (type + 1, cleared by the wiper's destroy callback at the list-5 clears, rebuilt by
+the segment setup, wet rails after the setup tick above level 199); `0x856fa8` as an i16; the
+forced N / EB of the recovery (§12). The rules replay now passes the logged `0x84c494` to the
+station-based starts. The physics-only replay goes on from the logged state on rows where the
+stage clock stands still (0x40a0a0's blocking loops zero the speed for a length it cannot know,
+and the fade's tick) and uses N / EB on the tick a recovery starts. Not traced: the weather
+ending by its duration (the auto-driver's runs ended first), stage 2's event 22, type 2 (stage
+7).
