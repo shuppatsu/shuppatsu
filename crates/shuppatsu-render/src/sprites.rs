@@ -868,8 +868,10 @@ impl SpriteLayer {
             let row = &mut canvas[4 * (y * cw + x0)..4 * (y * cw + x1)];
             for px in row.as_chunks_mut::<4>().0 {
                 let under = 255 - u16::from(px[3]);
+                // Wrapping, as release builds and the GPU (`gpu2d.wgsl`, `& 255`) do: a canvas
+                // that is not premultiplied (only the randomised tests make one) overflows.
                 for (c, &b) in px[..3].iter_mut().zip(&rgb) {
-                    *c += (u16::from(b) * under / 255) as u8;
+                    *c = c.wrapping_add((u16::from(b) * under / 255) as u8);
                 }
                 px[3] = 255;
             }
