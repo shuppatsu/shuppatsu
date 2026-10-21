@@ -12,6 +12,7 @@ use anyhow::Result;
 use shuppatsu_formats::exe::Exe;
 use shuppatsu_render::overlay::{UiScaling, wide_canvas_width};
 use shuppatsu_render::sprites::{CANVAS_H, CANVAS_W, SpriteBank, SpriteLayer};
+use shuppatsu_render::text::TextOverlay;
 
 use crate::locale::LocaleConfig;
 use crate::scene::GameData;
@@ -57,9 +58,25 @@ pub fn fit_layer(
     window: (u32, u32),
     wide: bool,
 ) -> Result<bool> {
+    fit_layer_with(cfg, data, bank, layer, window, wide, false)
+}
+
+/// [`fit_layer`]; with `keep_pending` a [`TextOverlay::pending`] text overlay stays so (no
+/// window yet: the first fit with one builds it).
+pub fn fit_layer_with(
+    cfg: &mut LocaleConfig,
+    data: &GameData,
+    bank: &mut SpriteBank,
+    layer: &mut SpriteLayer,
+    window: (u32, u32),
+    wide: bool,
+    keep_pending: bool,
+) -> Result<bool> {
     let before = layer.canvas_size();
     let s = cfg.multiple_for(window.1);
-    rescale_text(cfg, data, bank, s)?;
+    if !(keep_pending && bank.text().is_some_and(TextOverlay::is_pending)) {
+        rescale_text(cfg, data, bank, s)?;
+    }
     layer.scale = s;
     cfg.ui_scale = s;
     layer.wide = if wide {

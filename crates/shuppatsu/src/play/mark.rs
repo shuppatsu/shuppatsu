@@ -310,7 +310,7 @@ pub(crate) mod tests {
         let mut log = InputLog::default();
         log.start(controls.pad_connected());
         let shared = Shared {
-            bank: load_bank(&data, &exe, &opts.locale).unwrap().0,
+            bank: load_bank(&data, &exe, &opts.locale, false).unwrap().0,
             layer: SpriteLayer::default(),
             save,
             controls,

@@ -270,7 +270,7 @@ impl App {
         let mut pad = opts.pad.clone();
         pad.joystick_dat = joystick_dat(&opts.pad);
         let controls = Controls::new(&exe, usize::from(save.eeprom.options().control_mode), &pad)?;
-        let (mut bank, mut front) = play::load_bank(&data, &exe, &opts.locale)?;
+        let (mut bank, mut front) = play::load_bank(&data, &exe, &opts.locale, !headless)?;
         bank.set_upscale(opts.settings.hud_upscale);
         if opts.first_run {
             // The language screen's labels, before any language is installed.
@@ -1281,16 +1281,19 @@ impl App {
             return Ok(());
         };
         let window = r.gpu.as_ref().map_or(self.opts.size, Gpu::size);
-        crate::presentation::fit_layer(
+        // Without a window yet the translated text waits for its size (`install_deferred`).
+        let generation = r.bank.generation();
+        crate::presentation::fit_layer_with(
             &mut self.opts.locale,
             &r.data,
             &mut r.bank,
             &mut r.layer,
             window,
             self.opts.settings.wide_menus,
+            r.gpu.is_none(),
         )?;
         let (w, h) = r.layer.canvas_size();
-        if self.canvas.size() != (w, h) {
+        if self.canvas.size() != (w, h) || r.bank.generation() != generation {
             self.canvas.compose(&r.layer, &r.bank, None);
         }
         Ok(())

@@ -824,6 +824,17 @@ impl TextOverlay {
         self.scale
     }
 
+    /// An overlay not built yet (scale 0, no parts): drawing shows the original art until it
+    /// is built for the window's canvas multiple.
+    pub fn pending() -> Self {
+        Self::default()
+    }
+
+    /// Whether this is [`TextOverlay::pending`].
+    pub fn is_pending(&self) -> bool {
+        self.scale == 0
+    }
+
     pub fn get(&self, key: &SpriteKey) -> Option<&[RenderedPart]> {
         self.parts.get(key).map(Vec::as_slice)
     }

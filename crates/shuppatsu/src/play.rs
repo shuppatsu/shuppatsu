@@ -274,6 +274,7 @@ pub fn load_bank(
     data: &GameData,
     exe: &Exe<'_>,
     locale: &crate::locale::LocaleConfig,
+    defer_text: bool,
 ) -> Result<(SpriteBank, crate::front::tables::FrontTables)> {
     let cg_bytes = data.read("cg.rom")?;
     let mut bank = SpriteBank::new(
@@ -284,7 +285,12 @@ pub fn load_bank(
     // name them.
     let mut front = crate::front::tables::FrontTables::read(exe)?;
     crate::front::add_port_art(&mut bank, &mut front);
-    crate::locale::install(locale, exe, &mut bank)?;
+    // With a window to come, its first fit builds the text for its canvas multiple.
+    if defer_text {
+        crate::locale::install_deferred(locale, exe, &mut bank)?;
+    } else {
+        crate::locale::install(locale, exe, &mut bank)?;
+    }
     // Controller hints (`hybrid_input`) in every language.
     bank.set_legend_font(Some(shuppatsu_render::label::LabelFont::new(Box::new(
         crate::locale::bundled_font()?,
@@ -319,7 +325,7 @@ pub fn run(mut opts: PlayOptions) -> Result<()> {
     let controls = Controls::new(&exe, opts.control_mode, &opts.pad)?;
     let mut log = InputLog::default();
     log.start(controls.pad_connected());
-    let (bank, _) = load_bank(&data, &exe, &opts.locale)?;
+    let (bank, _) = load_bank(&data, &exe, &opts.locale, false)?;
     let sound = if opts.shot.is_some() || opts.mute {
         None
     } else {
@@ -1910,7 +1916,7 @@ mod tests {
             locale,
         };
         let shared = Shared {
-            bank: load_bank(&data, &exe, &opts.locale).unwrap().bank(),
+            bank: load_bank(&data, &exe, &opts.locale, false).unwrap().bank(),
             layer: SpriteLayer::default(),
             save: Save::open(&exe, None).unwrap(),
             controls: Controls::new(&exe, 0, &pad).unwrap(),

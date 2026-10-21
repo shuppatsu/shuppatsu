@@ -969,6 +969,23 @@ fn clamp_scale(s: usize) -> usize {
 /// overridden: for `ja` only the port's own cells (`ja.toml`, the options' seventh label),
 /// the original art everywhere else. Without `--font` the bundled M+ 2 Medium is used.
 pub fn install(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Result<usize> {
+    install_with(cfg, exe, bank, true)
+}
+
+/// [`install`] with the text overlay left [`TextOverlay::pending`]: a window's first fit
+/// ([`crate::presentation::fit_layer`]) builds it for its canvas multiple. Built at start-up for
+/// the configured multiple, it was built again for the full-screen window's (about 170 ms of
+/// a 570 ms start).
+pub fn install_deferred(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Result<()> {
+    install_with(cfg, exe, bank, false).map(|_| ())
+}
+
+fn install_with(
+    cfg: &LocaleConfig,
+    exe: &Exe<'_>,
+    bank: &mut SpriteBank,
+    build: bool,
+) -> Result<usize> {
     let sheets = SheetTables::read(exe)?;
     let locale = Locale::load(&cfg.lang, cfg.dir.as_deref(), &sheets)?;
     let identity = cfg.lang == IDENTITY_LANG;
@@ -996,7 +1013,11 @@ pub fn install(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Resu
         body: &font,
         display: display.as_ref().map(|d| d as _),
     };
-    let overlay = TextOverlay::build_with(bank, locale.overrides(), fonts, cfg.ui_scale);
+    let overlay = if build {
+        TextOverlay::build_with(bank, locale.overrides(), fonts, cfg.ui_scale)
+    } else {
+        TextOverlay::pending()
+    };
     let n = overlay.len();
     bank.set_text(Some(overlay));
     if identity {
