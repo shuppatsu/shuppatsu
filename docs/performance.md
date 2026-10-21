@@ -33,7 +33,8 @@ periods, rounded, misses n − 1), a histogram of intervals in periods, the CPU 
 **Composer check.** `SHUPPATSU_VERIFY_COMPOSE=1` composes every partial 2D update a second time in
 full and panics at the first differing pixel (a debug aid: it costs a full compose per tick); in
 GPU mode it checks every GPU-composed frame against a CPU compose (§3). `SHUPPATSU_COMPOSE=cpu`
-or `gpu` picks where the layer is composed (default `gpu`).
+or `gpu` picks where the layer is composed (default `gpu`). `SHUPPATSU_IDLE_WAIT=<ms>|poll` sets
+how the event loop waits between redraws (§4; default 1 ms).
 
 A measurement run, muted, in throwaway config and data directories, stopped after a time:
 
@@ -83,7 +84,14 @@ their map's art kept per bank generation.
 
 **Caches built on first use.** Paper fills (the wide menu backdrops) are built on all cores and
 kept for up to 32 palettes, so fades that come back are lookups; a fill scaled for a fade goes
-through a 256-entry table. xBRZ images (`hud_upscale`) are built on all cores.
+through a 256-entry table. A fade-in still builds an exact fill whenever the palette passes
+twice the brightness of the last one built (about six times in the title fade): what does not
+depend on the palette — each fill pixel's three lattice taps and weights, the ramp and light
+shares per column (a side's *shape*) — is kept per picture size and reach, built ahead on a
+thread when the map is marked as paper (for the reaches of 16:10 and 16:9 canvases), so a build
+only colours the exemplars and mixes them (4K: about 0.9 ms, 2 ms before; the first one 1.3 ms,
+3.3 ms before). The arithmetic and its order are the same, so the fill is byte-identical. xBRZ
+images (`hud_upscale`) are built on all cores.
 
 **Translated text** is rasterised on all cores (`TextOverlay::build_with`), at start-up and
 whenever the canvas multiple changes; the lettering analysis of the original art behind it (a
@@ -157,48 +165,90 @@ the display):
 | Ending (staff roll) | 372 → 11 KB | 2.2 → 0.06 ms | 5.7 → 4.1 ms |
 
 At 180 Hz the attract fades miss 0.5–1 % of the refreshes instead of 2–3 %, driving 0.1–0.3 %
-instead of 0.6–0.7 %. What remains of the attract's compose is the paper fill rebuilt per fade
-step inside `SpriteLayer::prepare`, which both modes share. The 68 reference shots are
-byte-identical in both modes, and the verify mode found no difference in about 26 000 GPU frames
-over every reference session (with `hud_upscale` and the first-start language screen).
+instead of 0.6–0.7 %. The 68 reference shots are byte-identical in both modes, and the verify
+mode found no difference in about 26 000 GPU frames over every reference session (with
+`hud_upscale` and the first-start language screen).
+
+On the 120 Hz TV (measured later, round 2): the attract misses 1.9–2.6 % with the CPU compose and
+0.4–0.6 % with the GPU compose (work p99 4.4–5.1 → 1.7–2.2 ms), the title 0.4–1.2 % → 0–0.2 %,
+driving 0.4 % → 0.1 %. What is left in the attract is not compose work (§6).
 
 ## 4. Frame pacing
 
-With vsync the runs present with Fifo and the event loop polls (`ControlFlow::Poll`). A run's
-simulation advances by whole refresh periods of the display's reported rate, phase-locked to the
-wall clock (`pacing.rs`, `FrameClock`): redraws run ±0.5 ms (up to ±2 ms) off their refresh,
-and the 33 ms ticks and the interpolation between them followed that jitter. An offset of more
-than half a period (a stall, a variable rate) jumps to the wall clock; without vsync the clock is
-the redraws' own.
+With vsync the runs present with Fifo. A run's simulation advances by whole refresh periods of
+the display's reported rate, phase-locked to the wall clock (`pacing.rs`, `FrameClock`): redraws
+run ±0.5 ms (up to ±2 ms) off their refresh, and the 33 ms ticks and the interpolation between
+them followed that jitter. An offset of more than half a period (a stall, a variable rate) jumps
+to the wall clock; without vsync the clock is the redraws' own.
 
-Polling keeps one core busy between frames. Waiting instead (`ControlFlow::Wait`) brings that to
-about 6 % but made every part of the frame slower (the core clocks down between frames) and
-driving missed 1.2 % of the refreshes instead of 0.1 %, so the loop polls.
+**Waiting between redraws** (`pacing.rs`, `IdleWait`). Polling (`ControlFlow::Poll`) kept the
+main thread at 100 % of a core. Sleeping until the next event (`ControlFlow::Wait`) brought that
+to about 6 %, but the core clocked down between frames: every part of the frame got slower and
+driving missed 1.2 % of the refreshes instead of 0.1 %. The loop now sleeps
+(`ControlFlow::WaitUntil`) until 1 ms before the next redraw is due — the previous redraw plus
+the shortest of the recent intervals — and polls from there; a redraw long overdue (a hidden
+window gets no frame callbacks) sleeps until an event. On the 120 Hz TV, 2 × 120 s of driving:
+missed refreshes 0.1 % as with polling, frame work the same (1.15 ms on average), the process's
+CPU time halved (68 against 130 s per 120 s), the main thread at 39 % of a core. Margins of 2 and
+4 ms used more CPU for nothing; 0 (sleeping up to the redraw) made the frame work about 40 %
+slower.
+
+The cost: work that comes in one burst after idle frames runs on a core that has clocked down.
+The stage-start tick takes about 40 % longer (the run after the board: a 35 ms interval instead
+of 25 ms; the intro's start 50 instead of 38 ms) and the attract fade's paper builds about 70 %
+longer (still well inside the period). `SHUPPATSU_IDLE_WAIT=poll` polls as before;
+`SHUPPATSU_IDLE_WAIT=<ms>` sets another margin.
 
 ## 5. Run start
 
-A run's start reads the departure boards' diagrams on all cores (`board_en.rs`); the frame that
-starts a stage takes about 45 ms (95 ms before), most of it the route scene and the cab's
-translated captions.
+The tick that starts a run builds the run (`Play::new`): exe tables and the drive (2 ms), the
+cab's translated captions (landmark names 3 ms, one-line captions 2 ms, board names 10 ms),
+screen tables (1.6 ms), subtitles (3 ms), the route scene (14–22 ms, on its own thread) and the
+GPU setup (4 ms).
+
+- The departure boards' diagrams are analysed on all cores (`board_en.rs`), and the analysis is
+  kept for the next start with the same bank state (its art id and generation) and names: a
+  stage intro and the run after its board build the same. `SpriteBank::set_upscale`, called at
+  every start, changes the generation only when the setting changes (it reset every cache keyed
+  by the generation at each start).
+- The route scene of the run after the departure board loads on a thread while the board shows
+  (`play::load_scene_ahead`); `Play::new` takes it if its key (COM file, visibility, settings,
+  geometry, stage, texture pack) matches, and loads it on its own thread otherwise. Texture
+  pages convert to RGBA on all cores.
+- The movie (`Komachi.DAT`, 33 MB: 13 ms to read, 13 ms to demultiplex) is read on a thread at
+  start-up and again after each showing (`movie::MovieAhead`), so it starts without a stall; the
+  demultiplexed movie stays in memory.
+
+The tick that starts the run after the board went from about 28 to 16 ms (polling); the intro's
+start (no board before it) is unchanged at about 27–32 ms.
 
 ## 6. Results
 
-Missed refreshes at 120 Hz, 4K full screen (windowed 2560×1440 where marked), default settings,
-English, before the work and after it:
+Missed refreshes at 120 Hz on the TV, 4K full screen (windowed 2560×1440 where marked), default
+settings (GPU compose, idle wait), English; the first measurement, the first round's end, and
+round 2's end (out/perf/round2.md):
 
-| Screen | Before | After |
-|---|---|---|
-| Title menu | 40 % | 0.1 % |
-| Options / port settings | 37 / 41 % | under 0.5 % |
-| Route select | 20 % | 0.4 % |
-| Driving, enhanced HUD / original HUD | 22 / 23 % | 0.1 % / 0.1 % |
-| Coupling minigame | 22 % | 0.1 % |
-| Pause | 25 % | 0.1 % |
-| Driving report | 20 % | 0.1 % |
-| Ending (staff roll) | 20 % | 0.1 % |
-| Attract (palette fades) | 8 % | about 1.5 % |
-| Title menu, windowed | 20 % | 0.2 % |
-| Driving, windowed | 12 % | 0.1 % |
+| Screen | Before | Round 1 (CPU compose, polling) | Round 2 |
+|---|---|---|---|
+| Title menu | 40 % | 0.1 % | 0–0.2 % |
+| Options / port settings | 37 / 41 % | under 0.5 % | 0.2 / 0.2 % |
+| Route select | 20 % | 0.4 % | 0 % |
+| Driving, enhanced HUD / original HUD | 22 / 23 % | 0.1 % / 0.1 % | 0.1 / 0.1 % |
+| Coupling minigame | 22 % | 0.1 % | 0.1 % |
+| Pause | 25 % | 0.1 % | 0 % |
+| Driving report | 20 % | 0.1 % | 0.1 % |
+| Ending (staff roll) | 20 % | 0.1 % | 0.2 % |
+| Attract (palette fades) | 8 % | about 1.5 % | 0.4–0.6 % |
+| Title menu, windowed | 20 % | 0.2 % | 0 % |
+| Driving, windowed | 12 % | 0.1 % | 0.1 % |
+
+Most of what remains comes from outside the frame's work, in every run: the window's switch to
+full screen (two intervals of 16–25 ms about 0.25 s after it opens, the wait in `acquire`), and
+an interval of 16–18 ms every 5.0 s (600 frames) with no CPU work in the frame, also with
+MangoHud off — the compositor or the system. Within the work: the stage-start tick (§5), the
+first frame of the 3D view after a start (4–7 ms of `build3d`), and the first frame of the title
+menu (3–4 ms of GPU draw-list building for the translated menu items, first-touch page faults of
+their packed text).
 
 The reference shots (every screen, English and Japanese, 1440p and 4K) are byte-identical before
-and after each change.
+and after each change, in both compose modes.
