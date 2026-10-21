@@ -215,6 +215,12 @@ impl Drop for Scope {
     }
 }
 
+/// Opens the trace now (call it first thing in `main`, on the thread that draws): `t_ms`
+/// then counts from the program's start, so the first frame's is the start-up time.
+pub fn start() {
+    enabled();
+}
+
 /// Runs `f` timed as `section`.
 pub fn time<R>(section: Section, f: impl FnOnce() -> R) -> R {
     let _g = scope(section);

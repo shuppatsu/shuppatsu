@@ -908,6 +908,7 @@ fn cli_args() -> Vec<String> {
 }
 
 fn main() -> Result<()> {
+    shuppatsu_render::perf::start();
     let log = win_console::init(std::env::args().any(|a| a == "--console"));
     let result = run_main();
     if let Err(e) = &result {
