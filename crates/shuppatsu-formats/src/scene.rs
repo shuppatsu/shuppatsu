@@ -922,6 +922,8 @@ struct TrackBuilder<'a> {
     camera: &'a CabCamera,
     out: Vec<TrackInstance>,
     options: TrackOptions,
+    /// Scratch space of [`TrackBuilder::run_point_chord`].
+    chords: Vec<f32>,
 }
 
 /// Enhancements to track drawing; `Default` reproduces the original.
@@ -969,18 +971,22 @@ impl TrackBuilder<'_> {
 
     /// `even_track_width`: the median chord of one point of a track-side run, the width
     /// its pieces are evened to (scaled by step × scale); `None` when off or no chord.
-    fn run_point_chord(&self, run: &TrackRun) -> Option<f32> {
+    fn run_point_chord(&mut self, run: &TrackRun) -> Option<f32> {
         if !self.options.even_width {
             return None;
         }
         let end = run.slots.end.min(self.limit.saturating_sub(1));
-        let mut chords: Vec<f32> = (run.slots.start..end)
-            .map(|i| {
-                let (p, q) = (self.slots[i], self.slots[i + 1]);
-                (q.x - p.x).hypot(q.z - p.z)
-            })
-            .filter(|&c| c > 0.0)
-            .collect();
+        let slots = self.slots;
+        let chords = &mut self.chords;
+        chords.clear();
+        chords.extend(
+            (run.slots.start..end)
+                .map(|i| {
+                    let (p, q) = (slots[i], slots[i + 1]);
+                    (q.x - p.x).hypot(q.z - p.z)
+                })
+                .filter(|&c| c > 0.0),
+        );
         if chords.is_empty() {
             return None;
         }
@@ -1399,6 +1405,10 @@ fn extra_runs(
     covered: &mut Coverage,
     out: &mut Vec<TrackInstance>,
 ) {
+    // One builder for every run (its pieces are taken out after each).
+    let mut builder = TrackBuilder::new(route, tables, ctx, camera);
+    builder.options = options;
+    builder.limit = route.slots.len();
     for k in buckets {
         let Some(bucket) = route.buckets.get(k) else {
             break;
@@ -1407,15 +1417,12 @@ fn extra_runs(
             if covered.covers_all(run) {
                 continue;
             }
-            let mut builder = TrackBuilder::new(route, tables, ctx, camera);
-            builder.options = options;
-            builder.limit = route.slots.len();
             builder.run(run, ctx, pos.engine_index);
             let rail = run.kind == 1;
             out.extend(
                 builder
                     .out
-                    .into_iter()
+                    .drain(..)
                     .filter(|i| !covered.covers(rail, i.slot)),
             );
             covered.add(run);
@@ -1438,6 +1445,7 @@ impl<'a> TrackBuilder<'a> {
             camera,
             out: Vec::new(),
             options: TrackOptions::default(),
+            chords: Vec::new(),
         }
     }
 

@@ -172,6 +172,8 @@ pub struct FrameGeometry {
     /// adding instances, for depth precision far from the world origin (the renderer adds it
     /// back). Kept by [`FrameGeometry::clear`].
     pub origin: Vec3,
+    /// Scratch space for a terrain part's points (a frame places thousands of parts).
+    points: Vec<Vec3>,
 }
 
 impl FrameGeometry {
@@ -222,7 +224,9 @@ impl FrameGeometry {
             self.missing_parts += 1;
             return false;
         };
-        let shape = terrain.then(|| crate::ground::PartShape::of(part, transform));
+        let mut points = std::mem::take(&mut self.points);
+        let shape =
+            terrain.then(|| crate::ground::PartShape::of_with(part, transform, &mut points));
         // In f64 and relative to the origin: coplanar parts placed with different transforms
         // then differ only by the GPU's rounding of small numbers (renderer.md §6.1).
         let to_world = transform.as_dmat4();
@@ -249,10 +253,8 @@ impl FrameGeometry {
             }));
             if let Some(shape) = &shape {
                 let added = &mut batch.vertices[base as usize..];
-                let points: Vec<Vec3> = added
-                    .iter()
-                    .map(|v| Vec3::from(v.pos) + self.origin)
-                    .collect();
+                points.clear();
+                points.extend(added.iter().map(|v| Vec3::from(v.pos) + self.origin));
                 let bits = crate::ground::surface_bits(
                     &points,
                     g.triangles(),
@@ -268,6 +270,7 @@ impl FrameGeometry {
                 .indices
                 .extend(g.triangles().flatten().map(|i| base + u32::from(i)));
         }
+        self.points = points;
         self.instances += 1;
         true
     }

@@ -106,16 +106,22 @@ pub struct PartShape {
 
 impl PartShape {
     pub fn of(part: &Part, transform: &Mat4) -> Self {
+        Self::of_with(part, transform, &mut Vec::new())
+    }
+
+    /// [`PartShape::of`] with `points` as scratch space (a frame places thousands of parts).
+    pub fn of_with(part: &Part, transform: &Mat4, points: &mut Vec<Vec3>) -> Self {
         let mut min_y = f32::INFINITY;
         let (mut total, mut wall) = (0.0, 0.0);
         for g in &part.groups {
-            let points: Vec<Vec3> = g
-                .vertices
-                .iter()
-                .map(|v| transform.transform_point3(Vec3::from(v.position())))
-                .collect();
+            points.clear();
+            points.extend(
+                g.vertices
+                    .iter()
+                    .map(|v| transform.transform_point3(Vec3::from(v.position()))),
+            );
             min_y = points.iter().map(|p| p.y).fold(min_y, f32::min);
-            let s = areas(&points, g.triangles());
+            let s = areas(points, g.triangles());
             total += s.total;
             wall += s.wall;
         }
