@@ -115,7 +115,41 @@ impl StreamBuffer {
         if bytes.is_empty() {
             return;
         }
-        let size = bytes.len() as u64;
+        self.reserve(device, bytes.len() as u64);
+        queue.write_buffer(self.buffer.as_ref().expect("allocated above"), 0, bytes);
+    }
+
+    /// Writes `parts` one after another (each a whole number of words) through one staging
+    /// copy; `offsets` gets where each starts.
+    fn write_parts<'a>(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        parts: impl Iterator<Item = &'a [u8]> + Clone,
+        offsets: &mut Vec<u64>,
+    ) {
+        offsets.clear();
+        let mut total = 0;
+        for p in parts.clone() {
+            offsets.push(total);
+            total += p.len() as u64;
+        }
+        let Some(size) = wgpu::BufferSize::new(total) else {
+            return;
+        };
+        self.reserve(device, total);
+        let buffer = self.buffer.as_ref().expect("allocated above");
+        if let Some(mut view) = queue.write_buffer_with(buffer, 0, size) {
+            let mut at = 0;
+            for p in parts {
+                view.slice(at..at + p.len()).copy_from_slice(p);
+                at += p.len();
+            }
+        }
+    }
+
+    /// A buffer of at least `size` bytes.
+    fn reserve(&mut self, device: &wgpu::Device, size: u64) {
         if self.buffer.as_ref().is_none_or(|b| b.size() < size) {
             self.buffer = Some(device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some(self.label),
@@ -125,22 +159,29 @@ impl StreamBuffer {
                 mapped_at_creation: false,
             }));
         }
-        queue.write_buffer(self.buffer.as_ref().expect("allocated above"), 0, bytes);
     }
 
     fn slice(&self, len: u64) -> Option<wgpu::BufferSlice<'_>> {
         self.buffer.as_ref().map(|b| b.slice(..len))
     }
+
+    /// `len` bytes from `offset`.
+    fn range(&self, offset: u64, len: u64) -> Option<wgpu::BufferSlice<'_>> {
+        self.buffer.as_ref().map(|b| b.slice(offset..offset + len))
+    }
 }
 
+/// A texture page and where its geometry of the frame is in the renderer's shared buffers
+/// (byte offsets; one buffer for all pages' vertices, one for their indices, and so on: a
+/// write per buffer and frame, not per page).
 struct PageGpu {
     bind_group: wgpu::BindGroup,
-    vertices: StreamBuffer,
-    indices: StreamBuffer,
+    vertex_range: (u64, u64),
+    index_offset: u64,
     index_count: u32,
-    bg_tex: StreamBuffer,
+    bg_tex_offset: u64,
     bg_tex_count: u32,
-    fx_tex: StreamBuffer,
+    fx_tex_offset: u64,
     fx_tex_count: u32,
 }
 
@@ -260,12 +301,12 @@ impl PageUploader {
                 });
                 PageGpu {
                     bind_group,
-                    vertices: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "page vertices"),
-                    indices: StreamBuffer::new(wgpu::BufferUsages::INDEX, "page indices"),
+                    vertex_range: (0, 0),
+                    index_offset: 0,
                     index_count: 0,
-                    bg_tex: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "page background"),
+                    bg_tex_offset: 0,
                     bg_tex_count: 0,
-                    fx_tex: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "page effects"),
+                    fx_tex_offset: 0,
                     fx_tex_count: 0,
                 }
             })
@@ -290,6 +331,12 @@ pub struct Renderer {
     sampler: wgpu::Sampler,
     filtered_sampler: wgpu::Sampler,
     pages: Vec<PageGpu>,
+    /// Every page's world vertices, indices, background and effect quads of the frame
+    /// ([`PageGpu`] has where).
+    page_vertices: StreamBuffer,
+    page_indices: StreamBuffer,
+    page_bg_tex: StreamBuffer,
+    page_fx_tex: StreamBuffer,
     /// This frame's [`FrameGeometry::origin`].
     origin: glam::Vec3,
     /// This frame's [`FrameGeometry::instances`].
@@ -616,6 +663,10 @@ impl Renderer {
             sampler,
             filtered_sampler,
             pages: Vec::new(),
+            page_vertices: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "page vertices"),
+            page_indices: StreamBuffer::new(wgpu::BufferUsages::INDEX, "page indices"),
+            page_bg_tex: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "page background"),
+            page_fx_tex: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "page effects"),
             origin: glam::Vec3::ZERO,
             instances: 0,
             lines: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "lines"),
@@ -689,17 +740,42 @@ impl Renderer {
         frame: &FrameGeometry,
     ) {
         let _perf = crate::perf::scope(crate::perf::Section::Upload3d);
-        for (page, quads) in self.pages.iter_mut().zip(&frame.background_tex) {
-            page.bg_tex_count = quads.len() as u32;
-            page.bg_tex
-                .write(device, queue, bytemuck::cast_slice(quads));
+        let n = self.pages.len();
+        let mut offsets = Vec::with_capacity(n);
+        for page in &mut self.pages {
+            (page.bg_tex_count, page.index_count) = (0, 0);
         }
-        for (page, batch) in self.pages.iter_mut().zip(&frame.batches) {
-            page.index_count = batch.indices.len() as u32;
-            page.vertices
-                .write(device, queue, bytemuck::cast_slice(&batch.vertices));
-            page.indices
-                .write(device, queue, bytemuck::cast_slice(&batch.indices));
+        let quads = frame.background_tex.iter().take(n);
+        self.page_bg_tex.write_parts(
+            device,
+            queue,
+            quads.clone().map(|q| bytemuck::cast_slice(q)),
+            &mut offsets,
+        );
+        for ((page, q), &at) in self.pages.iter_mut().zip(quads).zip(&offsets) {
+            page.bg_tex_count = q.len() as u32;
+            page.bg_tex_offset = at;
+        }
+        let batches = frame.batches.iter().take(n);
+        self.page_vertices.write_parts(
+            device,
+            queue,
+            batches.clone().map(|b| bytemuck::cast_slice(&b.vertices)),
+            &mut offsets,
+        );
+        for ((page, b), &at) in self.pages.iter_mut().zip(batches.clone()).zip(&offsets) {
+            let len = std::mem::size_of_val(b.vertices.as_slice()) as u64;
+            page.vertex_range = (at, len);
+        }
+        self.page_indices.write_parts(
+            device,
+            queue,
+            batches.clone().map(|b| bytemuck::cast_slice(&b.indices)),
+            &mut offsets,
+        );
+        for ((page, b), &at) in self.pages.iter_mut().zip(batches).zip(&offsets) {
+            page.index_count = b.indices.len() as u32;
+            page.index_offset = at;
         }
         self.origin = frame.origin;
         self.instances = frame.instances;
@@ -956,7 +1032,7 @@ impl Renderer {
             pass.set_bind_group(0, &self.frame_bind.0, &[]);
             for page in self.pages.iter().filter(|p| p.bg_tex_count > 0) {
                 let bytes = u64::from(page.bg_tex_count) * size_of::<BgTexVertex>() as u64;
-                if let Some(slice) = page.bg_tex.slice(bytes) {
+                if let Some(slice) = self.page_bg_tex.range(page.bg_tex_offset, bytes) {
                     pass.set_bind_group(1, &page.bind_group, &[]);
                     pass.set_vertex_buffer(0, slice);
                     pass.draw(0..page.bg_tex_count, 0..1);
@@ -965,14 +1041,16 @@ impl Renderer {
             pass.set_pipeline(&self.pipelines.world);
             pass.set_bind_group(0, &self.frame_bind.0, &[]);
             for page in self.pages.iter().filter(|p| p.index_count > 0) {
+                let (vertices, len) = page.vertex_range;
                 let (Some(v), Some(i)) = (
-                    page.vertices.buffer.as_ref(),
-                    page.indices.slice(u64::from(page.index_count) * 4),
+                    self.page_vertices.range(vertices, len),
+                    self.page_indices
+                        .range(page.index_offset, u64::from(page.index_count) * 4),
                 ) else {
                     continue;
                 };
                 pass.set_bind_group(1, &page.bind_group, &[]);
-                pass.set_vertex_buffer(0, v.slice(..));
+                pass.set_vertex_buffer(0, v);
                 pass.set_index_buffer(i, wgpu::IndexFormat::Uint32);
                 pass.draw_indexed(0..page.index_count, 0, 0..1);
             }
@@ -997,11 +1075,17 @@ impl Renderer {
         self.fx_flat_count = fx.flat.len() as u32;
         self.fx_flat
             .write(device, queue, bytemuck::cast_slice(&fx.flat));
-        for (i, page) in self.pages.iter_mut().enumerate() {
-            let quads = fx.textured.get(i).map_or(&[][..], Vec::as_slice);
-            page.fx_tex_count = quads.len() as u32;
-            page.fx_tex
-                .write(device, queue, bytemuck::cast_slice(quads));
+        let quads = |i: usize| fx.textured.get(i).map_or(&[][..], Vec::as_slice);
+        let mut offsets = Vec::with_capacity(self.pages.len());
+        self.page_fx_tex.write_parts(
+            device,
+            queue,
+            (0..self.pages.len()).map(|i| bytemuck::cast_slice(quads(i))),
+            &mut offsets,
+        );
+        for (i, (page, &at)) in self.pages.iter_mut().zip(&offsets).enumerate() {
+            page.fx_tex_count = quads(i).len() as u32;
+            page.fx_tex_offset = at;
         }
     }
 
@@ -1023,7 +1107,7 @@ impl Renderer {
         pass.set_bind_group(0, &self.frame_bind.0, &[]);
         for page in self.pages.iter().filter(|p| p.fx_tex_count > 0) {
             let bytes = u64::from(page.fx_tex_count) * size_of::<BgTexVertex>() as u64;
-            if let Some(slice) = page.fx_tex.slice(bytes) {
+            if let Some(slice) = self.page_fx_tex.range(page.fx_tex_offset, bytes) {
                 pass.set_bind_group(1, &page.bind_group, &[]);
                 pass.set_vertex_buffer(0, slice);
                 pass.draw(0..page.fx_tex_count, 0..1);
