@@ -370,6 +370,12 @@ impl SpriteBank {
         self.generation
     }
 
+    /// Identifies the bank's art: unique to each bank and each change of its art. With
+    /// [`SpriteBank::generation`] it identifies what the bank draws.
+    pub fn art_id(&self) -> u64 {
+        self.art
+    }
+
     /// The tilemaps (`tbl.rom`, and the port's own).
     pub fn tilemaps(&self) -> &[Tilemap] {
         &self.tilemaps
@@ -385,8 +391,11 @@ impl SpriteBank {
     }
 
     pub fn set_upscale(&mut self, on: bool) {
-        self.generation += 1;
-        self.upscale = on;
+        // Unchanged, nothing the bank draws changes: its caches stay valid (a run start sets it).
+        if self.upscale != on {
+            self.generation += 1;
+            self.upscale = on;
+        }
     }
 
     pub fn upscale(&self) -> bool {

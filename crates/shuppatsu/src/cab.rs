@@ -195,7 +195,7 @@ pub struct CabHud {
     /// An attract demo drive: its task, not the stage loop, runs (no 0x40c4e0 HUD parts).
     demo: bool,
     /// Enhancement `board_names`; `None` leaves the route board in kanji only.
-    board_names: Option<crate::board_en::BoardNames>,
+    board_names: Option<std::sync::Arc<crate::board_en::BoardNames>>,
 }
 
 impl CabHud {
@@ -275,12 +275,17 @@ impl CabHud {
 
     /// Enhancement `board_names`: romaji under the route board's station names. `tbl_texts`:
     /// translated texts by tilemap id (the station names are their name sprites' texts).
+    /// Kept for the next run start with the same bank and names (a stage intro and the run
+    /// after it build the same; about 10 ms of the stage-start tick).
     pub fn use_board_names(
         &mut self,
         bank: &shuppatsu_render::sprites::SpriteBank,
         tbl_texts: &std::collections::HashMap<u16, String>,
     ) {
-        let names = self
+        type Key = (u64, u64, Vec<u16>, Vec<(usize, String)>);
+        static KEPT: std::sync::Mutex<Option<(Key, std::sync::Arc<crate::board_en::BoardNames>)>> =
+            std::sync::Mutex::new(None);
+        let names: std::collections::HashMap<usize, String> = self
             .captions
             .defs()
             .names
@@ -289,7 +294,21 @@ impl CabHud {
             .filter_map(|(id, n)| Some((id, tbl_texts.get(&n.plain)?.clone())))
             .collect();
         let tilemaps: Vec<u16> = self.departure.diagram_tilemaps().collect();
-        self.board_names = Some(crate::board_en::BoardNames::new(bank, tilemaps, &names));
+        let mut sorted: Vec<(usize, String)> =
+            names.iter().map(|(&id, n)| (id, n.clone())).collect();
+        sorted.sort_unstable();
+        let key = (bank.art_id(), bank.generation(), tilemaps.clone(), sorted);
+        let mut kept = KEPT.lock().unwrap_or_else(|e| e.into_inner());
+        let built = match kept.as_ref() {
+            Some((k, b)) if *k == key => b.clone(),
+            _ => {
+                let b =
+                    std::sync::Arc::new(crate::board_en::BoardNames::new(bank, tilemaps, &names));
+                *kept = Some((key, b.clone()));
+                b
+            }
+        };
+        self.board_names = Some(built);
     }
 
     /// Enhancement `landmark_names`: translated names under the landmark captions, by
