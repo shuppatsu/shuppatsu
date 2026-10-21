@@ -156,7 +156,7 @@ pub struct GpuCache {
     /// Translated text parts by the address of their list, for one bank generation: the
     /// regions (four words each) and each part's pixels.
     parts_gen: u64,
-    parts: Vec<(usize, Blob, Vec<Blob>)>,
+    parts: Vec<(usize, Blob, Vec<PartBlobs>)>,
     text: Vec<(TextKey, Blob)>,
     legends: Vec<(LegendKey, Arc<[LegendGroup]>)>,
     sprites: Vec<(SpriteKey, Arc<Resampled>)>,
@@ -519,7 +519,7 @@ impl SpriteLayer {
                     let rects: Vec<u32> =
                         parts.iter().flat_map(|p| p.region.map(u32::from)).collect();
                     let rects = Blob::Words(rects.into());
-                    let blobs: Vec<Blob> = parts.iter().map(part_words).collect();
+                    let blobs: Vec<PartBlobs> = parts.iter().map(part_blobs).collect();
                     cache.parts.push((key, rects.clone(), blobs.clone()));
                     (rects, blobs)
                 }
@@ -619,6 +619,8 @@ impl SpriteLayer {
                 let [rx, ry, rw, rh] = p.region.map(i32::from);
                 let pb = clamp_box([ox + rx, oy + ry, ox + rx + rw, oy + ry + rh], c);
                 let Some(pb) = pb else { continue };
+                // Words 6, 8 and 9: the base, coverage and (flag 1 in word 10) text colour
+                // blobs; without colours per pixel, word 10 holds the colour << 8.
                 let params = [
                     w(ox),
                     w(oy),
@@ -628,8 +630,18 @@ impl SpriteLayer {
                     w(rh),
                     0,
                     u32::from(slot.palette),
+                    0,
+                    0,
+                    match blob.fg_map {
+                        Some(_) => 1,
+                        None => u32::from(p.fg) << 8,
+                    },
                 ];
-                b.push(kind::PART, pb, frame, &params, &[(6, blob.clone())]);
+                let mut data = vec![(6, blob.base.clone()), (8, blob.coverage.clone())];
+                if let Some(m) = &blob.fg_map {
+                    data.push((9, m.clone()));
+                }
+                b.push(kind::PART, pb, frame, &params, &data);
             }
         }
     }
@@ -940,13 +952,19 @@ impl SpriteLayer {
     }
 }
 
-/// A translated text part's pixels as words: base index, coverage << 8, text colour << 16.
-fn part_words(p: &RenderedPart) -> Blob {
-    let words: Vec<u32> = (0..p.base.len())
-        .map(|i| {
-            let fg = p.fg_map.get(i).copied().unwrap_or(p.fg);
-            u32::from(p.base[i]) | u32::from(p.coverage[i]) << 8 | u32::from(fg) << 16
-        })
-        .collect();
-    Blob::Words(words.into())
+/// A translated text part's pixels as the GPU reads them: its base indices and coverage, and
+/// its per-pixel text colours when it has them, shared with the part (nothing is copied).
+#[derive(Clone)]
+struct PartBlobs {
+    base: Blob,
+    coverage: Blob,
+    fg_map: Option<Blob>,
+}
+
+fn part_blobs(p: &RenderedPart) -> PartBlobs {
+    PartBlobs {
+        base: Blob::Bytes(p.base.clone()),
+        coverage: Blob::Bytes(p.coverage.clone()),
+        fg_map: (!p.fg_map.is_empty()).then(|| Blob::Bytes(p.fg_map.clone())),
+    }
 }

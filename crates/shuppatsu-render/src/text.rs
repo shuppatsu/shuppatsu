@@ -16,6 +16,7 @@
 use crate::sprites::SpriteBank;
 use shuppatsu_formats::cg::{Palette, TILE_SIZE};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Debug, thiserror::Error)]
 pub enum TextError {
@@ -617,13 +618,13 @@ pub struct RenderedPart {
     /// pixels × the overlay's scale).
     pub region: [u16; 4],
     /// Under-colour per pixel: 0 = keep what is below, else a palette index (box or outline).
-    pub base: Vec<u8>,
+    pub base: Arc<[u8]>,
     /// Text coverage per pixel, blended over `base` in colour `fg` (or the pixel's `fg_map`).
-    pub coverage: Vec<u8>,
+    pub coverage: Arc<[u8]>,
     pub fg: u8,
     /// The text colour per pixel, for lettering whose strokes are a vertical gradient
     /// ([`crate::lettering::gradient`]); empty = `fg` everywhere.
-    pub fg_map: Vec<u8>,
+    pub fg_map: Arc<[u8]>,
 }
 
 impl RenderedPart {
@@ -803,9 +804,11 @@ impl TextOverlay {
                     };
                     rendered.map(|mut r| {
                         if let Some((own, shared)) = outline {
-                            for b in r.base.iter_mut().filter(|b| **b == own) {
-                                *b = shared;
-                            }
+                            r.base = r
+                                .base
+                                .iter()
+                                .map(|&b| if b == own { shared } else { b })
+                                .collect();
                         }
                         r
                     })
@@ -1186,10 +1189,10 @@ fn render_part_at(
         });
     let rendered = RenderedPart {
         region: [(x * s) as u16, (y * s) as u16, sw as u16, sh as u16],
-        base,
-        coverage,
+        base: base.into(),
+        coverage: coverage.into(),
         fg,
-        fg_map,
+        fg_map: fg_map.into(),
     };
     Some((rendered, px))
 }

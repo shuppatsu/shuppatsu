@@ -188,14 +188,19 @@ fn paper(b: u32, x: i32, y: i32, cur: vec4<u32>) -> vec4<u32> {
 fn part(b: u32, x: i32, y: i32, cur: vec4<u32>) -> vec4<u32> {
     let rx = x - pi(b, 0u) - pi(b, 2u);
     let ry = y - pi(b, 1u) - pi(b, 3u);
-    let d = blobs[p(b, 6u) + u32(ry * pi(b, 4u) + rx)];
-    let base = d & 255u;
-    let c = (d >> 8u) & 255u;
+    let i = u32(ry * pi(b, 4u) + rx);
+    let base = byte_at(p(b, 6u), i);
+    let c = byte_at(p(b, 8u), i);
     if (base == 0u && c == 0u) {
         return cur;
     }
     let pl = p(b, 7u);
-    let fg = pal(pl, (d >> 16u) & 255u);
+    let fg_word = p(b, 10u);
+    var fg_index = fg_word >> 8u;
+    if ((fg_word & 1u) != 0u) {
+        fg_index = byte_at(p(b, 9u), i);
+    }
+    let fg = pal(pl, fg_index);
     var under = cur;
     if (base != 0u) {
         under = pal(pl, base);
