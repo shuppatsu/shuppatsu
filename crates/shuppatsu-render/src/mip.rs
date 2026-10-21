@@ -7,10 +7,17 @@
 /// The full chain down to 1×1, level 0 first: `(width, height, rgba8)`.
 pub fn chain(width: u32, height: u32, rgba: &[u8]) -> Vec<(u32, u32, Vec<u8>)> {
     let mut levels = vec![(width, height, rgba.to_vec())];
-    while let Some((w, h, data)) = levels.last()
-        && (*w > 1 || *h > 1)
-    {
-        let next = half(*w, *h, data);
+    levels.extend(below(width, height, rgba));
+    levels
+}
+
+/// The chain without level 0: level 1 first, empty for a 1×1 image.
+pub fn below(width: u32, height: u32, rgba: &[u8]) -> Vec<(u32, u32, Vec<u8>)> {
+    let mut levels: Vec<(u32, u32, Vec<u8>)> = Vec::new();
+    let (mut w, mut h) = (width, height);
+    while w > 1 || h > 1 {
+        let next = half(w, h, levels.last().map_or(rgba, |l| &l.2));
+        (w, h) = (next.0, next.1);
         levels.push(next);
     }
     levels

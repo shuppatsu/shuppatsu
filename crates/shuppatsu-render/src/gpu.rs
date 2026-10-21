@@ -527,19 +527,25 @@ impl Renderer {
         queue: &wgpu::Queue,
         pages: &[PageImage],
     ) {
+        // The smaller mip levels of every page, on all cores.
+        let mips = if self.wants_mipmaps() {
+            crate::par::par_map(pages, |p| crate::mip::below(p.width, p.height, &p.rgba))
+        } else {
+            pages.iter().map(|_| Vec::new()).collect()
+        };
         self.pages = pages
             .iter()
-            .map(|page| {
+            .zip(&mips)
+            .map(|(page, mips)| {
                 let size = wgpu::Extent3d {
                     width: page.width,
                     height: page.height,
                     depth_or_array_layers: 1,
                 };
-                let levels = if self.wants_mipmaps() {
-                    crate::mip::chain(page.width, page.height, &page.rgba)
-                } else {
-                    vec![(page.width, page.height, page.rgba.clone())]
-                };
+                let levels: Vec<(u32, u32, &[u8])> =
+                    std::iter::once((page.width, page.height, &page.rgba[..]))
+                        .chain(mips.iter().map(|(w, h, d)| (*w, *h, &d[..])))
+                        .collect();
                 let texture = device.create_texture(&wgpu::TextureDescriptor {
                     label: Some("page"),
                     size,
