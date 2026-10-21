@@ -154,6 +154,130 @@ pub struct SubView {
     pub clear: bool,
 }
 
+/// Whether pages get mipmaps: with `texture_filtering` or `anisotropic`.
+fn mipmaps(texture_filtering: bool, anisotropic: u16) -> bool {
+    texture_filtering || anisotropic > 1
+}
+
+/// The device, queue, layout and samplers [`Renderer::upload_pages`] uses, owned, so a
+/// route's texture pages can be uploaded on the thread that loads it (about 5 ms for the
+/// 344 pages of a stage, mostly per-texture overhead).
+#[derive(Clone)]
+pub struct PageUploader {
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    filtered_sampler: wgpu::Sampler,
+}
+
+/// Texture pages on the GPU for [`Renderer::use_pages`].
+pub struct UploadedPages {
+    pages: Vec<PageGpu>,
+    filtering: bool,
+    mipmaps: bool,
+}
+
+impl PageUploader {
+    /// Uploads `pages` as [`Renderer::upload_pages`] does with `texture_filtering` and
+    /// `anisotropic` set so.
+    pub fn upload(
+        &self,
+        pages: &[PageImage],
+        texture_filtering: bool,
+        anisotropic: u16,
+    ) -> UploadedPages {
+        let (device, queue) = (&self.device, &self.queue);
+        let mipmaps = mipmaps(texture_filtering, anisotropic);
+        // The smaller mip levels of every page, on all cores.
+        let mips = if mipmaps {
+            crate::par::par_map(pages, |p| crate::mip::below(p.width, p.height, &p.rgba))
+        } else {
+            pages.iter().map(|_| Vec::new()).collect()
+        };
+        let pages = pages
+            .iter()
+            .zip(&mips)
+            .map(|(page, mips)| {
+                let size = wgpu::Extent3d {
+                    width: page.width,
+                    height: page.height,
+                    depth_or_array_layers: 1,
+                };
+                let levels: Vec<(u32, u32, &[u8])> =
+                    std::iter::once((page.width, page.height, &page.rgba[..]))
+                        .chain(mips.iter().map(|(w, h, d)| (*w, *h, &d[..])))
+                        .collect();
+                let texture = device.create_texture(&wgpu::TextureDescriptor {
+                    label: Some("page"),
+                    size,
+                    mip_level_count: levels.len() as u32,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                });
+                for (level, (w, h, rgba)) in levels.iter().enumerate() {
+                    queue.write_texture(
+                        wgpu::TexelCopyTextureInfo {
+                            texture: &texture,
+                            mip_level: level as u32,
+                            origin: wgpu::Origin3d::ZERO,
+                            aspect: wgpu::TextureAspect::All,
+                        },
+                        rgba,
+                        wgpu::TexelCopyBufferLayout {
+                            offset: 0,
+                            bytes_per_row: Some(4 * w),
+                            rows_per_image: Some(*h),
+                        },
+                        wgpu::Extent3d {
+                            width: *w,
+                            height: *h,
+                            depth_or_array_layers: 1,
+                        },
+                    );
+                }
+                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("page"),
+                    layout: &self.layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(if texture_filtering {
+                                &self.filtered_sampler
+                            } else {
+                                &self.sampler
+                            }),
+                        },
+                    ],
+                });
+                PageGpu {
+                    bind_group,
+                    vertices: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "page vertices"),
+                    indices: StreamBuffer::new(wgpu::BufferUsages::INDEX, "page indices"),
+                    index_count: 0,
+                    bg_tex: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "page background"),
+                    bg_tex_count: 0,
+                    fx_tex: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "page effects"),
+                    fx_tex_count: 0,
+                }
+            })
+            .collect();
+        UploadedPages {
+            pages,
+            filtering: texture_filtering,
+            mipmaps,
+        }
+    }
+}
+
 pub struct Renderer {
     shader: wgpu::ShaderModule,
     target_format: wgpu::TextureFormat,
@@ -514,11 +638,6 @@ impl Renderer {
         }
     }
 
-    /// Whether pages get mipmaps: with `texture_filtering` or `anisotropic`.
-    fn wants_mipmaps(&self) -> bool {
-        self.texture_filtering || self.shading.anisotropic > 1
-    }
-
     /// Uploads texture pages (replacing earlier ones). Page `i` here is batch `i` of every
     /// [`FrameGeometry`].
     pub fn upload_pages(
@@ -527,87 +646,39 @@ impl Renderer {
         queue: &wgpu::Queue,
         pages: &[PageImage],
     ) {
-        // The smaller mip levels of every page, on all cores.
-        let mips = if self.wants_mipmaps() {
-            crate::par::par_map(pages, |p| crate::mip::below(p.width, p.height, &p.rgba))
-        } else {
-            pages.iter().map(|_| Vec::new()).collect()
-        };
-        self.pages = pages
-            .iter()
-            .zip(&mips)
-            .map(|(page, mips)| {
-                let size = wgpu::Extent3d {
-                    width: page.width,
-                    height: page.height,
-                    depth_or_array_layers: 1,
-                };
-                let levels: Vec<(u32, u32, &[u8])> =
-                    std::iter::once((page.width, page.height, &page.rgba[..]))
-                        .chain(mips.iter().map(|(w, h, d)| (*w, *h, &d[..])))
-                        .collect();
-                let texture = device.create_texture(&wgpu::TextureDescriptor {
-                    label: Some("page"),
-                    size,
-                    mip_level_count: levels.len() as u32,
-                    sample_count: 1,
-                    dimension: wgpu::TextureDimension::D2,
-                    format: wgpu::TextureFormat::Rgba8UnormSrgb,
-                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                    view_formats: &[],
-                });
-                for (level, (w, h, rgba)) in levels.iter().enumerate() {
-                    queue.write_texture(
-                        wgpu::TexelCopyTextureInfo {
-                            texture: &texture,
-                            mip_level: level as u32,
-                            origin: wgpu::Origin3d::ZERO,
-                            aspect: wgpu::TextureAspect::All,
-                        },
-                        rgba,
-                        wgpu::TexelCopyBufferLayout {
-                            offset: 0,
-                            bytes_per_row: Some(4 * w),
-                            rows_per_image: Some(*h),
-                        },
-                        wgpu::Extent3d {
-                            width: *w,
-                            height: *h,
-                            depth_or_array_layers: 1,
-                        },
-                    );
-                }
-                let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("page"),
-                    layout: &self.page_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(if self.texture_filtering {
-                                &self.filtered_sampler
-                            } else {
-                                &self.sampler
-                            }),
-                        },
-                    ],
-                });
-                PageGpu {
-                    bind_group,
-                    vertices: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "page vertices"),
-                    indices: StreamBuffer::new(wgpu::BufferUsages::INDEX, "page indices"),
-                    index_count: 0,
-                    bg_tex: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "page background"),
-                    bg_tex_count: 0,
-                    fx_tex: StreamBuffer::new(wgpu::BufferUsages::VERTEX, "page effects"),
-                    fx_tex_count: 0,
-                }
-            })
-            .collect();
+        let up = self.page_uploader(device, queue);
+        self.pages = up
+            .upload(pages, self.texture_filtering, self.shading.anisotropic)
+            .pages;
+    }
+
+    /// What uploading texture pages takes, to do it on another thread
+    /// ([`PageUploader::upload`], then [`Renderer::use_pages`]).
+    pub fn page_uploader(&self, device: &wgpu::Device, queue: &wgpu::Queue) -> PageUploader {
+        PageUploader {
+            device: device.clone(),
+            queue: queue.clone(),
+            layout: self.page_layout.clone(),
+            sampler: self.sampler.clone(),
+            filtered_sampler: self.filtered_sampler.clone(),
+        }
+    }
+
+    /// Takes pages uploaded by [`PageUploader::upload`] if they were made for the current
+    /// `texture_filtering` and `anisotropic` (the same sampler and mipmaps
+    /// [`Renderer::upload_pages`] would give them); false (and nothing changed) otherwise.
+    pub fn use_pages(&mut self, uploaded: UploadedPages) -> bool {
+        if (uploaded.filtering, uploaded.mipmaps) != (self.texture_filtering, self.wants_mipmaps())
+        {
+            return false;
+        }
+        self.pages = uploaded.pages;
+        true
+    }
+
+    /// Whether pages get mipmaps: with `texture_filtering` or `anisotropic`.
+    fn wants_mipmaps(&self) -> bool {
+        mipmaps(self.texture_filtering, self.shading.anisotropic)
     }
 
     /// Streams this frame's geometry to the GPU.

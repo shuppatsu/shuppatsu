@@ -116,6 +116,12 @@ impl PartLibrary {
         self.rects.get(&id).copied()
     }
 
+    /// Works out every rect's [`PartLibrary::seams`] now, on all cores.
+    pub fn prepare_seams(&self) {
+        let ids: Vec<u16> = self.seams.keys().copied().collect();
+        crate::par::par_map_min(&ids, 64, |&id| self.seams(id));
+    }
+
     /// Whether rect `id`'s texture wraps seamlessly along u and v ([`crate::ground`]).
     pub fn seams(&self, id: u16) -> [bool; 2] {
         let (Some((page, cell)), Some((_, rect))) = (self.seams.get(&id), self.rects.get(&id))

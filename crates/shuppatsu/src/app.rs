@@ -459,7 +459,8 @@ impl App {
             Next::Board(chosen) => {
                 // The run after the board: its route scene loads while the board shows.
                 let r = self.res.as_ref().expect("resources");
-                play::load_scene_ahead(&r.data, &self.play_options(r, chosen));
+                let up = play::page_uploader(r.gpu.as_ref());
+                play::load_scene_ahead(&r.data, &self.play_options(r, chosen), up);
                 let route = chosen.route;
                 let layer = &mut self.res.as_mut().expect("resources").layer;
                 let b = DepartureBoard::new(&self.defs.front, route, chosen.variant, layer);
@@ -966,7 +967,8 @@ impl App {
             && play::has_stage_intro(chosen.route)
         {
             let r = self.res.as_ref().expect("resources");
-            play::load_scene_ahead(&r.data, &self.play_options(r, chosen));
+            let up = play::page_uploader(r.gpu.as_ref());
+            play::load_scene_ahead(&r.data, &self.play_options(r, chosen), up);
         }
         if let Some(from) = movie {
             self.screen = self.start_movie(from);

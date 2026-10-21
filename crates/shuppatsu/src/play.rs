@@ -177,7 +177,11 @@ fn scene_key(com: &str, opts: &PlayOptions) -> SceneKey {
 /// Starts loading on a thread the route scene of the run `opts` will start (the departure
 /// board shows for seconds before it); [`Play::new`] takes it if its key matches. The
 /// stage-start tick waited for that load (about 20 ms, its longest part).
-pub fn load_scene_ahead(data: &GameData, opts: &PlayOptions) {
+pub fn load_scene_ahead(
+    data: &GameData,
+    opts: &PlayOptions,
+    uploader: Option<shuppatsu_render::PageUploader>,
+) {
     let mut data = data.clone();
     data.texture_pack = opts.locale.texture_pack.clone();
     let key = scene_key("", opts);
@@ -201,10 +205,15 @@ pub fn load_scene_ahead(data: &GameData, opts: &PlayOptions) {
             stage,
             pack,
         );
-        let scene = load_scene_for(&data, &key.0, key.1, (key.2, key.3, key.4))?;
+        let scene = load_scene_for(&data, &key.0, key.1, (key.2, key.3, key.4), uploader)?;
         Ok((key, scene))
     });
     *SCENE_AHEAD.lock().unwrap_or_else(|e| e.into_inner()) = Some(job);
+}
+
+/// What a scene loader needs to upload the texture pages on its own thread, with a window.
+pub fn page_uploader(gpu: Option<&Gpu>) -> Option<shuppatsu_render::PageUploader> {
+    gpu.map(|g| g.renderer.page_uploader(&g.device, &g.queue))
 }
 
 /// The scene loaded ahead for `key`, if there is one ([`load_scene_ahead`]).
@@ -420,7 +429,8 @@ impl Play {
                 visibility(&opts),
                 (opts.settings, geometry(&opts), opts.stage),
             );
-            std::thread::spawn(move || load_scene_for(&data, &com, vis, what))
+            let uploader = page_uploader(gpu.as_ref());
+            std::thread::spawn(move || load_scene_for(&data, &com, vis, what, uploader))
         });
         Hud::install_palettes(&exe, &mut layer)?;
         // The horn hint names the B button with a joystick in modes 5–6 (`FUN_00433270`).
@@ -868,6 +878,7 @@ fn load_scene(
         com,
         visibility,
         (opts.settings, geometry(opts), opts.stage),
+        None,
     )
 }
 
@@ -878,6 +889,7 @@ fn load_scene_for(
     com: &str,
     visibility: Visibility,
     (settings, geometry, stage): (crate::settings::Settings, crate::scene::Geometry, usize),
+    uploader: Option<shuppatsu_render::PageUploader>,
 ) -> Result<RouteScene> {
     let t = Instant::now();
     let mut scene = RouteScene::load(data, com, visibility)?;
@@ -885,6 +897,17 @@ fn load_scene_for(
     scene.set_geometry(geometry);
     scene.traffic_reach = settings.far_traffic.then_some(f64::from(geometry.far()));
     crate::traffic::load_stage_trains(&mut scene, data, stage)?;
+    // Every rect's seams (about 4 ms on all cores; the run's first frames did it rect by rect).
+    scene.library.prepare_seams();
+    // On this thread too: the pages' upload (about 5 ms) for the run to take.
+    scene.gpu_pages = uploader.map(|u| {
+        let s = settings;
+        u.upload(
+            &scene.library.pages,
+            s.texture_filtering,
+            s.shading().anisotropic,
+        )
+    });
     eprintln!("{com}: loaded in {:.2?}", t.elapsed());
     Ok(scene)
 }
@@ -1750,8 +1773,12 @@ impl Play {
         };
         r.band_top = HUD_BAND_TOP;
         self.scene.geometry().configure(r);
-        gpu.renderer
-            .upload_pages(&gpu.device, &gpu.queue, &self.scene.library.pages);
+        // Uploaded with the scene on its thread, or here.
+        let ahead = self.scene.gpu_pages.take();
+        if !ahead.is_some_and(|p| gpu.renderer.use_pages(p)) {
+            gpu.renderer
+                .upload_pages(&gpu.device, &gpu.queue, &self.scene.library.pages);
+        }
     }
 
     fn fail(&mut self, event_loop: &ActiveEventLoop, e: anyhow::Error) {

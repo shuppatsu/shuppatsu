@@ -21,5 +21,5 @@ pub mod text_audit;
 pub mod world;
 
 pub use camera::{Camera, Projection};
-pub use gpu::{Fog, Renderer, Shading, SubView};
+pub use gpu::{Fog, PageUploader, Renderer, Shading, SubView, UploadedPages};
 pub use world::{FrameGeometry, PartLibrary};

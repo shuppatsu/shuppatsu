@@ -213,6 +213,9 @@ pub struct RouteScene {
     pub traffic_reach: Option<f64>,
     /// Frame of the animated 3D signals: the rules' `signal_model` (`0x85744c`).
     pub signal_model: usize,
+    /// The texture pages already on the GPU when the scene was loaded on a thread
+    /// ([`shuppatsu_render::PageUploader`]), for the run to take instead of uploading them.
+    pub gpu_pages: Option<shuppatsu_render::UploadedPages>,
 }
 
 impl RouteScene {
@@ -290,6 +293,7 @@ impl RouteScene {
             traffic: Vec::new(),
             traffic_reach: None,
             signal_model: 0,
+            gpu_pages: None,
         })
     }
 
