@@ -344,6 +344,29 @@ const FILL_BAND: usize = 120;
 /// Shapes kept (one per side and canvas width in use).
 const SHAPES: usize = 8;
 
+/// The reaches (art columns, as [`PaperCache`] rounds them) of 16:10 and 16:9 canvases,
+/// whose shapes [`warm_shapes`] builds ahead.
+const LIKELY_REACHES: [i32; 2] = [64, 128];
+
+/// Builds on a thread the side shapes of a `width × height` picture's fill for the likely
+/// reaches, so the first fill (the first frame of a fade) does not wait for them.
+pub(super) fn warm_shapes(spec: &Paper, (width, height): (usize, usize)) {
+    let ex = (
+        usize::from(spec.source_cols),
+        usize::from(spec.source_rows.1.saturating_sub(spec.source_rows.0)),
+    );
+    let (w, r) = (width as i32, i32::from(spec.ramp));
+    if ex.0 == 0 || ex.1 == 0 || height == 0 {
+        return;
+    }
+    std::thread::spawn(move || {
+        for reach in LIKELY_REACHES {
+            SideShape::get(ex, height, -reach..r, (r - 1, -1, r));
+            SideShape::get(ex, height, w - r..w + reach, (w - r, 1, r));
+        }
+    });
+}
+
 impl SideShape {
     fn get(
         (w, h): (usize, usize),
@@ -383,6 +406,10 @@ impl SideShape {
         .concat();
         let shape = Arc::new(Self { columns, taps });
         let mut kept = lock();
+        // Built meanwhile by another thread (the warm-up, the other side).
+        if let Some((_, s)) = kept.iter().find(|(k, _)| *k == key) {
+            return s.clone();
+        }
         if kept.len() >= SHAPES {
             kept.remove(0);
         }

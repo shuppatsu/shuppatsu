@@ -461,9 +461,16 @@ impl SpriteBank {
     /// exists.
     pub fn set_wide_paper(&mut self, tbl: u16, paper: Paper) -> bool {
         self.generation += 1;
-        if self.tilemaps.get(usize::from(tbl)).is_none() {
+        let Some(map) = self.tilemaps.get(usize::from(tbl)) else {
             return false;
-        }
+        };
+        paper::warm_shapes(
+            &paper,
+            (
+                usize::from(map.width) * TILE_SIZE,
+                usize::from(map.height) * TILE_SIZE,
+            ),
+        );
         self.put_wide_fill(tbl, WideFill::Paper(paper));
         true
     }
