@@ -812,7 +812,7 @@ fn start_subtitles(
         return Ok(None);
     };
     s.set_voice_log(true);
-    let cat = crate::locale::Catalogue::load(&opts.locale.lang, opts.locale.dir.as_deref())?;
+    let cat = crate::locale::Catalogue::shared(&opts.locale.lang, opts.locale.dir.as_deref())?;
     let book = crate::subtitles::SubtitleBook::for_game(&cat, exe, data, s.tables())?;
     Ok(Some(crate::subtitles::Subtitles::new(book)))
 }

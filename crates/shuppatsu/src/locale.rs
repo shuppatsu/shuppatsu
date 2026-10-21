@@ -211,6 +211,36 @@ impl Catalogue {
         Ok(cat)
     }
 
+    /// [`Catalogue::load`], parsed once per process while the file stays the same (its size
+    /// and modification time): a run start reads it five times (plates, landmarks, captions,
+    /// subtitles, the port's strings), about 3 ms each.
+    pub fn shared(lang: &str, dir: Option<&Path>) -> Result<std::sync::Arc<Self>> {
+        type Key = (
+            String,
+            Option<(PathBuf, u64, Option<std::time::SystemTime>)>,
+        );
+        static KEPT: std::sync::Mutex<Vec<(Key, std::sync::Arc<Catalogue>)>> =
+            std::sync::Mutex::new(Vec::new());
+        let file = dir.map(|d| d.join(format!("{lang}.toml"))).and_then(|f| {
+            let m = std::fs::metadata(&f).ok().filter(|m| m.is_file())?;
+            Some((f, m.len(), m.modified().ok()))
+        });
+        let key = (lang.to_owned(), file);
+        if let Some((_, c)) = KEPT
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|(k, _)| *k == key)
+        {
+            return Ok(c.clone());
+        }
+        let cat = std::sync::Arc::new(Self::load(lang, dir)?);
+        let mut kept = KEPT.lock().unwrap_or_else(|e| e.into_inner());
+        kept.retain(|(k, _)| k.0 != key.0);
+        kept.push((key, cat.clone()));
+        Ok(cat)
+    }
+
     /// Parses and checks a catalogue. Every key must be a valid tbl id or a known sheet
     /// descriptor; unknown fields are errors, so typos do not silently fall back to the art.
     pub fn parse(src: &str) -> Result<Self> {
@@ -418,7 +448,7 @@ pub fn caption_phrases(cfg: &LocaleConfig) -> Result<Option<CaptionPhrases>> {
     if !cfg.active() {
         return Ok(None);
     }
-    let cat = Catalogue::load(&cfg.lang, cfg.dir.as_deref())?;
+    let cat = Catalogue::shared(&cfg.lang, cfg.dir.as_deref())?;
     if cat.captions.is_empty() {
         return Ok(None);
     }
@@ -433,7 +463,10 @@ pub fn caption_phrases(cfg: &LocaleConfig) -> Result<Option<CaptionPhrases>> {
         tbl_texts: cat.tbl_texts(),
         tbl_parts: cat.tbl_parts(),
         fonts: cat.caption_fonts,
-        staff_kanji: cat.staff_kanji.unwrap_or_else(|| "{kanji}".to_owned()),
+        staff_kanji: cat
+            .staff_kanji
+            .clone()
+            .unwrap_or_else(|| "{kanji}".to_owned()),
     }))
 }
 
@@ -689,7 +722,7 @@ impl Locale {
     /// the built-in catalogue. `ja` keeps the original art: its catalogue names only the
     /// port's own cells ([`crate::front::add_port_art`]), never an original sprite.
     pub fn load(lang: &str, dir: Option<&Path>, sheets: &SheetTables) -> Result<Self> {
-        Self::from_catalogue(&Catalogue::load(lang, dir)?, sheets)
+        Self::from_catalogue(&*Catalogue::shared(lang, dir)?, sheets)
     }
 
     pub fn is_identity(&self) -> bool {
@@ -994,8 +1027,8 @@ pub fn station_plate_names(cfg: &LocaleConfig) -> Result<HashMap<u16, String>> {
     if !cfg.active() {
         return Ok(HashMap::new());
     }
-    let cat = Catalogue::load(&cfg.lang, cfg.dir.as_deref())?;
-    Ok(cat.station_plates.into_iter().collect())
+    let cat = Catalogue::shared(&cfg.lang, cfg.dir.as_deref())?;
+    Ok(cat.station_plates.iter().cloned().collect())
 }
 
 /// The translated landmark names (`[landmark]`), by landmark sprite tilemap id; empty unless
@@ -1004,8 +1037,8 @@ pub fn landmark_names(cfg: &LocaleConfig) -> Result<HashMap<u16, String>> {
     if !cfg.active() {
         return Ok(HashMap::new());
     }
-    let cat = Catalogue::load(&cfg.lang, cfg.dir.as_deref())?;
-    Ok(cat.landmarks.into_iter().collect())
+    let cat = Catalogue::shared(&cfg.lang, cfg.dir.as_deref())?;
+    Ok(cat.landmarks.iter().cloned().collect())
 }
 
 #[cfg(test)]

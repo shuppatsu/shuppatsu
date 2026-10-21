@@ -461,8 +461,8 @@ impl UiText {
     /// The strings of `lang` (`dir` as [`crate::locale::Catalogue::load`]); a catalogue that
     /// does not load is reported and English is used.
     pub fn load(lang: &str, dir: Option<&Path>) -> Self {
-        let read = |l: &str| match crate::locale::Catalogue::load(l, dir) {
-            Ok(c) => c.ui.into_iter().collect(),
+        let read = |l: &str| match crate::locale::Catalogue::shared(l, dir) {
+            Ok(c) => c.ui.iter().cloned().collect(),
             Err(e) => {
                 eprintln!("warning: ui text {l}: {e:#}");
                 HashMap::new()
