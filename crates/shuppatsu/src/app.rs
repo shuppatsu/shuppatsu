@@ -186,6 +186,8 @@ pub struct App {
     ticks: u64,
     accumulator: Duration,
     last_frame: Instant,
+    /// How the event loop waits between redraws.
+    idle: crate::pacing::IdleWait,
     error: Option<anyhow::Error>,
     /// An issue mark waiting for its frame ([`crate::marks`]).
     mark: Option<crate::marks::Pending>,
@@ -342,6 +344,7 @@ impl App {
             ticks: 0,
             accumulator: Duration::ZERO,
             last_frame: now,
+            idle: crate::pacing::IdleWait::from_env(),
             error: None,
             mark: None,
             boot,
@@ -1493,6 +1496,7 @@ impl ApplicationHandler for App {
             return;
         }
         if matches!(event, WindowEvent::RedrawRequested) {
+            self.idle.redraw(Instant::now());
             if crate::marks::take_request() && self.mark.is_none() {
                 self.mark = crate::marks::begin(self.gpu_mut());
             }
@@ -1508,6 +1512,10 @@ impl ApplicationHandler for App {
                 g.window.request_redraw();
             }
         }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        event_loop.set_control_flow(self.idle.control_flow(Instant::now()));
     }
 }
 

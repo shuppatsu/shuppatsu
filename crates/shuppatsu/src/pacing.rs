@@ -65,6 +65,79 @@ impl FrameClock {
     }
 }
 
+/// How the event loop waits between redraws (docs/performance.md, "Frame pacing"). Polling
+/// keeps a core busy; sleeping until the next redraw lets the core clock down, and the frame
+/// after it runs slower. With a margin, the loop sleeps until `margin` before the next redraw
+/// is due (the previous one plus the shortest recent interval) and polls from there.
+#[derive(Debug, Clone)]
+pub struct IdleWait {
+    margin: Option<Duration>,
+    last: Option<Instant>,
+    /// The shortest of the recent redraw intervals, and how many redraws it has stood.
+    period: Option<(Duration, u32)>,
+}
+
+/// Redraws after which the shortest interval is measured afresh.
+const PERIOD_WINDOW: u32 = 240;
+
+/// Polling starts this long (ms) before the next redraw is due. Measured on the 120 Hz TV
+/// (docs/performance.md): driving misses as few refreshes as with polling throughout and
+/// every section of the frame takes as long, at half the CPU time; sleeping to the redraw
+/// itself (0) made the frame work about 40 % slower.
+pub const DEFAULT_MARGIN_MS: f64 = 1.0;
+
+impl IdleWait {
+    /// The margin is [`DEFAULT_MARGIN_MS`]; `SHUPPATSU_IDLE_WAIT=<ms>` sets another, `poll`
+    /// makes the loop poll throughout.
+    pub fn from_env() -> Self {
+        let margin = match std::env::var("SHUPPATSU_IDLE_WAIT") {
+            Ok(v) if v == "poll" => None,
+            Ok(v) => v
+                .parse::<f64>()
+                .ok()
+                .filter(|ms| ms.is_finite() && *ms >= 0.0)
+                .or(Some(DEFAULT_MARGIN_MS)),
+            Err(_) => Some(DEFAULT_MARGIN_MS),
+        }
+        .map(|ms| Duration::from_secs_f64(ms / 1000.0));
+        Self {
+            margin,
+            last: None,
+            period: None,
+        }
+    }
+
+    /// A redraw starts at `now`.
+    pub fn redraw(&mut self, now: Instant) {
+        if let Some(last) = self.last {
+            let d = now.saturating_duration_since(last);
+            self.period = Some(match self.period {
+                Some((p, n)) if n < PERIOD_WINDOW && p <= d => (p, n + 1),
+                _ => (d, 0),
+            });
+        }
+        self.last = Some(now);
+    }
+
+    /// The control flow until the next event.
+    pub fn control_flow(&self, now: Instant) -> winit::event_loop::ControlFlow {
+        use winit::event_loop::ControlFlow;
+        let (Some(margin), Some(last), Some((period, _))) = (self.margin, self.last, self.period)
+        else {
+            return ControlFlow::Poll;
+        };
+        // An interval far off any display rate (a stall) caps the sleep.
+        let period = period.min(Duration::from_millis(50));
+        match (last + period).checked_sub(margin) {
+            Some(t) if t > now => ControlFlow::WaitUntil(t),
+            // A redraw long overdue (a hidden window gets no frame callbacks): sleep until an
+            // event comes.
+            _ if now > last + 4 * period => ControlFlow::Wait,
+            _ => ControlFlow::Poll,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -117,5 +190,37 @@ mod tests {
         assert!((two - 2.0 / 60.0).abs() < 2e-4, "{two}");
         let stall = c.advance(s(1.5), Some(p)).as_secs_f64();
         assert!(stall > 0.45, "{stall}");
+    }
+
+    /// The loop sleeps until the margin before the next redraw, polls from there, and sleeps
+    /// for events once a redraw is long overdue; without a margin it always polls.
+    #[test]
+    fn idle_wait_sleeps_until_the_margin() {
+        use winit::event_loop::ControlFlow;
+        let start = Instant::now();
+        let ms = |v: f64| Duration::from_secs_f64(v / 1000.0);
+        let mut w = IdleWait {
+            margin: Some(ms(1.0)),
+            last: None,
+            period: None,
+        };
+        assert_eq!(w.control_flow(start), ControlFlow::Poll);
+        for (k, jitter) in [0.0, 0.3, -0.2, 0.1].into_iter().enumerate() {
+            w.redraw(start + ms(k as f64 * 8.333 + jitter));
+        }
+        // The shortest interval: 8.333 − 0.5 ms.
+        let last = start + ms(3.0 * 8.333 + 0.1);
+        let period = ms(8.333 - 0.5);
+        assert_eq!(
+            w.control_flow(last + ms(1.0)),
+            ControlFlow::WaitUntil(last + period - ms(1.0))
+        );
+        assert_eq!(w.control_flow(last + period - ms(0.5)), ControlFlow::Poll);
+        assert_eq!(w.control_flow(last + 5 * period), ControlFlow::Wait);
+        let poll = IdleWait {
+            margin: None,
+            ..w.clone()
+        };
+        assert_eq!(poll.control_flow(last + ms(1.0)), ControlFlow::Poll);
     }
 }

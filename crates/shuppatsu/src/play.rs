@@ -447,6 +447,7 @@ impl Play {
             accumulator: Duration::ZERO,
             last_frame: now,
             clock: crate::pacing::FrameClock::new(opts.settings.vsync),
+            idle: crate::pacing::IdleWait::from_env(),
             refresh: None,
             title_at: now,
             title_frames: (0, Duration::ZERO),
@@ -858,6 +859,8 @@ pub struct Play {
     last_frame: Instant,
     /// How far each redraw moves the simulation ([`crate::pacing`]).
     clock: crate::pacing::FrameClock,
+    /// How the event loop waits between redraws (`shuppatsu play`).
+    idle: crate::pacing::IdleWait,
     /// The display's refresh period ([`Play::refresh_period`]), `None` before the first look.
     refresh: Option<Option<Duration>>,
     title_at: Instant,
@@ -1690,6 +1693,7 @@ impl ApplicationHandler for Play {
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::RedrawRequested => {
+                self.idle.redraw(Instant::now());
                 if crate::marks::take_request() && self.mark.is_none() {
                     self.mark = crate::marks::begin(self.gpu.as_mut());
                 }
@@ -1708,6 +1712,10 @@ impl ApplicationHandler for Play {
             }
             other => self.window_input(&other),
         }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        event_loop.set_control_flow(self.idle.control_flow(Instant::now()));
     }
 }
 
