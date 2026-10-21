@@ -85,13 +85,13 @@ impl PartLibrary {
     /// Adds a texture file; its pages get global indices after those already added.
     pub fn add_textures(&mut self, tex: &TexFile) {
         let base = self.pages.len();
-        for page in &tex.pages {
-            self.pages.push(PageImage {
+        // Pages convert independently: on all cores (a stage start's scene load waits for them).
+        self.pages
+            .extend(crate::par::par_map(&tex.pages, |page| PageImage {
                 width: page.width.into(),
                 height: page.height.into(),
                 rgba: page.to_rgba8(),
-            });
-        }
+            }));
         for r in &tex.rects {
             self.rects.insert(r.id, (base + usize::from(r.page), *r));
             self.seams.insert(
