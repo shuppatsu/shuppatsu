@@ -218,13 +218,19 @@ struct Resampled {
 impl Resampled {
     fn new(art: &Art<'_>, z: f32, (w, h): (usize, usize)) -> Self {
         let [ax, ay, sw, sh] = art.rect;
-        let mut known: std::collections::HashMap<Vec<(u8, u32)>, u32> = Default::default();
-        let mut lists = Vec::new();
-        let mut ids = vec![u32::MAX; w * h];
-        for ry in 0..h {
+        type Key = Vec<(u8, u32)>;
+        // Each row on its own core: its pixels' lists, numbered by first appearance in the
+        // row (a whole staff-roll picture has a handful of lists over 400 K pixels, so the
+        // pixel before usually has the same one).
+        let rows = crate::par::par_range(h, 4, |ry| {
             let rows: Vec<(usize, f32)> = footprint(ry as i64, z, sh).collect();
-            for rx in 0..w {
-                let mut list = Vec::new();
+            let mut known: std::collections::HashMap<Key, u32> = Default::default();
+            let mut lists: Vec<Vec<(u8, f32)>> = Vec::new();
+            let mut ids = vec![u32::MAX; w];
+            let (mut list, mut key): (Vec<(u8, f32)>, Key) = (Vec::new(), Vec::new());
+            let mut last: Option<(Key, u32)> = None;
+            for (rx, id) in ids.iter_mut().enumerate() {
+                list.clear();
                 for (col, wx) in footprint(rx as i64, z, sw) {
                     for &(row, wy) in &rows {
                         let index = art.px[(ay + row) * art.stride + ax + col];
@@ -236,12 +242,47 @@ impl Resampled {
                 if list.is_empty() {
                     continue;
                 }
-                let key: Vec<(u8, u32)> = list.iter().map(|&(i, w)| (i, w.to_bits())).collect();
-                ids[ry * w + rx] = *known.entry(key).or_insert_with(|| {
-                    lists.push(list);
-                    (lists.len() - 1) as u32
-                });
+                key.clear();
+                key.extend(list.iter().map(|&(i, w)| (i, w.to_bits())));
+                *id = match &last {
+                    Some((k, id)) if *k == key => *id,
+                    _ => {
+                        let id = match known.get(key.as_slice()) {
+                            Some(&id) => id,
+                            None => {
+                                lists.push(list.clone());
+                                let id = (lists.len() - 1) as u32;
+                                known.insert(key.clone(), id);
+                                id
+                            }
+                        };
+                        last = Some((key.clone(), id));
+                        id
+                    }
+                };
             }
+            (ids, lists)
+        });
+        // Numbered for the whole picture in the same order: by first appearance, row by row.
+        let mut known: std::collections::HashMap<Key, u32> = Default::default();
+        let mut lists = Vec::new();
+        let mut ids = Vec::with_capacity(w * h);
+        for (row_ids, row_lists) in rows {
+            let global: Vec<u32> = row_lists
+                .into_iter()
+                .map(|list| {
+                    let key: Key = list.iter().map(|&(i, w)| (i, w.to_bits())).collect();
+                    *known.entry(key).or_insert_with(|| {
+                        lists.push(list);
+                        (lists.len() - 1) as u32
+                    })
+                })
+                .collect();
+            ids.extend(
+                row_ids
+                    .into_iter()
+                    .map(|id| global.get(id as usize).copied().unwrap_or(u32::MAX)),
+            );
         }
         Self {
             ids: Blob::Words(ids.into()),
