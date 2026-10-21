@@ -457,6 +457,9 @@ impl App {
                 }
             }
             Next::Board(chosen) => {
+                // The run after the board: its route scene loads while the board shows.
+                let r = self.res.as_ref().expect("resources");
+                play::load_scene_ahead(&r.data, &self.play_options(r, chosen));
                 let route = chosen.route;
                 let layer = &mut self.res.as_mut().expect("resources").layer;
                 let b = DepartureBoard::new(&self.defs.front, route, chosen.variant, layer);
@@ -595,10 +598,10 @@ impl App {
         crate::movie::movie_rect(window, design, enhanced, dar)
     }
 
-    fn start_play(&mut self, chosen: Chosen) -> Result<Play> {
-        let mut shared = self.res.take().expect("resources");
+    /// The options of a run of `chosen` started from the front end.
+    fn play_options(&self, shared: &Shared, chosen: Chosen) -> PlayOptions {
         let o = shared.save.eeprom.options();
-        let opts = PlayOptions {
+        PlayOptions {
             stage: chosen.route,
             difficulty: usize::from(shared.save.eeprom.difficulty()),
             difficulty_from_save: false,
@@ -617,7 +620,12 @@ impl App {
             ending: None,
             intro: false,
             locale: self.opts.locale.clone(),
-        };
+        }
+    }
+
+    fn start_play(&mut self, chosen: Chosen) -> Result<Play> {
+        let mut shared = self.res.take().expect("resources");
+        let opts = self.play_options(&shared, chosen);
         eprintln!(
             "select stage {} → route {}{}, difficulty {}",
             chosen.stage,

@@ -113,22 +113,7 @@ struct Tables {
 }
 
 fn start_drive(tables: &Tables, opts: &PlayOptions, station: usize) -> Result<Drive> {
-    let loader_data = GameData::from_env()?;
-    let loader = move |name: &str| -> Result<Vec<u8>, LoadError> {
-        loader_data
-            .read(name)
-            .map_err(|e| LoadError::from(format!("{e:#}")))
-    };
-    let drive = Drive::new(
-        &tables.train,
-        &tables.rules,
-        &tables.stages,
-        opts.stage,
-        opts.difficulty,
-        station,
-        loader,
-    )
-    .context("starting the stage")?;
+    let drive = new_drive(tables, (opts.stage, opts.difficulty, station))?;
     eprintln!(
         "stage {} difficulty {} from station {station} ({})",
         opts.stage,
@@ -136,6 +121,102 @@ fn start_drive(tables: &Tables, opts: &PlayOptions, station: usize) -> Result<Dr
         drive.station_name(station).unwrap_or("?")
     );
     Ok(drive)
+}
+
+/// The drive of `stage` at `difficulty` from `station`.
+fn new_drive(
+    tables: &Tables,
+    (stage, difficulty, station): (usize, usize, usize),
+) -> Result<Drive> {
+    let loader_data = GameData::from_env()?;
+    let loader = move |name: &str| -> Result<Vec<u8>, LoadError> {
+        loader_data
+            .read(name)
+            .map_err(|e| LoadError::from(format!("{e:#}")))
+    };
+    Drive::new(
+        &tables.train,
+        &tables.rules,
+        &tables.stages,
+        stage,
+        difficulty,
+        station,
+        loader,
+    )
+    .context("starting the stage")
+}
+
+/// What a run's route scene is loaded from ([`load_scene_for`]): the COM file, visibility,
+/// settings, geometry, stage and texture pack.
+type SceneKey = (
+    String,
+    Visibility,
+    crate::settings::Settings,
+    crate::scene::Geometry,
+    usize,
+    Option<PathBuf>,
+);
+
+/// A scene loading on a thread ahead of its run ([`load_scene_ahead`]), with its key.
+type SceneAhead = std::thread::JoinHandle<Result<(SceneKey, RouteScene)>>;
+
+static SCENE_AHEAD: std::sync::Mutex<Option<SceneAhead>> = std::sync::Mutex::new(None);
+
+/// The key of the scene a run with `opts` starting on `com` loads.
+fn scene_key(com: &str, opts: &PlayOptions) -> SceneKey {
+    (
+        com.to_owned(),
+        visibility(opts),
+        opts.settings,
+        geometry(opts),
+        opts.stage,
+        opts.locale.texture_pack.clone(),
+    )
+}
+
+/// Starts loading on a thread the route scene of the run `opts` will start (the departure
+/// board shows for seconds before it); [`Play::new`] takes it if its key matches. The
+/// stage-start tick waited for that load (about 20 ms, its longest part).
+pub fn load_scene_ahead(data: &GameData, opts: &PlayOptions) {
+    let mut data = data.clone();
+    data.texture_pack = opts.locale.texture_pack.clone();
+    let key = scene_key("", opts);
+    let (stage, difficulty, station) = (opts.stage, opts.difficulty, opts.station);
+    let job = std::thread::spawn(move || {
+        let exe_bytes = data.exe()?;
+        let exe = Exe::parse(&exe_bytes)?;
+        let tables = Tables {
+            train: TrainTables::read(&exe)?,
+            rules: RuleTables::read(&exe)?,
+            stages: StageTables::read(&exe)?,
+            result: ResultTables::read(&exe)?,
+        };
+        let drive = new_drive(&tables, (stage, difficulty, station))?;
+        let (_, vis, settings, geometry, stage, pack) = key;
+        let key = (
+            drive.com_name().to_owned(),
+            vis,
+            settings,
+            geometry,
+            stage,
+            pack,
+        );
+        let scene = load_scene_for(&data, &key.0, key.1, (key.2, key.3, key.4))?;
+        Ok((key, scene))
+    });
+    *SCENE_AHEAD.lock().unwrap_or_else(|e| e.into_inner()) = Some(job);
+}
+
+/// The scene loaded ahead for `key`, if there is one ([`load_scene_ahead`]).
+fn scene_ahead(key: &SceneKey) -> Option<RouteScene> {
+    let job = SCENE_AHEAD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()?;
+    match job.join() {
+        Ok(Ok((k, scene))) if k == *key => Some(scene),
+        _ => None,
+    }
 }
 
 /// What a run borrows from its owner: moved into [`Play::new`] and handed back by
@@ -331,14 +412,16 @@ impl Play {
         let canvas = shuppatsu_render::sprites::Composer::blank(layer.canvas_size());
         // The route scene loads on its own thread while the cab is set up (both take tens of ms
         // at a stage start).
-        let scene_job = {
+        // Loaded ahead while the departure board showed ([`load_scene_ahead`]), or here.
+        let ahead = scene_ahead(&scene_key(drive.com_name(), &opts));
+        let scene_job = ahead.is_none().then(|| {
             let (data, com) = (data.clone(), drive.com_name().to_owned());
             let (vis, what) = (
                 visibility(&opts),
                 (opts.settings, geometry(&opts), opts.stage),
             );
             std::thread::spawn(move || load_scene_for(&data, &com, vis, what))
-        };
+        });
         Hud::install_palettes(&exe, &mut layer)?;
         // The horn hint names the B button with a joystick in modes 5–6 (`FUN_00433270`).
         let mut cab = CabHud::new(&exe, opts.stage, matches!(opts.control_mode, 5 | 6))?;
@@ -408,9 +491,13 @@ impl Play {
             s.begin_stage(&exe, &drive)?;
         }
         let visibility = visibility(&opts);
-        let scene = scene_job
-            .join()
-            .map_err(|_| anyhow::anyhow!("the scene loader panicked"))??;
+        let scene = match (ahead, scene_job) {
+            (Some(scene), _) => scene,
+            (None, Some(job)) => job
+                .join()
+                .map_err(|_| anyhow::anyhow!("the scene loader panicked"))??,
+            (None, None) => unreachable!("a scene job without a scene ahead"),
+        };
         let script = load_script(opts.inputs.as_deref())?;
         let mut controls = controls;
         if let Some(h) = script.hint {
