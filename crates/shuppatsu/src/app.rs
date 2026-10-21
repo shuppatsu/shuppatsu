@@ -961,6 +961,13 @@ impl App {
             }
             s @ (Screen::Play(_) | Screen::Quit) => s,
         };
+        // The stage intro is a run of its own: its route scene loads during the wait before it.
+        if let Screen::Wait(TO_INTRO_TICKS, Next::Intro(chosen)) = self.screen
+            && play::has_stage_intro(chosen.route)
+        {
+            let r = self.res.as_ref().expect("resources");
+            play::load_scene_ahead(&r.data, &self.play_options(r, chosen));
+        }
         if let Some(from) = movie {
             self.screen = self.start_movie(from);
         }
