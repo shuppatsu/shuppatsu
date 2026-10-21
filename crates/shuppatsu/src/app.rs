@@ -431,6 +431,16 @@ impl App {
     }
 
     fn start(&mut self, next: Next, sfx: &mut Vec<Sfx>) -> Result<()> {
+        // The movie read ahead (about 33 MB) is let go for a run, which cannot show it, and
+        // read again when attract or the title menu comes back.
+        match next {
+            Next::Intro(_) | Next::Board(_) | Next::Play(_) => self.movie_ahead = None,
+            Next::Attract { .. } | Next::Title { .. } if self.movie_ahead.is_none() => {
+                let r = self.res.as_ref().expect("resources");
+                self.movie_ahead = Some(crate::movie::MovieAhead::start(r.data.data_dir()));
+            }
+            _ => {}
+        }
         self.screen = match next {
             Next::Attract { skip_opening } => {
                 Screen::Attract(Attract::new(skip_opening, self.attract_counters))
