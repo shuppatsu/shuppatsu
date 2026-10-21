@@ -160,6 +160,13 @@ pub struct TickInput {
     pub tolerance_m: i32,
 }
 
+/// The translated cab texts of a run ([`CabHud::translations`]).
+pub struct Translations {
+    landmarks: Option<crate::captions::LandmarkLines>,
+    one_line: Option<crate::captions::OneLine>,
+    board: Option<std::sync::Arc<crate::board_en::BoardNames>>,
+}
+
 pub struct CabHud {
     pub hud: Hud,
     popups: Popups,
@@ -243,28 +250,44 @@ impl CabHud {
         })
     }
 
-    /// Enhancement `one_line_captions`: captions and banners as one translated line. Returns
-    /// false (and keeps the sprites) when the art has no caption sprites. The route board's
-    /// names (enhancement `board_names`) use the same station texts: [`CabHud::use_board_names`].
-    pub fn use_one_line_captions(
-        &mut self,
+    /// The translated cab texts of a run (install them with [`CabHud::use_translations`]);
+    /// it only reads the cab, so a run start builds them beside its other work (the board
+    /// names take about 9 ms the first time):
+    /// - enhancement `landmark_names` (`landmarks`): translated names under the landmark
+    ///   captions, by landmark sprite tilemap;
+    /// - enhancement `one_line_captions` (`one_line`): captions and banners as one translated
+    ///   line (the sprites stay when the art has no caption sprites);
+    /// - enhancement `board_names` (`board`, translated texts by tilemap id: the station names
+    ///   are their name sprites' texts): romaji under the route board's station names, kept
+    ///   for the next run start with the same bank and names (a stage intro and the run after
+    ///   it build the same).
+    pub fn translations(
+        &self,
         bank: &shuppatsu_render::sprites::SpriteBank,
-        phrases: &crate::locale::CaptionPhrases,
-    ) -> bool {
+        landmarks: Option<&std::collections::HashMap<u16, String>>,
+        one_line: Option<&crate::locale::CaptionPhrases>,
+        board: Option<&std::collections::HashMap<u16, String>>,
+    ) -> Translations {
         let defs = self.captions.defs();
-        let one = crate::captions::OneLine::new(
-            bank,
-            defs,
-            &phrases.tbl_texts,
-            phrases.by_kind.clone(),
-            phrases.fonts,
-        );
-        match one {
-            Some(o) => {
-                self.captions.use_one_line(o);
-                true
-            }
-            None => false,
+        Translations {
+            landmarks: landmarks.map(|n| crate::captions::LandmarkLines::new(bank, defs, n)),
+            one_line: one_line.and_then(|p| {
+                crate::captions::OneLine::new(bank, defs, &p.tbl_texts, p.by_kind.clone(), p.fonts)
+            }),
+            board: board.map(|t| self.board_names(bank, t)),
+        }
+    }
+
+    /// Installs what [`CabHud::translations`] built.
+    pub fn use_translations(&mut self, t: Translations) {
+        if let Some(l) = t.landmarks {
+            self.captions.use_landmark_lines(l);
+        }
+        if let Some(o) = t.one_line {
+            self.captions.use_one_line(o);
+        }
+        if let Some(b) = t.board {
+            self.board_names = Some(b);
         }
     }
 
@@ -273,15 +296,12 @@ impl CabHud {
         &self.captions
     }
 
-    /// Enhancement `board_names`: romaji under the route board's station names. `tbl_texts`:
-    /// translated texts by tilemap id (the station names are their name sprites' texts).
-    /// Kept for the next run start with the same bank and names (a stage intro and the run
-    /// after it build the same; about 10 ms of the stage-start tick).
-    pub fn use_board_names(
-        &mut self,
+    /// Enhancement `board_names` for `tbl_texts`, built or kept from the last start.
+    fn board_names(
+        &self,
         bank: &shuppatsu_render::sprites::SpriteBank,
         tbl_texts: &std::collections::HashMap<u16, String>,
-    ) {
+    ) -> std::sync::Arc<crate::board_en::BoardNames> {
         type Key = (u64, u64, Vec<u16>, Vec<(usize, String)>);
         static KEPT: std::sync::Mutex<Option<(Key, std::sync::Arc<crate::board_en::BoardNames>)>> =
             std::sync::Mutex::new(None);
@@ -293,13 +313,13 @@ impl CabHud {
             .enumerate()
             .filter_map(|(id, n)| Some((id, tbl_texts.get(&n.plain)?.clone())))
             .collect();
-        let tilemaps: Vec<u16> = self.departure.diagram_tilemaps().collect();
+        let tilemaps: Vec<u16> = self.departure.diagram_tilemaps(self.stage).collect();
         let mut sorted: Vec<(usize, String)> =
             names.iter().map(|(&id, n)| (id, n.clone())).collect();
         sorted.sort_unstable();
         let key = (bank.art_id(), bank.generation(), tilemaps.clone(), sorted);
         let mut kept = KEPT.lock().unwrap_or_else(|e| e.into_inner());
-        let built = match kept.as_ref() {
+        match kept.as_ref() {
             Some((k, b)) if *k == key => b.clone(),
             _ => {
                 let b =
@@ -307,19 +327,7 @@ impl CabHud {
                 *kept = Some((key, b.clone()));
                 b
             }
-        };
-        self.board_names = Some(built);
-    }
-
-    /// Enhancement `landmark_names`: translated names under the landmark captions, by
-    /// landmark sprite tilemap.
-    pub fn use_landmark_names(
-        &mut self,
-        bank: &shuppatsu_render::sprites::SpriteBank,
-        names: &std::collections::HashMap<u16, String>,
-    ) {
-        let lines = crate::captions::LandmarkLines::new(bank, self.captions.defs(), names);
-        self.captions.use_landmark_lines(lines);
+        }
     }
 
     /// `Hud_Create` 0x40f7e0 (stage start and restart): static slots, strip palette.

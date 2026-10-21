@@ -443,53 +443,65 @@ impl Play {
             cab.hud.use_horizontal_plates(&bank, &names);
         }
         // Enhancement `landmark_names`: with a translation drawn, the name under the kanji.
-        if opts.settings.landmark_names && bank.has_label_font() {
-            let names = crate::locale::landmark_names(&opts.locale)?;
-            if !names.is_empty() {
-                cab.use_landmark_names(&bank, &names);
-            }
-        }
+        let landmarks = if opts.settings.landmark_names && bank.has_label_font() {
+            Some(crate::locale::landmark_names(&opts.locale)?).filter(|n| !n.is_empty())
+        } else {
+            None
+        };
         // Enhancements `one_line_captions` and `board_names` (docs/localisation.md): with a
         // translation drawn.
         let s = opts.settings;
-        let mut staff_parts = None;
-        if (s.one_line_captions || s.board_names)
-            && bank.has_label_font()
-            && let Some(p) = crate::locale::caption_phrases(&opts.locale)?
-        {
-            if s.one_line_captions {
-                cab.use_one_line_captions(&bank, &p);
-                let kanji = s.staff_kanji.then(|| p.staff_kanji.clone());
-                staff_parts = Some((p.tbl_parts.clone(), p.fonts[0], kanji));
-            }
-            if s.board_names {
-                cab.use_board_names(&bank, &p.tbl_texts);
-            }
-        }
-        cab.create(&mut layer);
-        let screen_tables = ScreenTables::read(&exe)?;
-        let flow = StageFlow::new(FlowDefs::new(&screen_tables, |tbl| {
-            usize::try_from(tbl)
-                .ok()
-                .and_then(|i| bank.tilemaps().get(i))
-                .map_or((0, 0), |m| {
-                    (i16::from(m.width) * TILE_PX, i16::from(m.height) * TILE_PX)
-                })
-        }));
-
-        let ui = crate::front::port_settings::UiText::load(
-            &opts.locale.lang,
-            opts.locale.dir.as_deref(),
-        );
-        let pad_words = crate::screens::PadHints {
-            select: ui.get("hint_select").to_owned(),
-            confirm: ui.get("hint_confirm").to_owned(),
-            resume: ui.get("hint_resume").to_owned(),
+        let phrases = if (s.one_line_captions || s.board_names) && bank.has_label_font() {
+            crate::locale::caption_phrases(&opts.locale)?
+        } else {
+            None
         };
-        let subtitles = start_subtitles(&opts, &bank, &data, &exe, &mut sound)?;
-        if let Some(s) = sound.as_mut() {
-            s.begin_stage(&exe, &drive)?;
-        }
+        let one_line = phrases.as_ref().filter(|_| s.one_line_captions);
+        let staff_parts = one_line.map(|p| {
+            let kanji = s.staff_kanji.then(|| p.staff_kanji.clone());
+            (p.tbl_parts.clone(), p.fonts[0], kanji)
+        });
+        let board = phrases
+            .as_ref()
+            .filter(|_| s.board_names)
+            .map(|p| &p.tbl_texts);
+        // The translated cab texts are built beside the screen tables, the port's strings, the
+        // subtitles and the stage's sounds (they only read the cab and the bank).
+        let landmarks = landmarks.as_ref();
+        let (translations, rest) = std::thread::scope(|sc| {
+            let (cab, bank) = (&cab, &bank);
+            let job = sc.spawn(move || cab.translations(bank, landmarks, one_line, board));
+            let rest = (|| -> Result<_> {
+                let screen_tables = ScreenTables::read(&exe)?;
+                let flow = StageFlow::new(FlowDefs::new(&screen_tables, |tbl| {
+                    usize::try_from(tbl)
+                        .ok()
+                        .and_then(|i| bank.tilemaps().get(i))
+                        .map_or((0, 0), |m| {
+                            (i16::from(m.width) * TILE_PX, i16::from(m.height) * TILE_PX)
+                        })
+                }));
+                let ui = crate::front::port_settings::UiText::load(
+                    &opts.locale.lang,
+                    opts.locale.dir.as_deref(),
+                );
+                let pad_words = crate::screens::PadHints {
+                    select: ui.get("hint_select").to_owned(),
+                    confirm: ui.get("hint_confirm").to_owned(),
+                    resume: ui.get("hint_resume").to_owned(),
+                };
+                let subtitles = start_subtitles(&opts, bank, &data, &exe, &mut sound)?;
+                if let Some(s) = sound.as_mut() {
+                    s.begin_stage(&exe, &drive)?;
+                }
+                Ok((flow, ui, pad_words, subtitles))
+            })();
+            let built = job.join().unwrap_or_else(|e| std::panic::resume_unwind(e));
+            (built, rest)
+        });
+        let (flow, ui, pad_words, subtitles) = rest?;
+        cab.use_translations(translations);
+        cab.create(&mut layer);
         let visibility = visibility(&opts);
         let scene = match (ahead, scene_job) {
             (Some(scene), _) => scene,

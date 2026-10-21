@@ -466,7 +466,7 @@ mod data_tests {
         assert_eq!(n(0x32a), Some(9));
         assert_eq!(n(0x31e), Some(3));
         let mut found = 0;
-        for t in hud.diagram_tilemaps() {
+        for t in (0..20).flat_map(|stage| hud.diagram_tilemaps(stage)) {
             let Some(d) = Diagram::of(&bank, t) else {
                 continue;
             };

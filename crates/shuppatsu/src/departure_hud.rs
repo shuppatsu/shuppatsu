@@ -98,11 +98,14 @@ impl DepartureHud {
         }
     }
 
-    /// Every diagram tilemap the strip tables name (for [`crate::board_en::BoardNames`]).
-    pub fn diagram_tilemaps(&self) -> impl Iterator<Item = u16> + '_ {
+    /// The diagram tilemaps a run of `stage` shows (for [`crate::board_en::BoardNames`]): its
+    /// strip's, and stage 10's second-half strip on stage 10. Every stage's strip together
+    /// names about 650, a quarter of a run start's work to analyse.
+    pub fn diagram_tilemaps(&self, stage: usize) -> impl Iterator<Item = u16> + '_ {
         self.strips
-            .iter()
-            .chain(std::iter::once(&self.strip_stage10))
+            .get(stage)
+            .into_iter()
+            .chain((stage == 10).then_some(&self.strip_stage10))
             .flat_map(|s| s[1..].iter())
             .filter_map(|&t| u16::try_from(t).ok())
     }
