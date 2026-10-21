@@ -107,6 +107,11 @@ impl DepartureBoard {
         }
     }
 
+    /// Ticks until the screen ends, once all four flaps have landed.
+    pub fn ticks_left(&self) -> Option<i32> {
+        (self.landed > 0).then_some(BOARD_HOLD - self.landed)
+    }
+
     /// One tick; true when the screen ended (the destroy 0x413d30 hides its slots).
     pub fn tick(&mut self, t: &FrontTables, l: &mut SpriteLayer, sfx: &mut Vec<Sfx>) -> bool {
         if self.counter == BOARD_START {

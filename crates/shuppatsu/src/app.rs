@@ -1540,9 +1540,25 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        event_loop.set_control_flow(self.idle.control_flow(Instant::now()));
+        let now = Instant::now();
+        // A screen starts within a few ticks (a run: tens of ms of work in one tick): poll
+        // through it and the first frames after, so it runs on a core that has not clocked down.
+        let soon = match &self.screen {
+            Screen::Wait(n, _) => *n <= WARM_TICKS,
+            Screen::Board(b, _) => b.ticks_left().is_some_and(|n| n <= WARM_TICKS),
+            _ => false,
+        };
+        if soon {
+            self.idle.keep_warm(now + WARM_AFTER);
+        }
+        event_loop.set_control_flow(self.idle.control_flow(now));
     }
 }
+
+/// Ticks before a screen starts from which the event loop polls ([`App::about_to_wait`]).
+const WARM_TICKS: i32 = 3;
+/// How long it keeps polling after that (the start's tick and the first frames after it).
+const WARM_AFTER: Duration = Duration::from_millis(150);
 
 /// `shuppatsu` with no subcommand.
 pub fn run(opts: AppOptions) -> Result<()> {

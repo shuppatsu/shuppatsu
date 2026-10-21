@@ -75,6 +75,8 @@ pub struct IdleWait {
     last: Option<Instant>,
     /// The shortest of the recent redraw intervals, and how many redraws it has stood.
     period: Option<(Duration, u32)>,
+    /// Poll until then ([`IdleWait::keep_warm`]).
+    warm_until: Option<Instant>,
 }
 
 /// Redraws after which the shortest interval is measured afresh.
@@ -104,6 +106,7 @@ impl IdleWait {
             margin,
             last: None,
             period: None,
+            warm_until: None,
         }
     }
 
@@ -119,9 +122,18 @@ impl IdleWait {
         self.last = Some(now);
     }
 
+    /// Polls until `until`: a burst of work is due (a run starting), and a core that clocked
+    /// down while the loop slept runs it about 40 % slower (docs/performance.md §4).
+    pub fn keep_warm(&mut self, until: Instant) {
+        self.warm_until = Some(self.warm_until.map_or(until, |t| t.max(until)));
+    }
+
     /// The control flow until the next event.
     pub fn control_flow(&self, now: Instant) -> winit::event_loop::ControlFlow {
         use winit::event_loop::ControlFlow;
+        if self.warm_until.is_some_and(|t| now < t) {
+            return ControlFlow::Poll;
+        }
         let (Some(margin), Some(last), Some((period, _))) = (self.margin, self.last, self.period)
         else {
             return ControlFlow::Poll;
@@ -203,6 +215,7 @@ mod tests {
             margin: Some(ms(1.0)),
             last: None,
             period: None,
+            warm_until: None,
         };
         assert_eq!(w.control_flow(start), ControlFlow::Poll);
         for (k, jitter) in [0.0, 0.3, -0.2, 0.1].into_iter().enumerate() {
@@ -222,5 +235,11 @@ mod tests {
             ..w.clone()
         };
         assert_eq!(poll.control_flow(last + ms(1.0)), ControlFlow::Poll);
+        // Kept warm ahead of a burst: polls until then, sleeps again after.
+        let mut warm = w.clone();
+        warm.keep_warm(last + ms(20.0));
+        warm.keep_warm(last + ms(10.0));
+        assert_eq!(warm.control_flow(last + ms(1.0)), ControlFlow::Poll);
+        assert_eq!(warm.control_flow(last + 5 * period), ControlFlow::Wait);
     }
 }
