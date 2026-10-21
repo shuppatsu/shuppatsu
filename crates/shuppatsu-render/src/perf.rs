@@ -5,10 +5,15 @@
 //! Sections are timed exclusively: a section entered inside another (a compose inside a tick)
 //! pauses the outer one, so the columns add up to the frame's tracked time. Without the
 //! variable every call is a cheap check of a flag.
+//!
+//! The lines are written by a thread of their own: a `write` to the file can block for a
+//! refresh or more while the kernel writes dirty pages back (every 5 s on ext4), which showed
+//! up as a missed refresh every 600 frames that was the trace's own doing.
 
 use std::cell::RefCell;
 use std::io::Write;
 use std::sync::OnceLock;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 /// A part of a frame's CPU time.
@@ -75,8 +80,38 @@ pub enum Counter {
     FullComposes,
 }
 
+/// What the writer thread is sent.
+enum Out {
+    Line(String),
+    /// Write out everything sent before, then answer.
+    Flush(mpsc::Sender<()>),
+}
+
+/// The writer thread's loop: lines are written as they come and the file is flushed whenever
+/// nothing more is waiting, so a run that is killed keeps its trace.
+fn write_lines(mut out: std::io::BufWriter<std::fs::File>, rx: mpsc::Receiver<Out>) {
+    while let Ok(mut msg) = rx.recv() {
+        loop {
+            match msg {
+                Out::Line(line) => {
+                    let _ = writeln!(out, "{line}");
+                }
+                Out::Flush(done) => {
+                    let _ = out.flush();
+                    let _ = done.send(());
+                }
+            }
+            match rx.try_recv() {
+                Ok(m) => msg = m,
+                Err(_) => break,
+            }
+        }
+        let _ = out.flush();
+    }
+}
+
 struct Trace {
-    out: std::io::BufWriter<std::fs::File>,
+    out: mpsc::Sender<Out>,
     start: Instant,
     last_frame: Option<Instant>,
     frames: u64,
@@ -110,9 +145,17 @@ fn enabled() -> bool {
         }
         header.push_str("\tticks\tcomposes\tupload2d_kb\tfull_composes\tscreen\tcanvas");
         let _ = writeln!(out, "{header}");
+        let (tx, rx) = mpsc::channel();
+        if let Err(e) = std::thread::Builder::new()
+            .name("frame-trace".into())
+            .spawn(move || write_lines(out, rx))
+        {
+            eprintln!("frame trace thread: {e}");
+            return false;
+        }
         TRACE.with(|t| {
             *t.borrow_mut() = Some(Trace {
-                out,
+                out: tx,
                 start: Instant::now(),
                 last_frame: None,
                 frames: 0,
@@ -220,10 +263,8 @@ pub fn frame(screen: &str, canvas: (usize, usize)) {
             canvas.0,
             canvas.1
         ));
-        let _ = writeln!(t.out, "{line}");
+        let _ = t.out.send(Out::Line(line));
         t.frames += 1;
-        // Every frame, so a run that is killed keeps its trace.
-        let _ = t.out.flush();
     });
 }
 
@@ -234,7 +275,10 @@ pub fn flush() {
     }
     TRACE.with(|t| {
         if let Some(t) = t.borrow_mut().as_mut() {
-            let _ = t.out.flush();
+            let (done, wait) = mpsc::channel();
+            if t.out.send(Out::Flush(done)).is_ok() {
+                let _ = wait.recv();
+            }
         }
     });
 }
