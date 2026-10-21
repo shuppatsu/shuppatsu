@@ -227,16 +227,42 @@ pub struct MoviePlayer {
     trace: Option<std::io::BufWriter<std::fs::File>>,
 }
 
+/// The movie's file read and demultiplexed on a thread ahead of its start: both take about
+/// 25 ms (a 33 MB file), which in [`MoviePlayer::open`] stalled the frame the movie starts on.
+pub struct MovieAhead(std::thread::JoinHandle<Result<Movie>>);
+
+impl MovieAhead {
+    /// Starts reading the movie in `data_dir`.
+    pub fn start(data_dir: &Path) -> Self {
+        let data_dir = data_dir.to_owned();
+        Self(std::thread::spawn(move || read_movie(&data_dir)))
+    }
+}
+
+/// `Komachi.DAT` in `data_dir`, demultiplexed.
+fn read_movie(data_dir: &Path) -> Result<Movie> {
+    let path = movie_path(data_dir).context("Komachi.DAT not found in the data directory")?;
+    let bytes = std::fs::read(&path).with_context(|| path.display().to_string())?;
+    Movie::open(&bytes).with_context(|| path.display().to_string())
+}
+
 impl MoviePlayer {
     /// Opens the movie in `data_dir`.
     pub fn open(data_dir: &Path) -> Result<Self> {
-        let path = movie_path(data_dir).context("Komachi.DAT not found in the data directory")?;
-        let bytes = std::fs::read(&path).with_context(|| path.display().to_string())?;
-        Self::from_bytes(&bytes).with_context(|| path.display().to_string())
+        Self::from_movie(read_movie(data_dir)?)
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let Movie { mut video, audio } = Movie::open(bytes)?;
+    /// Opens the movie read ahead ([`MovieAhead`]), waiting for it if it is not read yet.
+    pub fn open_ahead(ahead: MovieAhead) -> Result<Self> {
+        let movie = ahead
+            .0
+            .join()
+            .map_err(|_| anyhow::anyhow!("the movie reader panicked"))??;
+        Self::from_movie(movie)
+    }
+
+    fn from_movie(movie: Movie) -> Result<Self> {
+        let Movie { mut video, audio } = movie;
         let seq = video.read_sequence_header()?.clone();
         let (num, den) = seq.frame_rate();
         let mut player = Self {

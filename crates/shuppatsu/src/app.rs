@@ -176,6 +176,8 @@ pub struct App {
     demo_attract: Option<Attract>,
     /// The movie's picture on the GPU (made on its first frame).
     movie_overlay: Option<shuppatsu_render::overlay::Overlay>,
+    /// The movie read ahead of its start ([`crate::movie::MovieAhead`]).
+    movie_ahead: Option<crate::movie::MovieAhead>,
     /// The stage intro is the run in [`Screen::Play`]; the departure board of this choice
     /// follows it.
     intro_chosen: Option<Chosen>,
@@ -312,6 +314,7 @@ impl App {
         let mut log = InputLog::default();
         log.start(joystick);
         let now = Instant::now();
+        let movie_ahead = Some(crate::movie::MovieAhead::start(data.data_dir()));
         let mut app = Self {
             defs,
             res: Some(Shared {
@@ -336,6 +339,7 @@ impl App {
             attract_counters: AttractCounters::default(),
             demo_attract: None,
             movie_overlay: None,
+            movie_ahead,
             intro_chosen: None,
             down: [false; 256],
             menu_input: MenuInput::NONE,
@@ -499,7 +503,11 @@ impl App {
     fn start_movie(&mut self, from: MovieFrom) -> Screen {
         let r = self.res.as_mut().expect("resources");
         crate::front::clear_all(&mut r.layer);
-        match MoviePlayer::open(r.data.data_dir()) {
+        let opened = match self.movie_ahead.take() {
+            Some(ahead) => MoviePlayer::open_ahead(ahead),
+            None => MoviePlayer::open(r.data.data_dir()),
+        };
+        match opened {
             Ok(mut player) => {
                 let mut sound = false;
                 if let (Some(snd), Some(rate)) = (r.sound.as_mut(), player.audio_rate())
@@ -547,6 +555,8 @@ impl App {
             s.play_stream(None);
         }
         self.movie_overlay = None;
+        // Read again for the next time it plays.
+        self.movie_ahead = Some(crate::movie::MovieAhead::start(r.data.data_dir()));
         eprintln!(
             "movie: {} ({})",
             if skipped { "skipped" } else { "ended" },
