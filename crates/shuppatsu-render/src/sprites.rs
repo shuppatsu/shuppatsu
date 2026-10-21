@@ -497,7 +497,13 @@ impl SpriteBank {
         let entry = match known {
             Some(i) => memo[i].4.clone(),
             None => {
-                let (w, h, px) = self.art(tbl)?;
+                let map = self.tilemaps.get(usize::from(tbl))?;
+                let (w, h) = (
+                    usize::from(map.width) * TILE_SIZE,
+                    usize::from(map.height) * TILE_SIZE,
+                );
+                // The map's art is kept per bank generation: a fade builds only the fill.
+                let px = self.map_art(tbl);
                 let built = PaperCache::build(tbl, spec, (w, h, &px), palette, reach);
                 if memo.len() >= PAPER_MEMO {
                     memo.remove(0);

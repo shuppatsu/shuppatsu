@@ -199,14 +199,12 @@ impl PaperFill {
         if !fits {
             return None;
         }
-        let rgb: Vec<Rgb> = px
-            .iter()
-            .map(|&i| {
-                let [r, g, b, _] = palette.rgba(i);
-                [f32::from(r), f32::from(g), f32::from(b)]
-            })
-            .collect();
-        let at = |x: usize, y: usize| rgb[y * width + x];
+        // Only the edges are read: colours looked up per read, not for the whole picture.
+        let rgb: [Rgb; 256] = std::array::from_fn(|i| {
+            let [r, g, b, _] = palette.rgba(i as u8);
+            [f32::from(r), f32::from(g), f32::from(b)]
+        });
+        let at = |x: usize, y: usize| rgb[usize::from(px[y * width + x])];
         let ph = r1 - r0;
         let block = |x0: usize| -> Vec<Rgb> {
             let b: Vec<Rgb> = (r0..r1)
@@ -247,8 +245,11 @@ impl PaperFill {
             blocks,
         };
         let (w, r, reach_i) = (width as i32, ramp as i32, reach as i32);
-        let left = Side::build(&ex, &light_l, -reach_i..r, r - 1, -1, r, &at);
-        let right = Side::build(&ex, &light_r, w - r..w + reach_i, w - r, 1, r, &at);
+        let (left, right) = std::thread::scope(|s| {
+            let left = s.spawn(|| Side::build(&ex, &light_l, -reach_i..r, (r - 1, -1, r), &at));
+            let right = Side::build(&ex, &light_r, w - r..w + reach_i, (w - r, 1, r), &at);
+            (left.join().expect("paper worker"), right)
+        });
         Some(Self {
             width: w,
             height: height as i32,
@@ -319,86 +320,156 @@ impl PaperFill {
     }
 }
 
-impl Side {
-    /// One side's fill over picture columns `xs` under `light` (near and far, see
-    /// [`FAR_LIGHT`]). The ramp starts at picture column `ramp_start` and runs `ramp` columns
-    /// in direction `dir` (towards the edge); the picture is read with `at`.
-    fn build(
-        ex: &Exemplars,
-        [near, far]: &[Vec<Rgb>; 2],
+/// Where a side's pixels take their detail and light from: the same for every palette, so
+/// kept ([`SideShape::get`]) and only the colours are computed per build.
+struct SideShape {
+    /// Per column: the picture column, the share of the far light, and in the ramp the
+    /// picture's share (`t`, 0 at the inside of the ramp, 1 at the edge).
+    columns: Vec<(i32, f32, Option<f32>)>,
+    /// Per pixel (row-major) the lattice taps ([`Taps`]).
+    taps: Vec<Taps>,
+}
+
+/// The lattice taps of a pixel: per vertex of its triangle the exemplar (top bit) and the
+/// index in it, and the vertex's weight.
+type Taps = [(u32, f32); 3];
+
+/// What a [`SideShape`] depends on: the exemplar size, the rows, the columns, and the ramp
+/// (start, direction, length).
+type ShapeKey = ((usize, usize), usize, (i32, i32), (i32, i32, i32));
+
+/// Rows per band of a side built on its own thread.
+const FILL_BAND: usize = 120;
+
+/// Shapes kept (one per side and canvas width in use).
+const SHAPES: usize = 8;
+
+impl SideShape {
+    fn get(
+        (w, h): (usize, usize),
+        rows: usize,
         xs: std::ops::Range<i32>,
-        ramp_start: i32,
-        dir: i32,
-        ramp: i32,
-        at: &(impl Fn(usize, usize) -> Rgb + Sync),
-    ) -> Self {
-        let (first, cols) = (xs.start, xs.len());
-        let xw: Vec<usize> = xs
+        (ramp_start, dir, ramp): (i32, i32, i32),
+    ) -> Arc<Self> {
+        static KEPT: std::sync::Mutex<Vec<(ShapeKey, Arc<SideShape>)>> =
+            std::sync::Mutex::new(Vec::new());
+        let key = ((w, h), rows, (xs.start, xs.end), (ramp_start, dir, ramp));
+        let lock = || KEPT.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((_, s)) = lock().iter().find(|(k, _)| *k == key) {
+            return s.clone();
+        }
+        // Built unlocked: the two sides build theirs at once.
+        let columns = xs
             .clone()
-            .map(|x| x.rem_euclid(ex.w as i32) as usize)
-            .collect();
-        // Rows are independent: built on all cores (a 4K title backdrop took 13-16 ms on one).
-        let rows = crate::par::par_range(near.len(), 64, |y| {
-            let (n, f) = (near[y], far[y]);
-            let yh = y % ex.h;
-            let mut px = Vec::with_capacity(cols);
-            for (x, &xw) in xs.clone().zip(&xw) {
+            .map(|x| {
                 // Columns from the inside of the ramp: 0 .. ramp in it, then the fill.
                 let k = (x - ramp_start) * dir;
                 let d = (k - ramp + 1).max(0) as f32;
                 let a = smoothstep(d / FAR_LIGHT);
-                let l: Rgb = std::array::from_fn(|i| n[i] + (f[i] - n[i]) * a);
-                let mut fill = l;
-                add(&mut fill, ex.synth((x, y as i32), (xw, yh)), 1.0);
-                let c = if k < ramp {
-                    // 0 at the inside of the ramp, 1 at the edge.
-                    let t = smoothstep((k as f32 + 0.5) / ramp as f32);
-                    blend_around(l, at(x as usize, y), fill, t)
-                } else {
-                    fill
-                };
-                px.push(quantise(c));
+                let t = (k < ramp).then(|| smoothstep((k as f32 + 0.5) / ramp as f32));
+                (x, a, t)
+            })
+            .collect();
+        let xw: Vec<usize> = xs
+            .clone()
+            .map(|x| x.rem_euclid(w as i32) as usize)
+            .collect();
+        let taps = crate::par::par_range(rows, 64, |y| {
+            xs.clone()
+                .zip(&xw)
+                .map(|(x, &xw)| taps((w, h), (x, y as i32), (xw, y % h)))
+                .collect::<Vec<_>>()
+        })
+        .concat();
+        let shape = Arc::new(Self { columns, taps });
+        let mut kept = lock();
+        if kept.len() >= SHAPES {
+            kept.remove(0);
+        }
+        kept.push((key, shape.clone()));
+        shape
+    }
+}
+
+impl Side {
+    /// One side's fill over picture columns `xs` under `light` (near and far, see
+    /// [`FAR_LIGHT`]). The ramp `(start, dir, len)` starts at picture column `start` and runs
+    /// `len` columns in direction `dir` (towards the edge); the picture is read with `at`.
+    fn build(
+        ex: &Exemplars,
+        [near, far]: &[Vec<Rgb>; 2],
+        xs: std::ops::Range<i32>,
+        ramp: (i32, i32, i32),
+        at: &(impl Fn(usize, usize) -> Rgb + Sync),
+    ) -> Self {
+        let (first, cols) = (xs.start, xs.len());
+        let shape = SideShape::get((ex.w, ex.h), near.len(), xs, ramp);
+        // The palette's part is a few multiply-adds per pixel: rows in a few bands at once.
+        let bands = crate::par::par_range(near.len().div_ceil(FILL_BAND), 1, |b| {
+            let rows = b * FILL_BAND..((b + 1) * FILL_BAND).min(near.len());
+            let mut px = Vec::with_capacity(rows.len() * cols);
+            for y in rows {
+                let (n, f) = (near[y], far[y]);
+                let taps = &shape.taps[y * cols..(y + 1) * cols];
+                for (&(x, a, t), taps) in shape.columns.iter().zip(taps) {
+                    let l: Rgb = std::array::from_fn(|i| n[i] + (f[i] - n[i]) * a);
+                    let mut fill = l;
+                    add(&mut fill, ex.synth(taps), 1.0);
+                    let c = match t {
+                        Some(t) => blend_around(l, at(x as usize, y), fill, t),
+                        None => fill,
+                    };
+                    px.push(quantise(c));
+                }
             }
             px
         });
-        let px = rows.concat();
+        let px = bands.concat();
         Self { first, cols, px }
     }
 }
 
+/// The lattice taps of picture pixel `(x, y)` over `w × h` exemplars: the three vertices of
+/// its triangle each show an exemplar at a hashed offset, weighted by sharpened barycentric
+/// weight. `xw` and `yh` are `x` and `y` wrapped into the exemplar (`x mod w`, `y mod h`).
+fn taps((w, h): (usize, usize), (x, y): (i32, i32), (xw, yh): (usize, usize)) -> Taps {
+    // The triangle lattice: skewed coordinates in which the triangles are half squares.
+    let (u, v) = (x as f32 / CELL, y as f32 / CELL);
+    let (su, sv) = (u - v * 0.577_350_3, v * 1.154_700_5);
+    let (bu, bv) = (su.floor() as i32, sv.floor() as i32);
+    let (fu, fv) = (su - bu as f32, sv - bv as f32);
+    let fz = 1.0 - fu - fv;
+    let (verts, wt) = if fz > 0.0 {
+        ([(bu, bv), (bu, bv + 1), (bu + 1, bv)], [fz, fv, fu])
+    } else {
+        (
+            [(bu + 1, bv + 1), (bu + 1, bv), (bu, bv + 1)],
+            [-fz, 1.0 - fv, 1.0 - fu],
+        )
+    };
+    let wt = wt.map(|w| w.max(0.0).powi(SHARPEN));
+    let norm = (wt[0] * wt[0] + wt[1] * wt[1] + wt[2] * wt[2])
+        .sqrt()
+        .max(f32::EPSILON);
+    std::array::from_fn(|k| {
+        let (i, j) = verts[k];
+        let h32 = hash(i, j);
+        // Offsets by multiply-shift: `(h >> 1) · w / 2³¹` and `(h >> 12) · h / 2²⁰`.
+        let ox = ((u64::from(h32 >> 1) * w as u64) >> 31) as usize;
+        let oy = ((u64::from(h32 >> 12) * h as u64) >> 20) as usize;
+        let (sx, sy) = (wrap(xw + ox, w), wrap(yh + oy, h));
+        let index = u32::try_from(sy * w + sx).expect("exemplar index");
+        ((h32 & 1) << 31 | index, wt[k] / norm)
+    })
+}
+
 impl Exemplars {
-    /// The detail at picture pixel `(x, y)`: the three vertices of its lattice triangle each
-    /// show an exemplar at a hashed offset, mixed by sharpened barycentric weight. `xw` and
-    /// `yh` are `x` and `y` wrapped into the exemplar (`x mod w`, `y mod h`).
-    fn synth(&self, (x, y): (i32, i32), (xw, yh): (usize, usize)) -> Rgb {
-        // The triangle lattice: skewed coordinates in which the triangles are half squares.
-        let (u, v) = (x as f32 / CELL, y as f32 / CELL);
-        let (su, sv) = (u - v * 0.577_350_3, v * 1.154_700_5);
-        let (bu, bv) = (su.floor() as i32, sv.floor() as i32);
-        let (fu, fv) = (su - bu as f32, sv - bv as f32);
-        let fz = 1.0 - fu - fv;
-        let (verts, w) = if fz > 0.0 {
-            ([(bu, bv), (bu, bv + 1), (bu + 1, bv)], [fz, fv, fu])
-        } else {
-            (
-                [(bu + 1, bv + 1), (bu + 1, bv), (bu, bv + 1)],
-                [-fz, 1.0 - fv, 1.0 - fu],
-            )
-        };
-        let w = w.map(|w| w.max(0.0).powi(SHARPEN));
-        let norm = (w[0] * w[0] + w[1] * w[1] + w[2] * w[2])
-            .sqrt()
-            .max(f32::EPSILON);
+    /// The detail at a pixel with lattice taps `taps` ([`taps`]).
+    fn synth(&self, taps: &Taps) -> Rgb {
         let mut out = [0.0; 3];
-        for (&(i, j), &wi) in verts.iter().zip(&w) {
-            let h = hash(i, j);
-            let block = &self.blocks[(h & 1) as usize];
-            // Offsets by multiply-shift: `(h >> 1) · w / 2³¹` and `(h >> 12) · h / 2²⁰`.
-            let ox = ((u64::from(h >> 1) * self.w as u64) >> 31) as usize;
-            let oy = ((u64::from(h >> 12) * self.h as u64) >> 20) as usize;
-            let sx = wrap(xw + ox, self.w);
-            let sy = wrap(yh + oy, self.h);
-            add(&mut out, block[sy * self.w + sx], wi / norm);
+        for &(t, wn) in taps {
+            let block = &self.blocks[(t >> 31) as usize];
+            add(&mut out, block[(t & 0x7fff_ffff) as usize], wn);
         }
         out
     }
