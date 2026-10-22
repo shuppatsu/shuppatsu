@@ -126,7 +126,7 @@ different frame is composed again on the GPU.
 
 | Record | Per-pixel data on the GPU | Kept |
 |---|---|---|
-| Slot (one per run of columns) | tiles and tilemaps as indices; xBRZ index images (`hud_upscale`); the regions of the translated text over it (art under them is not drawn) | bank art per art id; images while used |
+| Slot (one per run of columns) | tiles and tilemaps as indices; xBRZ index images (`hud_upscale`); the regions of the translated text over it (art under them is not drawn) | bank art per art id (`SpriteBank::gpu_art`, kept in the bank, so a new `Composer` at each run start does not convert it again: 3-4 ms in the first frame of a stage intro or a run); images while used |
 | Paper fill | the fill's two sides, RGBA | per fill |
 | Translated text part | base index, coverage and (when not one colour) text colour index per pixel: the part's own byte arrays, nothing packed | per bank generation |
 | Fill | — (one colour) | — |
@@ -137,9 +137,12 @@ different frame is composed again on the GPU.
 | Resampled sprite | per pixel the id of its list of (index, weight) contributions; per palette each list's colour, coverage and its complement as the CPU's `f32` values | lists by map, rectangle and scale; colours by palette |
 
 A triangle (fans, arrows) is covered row by row as one run per row: along a row each edge
-test is monotonic (so is every rounded step), so the covered pixels are found from both ends
-(`triangle_spans`) instead of testing — and, for the GPU's masks, listing — every pixel (the
-attract opening's two full-canvas fans: 5 M pixels a tick, 6–8 ms).
+test is monotonic (so is every rounded step), so each edge passes on a prefix or a suffix of
+the row, found by bisection, and the run is their intersection (`triangle_spans`), instead of
+testing — and, for the GPU's masks, listing — every pixel (the attract opening's two
+full-canvas fans: 5 M pixels a tick, 6–8 ms). A linear scan from both ends was still O(width)
+per row: the ranking page after a run (its two full-height side bars, five seconds) took
+3.3 ms a tick at 4K; with the bisection 0.6 ms.
 
 The rasters are built when a record first needs them. A frame's new label texts are rasterised
 ahead on all cores (`SpriteLayer::label_rasters`) and taken where they would be built, so the
@@ -262,7 +265,19 @@ interval of that frame 48–80 → 14–16 ms):
   thread.
 - The movie (`Komachi.DAT`, 33 MB: 13 ms to read, 13 ms to demultiplex) is read on a thread at
   start-up and whenever attract or the title menu comes back (`movie::MovieAhead`), so it starts
-  without a stall; it is let go when a run starts (about 30 MB less resident while driving).
+  without a stall; it is let go, on a thread, on the first tick of the wait before a run (about
+  30 MB less resident while driving; freeing it in the run's start tick took 2.5–3 ms, and on a
+  thread beside the start it still slowed that tick down).
+- A scene made ahead and not taken (attract's next run when a menu was opened instead) is freed
+  on a thread when the next one is asked for; it was dropped in that tick (3–10 ms).
+- The subtitle book (station names from the catalogue, phrase lengths from `effect.rom`, 3–4
+  ms) is made once per catalogue and data directory (`SubtitleBook::shared`), on the
+  scene-ahead thread.
+- The GPU compositor's copy of the art is kept in the bank (§3), not per `Composer`.
+
+Round 3b (route 5, three runs): the stage intro's start tick 8.6 → 2.6–3.9 ms (frame interval
+17 → 11–12.6 ms), the run after the board 3.7 → 1.8–2.4 ms, and the first frames after both no
+longer compose for 3–4 ms; no missed refresh at either start in those runs.
 
 ## 6. Start-up
 
@@ -275,6 +290,18 @@ was parsed three times), then the window: its size is known as soon as it is ope
 first fit installs it. The text was built twice before, at the configured multiple at start-up
 and again for the window's; `locale::install_deferred` leaves it pending until a window exists.
 Headless runs (`--shot`) build it at once, as before.
+
+Round 3b: the GPU device no longer waits for the window. The menus' event loop is made before
+the game data loads, and a thread opens the wgpu instance, adapter and device on its display
+(`window::EarlyGpu`: `gpu_backend::open` without a surface, so the same backend order and shader
+probe). When the window opens, its surface is made on that instance and used if the adapter can
+present to it (`Adapter::is_surface_supported`); otherwise, or if the early open failed, the
+device is opened for the window as before. On this machine the device took ~130 ms (the
+Vulkan instance with the system's implicit layers, MangoHud and lsfg-vk). The first `Resized`
+event repeats the size the surface was made with; `Gpu::resize` no longer configures the swap
+chain again then (28 ms at 4K). Process start to first frame: 222–229 → 178–190 ms. The text for
+the window (115–130 ms on its thread from the window's opening) is now the longest part; the
+`play` subcommand still opens its device with its window.
 
 ## 7. The 3D frame
 
@@ -320,6 +347,13 @@ intervals with no work in the frame (the compositor), and 1.5–2.5 ms 2D draw-l
 new HUD texts appear (label rasters; no miss). The window's switch to full screen (two 16–25 ms
 intervals about 0.25 s after it opens, seen in every round-2 run) did not show in any round-3
 run.
+
+Round 3b (out/perf/r3b_final): every suite screen stays at 0–2 missed refreshes per run. The
+run starts lost most of what was left (stage intro start tick 8.6 → 2.6–3.9 ms, the first
+frames after a start no longer compose for 3–4 ms; the wait before the intro no longer misses),
+the ranking page after a run composes in 0.6 ms instead of 3.3 ms, and process start to first
+frame is 178–190 ms. The misses that remain are frames with no work and a 15–21 ms present (the
+compositor).
 
 The reference shots (every screen, English and Japanese, 1440p and 4K) are byte-identical before
 and after each change, in both compose modes.
