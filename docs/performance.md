@@ -23,7 +23,13 @@ CPU time of each part of it:
 then the counters `ticks`, `composes`, `upload2d_kb`, `full_composes` (in GPU mode: frames that
 changed, so were composed again on the GPU), the screen's name and the
 2D canvas size. Sections are exclusive: a compose inside a tick counts as compose only. Work on
-helper threads is inside the section that waits for it.
+helper threads is inside the section that waits for it. `t_ms` counts from the start of `main`,
+so the first frame's is the start-up time.
+
+The lines are written by a thread of their own. Until round 3 the main thread wrote and flushed
+each line, and on ext4 a `write` blocked for a refresh or more while the kernel wrote dirty
+pages back (every 5 s): every traced run showed a 16–18 ms interval every 600 frames, which was
+the trace's own doing (none with the trace on tmpfs, none since). Untraced runs never had it.
 
 **Report.** `shuppatsu-tools frame-report [--hz 120] <trace>...` prints, per screen, the frame
 intervals (average, p50, p99, max), the refreshes missed at the given rate (an interval of n
@@ -96,7 +102,10 @@ images (`hud_upscale`) are built on all cores.
 **Translated text** is rasterised on all cores (`TextOverlay::build_with`), at start-up and
 whenever the canvas multiple changes; the lettering analysis of the original art behind it (a
 bitmap and summed-area-table shadow search) is kept for the process, so a window going full screen
-re-rasterises in about 0.1 s (3 s before).
+re-rasterises in about 0.1 s (3 s before). The strokes' rims and shadows are grown by a square
+dilation done as a row pass and a column pass over running counts (`lettering::dilate_strokes`;
+testing the whole square per pixel took up to 100 ms for one banner at 4K). A part's base
+indices, coverage and text colours are shared (`Arc<[u8]>`) with the GPU compose (§3).
 
 ## 3. GPU 2D compositing
 
@@ -119,13 +128,19 @@ different frame is composed again on the GPU.
 |---|---|---|
 | Slot (one per run of columns) | tiles and tilemaps as indices; xBRZ index images (`hud_upscale`); the regions of the translated text over it (art under them is not drawn) | bank art per art id; images while used |
 | Paper fill | the fill's two sides, RGBA | per fill |
-| Translated text part | base index, coverage, text colour index per pixel | per bank generation |
+| Translated text part | base index, coverage and (when not one colour) text colour index per pixel: the part's own byte arrays, nothing packed | per bank generation |
 | Fill | — (one colour) | — |
 | Triangle / fan | a byte mask, rasterised by the CPU's edge test | per frame |
 | Label text | coverage, outline and backdrop bits (the CPU's mask and dilation) | by text, style and size |
 | Legend | one coverage raster per group of blends (shape, rim, letters), recorded from the CPU's legend drawing | by legend, colours and place |
 | Picture (logo board) | the scaled picture, RGBA | by picture and size |
 | Resampled sprite | per pixel the id of its list of (index, weight) contributions; per palette each list's colour, coverage and its complement as the CPU's `f32` values | lists by map, rectangle and scale; colours by palette |
+
+The rasters are built when a record first needs them. A frame's new label texts are rasterised
+ahead on all cores (`SpriteLayer::label_rasters`) and taken where they would be built, so the
+cache sees the same calls (a screen opening brings a dozen or more, 0.2–1 ms each at 4K); a
+resampled sprite's list numbering runs by rows on all cores without allocating per pixel (the
+first staff-roll picture: 17 → 2 ms).
 
 Palette-indexed art is coloured on the GPU from the frame's 128 palettes (rewritten only where
 they changed), so a fade uploads palettes, not pixels.
@@ -171,7 +186,7 @@ mode found no difference in about 26 000 GPU frames over every reference session
 
 On the 120 Hz TV (measured later, round 2): the attract misses 1.9–2.6 % with the CPU compose and
 0.4–0.6 % with the GPU compose (work p99 4.4–5.1 → 1.7–2.2 ms), the title 0.4–1.2 % → 0–0.2 %,
-driving 0.4 % → 0.1 %. What is left in the attract is not compose work (§6).
+driving 0.4 % → 0.1 %. What is left in the attract is not compose work (§8).
 
 ## 4. Frame pacing
 
@@ -193,62 +208,104 @@ CPU time halved (68 against 130 s per 120 s), the main thread at 39 % of a core.
 4 ms used more CPU for nothing; 0 (sleeping up to the redraw) made the frame work about 40 %
 slower.
 
-The cost: work that comes in one burst after idle frames runs on a core that has clocked down.
-The stage-start tick takes about 40 % longer (the run after the board: a 35 ms interval instead
-of 25 ms; the intro's start 50 instead of 38 ms) and the attract fade's paper builds about 70 %
-longer (still well inside the period). `SHUPPATSU_IDLE_WAIT=poll` polls as before;
-`SHUPPATSU_IDLE_WAIT=<ms>` sets another margin.
+The cost: work that comes in one burst after idle frames runs on a core that has clocked down
+(a run start's tick took about 40 % longer, the attract fade's paper builds about 70 % longer).
+So the loop polls (`IdleWait::keep_warm`) from three ticks before a screen starts — the end of a
+wait, the departure board's last ticks — until 150 ms after: the start's tick and the first
+frames after it run on a warm core. `SHUPPATSU_IDLE_WAIT=poll` polls throughout;
+`SHUPPATSU_IDLE_WAIT=<ms>` sets another margin (0.25 and 0.5 ms measured in round 3: no less
+CPU, frame work up to 15 % slower).
+
+While driving the main thread uses about a third of a core (round 3: 2.1 s user and 1.2 s
+system per 10 s); the system time is mostly the polling in the last millisecond before each
+redraw. With MangoHud on (the user's environment loads it into every Vulkan program), its GPU
+polling thread adds about a quarter of a core of system time to the process.
 
 ## 5. Run start
 
-The tick that starts a run builds the run (`Play::new`): exe tables and the drive (2 ms), the
-cab's translated captions (landmark names 3 ms, one-line captions 2 ms, board names 10 ms),
-screen tables (1.6 ms), subtitles (3 ms), the route scene (14–22 ms, on its own thread) and the
-GPU setup (4 ms).
+The tick that starts a run builds the run (`Play::new`). Round 3 moved most of it off that tick
+(route 5: the stage intro's start 38–70 → 5–8 ms, the run after the board 24–26 → 3–4 ms; the
+interval of that frame 48–80 → 14–16 ms):
 
-- The departure boards' diagrams are analysed on all cores (`board_en.rs`), and the analysis is
-  kept for the next start with the same bank state (its art id and generation) and names: a
-  stage intro and the run after its board build the same. `SpriteBank::set_upscale`, called at
-  every start, changes the generation only when the setting changes (it reset every cache keyed
-  by the generation at each start).
-- The route scene of the run after the departure board loads on a thread while the board shows
-  (`play::load_scene_ahead`); `Play::new` takes it if its key (COM file, visibility, settings,
-  geometry, stage, texture pack) matches, and loads it on its own thread otherwise. Texture
-  pages convert to RGBA on all cores.
+- The drive and the route scene of a run are made on a thread ahead of it
+  (`play::load_scene_ahead`): while the departure board shows, and during the 16 ticks before a
+  stage intro (the intro is a run of its own). `Play::new` takes them when made for the same
+  stage, difficulty, station and scene options (COM file, visibility, settings, geometry,
+  texture pack), and otherwise makes them itself (the scene on its own thread).
+- That thread also uploads the scene's 344 texture pages to the GPU (`PageUploader`, about
+  5 ms, mostly per-texture overhead; the run takes them with `Renderer::use_pages` when made for
+  its filtering and mipmaps) and works out every texture rect's seams for the ground shading
+  (`PartLibrary::prepare_seams`, 4 ms on all cores; the first 3D frames did it rect by rect,
+  4–7 ms of `build3d` in the first).
+- The language catalogue is parsed once per process (`Catalogue::shared`, kept while the file
+  keeps its size and modification time); a start parsed it five times, about 3 ms each.
+- The cab's translated texts (landmark lines, one-line captions, board names) are built on a
+  thread beside the screen tables, the port's strings, the subtitles and the stage's sounds
+  (`CabHud::translations`). The board names analyse only the run's own diagram strip (about 30
+  tilemaps; every stage's, 650, took 9 ms on all cores), and are kept for the next start with the
+  same bank state and names. `SpriteBank::set_upscale` changes the generation only when the
+  setting changes.
+- Texture pages convert to RGBA on all cores; mip levels (with `texture_filtering` or
+  `anisotropic`) too.
 - The movie (`Komachi.DAT`, 33 MB: 13 ms to read, 13 ms to demultiplex) is read on a thread at
-  start-up and again after each showing (`movie::MovieAhead`), so it starts without a stall; the
-  demultiplexed movie stays in memory.
+  start-up and whenever attract or the title menu comes back (`movie::MovieAhead`), so it starts
+  without a stall; it is let go when a run starts (about 30 MB less resident while driving).
 
-The tick that starts the run after the board went from about 28 to 16 ms (polling); the intro's
-start (no board before it) is unchanged at about 27–32 ms.
+## 6. Start-up
 
-## 6. Results
+Process start to the first frame on the TV, full screen 4K: about 640 ms before round 3, 220–230
+ms after. What it does now: the exe and controls (9 ms), the sprite art (24 ms) while the bundled
+font parses on a thread (28 ms, once per process: `locale::bundled_font`, shared behind `Arc`; it
+was parsed three times), then the window: its size is known as soon as it is open
+(`Gpu::open_window`), so the translated text for its canvas multiple is built on a thread
+(`presentation::text_ahead`, 120–140 ms on all cores) while the GPU is set up (75–90 ms), and the
+first fit installs it. The text was built twice before, at the configured multiple at start-up
+and again for the window's; `locale::install_deferred` leaves it pending until a window exists.
+Headless runs (`--shot`) build it at once, as before.
+
+## 7. The 3D frame
+
+The 3D geometry is built on the CPU each frame (`RouteScene::compose`: track pieces, scenery,
+background, traffic) relative to the camera eye in `f64` (renderer.md §6.1) and streamed to the
+GPU. It is not kept on the GPU between frames: the vertex positions depend on the eye (moving
+the subtraction to the GPU changes the rounding, so the output would not be byte-identical) and
+the pieces drawn depend on the continuous camera (culling behind the eye, buffer stops near it).
+Round 3 removed its per-frame allocations instead: the wide view's track builder, the even-width
+chords and a terrain part's points were new vectors per run or part (about 2 770 allocations a
+frame while driving; now about 60), and all pages' vertices, indices, background and effect
+quads go into one buffer each through one staging copy (`StreamBuffer::write_parts`; it was a
+`write_buffer` per page and buffer, about 650 allocations and 200 calls a frame). Driving at 4K
+(stage 17): `build3d` 0.71 → 0.56 ms, `upload3d` 0.16 → 0.05 ms on average, allocations
+3 700 → 390 a frame for the whole process.
+
+## 8. Results
 
 Missed refreshes at 120 Hz on the TV, 4K full screen (windowed 2560×1440 where marked), default
-settings (GPU compose, idle wait), English; the first measurement, the first round's end, and
-round 2's end (out/perf/round2.md):
+settings (GPU compose, idle wait), English; the first measurement, the first round's end, round
+2's end (out/perf/round2.md) and round 3's (out/perf/round3.md; with the trace fix of §1, so the
+earlier columns include about one miss per 5 s that was the trace's):
 
-| Screen | Before | Round 1 (CPU compose, polling) | Round 2 |
-|---|---|---|---|
-| Title menu | 40 % | 0.1 % | 0–0.2 % |
-| Options / port settings | 37 / 41 % | under 0.5 % | 0.2 / 0.2 % |
-| Route select | 20 % | 0.4 % | 0 % |
-| Driving, enhanced HUD / original HUD | 22 / 23 % | 0.1 % / 0.1 % | 0.1 / 0.1 % |
-| Coupling minigame | 22 % | 0.1 % | 0.1 % |
-| Pause | 25 % | 0.1 % | 0 % |
-| Driving report | 20 % | 0.1 % | 0.1 % |
-| Ending (staff roll) | 20 % | 0.1 % | 0.2 % |
-| Attract (palette fades) | 8 % | about 1.5 % | 0.4–0.6 % |
-| Title menu, windowed | 20 % | 0.2 % | 0 % |
-| Driving, windowed | 12 % | 0.1 % | 0.1 % |
+| Screen | Before | Round 1 (CPU compose, polling) | Round 2 | Round 3 |
+|---|---|---|---|---|
+| Title menu | 40 % | 0.1 % | 0–0.2 % | 0 % |
+| Options / port settings | 37 / 41 % | under 0.5 % | 0.2 / 0.2 % | 0 / 0.1 % |
+| Route select | 20 % | 0.4 % | 0 % | 0 % |
+| Driving, enhanced HUD / original HUD | 22 / 23 % | 0.1 % / 0.1 % | 0.1 / 0.1 % | 0.0 / 0 % |
+| Coupling minigame | 22 % | 0.1 % | 0.1 % | 0.0 % |
+| Pause | 25 % | 0.1 % | 0 % | 0 % |
+| Driving report | 20 % | 0.1 % | 0.1 % | 0 % |
+| Ending (staff roll) | 20 % | 0.1 % | 0.2 % | 0.0 % |
+| Attract (palette fades) | 8 % | about 1.5 % | 0.4–0.6 % | 0 % |
+| Stage intro / run start after the board | | | 1.2 / 0.8 % | 0.2 / 0.2 % |
+| Title menu, windowed | 20 % | 0.2 % | 0 % | 0 % |
+| Driving, windowed | 12 % | 0.1 % | 0.1 % | 0.0 % |
 
-Most of what remains comes from outside the frame's work, in every run: the window's switch to
-full screen (two intervals of 16–25 ms about 0.25 s after it opens, the wait in `acquire`), and
-an interval of 16–18 ms every 5.0 s (600 frames) with no CPU work in the frame, also with
-MangoHud off — the compositor or the system. Within the work: the stage-start tick (§5), the
-first frame of the 3D view after a start (4–7 ms of `build3d`), and the first frame of the title
-menu (3–4 ms of GPU draw-list building for the translated menu items, first-touch page faults of
-their packed text).
+("0.0 %": one to three misses in thousands of frames.) What remains: one missed refresh at a
+run's start (its tick, 4–8 ms, and the first HUD and 3D frames after it), rare single 13–24 ms
+intervals with no work in the frame (the compositor), and 1.5–2.5 ms 2D draw-list frames when
+new HUD texts appear (label rasters; no miss). The window's switch to full screen (two 16–25 ms
+intervals about 0.25 s after it opens, seen in every round-2 run) did not show in any round-3
+run.
 
 The reference shots (every screen, English and Japanese, 1440p and 4K) are byte-identical before
 and after each change, in both compose modes.
