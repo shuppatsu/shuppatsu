@@ -130,6 +130,8 @@ const DEMO_ROUTES: u32 = 0x3f9da;
 const DEMO_ROUTE_COUNT: u32 = 13;
 /// The lesson demo's stage (0x40e6e0: `0x8570a4 = 5`).
 const LESSON_STAGE: usize = 5;
+/// The stage whose data the opening runs on (AKITA1C in its route part).
+pub const OPENING_STAGE: usize = 1;
 
 /// The exe data attract needs.
 #[derive(Debug, Clone)]
@@ -365,6 +367,33 @@ impl Attract {
                 self.phase = Phase::Item(i + 1);
             }
         }
+    }
+
+    /// The stage of the run (a demo drive, or the opening on stage 1) that attract starts
+    /// next, if no other screen item comes before it: what its owner can load ahead while the
+    /// current item shows. A guess only for what the items do (the owner checks what it
+    /// loaded against the run it starts).
+    pub fn next_run(&self, t: &AttractTables) -> Option<usize> {
+        let from = match self.phase {
+            Phase::Item(i) | Phase::Gap(_, i) => i,
+            Phase::Logo(..) | Phase::Photo(_) | Phase::Poster(_) | Phase::Picture(_) => {
+                self.current + 1
+            }
+            Phase::Leaving(_) | Phase::Demo(_) | Phase::Opening(_) | Phase::Movie(_) => {
+                return None;
+            }
+        };
+        let mut stage = self.demo_stage;
+        for &f in t.items.get(from..)? {
+            match f {
+                ITEM_DEMO_ROUTE => stage = demo_route(self.counters.walk),
+                ITEM_DEMO_DRIVE => return Some(stage),
+                ITEM_LESSON_DEMO => return Some(LESSON_STAGE),
+                ITEM_TITLE if !self.skip_opening => return Some(OPENING_STAGE),
+                _ => return None,
+            }
+        }
+        None
     }
 
     /// The demo drive asked for by [`AttractStep::Demo`] has ended, by START or by its time.
