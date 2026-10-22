@@ -284,8 +284,14 @@ impl Gpu {
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
-        self.config.width = width.max(1);
-        self.config.height = height.max(1);
+        let (width, height) = (width.max(1), height.max(1));
+        // The first Resized repeats the size the surface was configured with; configuring the
+        // 4K swap chain again took 28 ms of the first frame.
+        if (width, height) == (self.config.width, self.config.height) {
+            return;
+        }
+        self.config.width = width;
+        self.config.height = height;
         self.surface.configure(&self.device, &self.config);
     }
 
