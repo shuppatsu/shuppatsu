@@ -260,13 +260,14 @@ pub trait GlyphSource: Sync {
 
 /// TrueType/OpenType fonts through fontdue: the first is the primary font (metrics, and every
 /// glyph it has); later ones fill in characters it lacks. A character no font has is drawn
-/// without its macron (ō → o) rather than as a missing-glyph box.
-pub struct FontGlyphs(Vec<fontdue::Font>);
+/// without its macron (ō → o) rather than as a missing-glyph box. Shared: a clone is cheap.
+#[derive(Clone)]
+pub struct FontGlyphs(Vec<Arc<fontdue::Font>>);
 
 impl FontGlyphs {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self, TextError> {
         fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default())
-            .map(|f| Self(vec![f]))
+            .map(|f| Self(vec![Arc::new(f)]))
             .map_err(TextError::Font)
     }
 
@@ -305,7 +306,12 @@ impl FontGlyphs {
 
     /// The font and character to draw `ch` with.
     fn pick(&self, ch: char) -> (&fontdue::Font, char) {
-        let has = |c: char| self.0.iter().find(|f| f.lookup_glyph_index(c) != 0);
+        let has = |c: char| {
+            self.0
+                .iter()
+                .map(|f| &**f)
+                .find(|f| f.lookup_glyph_index(c) != 0)
+        };
         if let Some(f) = has(ch) {
             return (f, ch);
         }

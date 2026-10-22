@@ -231,6 +231,10 @@ fn joystick_dat(opts: &PadOptions) -> Option<PathBuf> {
 
 impl App {
     pub fn new(mut opts: AppOptions) -> Result<Self> {
+        // The bundled font parses (28 ms) while the sprite art loads.
+        std::thread::spawn(|| {
+            let _ = crate::locale::bundled_font();
+        });
         let data = GameData::from_env()?;
         let exe_bytes = data.exe()?;
         let exe = Exe::parse(&exe_bytes)?;

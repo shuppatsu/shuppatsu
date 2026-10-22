@@ -1002,7 +1002,7 @@ fn install_with(
         let paths: Vec<PathBuf> = std::env::split_paths(list).collect();
         FontGlyphs::load_all(&paths)
     };
-    let bundled = || FontGlyphs::from_bytes(BUNDLED_FONT);
+    let bundled = bundled_font;
     let font = match &cfg.font {
         Some(list) => load(list)?.with_fallback(bundled()?),
         None => bundled()?,
@@ -1029,9 +1029,13 @@ fn install_with(
     Ok(n)
 }
 
-/// The bundled body font ([`BUNDLED_FONT`]).
+/// The bundled body font ([`BUNDLED_FONT`]), parsed once per process (28 ms; start-up asked
+/// for it three times: the text, the controller hints and the text again for the window).
 pub fn bundled_font() -> Result<FontGlyphs> {
-    Ok(FontGlyphs::from_bytes(BUNDLED_FONT)?)
+    static FONT: std::sync::OnceLock<Result<FontGlyphs, String>> = std::sync::OnceLock::new();
+    FONT.get_or_init(|| FontGlyphs::from_bytes(BUNDLED_FONT).map_err(|e| e.to_string()))
+        .clone()
+        .map_err(anyhow::Error::msg)
 }
 
 /// Only the bundled font as the label font, no text overrides: the first-run language screen
