@@ -753,25 +753,8 @@ pub fn paint(
     rims: Rims,
     shadow: Option<Shadow>,
 ) {
-    let inked = |x: i32, y: i32| {
-        x >= 0
-            && y >= 0
-            && (x as usize) < w
-            && (y as usize) < h
-            && coverage[y as usize * w + x as usize] >= 128
-    };
     // The strokes with their rims (a square of the rims' width in original pixels round each).
-    let dilated = |width: u8| {
-        let r = i32::from(width) * scale as i32;
-        let mut body = vec![false; w * h];
-        for y in 0..h as i32 {
-            for x in 0..w as i32 {
-                body[y as usize * w + x as usize] =
-                    (-r..=r).any(|dy| (-r..=r).any(|dx| inked(x + dx, y + dy)));
-            }
-        }
-        body
-    };
+    let dilated = |width: u8| dilate_strokes(coverage, w, h, usize::from(width) * scale);
     let inner = rims.outline.map(|o| dilated(o.width));
     let body = dilated(rims.width());
     let in_body = |x: i32, y: i32| {
@@ -811,6 +794,34 @@ pub fn paint(
             }
         }
     }
+}
+
+/// The `w × h` strokes of `coverage` (half coverage and up) dilated by a square of radius
+/// `r`: a row pass then a column pass over running counts, as the square is the two spans'
+/// product (testing the whole square per pixel took 100 ms for a banner at 4K).
+fn dilate_strokes(coverage: &[u8], w: usize, h: usize, r: usize) -> Vec<bool> {
+    let mut rows = vec![false; w * h];
+    let mut count = vec![0u32; w.max(h) + 1];
+    for y in 0..h {
+        for x in 0..w {
+            count[x + 1] = count[x] + u32::from(coverage[y * w + x] >= 128);
+        }
+        for x in 0..w {
+            let (lo, hi) = (x.saturating_sub(r), (x + r + 1).min(w));
+            rows[y * w + x] = count[hi] > count[lo];
+        }
+    }
+    let mut body = vec![false; w * h];
+    for x in 0..w {
+        for y in 0..h {
+            count[y + 1] = count[y] + u32::from(rows[y * w + x]);
+        }
+        for y in 0..h {
+            let (lo, hi) = (y.saturating_sub(r), (y + r + 1).min(h));
+            body[y * w + x] = count[hi] > count[lo];
+        }
+    }
+    body
 }
 
 #[cfg(test)]
@@ -1056,5 +1067,41 @@ mod tests {
         let flat: Vec<u8> = art.iter().map(|&v| if v == 0 { 0 } else { 4 }).collect();
         let scan = RegionScan::of(&part, &flat, w, h).unwrap();
         assert_eq!(gradient(&scan, &flat, w, h), None);
+    }
+
+    /// The separable dilation equals testing the whole square round each pixel.
+    #[test]
+    fn dilation_is_the_square() {
+        let mut seed = 0x2545_f491_u32;
+        let mut rand = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        for _ in 0..40 {
+            let (w, h) = (1 + rand() as usize % 37, 1 + rand() as usize % 23);
+            let r = rand() as usize % 9;
+            let coverage: Vec<u8> = (0..w * h)
+                .map(|_| {
+                    if rand() % 7 == 0 {
+                        200
+                    } else {
+                        (rand() % 128) as u8
+                    }
+                })
+                .collect();
+            let inked = |x: i64, y: i64| {
+                (0..w as i64).contains(&x)
+                    && (0..h as i64).contains(&y)
+                    && coverage[y as usize * w + x as usize] >= 128
+            };
+            let r = r as i64;
+            let naive: Vec<bool> = (0..h as i64)
+                .flat_map(|y| (0..w as i64).map(move |x| (x, y)))
+                .map(|(x, y)| (-r..=r).any(|dy| (-r..=r).any(|dx| inked(x + dx, y + dy))))
+                .collect();
+            assert_eq!(dilate_strokes(&coverage, w, h, r as usize), naive);
+        }
     }
 }
