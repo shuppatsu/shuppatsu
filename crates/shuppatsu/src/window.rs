@@ -67,6 +67,26 @@ pub fn block_on<F: std::future::Future>(fut: F) -> F::Output {
     }
 }
 
+/// The GPU instance, adapter and device opened on a thread before the window exists (on the
+/// event loop's display), so their set-up (130 ms on Vulkan with the system's implicit
+/// layers) runs beside the game's own start-up; [`Gpu::with_window_early`] takes them.
+pub struct EarlyGpu(std::thread::JoinHandle<Result<crate::gpu_backend::Opened>>);
+
+impl EarlyGpu {
+    pub fn start(display: winit::event_loop::OwnedDisplayHandle) -> Self {
+        Self(std::thread::spawn(move || {
+            crate::gpu_backend::open(
+                || {
+                    wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(
+                        display.clone(),
+                    ))
+                },
+                |_| Ok(None),
+            )
+        }))
+    }
+}
+
 impl Gpu {
     /// Opens a window of `size` pixels with an sRGB surface; `uncapped` presents without vsync,
     /// `fullscreen` covers the current monitor borderless (setting `fullscreen`; `size` is then
@@ -104,10 +124,46 @@ impl Gpu {
 
     /// [`Gpu::create`] on a window from [`Gpu::open_window`].
     pub fn with_window(window: Arc<Window>, uncapped: bool, ui_scale: usize) -> Result<Self> {
-        let (_instance, surface, adapter, device, queue) = crate::gpu_backend::open(
-            || wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(window.clone())),
-            |instance| Ok(Some(instance.create_surface(window.clone())?)),
-        )?;
+        Self::with_window_early(window, None, uncapped, ui_scale)
+    }
+
+    /// [`Gpu::with_window`] with the device of an [`EarlyGpu`], when it can present to the
+    /// window; else (or on its error) the device is opened for the window as usual.
+    pub fn with_window_early(
+        window: Arc<Window>,
+        early: Option<EarlyGpu>,
+        uncapped: bool,
+        ui_scale: usize,
+    ) -> Result<Self> {
+        let early = early.and_then(|e| match e.0.join() {
+            Ok(Ok(o)) => Some(o),
+            Ok(Err(e)) => {
+                eprintln!("graphics: early set-up failed ({e:#}); opening for the window");
+                None
+            }
+            Err(_) => None,
+        });
+        let with_surface = early.and_then(|(instance, _, adapter, device, queue)| {
+            let surface = instance.create_surface(window.clone()).ok()?;
+            adapter.is_surface_supported(&surface).then_some((
+                instance,
+                Some(surface),
+                adapter,
+                device,
+                queue,
+            ))
+        });
+        let (_instance, surface, adapter, device, queue) = match with_surface {
+            Some(o) => o,
+            None => crate::gpu_backend::open(
+                || {
+                    wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(
+                        window.clone(),
+                    ))
+                },
+                |instance| Ok(Some(instance.create_surface(window.clone())?)),
+            )?,
+        };
         let surface = surface.context("no surface")?;
         let info = adapter.get_info();
         eprintln!("adapter: {} ({:?})", info.name, info.backend);

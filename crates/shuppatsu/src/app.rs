@@ -32,7 +32,7 @@ use crate::scene::GameData;
 use crate::screens::tables::ScreenTables;
 use crate::screens::{MenuInput, Sfx};
 use crate::script::{InputLog, Script};
-use crate::window::{Gpu, Toggle};
+use crate::window::{EarlyGpu, Gpu, Toggle};
 use anyhow::{Context, Result};
 use shuppatsu_engine::demo::DemoKind;
 use shuppatsu_formats::exe::Exe;
@@ -181,6 +181,8 @@ pub struct App {
     /// The translated text built for the window while the GPU was set up ([`App::resumed`]),
     /// for its first fit.
     text_ahead: Option<(usize, shuppatsu_render::text::TextOverlay)>,
+    /// The GPU device opened before the window ([`EarlyGpu`]), taken when it opens.
+    gpu_early: Option<EarlyGpu>,
     /// The stage intro is the run in [`Screen::Play`]; the departure board of this choice
     /// follows it.
     intro_chosen: Option<Chosen>,
@@ -351,6 +353,7 @@ impl App {
             movie_overlay: None,
             movie_ahead,
             text_ahead: None,
+            gpu_early: None,
             intro_chosen: None,
             attract_ahead: None,
             down: [false; 256],
@@ -1523,6 +1526,7 @@ impl ApplicationHandler for App {
         let Some(r) = self.res.as_mut() else {
             return;
         };
+        let early = self.gpu_early.take();
         let opened = Gpu::open_window(
             event_loop,
             "shuppatsu",
@@ -1544,8 +1548,12 @@ impl ApplicationHandler for App {
                         crate::presentation::text_ahead(cfg, data, bank, (size.width, size.height))
                     })
                 });
-                let gpu =
-                    Gpu::with_window(window, !self.opts.settings.vsync, self.opts.locale.ui_scale);
+                let gpu = Gpu::with_window_early(
+                    window,
+                    early,
+                    !self.opts.settings.vsync,
+                    self.opts.locale.ui_scale,
+                );
                 let text = text.map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)));
                 (gpu, text)
             });
@@ -1644,13 +1652,23 @@ const WARM_AFTER: Duration = Duration::from_millis(150);
 
 /// `shuppatsu` with no subcommand.
 pub fn run(opts: AppOptions) -> Result<()> {
-    let app = App::new(opts)?;
-    if let Some((ticks, out)) = app.opts.shot.clone() {
+    // With a window, its event loop comes first: the GPU device opens on its display while
+    // the game data loads.
+    let windowed = match opts.shot {
+        None => {
+            let event_loop = EventLoop::new()?;
+            let early = EarlyGpu::start(event_loop.owned_display_handle());
+            Some((event_loop, early))
+        }
+        Some(_) => None,
+    };
+    let mut app = App::new(opts)?;
+    let Some((event_loop, early)) = windowed else {
+        let (ticks, out) = app.opts.shot.clone().expect("a headless run has a shot");
         return app.shot(ticks, &out);
-    }
-    let event_loop = EventLoop::new()?;
+    };
+    app.gpu_early = Some(early);
     event_loop.set_control_flow(ControlFlow::Poll);
-    let mut app = app;
     event_loop.run_app(&mut app)?;
     shuppatsu_render::perf::flush();
     // The save is written at exit (0x434f50 on WinMain's shutdown path).
