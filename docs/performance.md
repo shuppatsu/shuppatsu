@@ -114,7 +114,11 @@ changes, since every pixel's colour then changes: the attract fades composed 26 
 3.7 ms and uploaded it in about 0.9 ms, and missed about 1.5 % of the refreshes. The default is
 now to compose the layer on the GPU; `SHUPPATSU_COMPOSE=cpu` keeps the CPU compose, which stays
 the reference (tests, `SHUPPATSU_VERIFY_COMPOSE`, and a fallback for a GPU without compute
-shaders).
+shaders). A device that cannot run the compositor (`gpu2d::supported`: OpenGL, or too few
+compute or storage limits) composes on the CPU by itself: `gpu_backend::adapt` makes CPU the
+default mode when the device opens (headless shots open theirs before the run, `shot::prepare`),
+and a composer made before that switches at its first `Overlay::sync`. See docs/building.md,
+"OpenGL fallback".
 
 **What the CPU does** (`sprites/gpu.rs`, `Composer::compose` in GPU mode). The same
 `SpriteLayer::prepare` as a CPU compose (so the bank's paper-fill and xBRZ caches see the same

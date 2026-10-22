@@ -124,7 +124,7 @@ You need:
 
 * **Linux** (x86-64) or **Windows 10 or later** (x86-64);
 * a GPU with **Vulkan** (Linux) or **DirectX 12 / Vulkan** (Windows); any GPU from the last
-  ten years should do;
+  ten years should do. Without them the game falls back to OpenGL (GL 3.3 / GLES 3);
 * the **3000-bandai** disc, and about 450 MB of disk space for its extracted files.
 
 ### 1. Make an image of your disc
@@ -404,6 +404,10 @@ detail.
   `DATA` and `BIN/dengo3k.exe` exist and run the [checks](#3-check-it-optional).
 * **No window, or "no adapter" / Vulkan errors**: check `vulkaninfo --summary`. Outside NixOS,
   run the Nix package through nixGL.
+* **No Vulkan: the game falls back to OpenGL.** It logs `graphics: Gl (…): fallbacks: …` and
+  runs with the 2D layer composed on the CPU (a little more CPU time per frame); the picture is
+  the same apart from a few pixels. `WGPU_BACKEND=vulkan` (or `dx12`) insists on a backend,
+  `WGPU_BACKEND=gl` tries the fallback ([docs/building.md](docs/building.md#opengl-fallback)).
 * **No sound**: the game plays through ALSA on Linux (PipeWire and PulseAudio provide it).
   `--mute` starts silent.
 * **The controller does nothing**: check what arrives with `shuppatsu pad monitor`. It prints the

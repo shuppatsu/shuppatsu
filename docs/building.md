@@ -17,7 +17,8 @@ cargo test --workspace                            # data tests need SHUPPATSU_DA
 
 `nix build` (the flake's `packages`) builds the same binaries as a Nix package (see README.md).
 Running from the dev shell works because it puts the Vulkan loader, Wayland and X11 libraries on
-`LD_LIBRARY_PATH`. A bare `target/release/shuppatsu` outside the shell can't find them on NixOS.
+`LD_LIBRARY_PATH` (and libglvnd's libEGL for the OpenGL fallback). A bare `target/release/shuppatsu`
+outside the shell can't find them on NixOS.
 
 ## Windows (cross-compiled from Linux)
 
@@ -57,7 +58,7 @@ uses the same logo: the hinted 32 px icon in the title bar, 256 px for the taskb
 
 | Area | Windows | Linux |
 |---|---|---|
-| Graphics | wgpu, **DX12 first**, then Vulkan, then GL (`gpu_backend.rs`). A backend is skipped when a probe pipeline does not compile. `WGPU_BACKEND=vulkan`/`dx12` forces one | wgpu defaults (Vulkan) |
+| Graphics | wgpu, **DX12 first**, then Vulkan, then GL (`gpu_backend.rs`). A backend is skipped when a probe pipeline does not compile. `WGPU_BACKEND=vulkan`/`dx12` forces one | wgpu defaults: Vulkan, else OpenGL (below) |
 | Audio | cpal, WASAPI | cpal, ALSA (PipeWire/Pulse through their ALSA plugins) |
 | Gamepads | gilrs, Windows.Gaming.Input | gilrs, evdev |
 | Config, saves, log | `%APPDATA%\shuppatsu\` (`config.toml`, `eeprom.dat`, `joystick.dat`, `shuppatsu.log`); copied once from `%APPDATA%\ddg\` (the folder's name before the rename) when only that exists | `$XDG_CONFIG_HOME/shuppatsu/` (`~/.config/shuppatsu`); likewise copied once from `~/.config/ddg` |
@@ -72,6 +73,30 @@ overwritten on each start. If it fails to start, it also shows the error in a me
 `--console` attaches to the console of the command prompt that started it, or opens a new one.
 A redirected stderr (`shuppatsu.exe 2> log.txt`) is used as it is. `shuppatsu-tools.exe` is a normal
 console program.
+
+### OpenGL fallback
+
+Without Vulkan (or DX12 on Windows) wgpu opens OpenGL: desktop GL or GLES 3 through EGL on
+Linux, WGL on Windows. `WGPU_BACKEND=gl` forces it, for testing. The game then runs with these
+fallbacks, listed in one log line when the device opens (`gpu_backend::adapt`), e.g.
+
+```
+graphics: Gl (AMD Radeon Graphics (radeonsi, …)): fallbacks: 2D layer composed on the CPU (no GPU compositor); world pages through one sampler (GL)
+```
+
+| Feature | On OpenGL |
+|---|---|
+| 2D layer | composed on the CPU (the reference compose) into an `Rgba8UnormSrgb` canvas. The GPU compositor needs a storage texture sampled through an sRGB view of it, which GL cannot reinterpret |
+| World pass sampling | GL pairs a texture with one sampler per shader, so the world shader samples its page through one sampler slot, bound to the nearest sampler in the original's sampling mode (`gpu.rs`, `world_shader_source`); `msaa`'s alpha-to-coverage lookup is then filtered by hand from four texel loads |
+| `anisotropic` | off when the driver lacks it (wgpu clamps it to 1); Mesa has it |
+| `msaa` | the highest count the device has (the renderer probes 8, 4, 2); Mesa has 8 |
+| Issue marks | the GL surface cannot be read back, so the marked frame is drawn into a texture, read back and then put on the surface (`Gpu::target`) |
+
+Shots on GL differ from Vulkan's in a few pixels: the 2D screens by at most 1/255 in a handful
+of pixels (blending rounding); the 3D screens in 0.01–0.4 % of the pixels, at texel boundaries of
+magnified nearest-sampled textures and polygon edges (GL rasterises with Y flipped, so a texel
+or edge on the boundary can land on the other side); the movie's bilinear picture by up to 15 %
+in 0.06 % of the pixels. Vulkan and DX12 are unchanged by all of this.
 
 ## Where the game data is found
 
