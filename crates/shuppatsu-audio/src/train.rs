@@ -501,6 +501,9 @@ pub struct TurnoutClatter {
     wheels: [f32; 3],
     /// task+0x4c..: clicks so far per wheel set.
     clicks: [usize; 3],
+    /// Rail-joint requests so far; 0x4204d0 starts the force-feedback jolt (0x434940) with
+    /// each one (docs/re/input.md §11).
+    requests: u32,
 }
 
 impl TurnoutClatter {
@@ -510,7 +513,13 @@ impl TurnoutClatter {
             step: (f64::from(speed) * (1.0 / 30.0)) as f32,
             wheels: TURNOUT_WHEELS,
             clicks: [0; 3],
+            requests: 0,
         }
+    }
+
+    /// The rail-joint requests (and so force-feedback jolts) so far.
+    pub fn requests(&self) -> u32 {
+        self.requests
     }
 
     /// One update; `joint` is the stage's rail-joint code (0x856d98), `flange` the flag
@@ -520,6 +529,7 @@ impl TurnoutClatter {
         for (pos, clicks) in self.wheels.iter_mut().zip(self.clicks.iter_mut()) {
             if *pos >= 0.0 && *clicks < 3 {
                 snd.request(joint);
+                self.requests += 1;
                 // The original indexes past its 3-entry table if a wheel set could skip three
                 // spacings in one tick; no speed the game reaches does (10 m > 2.8 m per tick).
                 while *pos >= 0.0 && *clicks < 3 {
@@ -1083,5 +1093,14 @@ mod tests {
         assert_eq!(p.len(), 9);
         assert_eq!(p.last().unwrap().1, TURNOUT_SQUEAL);
         assert_eq!(clatter(10.0, false).len(), 8);
+    }
+
+    #[test]
+    fn turnout_clatter_counts_its_joint_requests() {
+        // One force-feedback jolt per rail-joint request (0x4204d0), not for the squeal.
+        let mut snd = SoundSystem::new(Arc::new(tables()));
+        let mut c = TurnoutClatter::new(10.0);
+        while c.tick(0x32, true, &mut snd) {}
+        assert_eq!(c.requests(), 8);
     }
 }
