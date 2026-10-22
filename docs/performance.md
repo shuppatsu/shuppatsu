@@ -130,7 +130,7 @@ different frame is composed again on the GPU.
 | Paper fill | the fill's two sides, RGBA | per fill |
 | Translated text part | base index, coverage and (when not one colour) text colour index per pixel: the part's own byte arrays, nothing packed | per bank generation |
 | Fill | — (one colour) | — |
-| Triangle / fan | a byte mask, rasterised by the CPU's edge test | per frame |
+| Triangle / fan | per row of its box one run per triangle (two 16-bit column bounds), from the CPU's edge test (`triangle_spans`) | per frame |
 | Label text | coverage, outline and backdrop bits (the CPU's mask and dilation) | by text, style and size |
 | Legend | one coverage raster per group of blends (shape, rim, letters), recorded from the CPU's legend drawing | by legend, colours and place |
 | Picture (logo board) | the scaled picture, RGBA | by picture and size |

@@ -36,8 +36,8 @@ pub mod kind {
     pub const PART: u32 = 3;
     /// A rectangle in one colour.
     pub const FILL: u32 = 4;
-    /// The pixels of a byte mask in one colour (triangles, fans).
-    pub const MASK: u32 = 5;
+    /// Row runs of triangles in one colour (fans, arrows).
+    pub const RUNS: u32 = 5;
     /// A label text widget: backdrop, outline and letters.
     pub const TEXT: u32 = 6;
     /// One group of a legend's blends.
@@ -420,11 +420,11 @@ fn bounds(pixels: impl Iterator<Item = (usize, usize)>) -> Option<[usize; 4]> {
     })
 }
 
-/// A byte mask of the pixels of triangles `tris` (as [`triangle_cover`] covers them in `clip`)
-/// over their bounding box: the box and the mask,
-/// made from their rows' runs: a fan over the whole canvas listed 5 M pixels (6-8 ms a tick in
-/// the opening at 4K).
-fn triangles_mask(tris: &[[[f32; 2]; 3]], clip: [usize; 4]) -> Option<([usize; 4], Blob)> {
+/// The pixels of triangles `tris` (as [`triangle_cover`] covers them in `clip`) as row runs
+/// for a [`kind::RUNS`] record: their bounding box, and per row of it one word per triangle,
+/// `x0 | x1 << 16` (0: none). A byte mask of a fan over the whole canvas was 6.5 MB made and
+/// uploaded every tick of a wipe (3.5 ms at 4K); its runs are a few KB.
+fn triangles_runs(tris: &[[[f32; 2]; 3]], clip: [usize; 4]) -> Option<([usize; 4], Blob)> {
     let mut b: Option<[usize; 4]> = None;
     for &t in tris {
         triangle_spans(t, clip, |y, x0, x1| {
@@ -437,15 +437,14 @@ fn triangles_mask(tris: &[[[f32; 2]; 3]], clip: [usize; 4]) -> Option<([usize; 4
         });
     }
     let b = b?;
-    let w = b[2] - b[0];
-    let mut m = vec![0u8; w * (b[3] - b[1])];
-    for &t in tris {
+    let k = tris.len();
+    let mut runs = vec![0u32; k * (b[3] - b[1])];
+    for (i, &t) in tris.iter().enumerate() {
         triangle_spans(t, clip, |y, x0, x1| {
-            let row = (y - b[1]) * w;
-            m[row + x0 - b[0]..row + x1 - b[0]].fill(1);
+            runs[(y - b[1]) * k + i] = x0 as u32 | (x1 as u32) << 16;
         });
     }
-    Some((b, Blob::Bytes(m.into())))
+    Some((b, Blob::Words(runs.into())))
 }
 
 impl SpriteLayer {
@@ -510,9 +509,15 @@ impl SpriteLayer {
                 .map(|k| [pts[0], pts[k], pts[k + 1]])
                 .collect();
             let [_, r, g, bl] = fan.argb.to_be_bytes();
-            if let Some((bbox, m)) = triangles_mask(&tris, c.clip) {
-                let params = [pack([r, g, bl, 255]), w(bbox[0] as i32), w(bbox[1] as i32)];
-                b.push(kind::MASK, bbox, [0; 4], &params, &[(3, m)]);
+            if let Some((bbox, m)) = triangles_runs(&tris, c.clip) {
+                let params = [
+                    pack([r, g, bl, 255]),
+                    0,
+                    w(bbox[1] as i32),
+                    0,
+                    tris.len() as u32,
+                ];
+                b.push(kind::RUNS, bbox, [0; 4], &params, &[(3, m)]);
             }
         }
         let backdrop = backdrop.map(|[r, g, bl]| {
@@ -826,13 +831,9 @@ impl SpriteLayer {
                 );
                 let (t, bt) = ((y + sy as f32) * s, (y + rh + sy as f32) * s);
                 let tri = [[l, t], [r, t], [(l + r) / 2.0, bt]];
-                if let Some((bbox, m)) = triangles_mask(&[tri], c.clip) {
-                    let params = [
-                        pack(pal.rgba(p.index)),
-                        w(bbox[0] as i32),
-                        w(bbox[1] as i32),
-                    ];
-                    b.push(kind::MASK, bbox, [0; 4], &params, &[(3, m)]);
+                if let Some((bbox, m)) = triangles_runs(&[tri], c.clip) {
+                    let params = [pack(pal.rgba(p.index)), 0, w(bbox[1] as i32), 0, 1];
+                    b.push(kind::RUNS, bbox, [0; 4], &params, &[(3, m)]);
                 }
             }
             WidgetKind::Sprite {

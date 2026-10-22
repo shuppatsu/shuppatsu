@@ -347,12 +347,6 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) loca
             case 4u: {
                 px = unpack(p(b, 0u));
             }
-            case 5u: {
-                let i = u32((y - pi(b, 2u)) * i32(frame[b + 3u] - frame[b + 1u]) + x - pi(b, 1u));
-                if (byte_at(p(b, 3u), i) != 0u) {
-                    px = unpack(p(b, 0u));
-                }
-            }
             case 6u: {
                 px = text(b, x, y, px);
             }
@@ -364,6 +358,20 @@ fn main(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) loca
             }
             case 9u: {
                 px = resample(b, x, y, px);
+            }
+            case 5u: {
+                // Row runs of triangles (sprites/gpu.rs `triangles_runs`): one word per triangle
+                // and row, `x0 | x1 << 16`.
+                let k = p(b, 4u);
+                let row = u32(y - pi(b, 2u));
+                let xu = u32(x);
+                for (var t = 0u; t < k; t++) {
+                    let r = blobs[p(b, 3u) + row * k + t];
+                    if (xu >= (r & 65535u) && xu < (r >> 16u)) {
+                        px = unpack(p(b, 0u));
+                        break;
+                    }
+                }
             }
             default: {}
         }
