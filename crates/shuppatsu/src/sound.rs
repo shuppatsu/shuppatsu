@@ -123,11 +123,6 @@ impl Sound {
         self.snd.take_voice_events()
     }
 
-    /// The sound tables read from the exe.
-    pub fn tables(&self) -> &SoundTables {
-        &self.tables
-    }
-
     /// Sets up the train and stage sounds for `drive`'s stage, on a fresh sound system (the
     /// previous stage's voices are stopped).
     pub fn begin_stage(&mut self, exe: &Exe<'_>, drive: &Drive) -> Result<()> {

@@ -27,6 +27,8 @@ use shuppatsu_formats::cg::Palette;
 use shuppatsu_render::sprites::{Anchor, Paint, SpriteLayer, TextStyle};
 use shuppatsu_render::text::{Align, FontRole};
 use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 /// Lines on screen at once (the newest at the bottom).
 pub const MAX_LINES: usize = 2;
@@ -410,6 +412,36 @@ impl SubtitleBook {
         let lengths = VoiceLengths::from_effect_rom(&data.read("effect.rom")?)?;
         Ok(Self::new(cat.subtitles.clone(), names, tables, lengths))
     }
+
+    /// [`SubtitleBook::for_game`] made once per process for each catalogue and data directory
+    /// (3-4 ms, which a run start spent in its tick; [`crate::play::load_scene_ahead`] makes
+    /// it ahead). The sound tables are the exe's, as every sound system's.
+    pub fn shared(
+        cat: &Arc<crate::locale::Catalogue>,
+        exe: &shuppatsu_formats::exe::Exe<'_>,
+        data: &crate::scene::GameData,
+    ) -> anyhow::Result<Arc<Self>> {
+        type Kept = (Arc<crate::locale::Catalogue>, PathBuf, Arc<SubtitleBook>);
+        static KEPT: Mutex<Vec<Kept>> = Mutex::new(Vec::new());
+        // Kept books (a language switch adds one).
+        const KEEP: usize = 4;
+        let kept = || KEPT.lock().unwrap_or_else(|e| e.into_inner());
+        let found = kept()
+            .iter()
+            .find(|(c, d, _)| Arc::ptr_eq(c, cat) && d == data.data_dir())
+            .map(|(_, _, b)| b.clone());
+        if let Some(b) = found {
+            return Ok(b);
+        }
+        let tables = SoundTables::from_exe(exe)?;
+        let book = Arc::new(Self::for_game(cat, exe, data, &tables)?);
+        let mut kept = kept();
+        if kept.len() >= KEEP {
+            kept.remove(0);
+        }
+        kept.push((cat.clone(), data.data_dir().to_owned(), book.clone()));
+        Ok(book)
+    }
 }
 
 /// The first step that is a voice: not a BGM-slot chime and not a chained sequence.
@@ -429,7 +461,7 @@ struct Shown {
 /// The subtitles of a run: cues waiting for their phrase and the lines on screen.
 #[derive(Debug, Clone, Default)]
 pub struct Subtitles {
-    book: SubtitleBook,
+    book: Arc<SubtitleBook>,
     /// (game ticks to wait, cue).
     pending: Vec<(u32, Cue)>,
     /// Oldest first.
@@ -437,9 +469,9 @@ pub struct Subtitles {
 }
 
 impl Subtitles {
-    pub fn new(book: SubtitleBook) -> Self {
+    pub fn new(book: impl Into<Arc<SubtitleBook>>) -> Self {
         Self {
-            book,
+            book: book.into(),
             ..Self::default()
         }
     }

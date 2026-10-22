@@ -201,6 +201,8 @@ pub fn load_scene_ahead(
     data.texture_pack = opts.locale.texture_pack.clone();
     let key = scene_key("", opts);
     let (stage, difficulty, station) = (opts.stage, opts.difficulty, opts.station);
+    let subtitles = (opts.settings.subtitles && opts.locale.active())
+        .then(|| (opts.locale.lang.clone(), opts.locale.dir.clone()));
     let job = std::thread::spawn(move || {
         let exe_bytes = data.exe()?;
         let exe = Exe::parse(&exe_bytes)?;
@@ -222,6 +224,12 @@ pub fn load_scene_ahead(
         );
         let what = (key.2, key.3, key.4);
         let scene = load_scene_with(&data, &key.0, key.1, what, uploader, sets)?;
+        // The run's subtitle book, kept for its start (a failure shows there).
+        if let Some((lang, dir)) = &subtitles
+            && let Ok(cat) = crate::locale::Catalogue::shared(lang, dir.as_deref())
+        {
+            let _ = crate::subtitles::SubtitleBook::shared(&cat, &exe, &data);
+        }
         Ok(Ahead {
             key,
             start: (stage, difficulty, station),
@@ -883,7 +891,7 @@ fn start_subtitles(
     };
     s.set_voice_log(true);
     let cat = crate::locale::Catalogue::shared(&opts.locale.lang, opts.locale.dir.as_deref())?;
-    let book = crate::subtitles::SubtitleBook::for_game(&cat, exe, data, s.tables())?;
+    let book = crate::subtitles::SubtitleBook::shared(&cat, exe, data)?;
     Ok(Some(crate::subtitles::Subtitles::new(book)))
 }
 
