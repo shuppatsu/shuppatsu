@@ -136,6 +136,11 @@ different frame is composed again on the GPU.
 | Picture (logo board) | the scaled picture, RGBA | by picture and size |
 | Resampled sprite | per pixel the id of its list of (index, weight) contributions; per palette each list's colour, coverage and its complement as the CPU's `f32` values | lists by map, rectangle and scale; colours by palette |
 
+A triangle (fans, arrows) is covered row by row as one run per row: along a row each edge
+test is monotonic (so is every rounded step), so the covered pixels are found from both ends
+(`triangle_spans`) instead of testing — and, for the GPU's masks, listing — every pixel (the
+attract opening's two full-canvas fans: 5 M pixels a tick, 6–8 ms).
+
 The rasters are built when a record first needs them. A frame's new label texts are rasterised
 ahead on all cores (`SpriteLayer::label_rasters`) and taken where they would be built, so the
 cache sees the same calls (a screen opening brings a dozen or more, 0.2–1 ms each at 4K); a
@@ -247,6 +252,14 @@ interval of that frame 48–80 → 14–16 ms):
   setting changes.
 - Texture pages convert to RGBA on all cores; mip levels (with `texture_filtering` or
   `anisotropic`) too.
+- Scenes a run moves to later load ahead too: the next route part's once the drive has loaded
+  its route at a station result (`Drive::next_com`, `Play::load_next_scene`; it is installed
+  four ticks later: stage 13's change at station 2 went from a 36 ms tick to 3 ms), the places
+  the opening and the ending put the camera at (`Drive::station_com`, `Play::prefetch_station`;
+  the opening's with its train sets), station 0's while the pause menu shows (its restart), and
+  attract's next demo drive or opening (`Attract::next_run`; their start ticks 41–64 → 5–6
+  ms). A scene that was not loaded ahead is loaded as before; the old one is freed on a
+  thread.
 - The movie (`Komachi.DAT`, 33 MB: 13 ms to read, 13 ms to demultiplex) is read on a thread at
   start-up and whenever attract or the title menu comes back (`movie::MovieAhead`), so it starts
   without a stall; it is let go when a run starts (about 30 MB less resident while driving).
@@ -288,15 +301,16 @@ earlier columns include about one miss per 5 s that was the trace's):
 | Screen | Before | Round 1 (CPU compose, polling) | Round 2 | Round 3 |
 |---|---|---|---|---|
 | Title menu | 40 % | 0.1 % | 0–0.2 % | 0 % |
-| Options / port settings | 37 / 41 % | under 0.5 % | 0.2 / 0.2 % | 0 / 0.1 % |
+| Options / port settings | 37 / 41 % | under 0.5 % | 0.2 / 0.2 % | 0.2 / 0.1 % |
 | Route select | 20 % | 0.4 % | 0 % | 0 % |
 | Driving, enhanced HUD / original HUD | 22 / 23 % | 0.1 % / 0.1 % | 0.1 / 0.1 % | 0.0 / 0 % |
-| Coupling minigame | 22 % | 0.1 % | 0.1 % | 0.0 % |
+| Coupling minigame | 22 % | 0.1 % | 0.1 % | 0 % |
 | Pause | 25 % | 0.1 % | 0 % | 0 % |
-| Driving report | 20 % | 0.1 % | 0.1 % | 0 % |
-| Ending (staff roll) | 20 % | 0.1 % | 0.2 % | 0.0 % |
-| Attract (palette fades) | 8 % | about 1.5 % | 0.4–0.6 % | 0 % |
-| Stage intro / run start after the board | | | 1.2 / 0.8 % | 0.2 / 0.2 % |
+| Driving report | 20 % | 0.1 % | 0.1 % | 0.1 % |
+| Ending (staff roll) | 20 % | 0.1 % | 0.2 % | 0.1 % |
+| Attract (palette fades) | 8 % | about 1.5 % | 0.4–0.6 % | 0–0.2 % |
+| Stage intro / run start after the board | | | 1.2 / 0.8 % | 0.3 / 0.4 % |
+| Attract opening / demo drive (90 s loop) | | | 1.9 / 0.2 % (round 3 baseline) | 0.1 / 0.0 % |
 | Title menu, windowed | 20 % | 0.2 % | 0 % | 0 % |
 | Driving, windowed | 12 % | 0.1 % | 0.1 % | 0.0 % |
 
