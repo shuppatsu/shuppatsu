@@ -560,6 +560,7 @@ impl Play {
         let now = Instant::now();
         let mut play = Play {
             scene_com: drive.com(),
+            scene_next: None,
             drive,
             tables,
             data,
@@ -979,6 +980,9 @@ pub struct Play {
     visibility: Visibility,
     scene: RouteScene,
     scene_com: u32,
+    /// The next segment's scene loading on a thread (its `.COM` index): the drive loads that
+    /// segment's route at a station result, seconds before the segment starts.
+    scene_next: Option<(u32, std::thread::JoinHandle<Result<RouteScene>>)>,
     controls: Controls,
     /// Controls polled at the end of the last tick (the physics reads them this tick).
     latched: DriverInput,
@@ -1151,6 +1155,7 @@ impl Play {
         }
         self.play(&sfx);
 
+        self.load_next_scene();
         if self.drive.com() != self.scene_com {
             self.reload_scene()?;
         }
@@ -1415,19 +1420,54 @@ impl Play {
     }
 
     fn reload_scene(&mut self) -> Result<()> {
-        self.scene = load_scene(
-            &self.data,
-            self.drive.com_name(),
-            self.visibility,
-            &self.opts,
-        )?;
-        self.scene_com = self.drive.com();
+        let com = self.drive.com();
+        // Loaded ahead ([`Play::load_next_scene`]), or here.
+        let ahead = match self.scene_next.take() {
+            Some((c, job)) if c == com => job.join().ok().and_then(Result::ok),
+            _ => None,
+        };
+        let scene = match ahead {
+            Some(scene) => scene,
+            None => load_scene(
+                &self.data,
+                self.drive.com_name(),
+                self.visibility,
+                &self.opts,
+            )?,
+        };
+        // The old scene (its route, parts and pages: a few ms to free) goes on a thread.
+        let old = std::mem::replace(&mut self.scene, scene);
+        std::thread::spawn(move || drop(old));
+        self.scene_com = com;
         self.interpolate = false;
         if let Some(g) = self.gpu.as_mut() {
-            g.renderer
-                .upload_pages(&g.device, &g.queue, &self.scene.library.pages);
+            let pages = self.scene.gpu_pages.take();
+            if !pages.is_some_and(|p| g.renderer.use_pages(p)) {
+                g.renderer
+                    .upload_pages(&g.device, &g.queue, &self.scene.library.pages);
+            }
         }
         Ok(())
+    }
+
+    /// Starts loading the next segment's scene on a thread once the drive knows it (a station
+    /// result; [`Play::reload_scene`] takes it at the segment's start): the load (20-40 ms with
+    /// its texture upload) stalled the tick that started the segment.
+    fn load_next_scene(&mut self) {
+        let Some((com, name)) = self.drive.next_com() else {
+            return;
+        };
+        if com == self.scene_com || self.scene_next.as_ref().is_some_and(|(c, _)| *c == com) {
+            return;
+        }
+        let (data, name) = (self.data.clone(), name.to_owned());
+        let (vis, what) = (
+            self.visibility,
+            (self.opts.settings, geometry(&self.opts), self.opts.stage),
+        );
+        let uploader = page_uploader(self.gpu.as_ref());
+        let job = std::thread::spawn(move || load_scene_for(&data, &name, vis, what, uploader));
+        self.scene_next = Some((com, job));
     }
 
     fn play(&mut self, sfx: &[Sfx]) {
