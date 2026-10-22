@@ -39,6 +39,8 @@
       # Libraries winit/wgpu dlopen at runtime.
       runtimeLibs = with pkgs; [
         vulkan-loader
+        # libEGL/libGL for wgpu's OpenGL backend, the fallback without Vulkan.
+        libglvnd
         wayland
         libxkbcommon
         libx11
