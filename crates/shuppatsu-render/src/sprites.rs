@@ -1879,8 +1879,20 @@ fn fill_triangle(t: [[f32; 2]; 3], rgba: [u8; 4], c: Canvas, canvas: &mut [u8]) 
 }
 
 /// Calls `f` with every pixel of `clip` (`[x0, y0, x1, y1]`) whose centre is inside the
-/// triangle `t` (either winding).
+/// triangle `t` (either winding), row by row, left to right.
 fn triangle_cover(t: [[f32; 2]; 3], clip: [usize; 4], mut f: impl FnMut(usize, usize)) {
+    triangle_spans(t, clip, |y, x0, x1| (x0..x1).for_each(|x| f(x, y)));
+}
+
+/// The pixels of [`triangle_cover`] as runs: `f(y, x0, x1)` for each row `y` with any, its
+/// columns `x0..x1`. Along a row each edge test is monotonic (the rounding of each step is),
+/// so a row's covered pixels are one run: found from both ends instead of testing every pixel
+/// (a fan over the whole canvas tested 5 M pixels at 4K).
+pub(crate) fn triangle_spans(
+    t: [[f32; 2]; 3],
+    clip: [usize; 4],
+    mut f: impl FnMut(usize, usize, usize),
+) {
     let edge = |a: [f32; 2], b: [f32; 2], p: [f32; 2]| {
         (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
     };
@@ -1893,23 +1905,73 @@ fn triangle_cover(t: [[f32; 2]; 3], clip: [usize; 4], mut f: impl FnMut(usize, u
     let min_y = (t.iter().map(|p| p[1]).fold(f32::MAX, f32::min).max(0.0) as usize).max(clip[1]);
     let max_y = (t.iter().map(|p| p[1]).fold(f32::MIN, f32::max).ceil() as usize).min(clip[3]);
     for y in min_y..max_y {
-        for x in min_x..max_x {
+        let inside = |x: usize| {
             let p = [x as f32 + 0.5, y as f32 + 0.5];
             let w = [
                 edge(t[1], t[2], p),
                 edge(t[2], t[0], p),
                 edge(t[0], t[1], p),
             ];
-            if w.iter().all(|&v| v * area >= 0.0) {
-                f(x, y);
-            }
-        }
+            w.iter().all(|&v| v * area >= 0.0)
+        };
+        let Some(x0) = (min_x..max_x).find(|&x| inside(x)) else {
+            continue;
+        };
+        let x1 = (x0..max_x).rfind(|&x| inside(x)).map_or(x0 + 1, |x| x + 1);
+        f(y, x0, x1);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The runs of `triangle_spans` are exactly the pixels whose centre passes the edge test.
+    #[test]
+    fn triangle_runs_are_the_tested_pixels() {
+        let mut seed = 0x9e37_79b9_u32;
+        let mut rand = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        let edge = |a: [f32; 2], b: [f32; 2], p: [f32; 2]| {
+            (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
+        };
+        for i in 0..300 {
+            // Coordinates in quarter pixels, some far outside the clip, some thin triangles.
+            let mut v = || {
+                let r = 4 * (60 + i % 200) as u32;
+                (rand() % r) as f32 / 4.0 - 20.0
+            };
+            let mut t = [[v(), v()], [v(), v()], [v(), v()]];
+            if i % 7 == 0 {
+                t[2] = [t[1][0] + 0.25, t[1][1] + 30.0];
+            }
+            let clip = [3, 2, 150, 120];
+            let area = edge(t[0], t[1], t[2]);
+            let mut want = Vec::new();
+            if area != 0.0 {
+                for y in clip[1]..clip[3] {
+                    for x in clip[0]..clip[2] {
+                        let p = [x as f32 + 0.5, y as f32 + 0.5];
+                        let w = [
+                            edge(t[1], t[2], p),
+                            edge(t[2], t[0], p),
+                            edge(t[0], t[1], p),
+                        ];
+                        if w.iter().all(|&v| v * area >= 0.0) {
+                            want.push((x, y));
+                        }
+                    }
+                }
+            }
+            let mut got = Vec::new();
+            triangle_cover(t, clip, |x, y| got.push((x, y)));
+            assert_eq!(got, want, "{t:?}");
+        }
+    }
 
     /// A bank with one 1×1 tilemap whose tile is solid index `v`.
     fn bank(v: u8) -> SpriteBank {

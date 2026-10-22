@@ -420,13 +420,30 @@ fn bounds(pixels: impl Iterator<Item = (usize, usize)>) -> Option<[usize; 4]> {
     })
 }
 
-/// A byte mask of `pixels` over their bounding box: the box and the mask.
-fn mask_of(pixels: &[(usize, usize)]) -> Option<([usize; 4], Blob)> {
-    let b = bounds(pixels.iter().copied())?;
+/// A byte mask of the pixels of triangles `tris` (as [`triangle_cover`] covers them in `clip`)
+/// over their bounding box: the box and the mask,
+/// made from their rows' runs: a fan over the whole canvas listed 5 M pixels (6-8 ms a tick in
+/// the opening at 4K).
+fn triangles_mask(tris: &[[[f32; 2]; 3]], clip: [usize; 4]) -> Option<([usize; 4], Blob)> {
+    let mut b: Option<[usize; 4]> = None;
+    for &t in tris {
+        triangle_spans(t, clip, |y, x0, x1| {
+            b = Some(match b {
+                None => [x0, y, x1, y + 1],
+                Some([bx0, by0, bx1, by1]) => {
+                    [bx0.min(x0), by0.min(y), bx1.max(x1), by1.max(y + 1)]
+                }
+            });
+        });
+    }
+    let b = b?;
     let w = b[2] - b[0];
     let mut m = vec![0u8; w * (b[3] - b[1])];
-    for &(x, y) in pixels {
-        m[(y - b[1]) * w + x - b[0]] = 1;
+    for &t in tris {
+        triangle_spans(t, clip, |y, x0, x1| {
+            let row = (y - b[1]) * w;
+            m[row + x0 - b[0]..row + x1 - b[0]].fill(1);
+        });
     }
     Some((b, Blob::Bytes(m.into())))
 }
@@ -489,12 +506,11 @@ impl SpriteLayer {
                     ]
                 })
                 .collect();
-            let mut px = Vec::new();
-            for k in 1..n.saturating_sub(1) {
-                triangle_cover([pts[0], pts[k], pts[k + 1]], c.clip, |x, y| px.push((x, y)));
-            }
+            let tris: Vec<[[f32; 2]; 3]> = (1..n.saturating_sub(1))
+                .map(|k| [pts[0], pts[k], pts[k + 1]])
+                .collect();
             let [_, r, g, bl] = fan.argb.to_be_bytes();
-            if let Some((bbox, m)) = mask_of(&px) {
+            if let Some((bbox, m)) = triangles_mask(&tris, c.clip) {
                 let params = [pack([r, g, bl, 255]), w(bbox[0] as i32), w(bbox[1] as i32)];
                 b.push(kind::MASK, bbox, [0; 4], &params, &[(3, m)]);
             }
@@ -809,11 +825,8 @@ impl SpriteLayer {
                     (x + rw + sx as f32) * s + shiftf,
                 );
                 let (t, bt) = ((y + sy as f32) * s, (y + rh + sy as f32) * s);
-                let mut px = Vec::new();
-                triangle_cover([[l, t], [r, t], [(l + r) / 2.0, bt]], c.clip, |x, y| {
-                    px.push((x, y));
-                });
-                if let Some((bbox, m)) = mask_of(&px) {
+                let tri = [[l, t], [r, t], [(l + r) / 2.0, bt]];
+                if let Some((bbox, m)) = triangles_mask(&[tri], c.clip) {
                     let params = [
                         pack(pal.rgba(p.index)),
                         w(bbox[0] as i32),
