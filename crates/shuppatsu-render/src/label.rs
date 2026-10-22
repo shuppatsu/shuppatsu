@@ -50,14 +50,15 @@ impl LabelFont {
             align,
             vertical,
         );
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-        cache
-            .entry(key)
-            .or_insert_with(|| {
-                let g = &*self.glyphs;
-                rasterise_sized(text, w, h, align, vertical, g, cap_px).into()
-            })
-            .clone()
+        let lock = || self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(m) = lock().get(&key) {
+            return m.clone();
+        }
+        // Rasterised outside the lock: labels are rasterised on several threads at once
+        // (`SpriteLayer::label_rasters`). The same key gives the same mask.
+        let g = &*self.glyphs;
+        let m: Arc<[u8]> = rasterise_sized(text, w, h, align, vertical, g, cap_px).into();
+        lock().entry(key).or_insert(m).clone()
     }
 
     /// The width of the widest line of `text` with capitals `cap` high, in the unit of `cap`

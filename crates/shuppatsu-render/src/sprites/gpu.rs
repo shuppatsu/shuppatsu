@@ -165,7 +165,7 @@ pub struct GpuCache {
     images: Vec<(ImageKey, Blob)>,
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 struct TextKey {
     generation: u64,
     text: String,
@@ -461,6 +461,7 @@ impl SpriteLayer {
             patches: Vec::new(),
         };
         let (sx, sy) = (i32::from(self.shake.0), i32::from(self.shake.1));
+        let mut fresh = self.label_rasters(bank, (sx, sy), c, cache);
         for layer in (0..LAYERS).rev() {
             for i in (0..SLOT_COUNT).rev() {
                 if self.slots[i].layer != layer {
@@ -472,7 +473,7 @@ impl SpriteLayer {
             }
             for wd in self.widgets.iter().filter(|w| w.layer == layer) {
                 let shift = self.anchor_shift(wd.anchor);
-                self.gpu_widget(bank, wd, sx, sy, shift, c, cache, &mut b);
+                self.gpu_widget(bank, wd, sx, sy, shift, c, cache, &mut fresh, &mut b);
             }
         }
         for fan in &self.fans {
@@ -687,6 +688,89 @@ impl SpriteLayer {
         }
     }
 
+    /// The canvas rectangle `[x0, y0, x1, y1]` of widget `wd` (shaken by `sx`, `sy`, shifted
+    /// by its anchor's `shift`), clamped to the canvas; `None` when empty.
+    fn widget_rect(wd: &Widget, sx: i32, sy: i32, shift: i32, c: Canvas) -> Option<[usize; 4]> {
+        let s = c.s as f32;
+        let [x, y, rw, rh] = wd.rect;
+        let to_px = |v: f32, shake: i32, offset: i32, max: usize| {
+            (((v + shake as f32) * s).round() as i64 + i64::from(offset)).clamp(0, max as i64)
+                as usize
+        };
+        let (x0, x1) = (to_px(x, sx, shift, c.w), to_px(x + rw, sx, shift, c.w));
+        let (y0, y1) = (to_px(y, sy, 0, c.h), to_px(y + rh, sy, 0, c.h));
+        (x0 < x1 && y0 < y1).then_some([x0, y0, x1, y1])
+    }
+
+    /// What a label text widget in `style` is drawn with: its text palette and font, its
+    /// backdrop and outline colours.
+    #[allow(clippy::type_complexity)]
+    fn text_look<'a>(
+        &'a self,
+        bank: &'a SpriteBank,
+        style: &TextStyle,
+    ) -> Option<(&'a Palette, &'a LabelFont, Option<[u8; 4]>, Option<[u8; 4]>)> {
+        let palette = |p: u8| self.palettes.get(usize::from(p)).and_then(Option::as_ref);
+        let pal = palette(style.paint.palette)?;
+        let font = bank.label_font(style.font)?;
+        let backdrop = style
+            .backdrop
+            .and_then(|b| Some(palette(b.palette)?.rgba(b.index)));
+        let outline = style
+            .outline
+            .and_then(|o| Some(palette(o.palette)?.rgba(o.index)));
+        Some((pal, font, backdrop, outline))
+    }
+
+    /// The rasters of the frame's label texts not in `cache` yet, built on all cores (a menu
+    /// opening brings a dozen, 0.2-1 ms each at 4K); [`SpriteLayer::gpu_widget`] takes them
+    /// where it would build them, so the cache sees the same calls.
+    fn label_rasters(
+        &self,
+        bank: &SpriteBank,
+        (sx, sy): (i32, i32),
+        c: Canvas,
+        cache: &GpuCache,
+    ) -> Vec<(TextKey, Blob)> {
+        let mut jobs = Vec::new();
+        for wd in &self.widgets {
+            let WidgetKind::Text { text, style } = &wd.kind else {
+                continue;
+            };
+            let shift = self.anchor_shift(wd.anchor);
+            let (Some([x0, y0, x1, y1]), Some((_, font, backdrop, outline))) = (
+                Self::widget_rect(wd, sx, sy, shift, c),
+                self.text_look(bank, style),
+            ) else {
+                continue;
+            };
+            let key = TextKey {
+                generation: bank.generation,
+                text: text.clone(),
+                style: *style,
+                size: (x1 - x0, y1 - y0),
+                scale: c.s,
+                backdrop: backdrop.is_some(),
+                outline: outline.is_some(),
+            };
+            let known = |k: &TextKey| *k == key;
+            if cache.text.iter().any(|(k, _)| known(k)) || jobs.iter().any(|(k, _, _)| known(k)) {
+                continue;
+            }
+            jobs.push((key, font, text.as_str()));
+        }
+        if jobs.len() < 2 {
+            return Vec::new();
+        }
+        crate::par::par_map(&jobs, |(k, font, text)| {
+            let flags = (k.backdrop, k.outline);
+            (
+                k.clone(),
+                text_blob(font, text, &k.style, k.size, k.scale, flags),
+            )
+        })
+    }
+
     /// The records of a widget, as [`SpriteLayer::draw_widget`] draws it.
     #[allow(clippy::too_many_arguments)]
     fn gpu_widget(
@@ -698,22 +782,17 @@ impl SpriteLayer {
         shift: i32,
         c: Canvas,
         cache: &mut GpuCache,
+        fresh: &mut Vec<(TextKey, Blob)>,
         b: &mut Builder,
     ) {
         let palette = |p: u8| self.palettes.get(usize::from(p)).and_then(Option::as_ref);
         let s = c.s as f32;
         let [x, y, rw, rh] = wd.rect;
-        let to_px = |v: f32, shake: i32, offset: i32, max: usize| {
-            (((v + shake as f32) * s).round() as i64 + i64::from(offset)).clamp(0, max as i64)
-                as usize
-        };
-        let (x0, x1) = (to_px(x, sx, shift, c.w), to_px(x + rw, sx, shift, c.w));
-        let (y0, y1) = (to_px(y, sy, 0, c.h), to_px(y + rh, sy, 0, c.h));
-        let shiftf = shift as f32;
-        if x0 >= x1 || y0 >= y1 {
+        let Some(rect) = Self::widget_rect(wd, sx, sy, shift, c) else {
             return;
-        }
-        let rect = [x0, y0, x1, y1];
+        };
+        let [x0, y0, x1, y1] = rect;
+        let shiftf = shift as f32;
         match &wd.kind {
             WidgetKind::Fill(p) => {
                 let Some(pal) = palette(p.palette) else {
@@ -931,17 +1010,10 @@ impl SpriteLayer {
             }
             WidgetKind::Text { text, style } => {
                 let paint = style.paint;
-                let (Some(pal), Some(font)) = (palette(paint.palette), bank.label_font(style.font))
-                else {
+                let Some((pal, font, backdrop, outline)) = self.text_look(bank, style) else {
                     return;
                 };
                 let (mw, mh) = (x1 - x0, y1 - y0);
-                let backdrop = style
-                    .backdrop
-                    .and_then(|b| Some(palette(b.palette)?.rgba(b.index)));
-                let outline = style
-                    .outline
-                    .and_then(|o| Some(palette(o.palette)?.rgba(o.index)));
                 let key = TextKey {
                     generation: bank.generation,
                     text: text.clone(),
@@ -951,30 +1023,16 @@ impl SpriteLayer {
                     backdrop: backdrop.is_some(),
                     outline: outline.is_some(),
                 };
+                // Built ahead with the frame's other new labels ([`SpriteLayer::label_rasters`]).
+                let made = fresh
+                    .iter()
+                    .position(|(k, _)| *k == key)
+                    .map(|i| fresh.swap_remove(i).1);
                 let blob = cached(&mut cache.text, key, 64, || {
-                    let l = TextLayers::new(
-                        font,
-                        text,
-                        style,
-                        (mw, mh),
-                        c.s,
-                        backdrop.is_some(),
-                        outline.is_some(),
-                    );
-                    let mut words: Vec<u32> = l.mask.iter().map(|&v| u32::from(v)).collect();
-                    if let Some(near) = &l.near {
-                        for (o, &n) in words.iter_mut().zip(near) {
-                            *o |= u32::from(n) << 8;
-                        }
-                    }
-                    if let Some((bx0, bx1)) = l.backdrop {
-                        for row in words.chunks_exact_mut(mw.max(1)) {
-                            for o in &mut row[bx0..bx1] {
-                                *o |= 1 << 9;
-                            }
-                        }
-                    }
-                    Blob::Words(words.into())
+                    made.unwrap_or_else(|| {
+                        let flags = (backdrop.is_some(), outline.is_some());
+                        text_blob(font, text, style, (mw, mh), c.s, flags)
+                    })
                 });
                 let flags = u32::from(outline.is_some()) | u32::from(backdrop.is_some()) << 1;
                 let params = [
@@ -1008,4 +1066,31 @@ fn part_blobs(p: &RenderedPart) -> PartBlobs {
         coverage: Blob::Bytes(p.coverage.clone()),
         fg_map: (!p.fg_map.is_empty()).then(|| Blob::Bytes(p.fg_map.clone())),
     }
+}
+
+/// A label text widget's raster for the GPU: per pixel its coverage, outline coverage << 8 and
+/// the backdrop bit 9 (the CPU's mask and dilation, [`TextLayers`]).
+fn text_blob(
+    font: &LabelFont,
+    text: &str,
+    style: &TextStyle,
+    (mw, mh): (usize, usize),
+    scale: usize,
+    (backdrop, outline): (bool, bool),
+) -> Blob {
+    let l = TextLayers::new(font, text, style, (mw, mh), scale, backdrop, outline);
+    let mut words: Vec<u32> = l.mask.iter().map(|&v| u32::from(v)).collect();
+    if let Some(near) = &l.near {
+        for (o, &n) in words.iter_mut().zip(near) {
+            *o |= u32::from(n) << 8;
+        }
+    }
+    if let Some((bx0, bx1)) = l.backdrop {
+        for row in words.chunks_exact_mut(mw.max(1)) {
+            for o in &mut row[bx0..bx1] {
+                *o |= 1 << 9;
+            }
+        }
+    }
+    Blob::Words(words.into())
 }
