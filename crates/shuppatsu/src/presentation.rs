@@ -58,11 +58,13 @@ pub fn fit_layer(
     window: (u32, u32),
     wide: bool,
 ) -> Result<bool> {
-    fit_layer_with(cfg, data, bank, layer, window, wide, false)
+    fit_layer_with(cfg, data, bank, layer, window, wide, false, None)
 }
 
 /// [`fit_layer`]; with `keep_pending` a [`TextOverlay::pending`] text overlay stays so (no
-/// window yet: the first fit with one builds it).
+/// window yet: the first fit with one builds it); `ahead`: the text built for a canvas
+/// multiple ahead ([`text_ahead`]), used if it is this fit's.
+#[allow(clippy::too_many_arguments)]
 pub fn fit_layer_with(
     cfg: &mut LocaleConfig,
     data: &GameData,
@@ -71,11 +73,12 @@ pub fn fit_layer_with(
     window: (u32, u32),
     wide: bool,
     keep_pending: bool,
+    ahead: Option<(usize, TextOverlay)>,
 ) -> Result<bool> {
     let before = layer.canvas_size();
     let s = cfg.multiple_for(window.1);
     if !(keep_pending && bank.text().is_some_and(TextOverlay::is_pending)) {
-        rescale_text(cfg, data, bank, s)?;
+        rescale_text(cfg, data, bank, s, ahead)?;
     }
     layer.scale = s;
     cfg.ui_scale = s;
@@ -88,12 +91,14 @@ pub fn fit_layer_with(
 }
 
 /// Rasterises the translated text sprites of `bank` again for canvas multiple `scale`, when
-/// they were made for another one (rare: only when a resize crosses a multiple).
-pub fn rescale_text(
+/// they were made for another one (rare: only when a resize crosses a multiple), taking
+/// `ahead` (built ahead, [`text_ahead`]) when it is for `scale`.
+fn rescale_text(
     cfg: &LocaleConfig,
     data: &GameData,
     bank: &mut SpriteBank,
     scale: usize,
+    ahead: Option<(usize, TextOverlay)>,
 ) -> Result<()> {
     if bank.text().is_none_or(|t| t.scale() == scale) {
         return Ok(());
@@ -103,11 +108,19 @@ pub fn rescale_text(
     let exe = Exe::parse(&exe_bytes)?;
     let mut c = cfg.clone();
     c.ui_scale = scale;
-    crate::locale::install(&c, &exe, bank)?;
-    eprintln!(
-        "ui: text rasterised for canvas multiple {scale} in {:.0?}",
-        t.elapsed()
-    );
+    match ahead.filter(|(s, _)| *s == scale) {
+        Some((_, overlay)) => {
+            crate::locale::install_built(&c, &exe, bank, overlay)?;
+            eprintln!("ui: text for canvas multiple {scale} built during the GPU set-up");
+        }
+        None => {
+            crate::locale::install(&c, &exe, bank)?;
+            eprintln!(
+                "ui: text rasterised for canvas multiple {scale} in {:.0?}",
+                t.elapsed()
+            );
+        }
+    }
     Ok(())
 }
 
@@ -116,6 +129,22 @@ pub fn rescale_text(
 /// canvas spans the height, lower when an integer-scaled canvas leaves bars above and below.
 pub fn band_top(rect: [f32; 4], height: u32, band_top: f32) -> f32 {
     ((rect[1] + band_top * rect[3]) / height.max(1) as f32).clamp(0.0, 1.0)
+}
+
+/// The translated text of `bank` built for the canvas multiple of a `window` (what its first
+/// fit would build), to build beside other start-up work; `None` with nothing to build.
+pub fn text_ahead(
+    cfg: &LocaleConfig,
+    data: &GameData,
+    bank: &SpriteBank,
+    window: (u32, u32),
+) -> Result<Option<(usize, TextOverlay)>> {
+    let scale = cfg.multiple_for(window.1);
+    let exe_bytes = data.exe()?;
+    let exe = Exe::parse(&exe_bytes)?;
+    let mut c = cfg.clone();
+    c.ui_scale = scale;
+    Ok(crate::locale::build_overlay(&c, &exe, bank)?.map(|o| (scale, o)))
 }
 
 #[cfg(test)]

@@ -178,6 +178,9 @@ pub struct App {
     movie_overlay: Option<shuppatsu_render::overlay::Overlay>,
     /// The movie read ahead of its start ([`crate::movie::MovieAhead`]).
     movie_ahead: Option<crate::movie::MovieAhead>,
+    /// The translated text built for the window while the GPU was set up ([`App::resumed`]),
+    /// for its first fit.
+    text_ahead: Option<(usize, shuppatsu_render::text::TextOverlay)>,
     /// The stage intro is the run in [`Screen::Play`]; the departure board of this choice
     /// follows it.
     intro_chosen: Option<Chosen>,
@@ -344,6 +347,7 @@ impl App {
             demo_attract: None,
             movie_overlay: None,
             movie_ahead,
+            text_ahead: None,
             intro_chosen: None,
             down: [false; 256],
             menu_input: MenuInput::NONE,
@@ -1305,6 +1309,7 @@ impl App {
             window,
             self.opts.settings.wide_menus,
             r.gpu.is_none(),
+            self.text_ahead.take(),
         )?;
         let (w, h) = r.layer.canvas_size();
         if self.canvas.size() != (w, h) || r.bank.generation() != generation {
@@ -1482,14 +1487,36 @@ impl ApplicationHandler for App {
         let Some(r) = self.res.as_mut() else {
             return;
         };
-        match Gpu::create(
+        let opened = Gpu::open_window(
             event_loop,
             "shuppatsu",
             self.opts.size,
-            !self.opts.settings.vsync,
             self.opts.settings.fullscreen,
-            self.opts.locale.ui_scale,
-        ) {
+        )
+        .and_then(|window| {
+            // The translated text for the window's size (its first fit) is built while the
+            // GPU is set up (both tens of ms).
+            let size = window.inner_size();
+            let pending = r
+                .bank
+                .text()
+                .is_some_and(shuppatsu_render::text::TextOverlay::is_pending);
+            let (cfg, data, bank) = (&self.opts.locale, &r.data, &r.bank);
+            let (gpu, text) = std::thread::scope(|s| {
+                let text = pending.then(|| {
+                    s.spawn(move || {
+                        crate::presentation::text_ahead(cfg, data, bank, (size.width, size.height))
+                    })
+                });
+                let gpu =
+                    Gpu::with_window(window, !self.opts.settings.vsync, self.opts.locale.ui_scale);
+                let text = text.map(|h| h.join().unwrap_or_else(|e| std::panic::resume_unwind(e)));
+                (gpu, text)
+            });
+            self.text_ahead = text.transpose()?.flatten();
+            gpu
+        });
+        match opened {
             Ok(gpu) => {
                 gpu.window.request_redraw();
                 r.gpu = Some(gpu);

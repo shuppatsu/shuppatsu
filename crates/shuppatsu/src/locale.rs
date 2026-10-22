@@ -969,7 +969,7 @@ fn clamp_scale(s: usize) -> usize {
 /// overridden: for `ja` only the port's own cells (`ja.toml`, the options' seventh label),
 /// the original art everywhere else. Without `--font` the bundled M+ 2 Medium is used.
 pub fn install(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Result<usize> {
-    install_with(cfg, exe, bank, true)
+    install_with(cfg, exe, bank, Text::Build)
 }
 
 /// [`install`] with the text overlay left [`TextOverlay::pending`]: a window's first fit
@@ -977,14 +977,74 @@ pub fn install(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Resu
 /// the configured multiple, it was built again for the full-screen window's (about 170 ms of
 /// a 570 ms start).
 pub fn install_deferred(cfg: &LocaleConfig, exe: &Exe<'_>, bank: &mut SpriteBank) -> Result<()> {
-    install_with(cfg, exe, bank, false).map(|_| ())
+    install_with(cfg, exe, bank, Text::Pending).map(|_| ())
+}
+
+/// [`install`] with the overlay [`build_overlay`] made for `cfg` (on another thread, beside
+/// the GPU set-up).
+pub fn install_built(
+    cfg: &LocaleConfig,
+    exe: &Exe<'_>,
+    bank: &mut SpriteBank,
+    overlay: TextOverlay,
+) -> Result<usize> {
+    install_with(cfg, exe, bank, Text::Built(overlay))
+}
+
+/// The overlay [`install`] builds for `cfg`, without installing it (`None`: `ja` without
+/// overrides, nothing to build). Reads `bank`'s art only.
+pub fn build_overlay(
+    cfg: &LocaleConfig,
+    exe: &Exe<'_>,
+    bank: &SpriteBank,
+) -> Result<Option<TextOverlay>> {
+    let sheets = SheetTables::read(exe)?;
+    let locale = Locale::load(&cfg.lang, cfg.dir.as_deref(), &sheets)?;
+    if cfg.lang == IDENTITY_LANG && locale.is_identity() {
+        return Ok(None);
+    }
+    let (font, display) = install_fonts(cfg)?;
+    let fonts = Fonts {
+        body: &font,
+        display: display.as_ref().map(|d| d as _),
+    };
+    Ok(Some(TextOverlay::build_with(
+        bank,
+        locale.overrides(),
+        fonts,
+        cfg.ui_scale,
+    )))
+}
+
+/// The text overlay [`install_with`] puts on the bank.
+enum Text {
+    Build,
+    Pending,
+    Built(TextOverlay),
+}
+
+/// The body font of `cfg` (its `font` list with the bundled one behind, or the bundled one)
+/// and its display font.
+fn install_fonts(cfg: &LocaleConfig) -> Result<(FontGlyphs, Option<FontGlyphs>)> {
+    // A `:`-separated list (`;` on Windows), like PATH: the primary font, then fallbacks.
+    let load = |list: &Path| {
+        let paths: Vec<PathBuf> = std::env::split_paths(list).collect();
+        FontGlyphs::load_all(&paths)
+    };
+    let font = match &cfg.font {
+        Some(list) => load(list)?.with_fallback(bundled_font()?),
+        None => bundled_font()?,
+    };
+    // The display role (headers, menu titles, banners): its own list, else the body font.
+    let display = cfg.display_font.as_deref().map(load).transpose()?;
+    Ok((font, display))
 }
 
 fn install_with(
     cfg: &LocaleConfig,
     exe: &Exe<'_>,
     bank: &mut SpriteBank,
-    build: bool,
+    text: Text,
 ) -> Result<usize> {
     let sheets = SheetTables::read(exe)?;
     let locale = Locale::load(&cfg.lang, cfg.dir.as_deref(), &sheets)?;
@@ -997,26 +1057,15 @@ fn install_with(
             return Ok(0);
         }
     }
-    // A `:`-separated list (`;` on Windows), like PATH: the primary font, then fallbacks.
-    let load = |list: &Path| {
-        let paths: Vec<PathBuf> = std::env::split_paths(list).collect();
-        FontGlyphs::load_all(&paths)
-    };
-    let bundled = bundled_font;
-    let font = match &cfg.font {
-        Some(list) => load(list)?.with_fallback(bundled()?),
-        None => bundled()?,
-    };
-    // The display role (headers, menu titles, banners): its own list, else the body font.
-    let display = cfg.display_font.as_deref().map(load).transpose()?;
+    let (font, display) = install_fonts(cfg)?;
     let fonts = Fonts {
         body: &font,
         display: display.as_ref().map(|d| d as _),
     };
-    let overlay = if build {
-        TextOverlay::build_with(bank, locale.overrides(), fonts, cfg.ui_scale)
-    } else {
-        TextOverlay::pending()
+    let overlay = match text {
+        Text::Build => TextOverlay::build_with(bank, locale.overrides(), fonts, cfg.ui_scale),
+        Text::Pending => TextOverlay::pending(),
+        Text::Built(overlay) => overlay,
     };
     let n = overlay.len();
     bank.set_text(Some(overlay));

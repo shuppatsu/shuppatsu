@@ -79,6 +79,18 @@ impl Gpu {
         fullscreen: bool,
         ui_scale: usize,
     ) -> Result<Self> {
+        let window = Self::open_window(event_loop, title, size, fullscreen)?;
+        Self::with_window(window, uncapped, ui_scale)
+    }
+
+    /// The window of [`Gpu::create`] alone: its size is known at once (the GPU set-up, tens
+    /// of ms, can run beside work that needs it).
+    pub fn open_window(
+        event_loop: &ActiveEventLoop,
+        title: &str,
+        size: (u32, u32),
+        fullscreen: bool,
+    ) -> Result<Arc<Window>> {
         let attrs = Window::default_attributes()
             .with_title(crate::identity::initial_title(title))
             .with_inner_size(winit::dpi::PhysicalSize::new(size.0, size.1))
@@ -87,6 +99,11 @@ impl Gpu {
         let window = Arc::new(event_loop.create_window(attrs)?);
         // The game never reads the mouse: the pointer starts hidden ([`Cursor`]).
         window.set_cursor_visible(false);
+        Ok(window)
+    }
+
+    /// [`Gpu::create`] on a window from [`Gpu::open_window`].
+    pub fn with_window(window: Arc<Window>, uncapped: bool, ui_scale: usize) -> Result<Self> {
         let (_instance, surface, adapter, device, queue) = crate::gpu_backend::open(
             || wgpu::InstanceDescriptor::new_with_display_handle_from_env(Box::new(window.clone())),
             |instance| Ok(Some(instance.create_surface(window.clone())?)),
