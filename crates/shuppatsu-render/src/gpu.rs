@@ -325,8 +325,11 @@ pub struct Renderer {
     pipelines: Pipelines,
     frame_buffer: wgpu::Buffer,
     frame_layout: wgpu::BindGroupLayout,
-    /// The frame bind group and the anisotropy clamp of its filtered sampler.
-    frame_bind: (wgpu::BindGroup, u16),
+    /// The frame bind group and its samplers.
+    frame_bind: (wgpu::BindGroup, FrameSamplers),
+    /// The device samples a texture through one sampler per shader only (GL;
+    /// [`world_shader_source`]).
+    one_sampler: bool,
     page_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     filtered_sampler: wgpu::Sampler,
@@ -397,15 +400,87 @@ fn filtered_sampler(device: &wgpu::Device, anisotropy: u16) -> wgpu::Sampler {
     })
 }
 
-/// Group 0: the frame uniform, the nearest sampler and a filtered one with `anisotropy`.
+/// The world shader (shader.wgsl) for a device that does, or (`one_sampler`) does not, let a
+/// shader sample one texture through two samplers.
+///
+/// OpenGL binds a texture and its sampler as one GLSL `sampler2D`, so there the world pass
+/// samples its page only through `filtered_sampler`, which is bound to the nearest sampler in
+/// the original's sampling mode ([`FrameSamplers`]); the alpha-to-coverage lookup of `msaa`,
+/// bilinear in that mode, is then filtered by hand from four texel loads (`key_lookup`). The
+/// other backends get the file unchanged.
+fn world_shader_source(one_sampler: bool) -> std::borrow::Cow<'static, str> {
+    const SOURCE: &str = include_str!("shader.wgsl");
+    if !one_sampler {
+        return SOURCE.into();
+    }
+    let mut s = SOURCE.to_owned();
+    for (from, to) in GL_EDITS {
+        debug_assert_eq!(s.matches(from).count(), 1, "shader.wgsl: {from}");
+        s = s.replacen(from, to, 1);
+    }
+    s.push_str(GL_KEY_LOOKUP);
+    s.into()
+}
+
+/// The GL world shader's edits of shader.wgsl ([`world_shader_source`]).
+const GL_EDITS: [(&str, &str); 2] = [
+    (
+        "textureSampleGrad(page, nearest_sampler, uv, gx_in, gy_in)",
+        "textureSampleGrad(page, filtered_sampler, uv, gx_in, gy_in)",
+    ),
+    (
+        "let lin = textureSampleGrad(page, filtered_sampler, in.uv, gx, gy);",
+        "let lin = key_lookup(in.uv, gx, gy);",
+    ),
+];
+
+/// The GL world shader's alpha-to-coverage lookup ([`world_shader_source`]): the filtered
+/// sampler where it is bound, else (nearest sampling: no mipmaps) bilinear at level 0 from
+/// four texel loads, wrapping like the repeat sampler.
+const GL_KEY_LOOKUP: &str = "
+fn wrapped_texel(p: vec2<i32>, size: vec2<i32>) -> vec4<f32> {
+    return textureLoad(page, ((p % size) + size) % size, 0);
+}
+
+fn key_lookup(uv: vec2<f32>, gx: vec2<f32>, gy: vec2<f32>) -> vec4<f32> {
+    if (frame.shade.x >= 0.5) {
+        return textureSampleGrad(page, filtered_sampler, uv, gx, gy);
+    }
+    let size = vec2<i32>(textureDimensions(page, 0));
+    let t = uv * vec2<f32>(size) - vec2<f32>(0.5);
+    let i = vec2<i32>(floor(t));
+    let f = t - floor(t);
+    let top = mix(wrapped_texel(i, size), wrapped_texel(i + vec2<i32>(1, 0), size), f.x);
+    let bottom = mix(
+        wrapped_texel(i + vec2<i32>(0, 1), size), wrapped_texel(i + vec2<i32>(1, 1), size), f.x,
+    );
+    return mix(top, bottom, f.y);
+}
+";
+
+/// What the frame bind group's two samplers are: the anisotropy clamp of the filtered one,
+/// and whether its slot holds the nearest sampler instead (GL in the original's sampling
+/// mode, [`world_shader_source`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct FrameSamplers {
+    anisotropy: u16,
+    nearest_in_filtered: bool,
+}
+
+/// Group 0: the frame uniform, the nearest sampler and a filtered one with `anisotropy` (or
+/// the nearest one again, `nearest_in_filtered`).
 fn frame_bind_group(
     device: &wgpu::Device,
     layout: &wgpu::BindGroupLayout,
     buffer: &wgpu::Buffer,
     nearest: &wgpu::Sampler,
-    anisotropy: u16,
+    samplers: FrameSamplers,
 ) -> wgpu::BindGroup {
-    let filtered = filtered_sampler(device, anisotropy);
+    let filtered = if samplers.nearest_in_filtered {
+        nearest.clone()
+    } else {
+        filtered_sampler(device, samplers.anisotropy)
+    };
     device.create_bind_group(&wgpu::BindGroupDescriptor {
         label: Some("frame"),
         layout,
@@ -577,9 +652,10 @@ fn samples_supported(device: &wgpu::Device, format: wgpu::TextureFormat, samples
 
 impl Renderer {
     pub fn new(device: &wgpu::Device, target_format: wgpu::TextureFormat) -> Self {
+        let one_sampler = device.adapter_info().backend == wgpu::Backend::Gl;
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("world shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("shader.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(world_shader_source(one_sampler)),
         });
         let sampler_entry = |binding| wgpu::BindGroupLayoutEntry {
             binding,
@@ -640,9 +716,13 @@ impl Renderer {
         // anisotropic over CPU-built mipmaps. (The world's filtered sampler follows
         // `anisotropic`, see `frame_bind_group`.)
         let filtered_sampler = filtered_sampler(device, 16);
+        let samplers = FrameSamplers {
+            anisotropy: 1,
+            nearest_in_filtered: one_sampler,
+        };
         let frame_bind = (
-            frame_bind_group(device, &frame_layout, &frame_buffer, &sampler, 1),
-            1,
+            frame_bind_group(device, &frame_layout, &frame_buffer, &sampler, samplers),
+            samplers,
         );
         let pipelines = build_pipelines(
             device,
@@ -659,6 +739,7 @@ impl Renderer {
             frame_buffer,
             frame_layout,
             frame_bind,
+            one_sampler,
             page_layout,
             sampler,
             filtered_sampler,
@@ -858,30 +939,39 @@ impl Renderer {
                 samples,
             );
         }
-        let anisotropy = self.shading.anisotropic.clamp(1, 16);
-        if anisotropy != self.frame_bind.1 {
+        let samplers = FrameSamplers {
+            anisotropy: self.shading.anisotropic.clamp(1, 16),
+            nearest_in_filtered: self.one_sampler && self.sampling_mode() == 0.0,
+        };
+        if samplers != self.frame_bind.1 {
             self.frame_bind = (
                 frame_bind_group(
                     device,
                     &self.frame_layout,
                     &self.frame_buffer,
                     &self.sampler,
-                    anisotropy,
+                    samplers,
                 ),
-                anisotropy,
+                samplers,
             );
         }
     }
 
-    /// The `shade` uniform: sampling mode, alpha to coverage, ground variation, de-tiling.
-    fn shade_uniform(&self) -> [f32; 4] {
-        let sampling = if self.texture_filtering {
+    /// The shader's sampling mode: 0 nearest (the original), 1 filtered, 2 nearest where
+    /// magnified and filtered where minified.
+    fn sampling_mode(&self) -> f32 {
+        if self.texture_filtering {
             1.0
         } else if self.shading.anisotropic > 1 {
             2.0
         } else {
             0.0
-        };
+        }
+    }
+
+    /// The `shade` uniform: sampling mode, alpha to coverage, ground variation, de-tiling.
+    fn shade_uniform(&self) -> [f32; 4] {
+        let sampling = self.sampling_mode();
         let on = |b: bool| if b { 1.0 } else { 0.0 };
         [
             sampling,
@@ -1113,5 +1203,80 @@ impl Renderer {
                 pass.draw(0..page.fx_tex_count, 0..1);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gl_world_shader_samples_the_page_through_one_sampler() {
+        let source = include_str!("shader.wgsl");
+        for (from, _) in GL_EDITS {
+            assert_eq!(source.matches(from).count(), 1, "{from}");
+        }
+        assert_eq!(world_shader_source(false), source);
+        let gl = world_shader_source(true);
+        assert!(!gl.contains("textureSampleGrad(page, nearest_sampler"));
+        assert!(gl.contains("fn key_lookup("));
+    }
+
+    fn block_on<F: std::future::Future>(fut: F) -> F::Output {
+        let mut fut = std::pin::pin!(fut);
+        let mut cx = std::task::Context::from_waker(std::task::Waker::noop());
+        loop {
+            if let std::task::Poll::Ready(v) = fut.as_mut().poll(&mut cx) {
+                return v;
+            }
+            std::thread::yield_now();
+        }
+    }
+
+    /// The world pass on an OpenGL device, in every sampling mode with and without MSAA,
+    /// raises no validation error. Skipped without a GL adapter.
+    #[test]
+    fn world_pass_builds_and_renders_on_gl() {
+        let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
+            backends: wgpu::Backends::GL,
+            ..wgpu::InstanceDescriptor::new_without_display_handle_from_env()
+        });
+        let Ok(adapter) = block_on(instance.request_adapter(&Default::default())) else {
+            eprintln!("no GL adapter; skipped");
+            return;
+        };
+        let (device, queue) =
+            block_on(adapter.request_device(&Default::default())).expect("GL device");
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let target = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d {
+                width: 16,
+                height: 16,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = target.create_view(&Default::default());
+        let camera = Camera {
+            eye: glam::Vec3::ZERO,
+            target: glam::Vec3::Z,
+        };
+        let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let mut renderer = Renderer::new(&device, format);
+        for (filtering, anisotropic, msaa) in
+            [(false, 1, 1), (false, 1, 4), (true, 1, 4), (false, 4, 4)]
+        {
+            renderer.texture_filtering = filtering;
+            renderer.shading.anisotropic = anisotropic;
+            renderer.shading.msaa = msaa;
+            renderer.render(&device, &queue, &view, (16, 16), &camera);
+        }
+        assert!(block_on(scope.pop()).is_none());
     }
 }
