@@ -533,6 +533,7 @@ impl Play {
         // The translated cab texts are built beside the screen tables, the port's strings, the
         // subtitles and the stage's sounds (they only read the cab and the bank).
         let landmarks = landmarks.as_ref();
+        let vibration = controls.ff_supported() && save.eeprom.options().vibration != 0;
         let (translations, rest) = std::thread::scope(|sc| {
             let (cab, bank) = (&cab, &bank);
             let job = sc.spawn(move || cab.translations(bank, landmarks, one_line, board));
@@ -556,6 +557,11 @@ impl Play {
                     resume: ui.get("hint_resume").to_owned(),
                 };
                 let subtitles = start_subtitles(&opts, bank, &data, &exe, &mut sound)?;
+                // The vibration's jolts come from the sound logic (the rail-joint clicks):
+                // without a device (or muted) it runs silent for them.
+                if vibration && sound.is_none() {
+                    sound = Some(crate::sound::Sound::silent(&exe)?);
+                }
                 if let Some(s) = sound.as_mut() {
                     s.begin_stage(&exe, &drive)?;
                 }
@@ -621,6 +627,8 @@ impl Play {
             script,
             save,
             meter_m: 0.0,
+            rumbler: crate::rumble::Rumbler::new(crate::rumble::JoltSpec::read_or_off(&exe)),
+            focused: true,
             weather: crate::weather::Weather::new(&exe, opts.stage, opts.settings.wide_weather)?,
             needle: Default::default(),
             result_view: None,
@@ -646,7 +654,8 @@ impl Play {
 
     /// Ends the run and hands the shared resources back (sound back to the menus, the HUD's
     /// sprites cleared).
-    pub fn into_shared(self) -> Shared {
+    pub fn into_shared(mut self) -> Shared {
+        self.stop_rumble();
         // A silent sound system (subtitles without a device) is not handed on.
         let mut sound = self.sound.filter(crate::sound::Sound::has_device);
         if let Some(s) = sound.as_mut() {
@@ -841,7 +850,12 @@ impl Play {
                     g.resize(size.width, size.height);
                 }
             }
-            WindowEvent::Focused(false) => self.down = [false; 256],
+            WindowEvent::Focused(false) => {
+                self.down = [false; 256];
+                self.focused = false;
+                self.stop_rumble();
+            }
+            WindowEvent::Focused(true) => self.focused = true,
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {
@@ -1086,6 +1100,11 @@ pub struct Play {
     /// Metres driven with the distance meter shown (`0x8571f0`; reset by 0x40d040 at a run
     /// start, kept over continues).
     meter_m: f32,
+    /// The controller vibration (input.md §11): the jolts of the sound layer to motor levels.
+    rumbler: crate::rumble::Rumbler,
+    /// The window has the focus (the original's joystick is acquired foreground-only, so
+    /// its effect stops with the focus).
+    focused: bool,
     weather: crate::weather::Weather,
     /// The speedometer needle between ticks (presentation only).
     needle: crate::smooth::Needle,
@@ -1121,8 +1140,48 @@ pub struct Play {
 }
 
 impl Play {
-    /// One 33 ms tick: a frozen pause tick, or a simulation tick with the stage flow.
+    /// One 33 ms tick, then the vibration for it.
     fn tick(&mut self) -> Result<()> {
+        let r = self.tick_sim();
+        self.rumble_tick();
+        r
+    }
+
+    /// The vibration of the tick just run (input.md §11): the sound layer's jolts at the
+    /// option's level (`0x856353`), only in a run's stage (not paused, not a demo, the
+    /// ending, the opening or a stage intro) and with the window focused. Output only: the
+    /// simulation never reads it.
+    fn rumble_tick(&mut self) {
+        let jolts = self
+            .sound
+            .as_mut()
+            .map_or(0, crate::sound::Sound::take_jolts);
+        let active = self.focused
+            && !self.leave
+            && !self.flow.paused()
+            && self.demo.is_none()
+            && self.ending.is_none()
+            && self.opening.is_none()
+            && self.intro.is_none();
+        let level = self.save.eeprom.options().vibration;
+        let motors = self.rumbler.tick(jolts, level, active);
+        self.controls.rumble(motors);
+    }
+
+    /// Stops the vibration at once (leaving the run, focus lost).
+    pub fn stop_rumble(&mut self) {
+        self.rumbler.stop();
+        self.controls.rumble(crate::rumble::Motors::OFF);
+    }
+
+    /// Stops the vibration before the process exits ([`Controls::stop_rumble_for_exit`]).
+    pub fn stop_rumble_for_exit(&mut self) {
+        self.rumbler.stop();
+        self.controls.stop_rumble_for_exit();
+    }
+
+    /// One 33 ms tick: a frozen pause tick, or a simulation tick with the stage flow.
+    fn tick_sim(&mut self) -> Result<()> {
         // The driving HUD anchors its slots again in `update_hud`; everything else is centred.
         // A pause tick runs no HUD, so it keeps the anchors of the frame it froze.
         let frozen = self.layer.anchors;
@@ -1965,7 +2024,10 @@ impl ApplicationHandler for Play {
             return;
         }
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                self.stop_rumble_for_exit();
+                event_loop.exit();
+            }
             WindowEvent::RedrawRequested => {
                 self.idle.redraw(Instant::now());
                 if crate::marks::take_request() && self.mark.is_none() {

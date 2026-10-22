@@ -877,3 +877,30 @@ fn rain_start_across_the_sky_fade_tick() {
     };
     assert_eq!(r.tick(split, resumed, &[]), [Command::SetPitch(RAIN, 1)]);
 }
+
+/// Every rail-joint click of a turnout clatter is a force-feedback jolt (0x4204d0 calls
+/// 0x434940 with each, input.md §11); the count is taken once.
+#[test]
+fn turnout_clicks_are_counted_for_the_vibration() {
+    let mut r = Rig::new(0);
+    let moving = Snap {
+        speed: 10.0,
+        ..Snap::default()
+    };
+    r.run(&TickInfo {
+        before: moving,
+        after: moving,
+        events: &[],
+        segment_started: false,
+        track_classes: None,
+        turnout_entered: true,
+        demo: false,
+    });
+    let mut clicks = r.st.take_turnout_clicks();
+    for _ in 0..200 {
+        r.drive(moving, &[]);
+        clicks += r.st.take_turnout_clicks();
+    }
+    assert_eq!(clicks, 8);
+    assert_eq!(r.st.take_turnout_clicks(), 0);
+}

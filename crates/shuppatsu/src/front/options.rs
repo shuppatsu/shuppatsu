@@ -484,6 +484,11 @@ impl ValuePage {
         self.item
     }
 
+    /// The value under the cursor.
+    pub fn cursor(&self) -> u8 {
+        u8::try_from(self.cursor.max(0)).unwrap_or(u8::MAX)
+    }
+
     pub fn tick(
         &mut self,
         input: &MenuInput,

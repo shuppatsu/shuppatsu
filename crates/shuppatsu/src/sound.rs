@@ -40,6 +40,8 @@ pub struct Sound {
     /// The sound option (`0x856356`): off makes the sound thread ignore play messages.
     enabled: bool,
     stage: Option<StageParts>,
+    /// Force-feedback jolts (0x434940) since the last [`Sound::take_jolts`].
+    jolts: u32,
 }
 
 /// The per-stage half: train sounds and the stage's sound mapping.
@@ -79,6 +81,7 @@ impl Sound {
             tables,
             enabled: true,
             stage: None,
+            jolts: 0,
         }))
     }
 
@@ -93,6 +96,7 @@ impl Sound {
             tables,
             enabled: true,
             stage: None,
+            jolts: 0,
         })
     }
 
@@ -159,6 +163,7 @@ impl Sound {
     /// Back to the menus: every voice stopped, the stage half dropped.
     pub fn end_stage(&mut self) {
         self.stage = None;
+        self.jolts = 0;
         self.snd.set_paused(false);
         self.snd.stop_all();
         self.flush();
@@ -168,6 +173,7 @@ impl Sound {
     /// leaves its music to run out over the departure board.
     pub fn leave_stage(&mut self) {
         self.stage = None;
+        self.jolts = 0;
         self.snd.set_paused(false);
         self.flush();
     }
@@ -237,6 +243,7 @@ impl Sound {
             _ => HornEdge::None,
         };
         p.horn_was_held = horn_held;
+        let joints_before = p.train.clicks;
         p.train.tick(
             &TrainTick {
                 driving: drive.train_driving(),
@@ -260,6 +267,14 @@ impl Sound {
         );
 
         p.stage.task_part(&mut self.snd, &p.train, &info);
+        // Each rail-joint click (0x422c20) and turnout click (0x4204d0) also starts the
+        // force-feedback jolt, which 0x434940 lets through only while a stage runs and the
+        // train is driving (`0x855ff8 & 2` and `& 0x200`): never in the attract demos
+        // (input.md §11).
+        let jolts = p.train.clicks.wrapping_sub(joints_before) + p.stage.take_turnout_clicks();
+        if !info.demo && drive.train_driving() {
+            self.jolts = self.jolts.saturating_add(jolts);
+        }
         // The car tasks' draw step runs in the render list, after the task lists.
         self.traffic(drive.traffic_sounds());
         self.snd.frame();
@@ -313,6 +328,11 @@ impl Sound {
         self.flush();
     }
 
+    /// The force-feedback jolts (0x434940 calls that pass its gates) since the last call.
+    pub fn take_jolts(&mut self) -> u32 {
+        std::mem::take(&mut self.jolts)
+    }
+
     /// The rail-joint clicks of the stage's train so far (`0x84c3dc`).
     pub fn joint_clicks(&self) -> Option<u32> {
         self.stage.as_ref().map(|p| p.train.clicks)
@@ -332,5 +352,100 @@ impl Sound {
         for e in out.take_errors() {
             eprintln!("audio: {e}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use shuppatsu_engine::demo::{DemoKind, DemoTables};
+    use shuppatsu_engine::drive::{DriverInput, LoadError};
+    use shuppatsu_engine::physics::TrainTables;
+    use shuppatsu_engine::rules::{Phase, RuleTables};
+
+    fn drive(exe: &Exe<'_>, stage: usize) -> Drive {
+        let data = crate::scene::GameData::from_env().unwrap();
+        let loader = move |name: &str| -> Result<Vec<u8>, LoadError> {
+            data.read(name)
+                .map_err(|e| LoadError::from(format!("{e:#}")))
+        };
+        let train = TrainTables::read(exe).unwrap();
+        let rules = RuleTables::read(exe).unwrap();
+        let stages = shuppatsu_formats::stages::StageTables::read(exe).unwrap();
+        Drive::new(&train, &rules, &stages, stage, 1, 0, loader).unwrap()
+    }
+
+    /// The vibration's jolts on the user's data (input.md §11): one per rail-joint click while
+    /// driving (plus the turnouts'), none in an attract demo although its train clicks. Runs
+    /// on a silent sound (no device, as with `--mute`). Skips without `SHUPPATSU_DATA_DIR`.
+    #[test]
+    fn jolts_follow_the_clicks_while_driving() {
+        let Ok(data) = crate::scene::GameData::from_env() else {
+            eprintln!("SHUPPATSU_DATA_DIR not set; skipped");
+            return;
+        };
+        let Ok(exe_bytes) = data.exe() else {
+            eprintln!("no exe under SHUPPATSU_DATA_DIR; skipped");
+            return;
+        };
+        let exe = Exe::parse(&exe_bytes).unwrap();
+
+        let mut d = drive(&exe, 0);
+        let mut s = Sound::silent(&exe).unwrap();
+        s.begin_stage(&exe, &d).unwrap();
+        let (mut jolts, mut clicks_driving) = (0, 0);
+        for _ in 0..3000 {
+            let before = Before::of(&d);
+            let r = d.rules();
+            let v = d.speed_mps();
+            let input = if r.phase == Phase::PreDeparture && !r.departure_done {
+                DriverInput {
+                    brake: 8,
+                    ..DriverInput::default()
+                }
+            } else if r.dist_m < f32::max(v * v, 30.0) {
+                DriverInput {
+                    brake: 6,
+                    ..DriverInput::default()
+                }
+            } else if v < 15.0 {
+                DriverInput {
+                    power: 4,
+                    ..DriverInput::default()
+                }
+            } else {
+                DriverInput::default()
+            };
+            let clicks = s.joint_clicks().unwrap();
+            let out = d.tick(input);
+            s.events(&out.events);
+            s.after_tick(&d, before, false, out.segment_started);
+            let tick_jolts = s.take_jolts();
+            let tick_clicks = s.joint_clicks().unwrap() - clicks;
+            if d.train_driving() {
+                clicks_driving += tick_clicks;
+                assert!(tick_jolts >= tick_clicks);
+            } else {
+                assert_eq!(tick_jolts, 0, "no jolt while not driving");
+            }
+            jolts += tick_jolts;
+        }
+        eprintln!("stage 0: {jolts} jolts, {clicks_driving} joint clicks while driving");
+        assert!(clicks_driving > 10, "the train never clicked");
+        assert!(jolts >= clicks_driving);
+
+        let mut d = drive(&exe, 1);
+        d.start_demo(DemoKind::Route, &DemoTables::read(&exe).unwrap());
+        let mut s = Sound::silent(&exe).unwrap();
+        s.begin_stage(&exe, &d).unwrap();
+        s.start_demo();
+        while !d.demo_finished() {
+            let before = Before::of(&d);
+            let out = d.tick(DriverInput::default());
+            s.events(&out.events);
+            s.after_tick(&d, before, false, out.segment_started);
+            assert_eq!(s.take_jolts(), 0, "the demos never vibrate");
+        }
+        assert!(s.joint_clicks().unwrap() > 0, "the demo train clicks");
     }
 }

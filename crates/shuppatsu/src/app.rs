@@ -190,6 +190,11 @@ pub struct App {
     /// ([`Attract::next_run`]).
     attract_ahead: Option<(usize, bool)>,
     down: [bool; 256],
+    /// The 振動 page's preview jolt (input.md §11.3) and its level.
+    rumbler: crate::rumble::Rumbler,
+    preview_level: u8,
+    /// The window has the focus (vibration stops without it).
+    focused: bool,
     menu_input: MenuInput,
     script: Script,
     canvas: shuppatsu_render::sprites::Composer,
@@ -357,6 +362,9 @@ impl App {
             intro_chosen: None,
             attract_ahead: None,
             down: [false; 256],
+            rumbler: crate::rumble::Rumbler::new(crate::rumble::JoltSpec::read_or_off(&exe)),
+            preview_level: 0,
+            focused: true,
             menu_input: MenuInput::NONE,
             script,
             canvas,
@@ -389,9 +397,9 @@ impl App {
             // modes too.
             joystick: self.joystick || r.controls.pad_connected(),
             hint: crate::glyphs::Hint::new(control_mode, r.controls.hint_device()),
-            // No force feedback is implemented: the vibration item stays hidden, as on a PC
-            // without an FF device (`0x816838 == 0`).
-            force_feedback: false,
+            // `0x816838`: the 振動 item shows while a pad that can vibrate is connected
+            // (input.md §11; it follows hot-plugging like `joystick`).
+            force_feedback: r.controls.ff_supported(),
             sound_device: r.sound.is_some() || self.opts.mute,
             movie_in_menu: self.opts.settings.movie_in_menu,
         }
@@ -696,6 +704,11 @@ impl App {
         } else {
             JoyState::default()
         };
+        let preview_from = match &self.screen {
+            Screen::Value(p) => p.cursor(),
+            _ => 0,
+        };
+        let mut preview: Option<u8> = None;
         let screen = std::mem::replace(&mut self.screen, Screen::Quit);
         let Defs {
             front: t, screens, ..
@@ -848,7 +861,14 @@ impl App {
                 }
             },
             Screen::Value(mut p) => match p.tick(&input, &env, t, &mut r.layer, &mut sfx) {
-                None => Screen::Value(p),
+                None => {
+                    // Port: moving the cursor on the 振動 page plays the jolt at that level
+                    // (input.md §11.3), so the strength can be felt before it is chosen.
+                    if p.item() == options::item::VIBRATION && p.cursor() != preview_from {
+                        preview = Some(p.cursor());
+                    }
+                    Screen::Value(p)
+                }
                 Some(v) => {
                     options::destroy(&mut r.layer);
                     let item = p.item();
@@ -1071,9 +1091,47 @@ impl App {
         if let Some(s) = self.res.as_mut().and_then(|r| r.sound.as_mut()) {
             s.menu_frame();
         }
+        self.front_rumble(preview);
         self.poll();
         self.compose();
         Ok(())
+    }
+
+    /// Stops the vibration at once (focus lost, exit), the run's too.
+    fn stop_rumble(&mut self) {
+        self.rumbler.stop();
+        if let Screen::Play(p) = &mut self.screen {
+            p.stop_rumble();
+        }
+        if let Some(r) = self.res.as_mut() {
+            r.controls.rumble(crate::rumble::Motors::OFF);
+        }
+    }
+
+    /// Stops the vibration before the process exits (the run's, if one is on).
+    fn stop_rumble_for_exit(&mut self) {
+        self.rumbler.stop();
+        if let Screen::Play(p) = &mut self.screen {
+            p.stop_rumble_for_exit();
+        }
+        if let Some(r) = self.res.as_mut() {
+            r.controls.stop_rumble_for_exit();
+        }
+    }
+
+    /// The front end's vibration: only the 振動 page's preview jolt at `preview`'s level
+    /// (the menus have no jolts of their own), with the window focused.
+    fn front_rumble(&mut self, preview: Option<u8>) {
+        let focused = self.focused;
+        let Some(r) = self.res.as_mut() else {
+            return;
+        };
+        let level = preview.unwrap_or(self.preview_level);
+        self.preview_level = level;
+        let motors = self
+            .rumbler
+            .tick(u32::from(preview.is_some()), level, focused);
+        r.controls.rumble(motors);
     }
 
     /// `Options_Set` 0x42a460 and what it implies.
@@ -1512,6 +1570,7 @@ impl App {
     }
 
     fn exit(&mut self, event_loop: &ActiveEventLoop) {
+        self.stop_rumble_for_exit();
         event_loop.exit();
     }
 }
@@ -1581,7 +1640,12 @@ impl ApplicationHandler for App {
         }
         match &event {
             WindowEvent::CloseRequested => return self.exit(event_loop),
-            WindowEvent::Focused(false) => self.down = [false; 256],
+            WindowEvent::Focused(false) => {
+                self.down = [false; 256];
+                self.focused = false;
+                self.stop_rumble();
+            }
+            WindowEvent::Focused(true) => self.focused = true,
             WindowEvent::KeyboardInput {
                 event:
                     KeyEvent {

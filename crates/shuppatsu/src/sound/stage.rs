@@ -437,6 +437,8 @@ pub struct StageSound {
     arrival: Option<(Option<u16>, bool, u32)>,
     timers: Vec<Timer>,
     turnouts: Vec<TurnoutClatter>,
+    /// Turnout clicks since the last [`StageSound::take_turnout_clicks`] (each a jolt).
+    turnout_clicks: u32,
     navi: Navigator,
     /// Ticks since the game over (the game-over tick is 1).
     game_over_ticks: Option<u32>,
@@ -458,6 +460,7 @@ impl StageSound {
             arrival: None,
             timers: Vec::new(),
             turnouts: Vec::new(),
+            turnout_clicks: 0,
             navi: Navigator::default(),
             game_over_ticks: None,
             last_stat: -1,
@@ -628,6 +631,12 @@ impl StageSound {
         self.leave_loop(snd, t);
     }
 
+    /// The turnout clatter's rail-joint clicks since the last call: 0x4204d0 starts the
+    /// force-feedback jolt with each (input.md §11).
+    pub fn take_turnout_clicks(&mut self) -> u32 {
+        std::mem::take(&mut self.turnout_clicks)
+    }
+
     /// The rest of `Task_Tick` after the train task.
     pub fn task_part(&mut self, snd: &mut SoundSystem, train: &TrainSound, t: &TickInfo<'_>) {
         let (b, a) = (&t.before, &t.after);
@@ -638,7 +647,13 @@ impl StageSound {
         // List 0x84c180: turnout clatter (0x4204d0) and timed releases (0x420440).
         let joint = train.stage_sounds().joint;
         let flange = train.flange();
-        self.turnouts.retain_mut(|c| c.tick(joint, flange, snd));
+        let clicks = &mut self.turnout_clicks;
+        self.turnouts.retain_mut(|c| {
+            let before = c.requests();
+            let alive = c.tick(joint, flange, snd);
+            *clicks += c.requests() - before;
+            alive
+        });
         let mut i = 0;
         while i < self.timers.len() {
             if self.timers[i].ticks == 0 {

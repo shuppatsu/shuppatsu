@@ -975,6 +975,75 @@ pub struct PadSource {
     gilrs: gilrs::Gilrs,
     id: Option<gilrs::GamepadId>,
     profile: PadProfile,
+    /// The vibration effects on the picked pad, made at its first use (input.md §11).
+    rumble: Option<PadRumble>,
+    /// A force-feedback error was reported (once per session).
+    rumble_failed: bool,
+}
+
+/// One gilrs effect per motor, each played at full magnitude scaled by its gain, so the
+/// game sets the two levels independently. gilrs' force-feedback thread mixes the playing
+/// effects every 50 ms and hands them to the device (Linux: an `FF_RUMBLE` effect of 100 ms,
+/// renewed while playing, so a stopped or dropped effect, or an exited process, goes quiet
+/// within 100 ms); the messages never block the caller.
+struct PadRumble {
+    id: gilrs::GamepadId,
+    strong: gilrs::ff::Effect,
+    weak: gilrs::ff::Effect,
+    now: crate::rumble::Motors,
+}
+
+impl PadRumble {
+    fn new(gilrs: &mut gilrs::Gilrs, id: gilrs::GamepadId) -> Result<Self, gilrs::ff::Error> {
+        use gilrs::ff::{BaseEffect, BaseEffectType, EffectBuilder};
+        let mut motor = |kind| {
+            EffectBuilder::new()
+                .add_effect(BaseEffect {
+                    kind,
+                    ..BaseEffect::default()
+                })
+                .gamepads(&[id])
+                .finish(gilrs)
+        };
+        Ok(Self {
+            id,
+            strong: motor(BaseEffectType::Strong {
+                magnitude: u16::MAX,
+            })?,
+            weak: motor(BaseEffectType::Weak {
+                magnitude: u16::MAX,
+            })?,
+            now: crate::rumble::Motors::OFF,
+        })
+    }
+
+    fn set(&mut self, m: crate::rumble::Motors) -> Result<(), gilrs::ff::Error> {
+        if m == self.now {
+            return Ok(());
+        }
+        for (effect, level, was) in [
+            (&self.strong, m.strong, self.now.strong),
+            (&self.weak, m.weak, self.now.weak),
+        ] {
+            if level > 0.0 {
+                effect.set_gain(level.min(1.0))?;
+                if was <= 0.0 {
+                    effect.play()?;
+                }
+            } else if was > 0.0 {
+                effect.stop()?;
+            }
+        }
+        self.now = m;
+        Ok(())
+    }
+}
+
+impl Drop for PadRumble {
+    fn drop(&mut self) {
+        let _ = self.strong.stop();
+        let _ = self.weak.stop();
+    }
 }
 
 impl PadSource {
@@ -990,6 +1059,8 @@ impl PadSource {
             gilrs,
             id: None,
             profile,
+            rumble: None,
+            rumble_failed: false,
         };
         s.pick();
         Some(s)
@@ -997,11 +1068,16 @@ impl PadSource {
 
     fn pick(&mut self) {
         let pads: Vec<_> = self.gilrs.gamepads().collect();
-        self.id = pads
+        let id = pads
             .iter()
             .find(|(_, g)| g.is_ff_supported())
             .or(pads.first())
             .map(|(id, _)| *id);
+        // A different (or no) pad: the old pad's effects go (unplugged: gilrs closed it).
+        if self.rumble.as_ref().is_some_and(|r| Some(r.id) != id) {
+            self.rumble = None;
+        }
+        self.id = id;
         if let Some(id) = self.id {
             let g = self.gilrs.gamepad(id);
             eprintln!(
@@ -1015,6 +1091,40 @@ impl PadSource {
 
     pub fn connected(&self) -> bool {
         self.id.is_some()
+    }
+
+    /// Whether the picked pad can vibrate (gilrs: Linux evdev rumble, Windows XInput/WGI).
+    pub fn ff_supported(&self) -> bool {
+        self.id
+            .and_then(|id| self.gilrs.connected_gamepad(id))
+            .is_some_and(|g| g.is_ff_supported())
+    }
+
+    /// Sets the pad's motors (0..=1 each) until the next call; unchanged levels send
+    /// nothing. A pad without force feedback, or none, is left alone. Never blocks: the
+    /// levels go to gilrs' force-feedback thread as messages. An error is reported once.
+    pub fn set_motors(&mut self, m: crate::rumble::Motors) {
+        if let Err(e) = self.try_set_motors(m)
+            && !self.rumble_failed
+        {
+            self.rumble_failed = true;
+            eprintln!("vibration: {e}");
+        }
+    }
+
+    /// [`PadSource::set_motors`] with its error, for `shuppatsu pad rumble`.
+    pub fn try_set_motors(&mut self, m: crate::rumble::Motors) -> Result<()> {
+        if self.rumble.is_none() {
+            if m.is_off() || !self.ff_supported() {
+                return Ok(());
+            }
+            let id = self.id.context("no gamepad")?;
+            self.rumble = Some(PadRumble::new(&mut self.gilrs, id)?);
+        }
+        if let Some(r) = self.rumble.as_mut() {
+            r.set(m)?;
+        }
+        Ok(())
     }
 
     /// Drains pending gilrs events and follows hot-plugging.
@@ -1577,6 +1687,46 @@ impl Controls {
         }
     }
 
+    fn pad_source_mut(&mut self) -> Option<&mut PadSource> {
+        match &mut self.hybrid {
+            Some(h) => h.pad.as_mut(),
+            None => self.joystick.as_mut().map(|(_, p)| p),
+        }
+    }
+
+    /// A pad that can vibrate is connected (the original's `g_has_ff`, 0x816838, which
+    /// shows the 振動 option): with `hybrid_input` any pad, in every control mode; off, the
+    /// selected joystick mode's pad, as the original vibrates only the joystick it reads.
+    /// Never with a scripted pad (a replayed or headless run).
+    pub fn ff_supported(&self) -> bool {
+        self.scripted.is_none() && self.pad_source().is_some_and(PadSource::ff_supported)
+    }
+
+    /// Sets the vibration motors of that pad until the next call (input.md §11).
+    pub fn rumble(&mut self, m: crate::rumble::Motors) {
+        if self.scripted.is_some() {
+            return;
+        }
+        if let Some(p) = self.pad_source_mut() {
+            p.set_motors(m);
+        }
+    }
+
+    /// At exit: stops the motors and, if they were running, waits two of gilrs' 50 ms
+    /// force-feedback ticks so the stop reaches the device before the process ends (Windows
+    /// keeps a vibration level set until it is changed; Linux ends it with the effect's
+    /// 100 ms length anyway).
+    pub fn stop_rumble_for_exit(&mut self) {
+        let Some(p) = self.pad_source_mut() else {
+            return;
+        };
+        let on = p.rumble.as_ref().is_some_and(|r| !r.now.is_off());
+        p.set_motors(crate::rumble::Motors::OFF);
+        if on {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+
     /// The device the on-screen hints show (`hybrid_input` only; `None` = the original's
     /// legends for the selected control mode).
     pub fn hint_device(&self) -> Option<HintDevice> {
@@ -1760,10 +1910,163 @@ fn monitor(exe: &Exe<'_>, mode: Option<usize>, opts: PadOptions) -> Result<()> {
     }
 }
 
-/// `shuppatsu pad`: watch, calibrate or learn a controller from the terminal.
+/// Whether bit `bit` is set in a sysfs capability mask (`capabilities/ff`: hex words of a
+/// `long`, the most significant first, as the kernel's `input_print_bitmap` writes them).
+#[cfg(any(target_os = "linux", test))]
+fn sysfs_bit(mask: &str, bit: u32) -> bool {
+    let bits = usize::BITS;
+    let words: Vec<&str> = mask.split_whitespace().collect();
+    let Some(i) = usize::try_from(bit / bits)
+        .ok()
+        .and_then(|i| words.len().checked_sub(i + 1))
+    else {
+        return false;
+    };
+    usize::from_str_radix(words[i], 16).is_ok_and(|w| w >> (bit % bits) & 1 == 1)
+}
+
+/// What the kernel says about the pad's force feedback (Linux): for each evdev node of
+/// `vendor:product`, its driver, its `EV_FF` capabilities and whether this user may open
+/// it for writing, which uploading an effect needs.
+#[cfg(target_os = "linux")]
+fn linux_ff_report(vendor: u16, product: u16) -> Vec<String> {
+    use std::path::Path;
+    let read = |p: &Path| std::fs::read_to_string(p).map(|s| s.trim().to_owned());
+    let Ok(dir) = std::fs::read_dir("/sys/class/input") else {
+        return vec!["  /sys/class/input unreadable".into()];
+    };
+    let mut nodes: Vec<String> = dir
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.starts_with("event"))
+        .collect();
+    nodes.sort();
+    let mut out = Vec::new();
+    for node in nodes {
+        let dev = Path::new("/sys/class/input").join(&node).join("device");
+        let id = |f: &str| {
+            read(&dev.join("id").join(f))
+                .ok()
+                .and_then(|s| u16::from_str_radix(&s, 16).ok())
+        };
+        if id("vendor") != Some(vendor) || id("product") != Some(product) {
+            continue;
+        }
+        let name = read(&dev.join("name")).unwrap_or_default();
+        let driver = std::fs::read_link(dev.join("device").join("driver"))
+            .ok()
+            .and_then(|p| Some(p.file_name()?.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "?".into());
+        let mask = read(&dev.join("capabilities").join("ff")).unwrap_or_default();
+        let named = [
+            (0x50, "RUMBLE"),
+            (0x51, "PERIODIC"),
+            (0x58, "SQUARE"),
+            (0x59, "TRIANGLE"),
+            (0x5a, "SINE"),
+            (0x60, "GAIN"),
+        ];
+        let caps: Vec<&str> = named
+            .iter()
+            .filter(|(b, _)| sysfs_bit(&mask, *b))
+            .map(|(_, n)| *n)
+            .collect();
+        let path = Path::new("/dev/input").join(&node);
+        let write = match std::fs::OpenOptions::new().write(true).open(&path) {
+            Ok(_) => "writable".to_owned(),
+            Err(e) => format!("not writable ({e})"),
+        };
+        out.push(format!(
+            "  {} {name:?}: driver {driver}, FF [{}] (mask {mask:?}), {write}",
+            path.display(),
+            caps.join(" ")
+        ));
+    }
+    if out.is_empty() {
+        out.push("  no evdev node with this vendor:product".into());
+    }
+    out.push(
+        "  gilrs needs FF_SQUARE, FF_TRIANGLE, FF_SINE and FF_GAIN (rumble pads get them from \
+         ff-memless) and a writable node"
+            .into(),
+    );
+    out
+}
+
+/// `shuppatsu pad rumble [strong weak [ms]]`: vibrates the pad for checking by hand. With no
+/// values it plays the game's jolt at 弱, 並 and 強, then a long pulse at 強.
+fn rumble_tool(exe: &Exe<'_>, args: &[String]) -> Result<()> {
+    use crate::rumble::{JoltSpec, Motors};
+    let nums = args
+        .iter()
+        .map(|a| {
+            a.parse::<f32>()
+                .with_context(|| format!("{a:?} is not a number"))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let spec = JoltSpec::read(exe)?;
+    let jolt_ms = spec.duration_us / 1000;
+    let pulses: Vec<(String, Motors, u32)> = match *nums.as_slice() {
+        [] => {
+            let mut v: Vec<_> = (1..=3u8)
+                .zip(["弱 (Low)", "並 (Mid)", "強 (High)"])
+                .map(|(l, n)| (format!("jolt {n}"), spec.motors(l), jolt_ms))
+                .collect();
+            v.push(("long pulse 強 (High)".into(), spec.motors(3), 1000));
+            v
+        }
+        [strong, weak] => vec![("pulse".into(), Motors { strong, weak }, 500)],
+        [strong, weak, ms] if ms >= 0.0 => {
+            vec![("pulse".into(), Motors { strong, weak }, ms as u32)]
+        }
+        _ => bail!("usage: shuppatsu pad rumble [strong weak [ms]] (levels 0..1)"),
+    };
+    let mut pad = PadSource::open(PadProfile::Generic).context("gamepad support unavailable")?;
+    let who = pad.describe().context("no gamepad connected")?;
+    println!("pad: {who}");
+    let ff = pad.ff_supported();
+    println!(
+        "force feedback (gilrs): {}",
+        if ff { "supported" } else { "not supported" }
+    );
+    #[cfg(target_os = "linux")]
+    if let Some(g) = pad.id.and_then(|id| pad.gilrs.connected_gamepad(id)) {
+        let (v, p) = (g.vendor_id().unwrap_or(0), g.product_id().unwrap_or(0));
+        for line in linux_ff_report(v, p) {
+            println!("{line}");
+        }
+    }
+    if !ff {
+        bail!("this pad cannot vibrate through gilrs");
+    }
+    let gap = std::time::Duration::from_millis(700);
+    for (what, m, ms) in pulses {
+        let m = Motors {
+            strong: m.strong.clamp(0.0, 1.0),
+            weak: m.weak.clamp(0.0, 1.0),
+        };
+        println!(
+            "{what}: strong {:.3}, weak {:.3}, {ms} ms",
+            m.strong, m.weak
+        );
+        pad.try_set_motors(m)
+            .context("starting the effects (uploaded to gilrs' force-feedback thread)")?;
+        std::thread::sleep(std::time::Duration::from_millis(u64::from(ms)));
+        pad.try_set_motors(Motors::OFF)?;
+        std::thread::sleep(gap);
+    }
+    println!("done (gilrs reports device write errors only through its log, not here)");
+    Ok(())
+}
+
+/// `shuppatsu pad`: watch, calibrate or learn a controller from the terminal, or test its
+/// vibration.
 pub fn run_tool(exe: &Exe<'_>, args: &[String]) -> Result<()> {
     const USAGE: &str = "usage: shuppatsu pad <monitor|calibrate|learn> [--mode <0..6>] \
-                         [--joystick-dat <file>] [--combo <file>]";
+                         [--joystick-dat <file>] [--combo <file>]\n       \
+                         shuppatsu pad rumble [strong weak [ms]]";
+    if args.first().is_some_and(|a| a == "rumble") {
+        return rumble_tool(exe, &args[1..]);
+    }
     let mut it = args.iter();
     let action = it.next().context(USAGE)?.clone();
     let mut mode = None;
@@ -2806,6 +3109,24 @@ mod tests {
             assert_eq!(a.poll(down), b.poll_with(down, LeverHolds::NONE));
             assert_eq!((a.power, a.brake), (b.power, b.brake));
         }
+    }
+
+    #[test]
+    fn sysfs_ff_capabilities() {
+        // The Bluetooth Xbox pad (hid-microsoft through ff-memless, out/pad/xbox-bt-evtest.txt):
+        // FF_RUMBLE 0x50, PERIODIC 0x51, SQUARE 0x58, TRIANGLE 0x59, SINE 0x5a, GAIN 0x60.
+        let mask = if usize::BITS == 64 {
+            "107030000 0"
+        } else {
+            "1 7030000 0 0"
+        };
+        for bit in [0x50, 0x51, 0x58, 0x59, 0x5a, 0x60] {
+            assert!(sysfs_bit(mask, bit), "{bit:#x}");
+        }
+        for bit in [0, 0x52, 0x5b, 0x61, 0x7f, 0x200] {
+            assert!(!sysfs_bit(mask, bit), "{bit:#x}");
+        }
+        assert!(!sysfs_bit("", 0x50));
     }
 
     #[test]

@@ -34,6 +34,7 @@ mod play;
 mod popups;
 mod presentation;
 mod result_view;
+mod rumble;
 mod save;
 mod scene;
 mod screens;
@@ -74,6 +75,7 @@ usage: shuppatsu [options] [--joystick-dat <file>] [--combo <file>] [--mute]
        shuppatsu view <route.com> [options]
        shuppatsu shot <route.com> --at <metres> --out <file.ppm> [options]
        shuppatsu pad <monitor|calibrate|learn> [--mode <4..6>] [--joystick-dat <file>] [--combo <file>]
+       shuppatsu pad rumble [strong weak [ms]]   vibrate the pad (levels 0..1; none: the game's jolts)
        shuppatsu install-desktop [--exec <path>] [--uninstall]
                      desktop entry + icon under $XDG_DATA_HOME (opt-in; see --help)
        shuppatsu label-audit [--out <dir>] [--catalogue <en.toml>] [--palette <n>]
