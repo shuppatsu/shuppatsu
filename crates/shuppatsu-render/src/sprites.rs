@@ -1904,22 +1904,48 @@ pub(crate) fn triangle_spans(
     let max_x = (t.iter().map(|p| p[0]).fold(f32::MIN, f32::max).ceil() as usize).min(clip[2]);
     let min_y = (t.iter().map(|p| p[1]).fold(f32::MAX, f32::min).max(0.0) as usize).max(clip[1]);
     let max_y = (t.iter().map(|p| p[1]).fold(f32::MIN, f32::max).ceil() as usize).min(clip[3]);
-    for y in min_y..max_y {
-        let inside = |x: usize| {
-            let p = [x as f32 + 0.5, y as f32 + 0.5];
-            let w = [
-                edge(t[1], t[2], p),
-                edge(t[2], t[0], p),
-                edge(t[0], t[1], p),
-            ];
-            w.iter().all(|&v| v * area >= 0.0)
-        };
-        let Some(x0) = (min_x..max_x).find(|&x| inside(x)) else {
-            continue;
-        };
-        let x1 = (x0..max_x).rfind(|&x| inside(x)).map_or(x0 + 1, |x| x + 1);
-        f(y, x0, x1);
+    if min_x >= max_x {
+        return;
     }
+    let edges = [(t[1], t[2]), (t[2], t[0]), (t[0], t[1])];
+    for y in min_y..max_y {
+        // Each edge's test is monotonic along the row (the edge function is linear in x and
+        // every rounding step keeps the order), so each one passes on a prefix or a suffix of
+        // the row, found by bisection; the covered pixels are the intersection. A linear scan
+        // was O(width) per row: 3.5 ms a tick for the ranking page's two side bars at 4K.
+        let (mut x0, mut x1) = (min_x, max_x);
+        for &(a, b) in &edges {
+            let pass = |x: usize| edge(a, b, [x as f32 + 0.5, y as f32 + 0.5]) * area >= 0.0;
+            match (pass(min_x), pass(max_x - 1)) {
+                (true, true) => {}
+                (false, false) => {
+                    x0 = x1;
+                    break;
+                }
+                // Failing then passing: the first pass is the run's start.
+                (false, true) => x0 = x0.max(first(min_x, max_x - 1, pass)),
+                // Passing then failing: the first failure ends the run.
+                (true, false) => x1 = x1.min(first(min_x, max_x - 1, |x| !pass(x))),
+            }
+        }
+        if x0 < x1 {
+            f(y, x0, x1);
+        }
+    }
+}
+
+/// The first `x` in `lo..=hi` where `pred` holds, for a `pred` false at `lo`, true at `hi`
+/// and monotonic in between.
+fn first(mut lo: usize, mut hi: usize, pred: impl Fn(usize) -> bool) -> usize {
+    while hi - lo > 1 {
+        let mid = lo + (hi - lo) / 2;
+        if pred(mid) {
+            hi = mid;
+        } else {
+            lo = mid;
+        }
+    }
+    hi
 }
 
 #[cfg(test)]
@@ -1939,7 +1965,7 @@ mod tests {
         let edge = |a: [f32; 2], b: [f32; 2], p: [f32; 2]| {
             (b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])
         };
-        for i in 0..300 {
+        for i in 0..2000 {
             // Coordinates in quarter pixels, some far outside the clip, some thin triangles.
             let mut v = || {
                 let r = 4 * (60 + i % 200) as u32;
@@ -1949,7 +1975,41 @@ mod tests {
             if i % 7 == 0 {
                 t[2] = [t[1][0] + 0.25, t[1][1] + 30.0];
             }
+            if i % 5 == 0 {
+                // Half a rectangle (the side bars of the ranking page are two of them).
+                t[1] = [t[0][0], t[2][1]];
+            }
             let clip = [3, 2, 150, 120];
+            let area = edge(t[0], t[1], t[2]);
+            let mut want = Vec::new();
+            if area != 0.0 {
+                for y in clip[1]..clip[3] {
+                    for x in clip[0]..clip[2] {
+                        let p = [x as f32 + 0.5, y as f32 + 0.5];
+                        let w = [
+                            edge(t[1], t[2], p),
+                            edge(t[2], t[0], p),
+                            edge(t[0], t[1], p),
+                        ];
+                        if w.iter().all(|&v| v * area >= 0.0) {
+                            want.push((x, y));
+                        }
+                    }
+                }
+            }
+            let mut got = Vec::new();
+            triangle_cover(t, clip, |x, y| got.push((x, y)));
+            assert_eq!(got, want, "{t:?}");
+        }
+        // 4K-wide rows with coordinates off any grid (canvas multiples, anchors).
+        for _ in 0..300 {
+            let mut v = |lo: f32, span: f32| lo + (rand() % 1_000_000) as f32 / 1e6 * span;
+            let t = [
+                [v(-200.0, 4300.0), v(480.0, 60.0)],
+                [v(-200.0, 4300.0), v(480.0, 60.0)],
+                [v(-200.0, 4300.0), v(480.0, 60.0)],
+            ];
+            let clip = [0, 495, 3840, 515];
             let area = edge(t[0], t[1], t[2]);
             let mut want = Vec::new();
             if area != 0.0 {
