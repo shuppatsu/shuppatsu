@@ -59,6 +59,32 @@ pub fn render_to_ppm(
     )
 }
 
+/// The device of headless shots, opened once ([`prepare`]): its instance and adapter are
+/// kept with it.
+type Headless = (wgpu::Instance, wgpu::Adapter, wgpu::Device, wgpu::Queue);
+static HEADLESS: std::sync::OnceLock<Result<Headless, String>> = std::sync::OnceLock::new();
+
+fn headless_device() -> Result<(wgpu::Device, wgpu::Queue)> {
+    let opened = HEADLESS.get_or_init(|| {
+        crate::gpu_backend::open(
+            wgpu::InstanceDescriptor::new_without_display_handle_from_env,
+            |_| Ok(None),
+        )
+        .map(|(instance, _, adapter, device, queue)| (instance, adapter, device, queue))
+        .map_err(|e| format!("{e:#}"))
+    });
+    match opened {
+        Ok((_, _, device, queue)) => Ok((device.clone(), queue.clone())),
+        Err(e) => Err(anyhow::anyhow!("{e}")),
+    }
+}
+
+/// Opens the headless device before a run that ends in a shot makes its canvases, so they are
+/// composed the way the device can (on the CPU without the GPU compositor, as on GL).
+pub fn prepare() -> Result<()> {
+    headless_device().map(|_| ())
+}
+
 /// Renders one frame with `draw` (device, queue, target view, target format) and the canvas
 /// over it, and writes a binary PPM (P6).
 pub fn render_to_ppm_with(
@@ -67,10 +93,7 @@ pub fn render_to_ppm_with(
     hud: Option<Canvas<'_>>,
     path: &std::path::Path,
 ) -> Result<()> {
-    let (_instance, _, _adapter, device, queue) = crate::gpu_backend::open(
-        wgpu::InstanceDescriptor::new_without_display_handle_from_env,
-        |_| Ok(None),
-    )?;
+    let (device, queue) = headless_device()?;
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
     let target = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("shot"),

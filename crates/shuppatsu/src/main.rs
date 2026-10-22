@@ -762,6 +762,10 @@ fn run_main() -> Result<()> {
         set_default_mode(ComposeMode::from_env().unwrap_or(ComposeMode::Gpu));
     }
     let first = cli_args().into_iter().nth(1);
+    // A headless shot: its device decides how the canvases are composed (GL: on the CPU).
+    if first.as_deref() == Some("shot") || cli_args().iter().any(|a| a == "--shot") {
+        shot::prepare()?;
+    }
     if matches!(first.as_deref(), Some("-h" | "--help")) {
         println!("{USAGE}");
         return Ok(());

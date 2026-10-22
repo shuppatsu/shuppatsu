@@ -77,6 +77,7 @@ pub fn open(
         })();
         match attempt {
             Ok((surface, adapter, device, queue)) => {
+                adapt(&adapter, &device);
                 return Ok((instance, surface, adapter, device, queue));
             }
             Err(e) => {
@@ -92,6 +93,92 @@ pub fn open(
     match last_error {
         Some(e) => Err(e),
         None => bail!("no graphics backend enabled (WGPU_BACKEND?)"),
+    }
+}
+
+/// What a device can do of the features that fall back without it (gathered by [`adapt`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Caps {
+    /// OpenGL (wgpu's GL backend; GLES 3 or desktop GL through EGL/WGL).
+    pub gl: bool,
+    /// Runs the GPU 2D compositor ([`shuppatsu_render::gpu2d::supported`]).
+    pub compose_2d: bool,
+    /// Anisotropic filtering (`DownlevelFlags::ANISOTROPIC_FILTERING`).
+    pub anisotropic: bool,
+    /// The largest MSAA sample count of the 3D pass's colour and depth formats.
+    pub max_samples: u32,
+}
+
+/// The features that fall back on a device with `caps`, one short phrase each (empty: none).
+pub fn fallbacks(caps: Caps) -> Vec<String> {
+    let mut out = Vec::new();
+    if !caps.compose_2d {
+        out.push("2D layer composed on the CPU (no GPU compositor)".to_owned());
+    }
+    if caps.gl {
+        out.push("world pages through one sampler (GL)".to_owned());
+    }
+    if !caps.anisotropic {
+        out.push("anisotropic filtering off".to_owned());
+    }
+    if caps.max_samples < 8 {
+        out.push(format!("msaa at most {}", caps.max_samples));
+    }
+    out
+}
+
+/// The largest sample count `adapter` renders `formats` with (a device without
+/// `TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES` only allows 1 and 4).
+fn max_samples(adapter: &wgpu::Adapter, device: &wgpu::Device) -> u32 {
+    use wgpu::TextureFormatFeatureFlags as F;
+    let adapter_specific = device
+        .features()
+        .contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES);
+    let flags = [
+        wgpu::TextureFormat::Rgba8UnormSrgb,
+        wgpu::TextureFormat::Bgra8UnormSrgb,
+        shuppatsu_render::gpu::DEPTH_FORMAT,
+    ]
+    .map(|f| adapter.get_texture_format_features(f).flags);
+    // The colour target is one of the two sRGB formats; the depth format is always used.
+    let colour = flags[0] | flags[1];
+    [
+        (16, F::MULTISAMPLE_X16),
+        (8, F::MULTISAMPLE_X8),
+        (4, F::MULTISAMPLE_X4),
+        (2, F::MULTISAMPLE_X2),
+    ]
+    .into_iter()
+    .find(|&(n, f)| colour.contains(f) && flags[2].contains(f) && (adapter_specific || n == 4))
+    .map_or(1, |(n, _)| n)
+}
+
+/// Fits the game to the device it opened: the 2D layer is composed on the CPU from now on
+/// when the device cannot run the GPU compositor (composers already made switch at their
+/// next sync, `Overlay::sync`), and one line lists what falls back.
+fn adapt(adapter: &wgpu::Adapter, device: &wgpu::Device) {
+    use shuppatsu_render::sprites::{ComposeMode, set_default_mode};
+    let info = adapter.get_info();
+    let caps = Caps {
+        gl: info.backend == wgpu::Backend::Gl,
+        compose_2d: shuppatsu_render::gpu2d::supported(device),
+        anisotropic: adapter
+            .get_downlevel_capabilities()
+            .flags
+            .contains(wgpu::DownlevelFlags::ANISOTROPIC_FILTERING),
+        max_samples: max_samples(adapter, device),
+    };
+    if !caps.compose_2d {
+        set_default_mode(ComposeMode::Cpu);
+    }
+    let notes = fallbacks(caps);
+    if !notes.is_empty() {
+        eprintln!(
+            "graphics: {:?} ({}): fallbacks: {}",
+            info.backend,
+            info.name,
+            notes.join("; ")
+        );
     }
 }
 
@@ -144,5 +231,53 @@ fn probe(device: &wgpu::Device) -> Result<()> {
                 .join(" ")
         )),
         None => Ok(()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FULL: Caps = Caps {
+        gl: false,
+        compose_2d: true,
+        anisotropic: true,
+        max_samples: 8,
+    };
+
+    #[test]
+    fn a_full_device_falls_back_on_nothing() {
+        assert!(fallbacks(FULL).is_empty());
+        let more = Caps {
+            max_samples: 16,
+            ..FULL
+        };
+        assert!(fallbacks(more).is_empty());
+    }
+
+    #[test]
+    fn gl_lists_every_feature_it_lacks() {
+        let gl = Caps {
+            gl: true,
+            compose_2d: false,
+            anisotropic: false,
+            max_samples: 4,
+        };
+        assert_eq!(
+            fallbacks(gl),
+            [
+                "2D layer composed on the CPU (no GPU compositor)",
+                "world pages through one sampler (GL)",
+                "anisotropic filtering off",
+                "msaa at most 4",
+            ]
+        );
+        // Mesa's desktop GL: everything but the compositor and the second sampler.
+        let mesa = Caps {
+            anisotropic: true,
+            max_samples: 8,
+            ..gl
+        };
+        assert_eq!(fallbacks(mesa).len(), 2);
     }
 }
