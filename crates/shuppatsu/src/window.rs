@@ -25,6 +25,9 @@ pub struct Gpu {
     pub capture: Option<std::path::PathBuf>,
     /// The surface can be copied from (`COPY_SRC`), for [`Gpu::capture`].
     copyable: bool,
+    /// A frame to capture on a surface that cannot be copied from (GL): drawn here instead
+    /// ([`Gpu::target`]), read back, then put on the surface ([`Gpu::present`]).
+    stand_in: Option<wgpu::Texture>,
     /// A short message in the window's top-right corner and when it goes ([`Gpu::show_toast`]).
     toast: Option<(Overlay, std::time::Instant)>,
     /// Screenshots being written, finished before the program ends.
@@ -208,6 +211,7 @@ impl Gpu {
             cursor: Cursor::default(),
             capture: None,
             copyable,
+            stand_in: None,
             toast: None,
             writes: Vec::new(),
         })
@@ -324,8 +328,10 @@ impl Gpu {
     /// as a PNG on a thread of its own; the toast ([`Gpu::show_toast`]) is drawn over the
     /// frame after that, so screenshots never show it.
     pub fn present(&mut self, frame: wgpu::SurfaceTexture) {
-        if let Some(path) = self.capture.take() {
-            self.save_frame(&frame.texture, path);
+        if let Some(stand_in) = self.stand_in.take() {
+            self.present_stand_in(&stand_in, &frame.texture);
+        } else if let Some(path) = self.capture.take() {
+            self.save_frame(&frame.texture, path, false);
         }
         self.draw_toast(&frame.texture);
         self.window.pre_present_notify();
@@ -333,18 +339,71 @@ impl Gpu {
         self.queue.present(frame);
     }
 
-    fn save_frame(&mut self, texture: &wgpu::Texture, path: std::path::PathBuf) {
-        if !self.copyable {
-            eprintln!("mark: this display surface cannot be read back; no screenshot");
+    /// The view to draw `frame` into: the surface's, or for a frame to capture on a surface
+    /// that cannot be read back (GL), a texture of the same size and format standing in for
+    /// it ([`Gpu::present`] reads it back and puts it on the surface).
+    pub fn target(&mut self, frame: &wgpu::SurfaceTexture) -> wgpu::TextureView {
+        let texture = if self.capture.is_some() && !self.copyable {
+            let t = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("mark frame"),
+                size: frame.texture.size(),
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: frame.texture.format(),
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            self.stand_in.insert(t)
+        } else {
+            &frame.texture
+        };
+        texture.create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    /// Saves the captured frame drawn into `stand_in` and draws it onto `surface`, opaque and
+    /// unscaled (the sRGB overlay passes the bytes through unchanged).
+    fn present_stand_in(&mut self, stand_in: &wgpu::Texture, surface: &wgpu::Texture) {
+        let Some(image) = self
+            .capture
+            .take()
+            .and_then(|path| self.save_frame(stand_in, path, true))
+        else {
             return;
+        };
+        let mut opaque = image.rgba;
+        for px in opaque.as_chunks_mut::<4>().0 {
+            px[3] = 255;
+        }
+        let mut o = Overlay::new(&self.device, self.config.format);
+        o.resize(&self.device, (image.width as usize, image.height as usize));
+        o.upload(&self.queue, &opaque);
+        o.scaling = shuppatsu_render::overlay::UiScaling::Nearest;
+        let view = surface.create_view(&wgpu::TextureViewDescriptor::default());
+        let rect = [0.0, 0.0, image.width as f32, image.height as f32];
+        o.render(&self.device, &self.queue, &view, rect);
+    }
+
+    /// Reads `texture` back and writes it to `path` as a PNG on a thread; returns the image
+    /// with `keep`.
+    fn save_frame(
+        &mut self,
+        texture: &wgpu::Texture,
+        path: std::path::PathBuf,
+        keep: bool,
+    ) -> Option<shuppatsu_render::rgba::RgbaImage> {
+        if !texture.usage().contains(wgpu::TextureUsages::COPY_SRC) {
+            eprintln!("mark: this display surface cannot be read back; no screenshot");
+            return None;
         }
         let image = match crate::shot::read_rgba(&self.device, &self.queue, texture) {
             Ok(i) => i,
             Err(e) => {
                 eprintln!("mark: no screenshot: {e:#}");
-                return;
+                return None;
             }
         };
+        let kept = keep.then(|| image.clone());
         self.writes.retain(|h| !h.is_finished());
         self.writes.push(std::thread::spawn(move || {
             let png = crate::desktop::encode_png(&image);
@@ -352,6 +411,7 @@ impl Gpu {
                 eprintln!("mark: writing {}: {e}", path.display());
             }
         }));
+        kept
     }
 
     /// Shows `image` (premultiplied RGBA) in the window's top-right corner for `seconds`.

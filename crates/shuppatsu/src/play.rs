@@ -1816,9 +1816,7 @@ impl Play {
         let Some(frame) = gpu.acquire() else {
             return Ok(());
         };
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let view = gpu.target(&frame);
         gpu.renderer
             .set_geometry(&gpu.device, &gpu.queue, &self.frame);
         match &self.result_view {

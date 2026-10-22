@@ -1441,9 +1441,7 @@ impl App {
         let Some(frame) = gpu.acquire() else {
             return Ok(());
         };
-        let view = frame
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+        let view = gpu.target(&frame);
         crate::shot::clear_black(&gpu.device, &gpu.queue, &view);
         if let (Screen::Movie(m), Some(rect)) = (&mut self.screen, movie_rect) {
             // Black around the picture, nothing of the canvas.
