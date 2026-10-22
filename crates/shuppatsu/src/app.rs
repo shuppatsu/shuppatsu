@@ -446,7 +446,13 @@ impl App {
         // The movie read ahead (about 33 MB) is let go for a run, which cannot show it, and
         // read again when attract or the title menu comes back.
         match next {
-            Next::Intro(_) | Next::Board(_) | Next::Play(_) => self.movie_ahead = None,
+            // Freed on a thread: the 33 MB and the demultiplexed stream took 2.5-3 ms of the
+            // tick a stage intro starts on.
+            Next::Intro(_) | Next::Board(_) | Next::Play(_) => {
+                if let Some(m) = self.movie_ahead.take() {
+                    std::thread::spawn(move || drop(m));
+                }
+            }
             Next::Attract { .. } | Next::Title { .. } if self.movie_ahead.is_none() => {
                 let r = self.res.as_ref().expect("resources");
                 self.movie_ahead = Some(crate::movie::MovieAhead::start(r.data.data_dir()));
@@ -1010,6 +1016,13 @@ impl App {
             let r = self.res.as_ref().expect("resources");
             let up = play::page_uploader(r.gpu.as_ref());
             play::load_scene_ahead(&r.data, &self.play_options(r, chosen), up, &[]);
+        }
+        // The movie read ahead goes on the wait before a run ([`App::start`]): freeing it took
+        // 2.5-3 ms, and on a thread beside the run's start it still slowed that tick down.
+        if let Screen::Wait(_, Next::Intro(_) | Next::Board(_) | Next::Play(_)) = self.screen
+            && let Some(m) = self.movie_ahead.take()
+        {
+            std::thread::spawn(move || drop(m));
         }
         if let Some(from) = movie {
             self.screen = self.start_movie(from);
