@@ -172,6 +172,7 @@ fn bank(rng: &mut Rng, scale: usize, upscale: bool) -> SpriteBank {
         map_art: Mutex::default(),
         upscale: false,
         hires: Mutex::default(),
+        gpu_art: Mutex::default(),
     };
     b.set_label_font(Some(LabelFont::new(Box::new(BoxGlyphs))));
     b.set_legend_font(Some(LabelFont::new(Box::new(BoxGlyphs))));

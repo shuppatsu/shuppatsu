@@ -34,6 +34,7 @@ fn bank(map: Tilemap) -> SpriteBank {
         map_art: Mutex::default(),
         upscale: false,
         hires: Mutex::default(),
+        gpu_art: Mutex::default(),
     }
 }
 

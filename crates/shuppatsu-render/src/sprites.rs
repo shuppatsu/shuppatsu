@@ -285,6 +285,10 @@ pub struct SpriteBank {
     upscale: bool,
     /// The upscaled images, built on first use.
     hires: Mutex<hires::Cache>,
+    /// The tiles and tilemaps as the GPU compositor reads them ([`gpu::BankArt`]), for the
+    /// current [`SpriteBank::art_id`]: kept here, so a new [`retained::Composer`] (every run
+    /// start makes one) does not convert them again (3 ms).
+    gpu_art: Mutex<Option<Arc<gpu::BankArt>>>,
 }
 
 /// How a backdrop continues past the edges of the 4:3 design on a wide canvas (enhancement
@@ -359,6 +363,7 @@ impl SpriteBank {
             map_art: Mutex::default(),
             upscale: false,
             hires: Mutex::default(),
+            gpu_art: Mutex::default(),
         }
     }
 
@@ -374,6 +379,20 @@ impl SpriteBank {
     /// [`SpriteBank::generation`] it identifies what the bank draws.
     pub fn art_id(&self) -> u64 {
         self.art
+    }
+
+    /// The art as the GPU compositor reads it, converted once per [`SpriteBank::art_id`]. Call
+    /// it ahead (on a thread) to keep the conversion out of a frame.
+    pub fn gpu_art(&self) -> Arc<gpu::BankArt> {
+        let mut kept = self.gpu_art.lock().unwrap_or_else(|e| e.into_inner());
+        match &*kept {
+            Some(a) if a.id == self.art => a.clone(),
+            _ => {
+                let a = Arc::new(gpu::BankArt::new(self));
+                *kept = Some(a.clone());
+                a
+            }
+        }
     }
 
     /// The tilemaps (`tbl.rom`, and the port's own).
@@ -2054,6 +2073,7 @@ mod tests {
             map_art: Mutex::default(),
             upscale: false,
             hires: Mutex::default(),
+            gpu_art: Mutex::default(),
         }
     }
 

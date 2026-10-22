@@ -89,7 +89,7 @@ pub struct BankArt {
 }
 
 impl BankArt {
-    fn new(bank: &SpriteBank) -> Self {
+    pub(super) fn new(bank: &SpriteBank) -> Self {
         let mut words = vec![0u32; bank.tiles.len() * TILE_PIXELS / 4];
         for (i, t) in bank.tiles.iter().enumerate() {
             if let Some(t) = t {
@@ -461,7 +461,7 @@ impl SpriteLayer {
         let art = match &cache.art {
             Some(a) if a.id == bank.art => a.clone(),
             _ => {
-                let a = Arc::new(BankArt::new(bank));
+                let a = bank.gpu_art();
                 cache.art = Some(a.clone());
                 a
             }
