@@ -320,8 +320,8 @@ traction fade task+0x38, and `kmh` the f32 store `[esp+0x14] = v·3.6`. **confir
   each of `click₀..click₃` plays the joint code when `phase ≥ clickᵢ` and state = i. The checks
   run in sequence within one tick and advance the state. At `v ≥ 22.2` m/s (80 km/h, 0x472648)
   the first and third clicks advance the state by 2, so only two clicks per period remain.
-  Every click also bumps a counter 0x84c3dc and calls 0x433260 (force feedback, which has no
-  effect; input.md). Rows on this disc: period 120/360/1200/1500, clicks e.g. 12/24/94/104.
+  Every click also bumps a counter 0x84c3dc and calls 0x433260 (the force-feedback jolt,
+  input.md §11). Rows on this disc: period 120/360/1200/1500, clicks e.g. 12/24/94/104.
 - Flange squeal (flag 0x84c400, latched at creation and then set / cleared by course events
   18 / 19, 0x40acd0): if `0x84c408 ≥ 2.1` (0x472640) and the counter ≥ 0x50, play 0x19
   and reset. Otherwise count up to 0x51. **Departure**: with the same flag, `v₀ == 0` while moving
@@ -573,7 +573,7 @@ on the first moving tick, however late. The 0x400 flag (time-up) ends it.
 0x407c10 latches `0x857096` while the point 6 ahead has `flags & 0xe000` = 0x8000 / 0xa000 and
 sets 0x856d96 on the rising edge; the train task's moving branch then creates the task with
 step = v/30 (double 0x459550). Three wheel sets start at 0, −2.5, −14.5 m; whenever one is ≥ 0
-(and has clicked < 3 times) it requests the rail-joint code and moves back by 4, 3, 3 m per
+(and has clicked < 3 times) it requests the rail-joint code (and starts the force-feedback jolt, 0x434940; input.md §11) and moves back by 4, 3, 3 m per
 click; all advance by the step. The task ends when every set has clicked at least twice, and
 then requests 0x2f if 0x84c400 is set and v·3.6 < 40 (0x46c638 = 108, 0x4594b0 = 40).
 

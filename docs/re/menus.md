@@ -1023,7 +1023,8 @@ Approximated or left out:
 * Select stage 20 runs route 10 with its own clear mark (+0x34e) and the departure-board
   destination; the other effects of `0x48ddf0` (replay slot 0x14 in 0x407900, the rules branch at
   0x40aa42, which also reads the clear mark of the route) are not modelled.
-* No force feedback: the vibration item is skipped as on a PC without an FF device. The Shift
+* The vibration item shows while a pad that can vibrate is connected (input.md §11), and moving
+  the cursor on its page plays a jolt at that strength (port addition). The Shift
   override's keyboard legends (0x829d08) are not drawn. The difficulty value page writes the
   eeprom; a run reads it at its start.
 * The 4:3 layout is always centred (the port has no non-centred mode), so the

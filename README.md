@@ -285,6 +285,13 @@ shoulders are power and the right ones brake: the trigger is more, the bumper le
 triggers count from half way. Pressing the same direction on two inputs or devices counts
 once. Pads can be plugged in at any time.
 
+**Vibration**: as in the original, the pad gives a short jolt at every rail joint and at the
+wheels crossing a set of points, while you drive (not in the demos or when paused). The
+options' 振動 (Vibration) item sets it to Off, Low, Mid or High (Mid by default, the
+original's default); it shows while a pad that can vibrate is connected, and moving the
+cursor on its page plays a jolt at that strength. `shuppatsu pad rumble` tests the pad's
+motors from the terminal (`shuppatsu pad rumble 1 0.5 500` for one half-second pulse).
+
 **Densha de GO! controllers:**
 
 * Controllers that report their handles as two axes: mode 6. Calibrate them in the game's
@@ -414,6 +421,9 @@ detail.
   pad and its mapping, every button and axis as the gamepad library names it, and the Xbox-layout
   reading (sticks, LT/RT travel 0–1, held buttons) with the notches. With `hybrid_input` off,
   choose a controller mode (4–6) in the options.
+* **The controller does not vibrate**: run `shuppatsu pad rumble`. It says whether the pad
+  supports vibration and, on Linux, the kernel driver, the node's force-feedback
+  capabilities and whether you may write to it (`/dev/input/event*` needs write access).
 * **A setting has no effect**: a bad value in `config.toml` is reported in the log and only
   that setting is ignored; a flag or environment variable overrides the file.
 * **Start over with the settings**: delete `config.toml` (keep `eeprom.dat`, your save).

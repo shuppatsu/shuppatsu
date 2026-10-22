@@ -26,7 +26,7 @@ inferred from usage. **guess** means it's a plausible reading that needs an expe
 | 0x004332a0 | `input_is_one_handle` | True for mode 3 or 5 | confirmed |
 | 0x004332c0 | `input_force_notches(p, b)` | Sets power/brake unless analog levers are active (the game calls it with (0, 9) = EB at run start) | confirmed |
 | 0x00434a00 | `controller_calibration_screen` | Settings menu entry 4 ("ADJUSTMENT"). Samples 6 mascon and 10 brake positions, writes `joystick.dat` | confirmed |
-| 0x00434940 | `ff_play_jolt` | Sets the FF effect gain from the setting (3333/6666/10000) and Start(1). Called through 0x433260 by the bonus game (0x41b810, 0x4241d0; menus.md §12.1) | confirmed |
+| 0x00434940 | `ff_play_jolt` | Gated on a running stage and driving (`0x855ff8 & 2`, `& 0x200`): sets the FF effect gain from the setting (3333/6666/10000) and Start(1). Called with every rail-joint click (0x422c20), every turnout click (0x4204d0) and, dead behind the gate, in the bonus game (0x41b810, 0x4241d0); directly or through 0x433260 (§11) | confirmed |
 | 0x00434ed0 | `settings_load` | Reads `eeprom.dat` (0x35a bytes → 0x856020). Clamps mode to 0 if there's no joystick | confirmed |
 | 0x00434f50 | `settings_save` | Writes `eeprom.dat` | confirmed |
 | 0x0042a130 | `pump_messages_and_poll` | PeekMessage/Dispatch, then `input_poll` (unless 0x816984≠0 and 0x81696c=0), then audio update | confirmed |
@@ -209,7 +209,7 @@ The thresholds are code constants in 0x4341c0. The power side always forces brak
   Everything is in `joystick.dat` and **`eeprom.dat`** (0x35a bytes, mirrored at 0x856020, loaded at
   0x434ed0 and saved at 0x434f50). Input-related bytes. **confirmed**:
   - file +0x332 (0x856352): control mode 0..6
-  - file +0x333 (0x856353): FF strength 0..3 (0 off, gains 3333/6666/10000). Only offered if `g_has_ff`.
+  - file +0x333 (0x856353): FF strength 0..3 (0 off, gains 3333/6666/10000). Only offered if `g_has_ff`. Default 2 (並, image byte 0x467aa1). §11.
   - +0x334, +0x335: settings items 4/5 (0x42a460). Item 5 changes HUD sprites (0x40f7e0). **likely**
   - +0x006 bits 14–15 → 0x829d10 (settings item 1; difficulty-like index used across the game). **likely**
 
@@ -314,8 +314,8 @@ physics consumes the input at the same frame cadence.
    found).
 2. Mode 6 reads button 2 for pause, but the INF declares only 2 buttons. Does DGOC44.DLL report a third
    (START)? This needs the driver or a real device.
-3. ~~Is the FF effect ever triggered?~~ Yes: 0x433260 is called by the bonus game (0x41b810 on
-   contact, 0x4241d0 on the rail joints). The port has no force feedback.
+3. ~~Is the FF effect ever triggered?~~ Yes: with every rail-joint and turnout click while
+   driving; the bonus game's calls are dead behind 0x434940's driving gate (§11.1).
 4. Frame rate (ms per poll) is outside this note.
 5. What does the J-key/0x829d16 path do, and should it be kept?
 
@@ -380,7 +380,7 @@ repeated inline. It is kept as a constant in `input::repeat_pulse`.
 | Keyboard alongside a controller (**decided port behaviour**, on by default, setting `keyboard_with_controller`, docs/settings.md) | modes 4–6: only Esc (pause + cancel), Enter (menu confirm 0x1000) and R reach the game; Space and the driving A bit 0x100000 are dropped, so the keyboard cannot horn or confirm ATS while driving (§6) | the keyboard's Space (horn 0x100) and Enter (A 0x100000 + menu confirm) also pass, OR-ed with the pad's buttons before the edges are taken (one edge while either holds); the levers still come only from the controller; Shift override and the unplug rule above unchanged (`Joystick::poll`; test `gamepad::tests::keyboard_drives_buttons_alongside_a_mode_4_pad`) | user decision: the keyboard always works. Applies with `hybrid_input` off; on, the whole keyboard counts (§10.6) |
 | Calibration file location | current directory | caller passes the path (`--joystick-dat`) | no writes into the install dir |
 | gilrs filters | DirectInput, no dead zone | gilrs default filters off (no dead zone or jitter filter) | keeps the thresholds meaningful |
-| FF ramp effect | created, never started (§1 0x434940 has no callers) | not implemented | dead code in the original |
+| FF ramp effect | a 100 ms ramp jolt at each rail-joint and turnout click while driving, on the acquired joystick of modes 4–6 (§11.1) | a dual-motor rumble pulse on any pad that can vibrate, in every control mode with `hybrid_input` (§11.3) | modern pads have rumble motors, not a positional force; the keyboard-mode limit is a DirectInput acquisition side effect |
 
 ### 10.4 Modern controllers (enhancements, all opt-in)
 
@@ -607,3 +607,176 @@ In mode 6 the calibration screen samples the handle decoder's pad as before, and
 only. Still to check on real devices: the gilrs button names for an actual Xbox pad (LT/RT
 reported as `LeftTrigger2`/`RightTrigger2` past gilrs' press threshold), stick signs per
 backend, the deadbands against a real stick and a real lever, and hot-plug timing.
+
+## 11. Vibration (force feedback)
+
+### 11.1 The original
+
+Sources: `input_init_joystick` 0x433d60, `ff_play_jolt` 0x434940 and its callers (objdump and
+Ghidra), the eeprom default image. Confidence per line.
+
+**The effect** (0x433d60, **confirmed**, objdump 0x433fa7–0x4340b1):
+- The joystick is the first attached one, replaced by the first attached **force-feedback**
+  joystick if any (`EnumDevices(…, DIEDFL_ATTACHEDONLY | DIEDFL_FORCEFEEDBACK)`); a match sets
+  `g_has_ff` 0x816838. Cooperative level 5 = exclusive | foreground.
+- `EnumEffects(enum_first_guid_cb, &guid, DIEFT_RAMPFORCE)` takes the device's first ramp-force
+  effect, then `CreateEffect` with this `DIEFFECT` (pointer 0x82979c):
+
+  | Field | Value | Instruction |
+  |---|---|---|
+  | dwSize | 0x34 | 0x434054 |
+  | dwFlags | 0x12 = `DIEFF_OBJECTOFFSETS \| DIEFF_CARTESIAN` | 0x43405c |
+  | dwDuration | **100 000 µs** | 0x434064 (imm at 0x434068) |
+  | dwSamplePeriod | 0 | 0x43406c |
+  | dwGain | 10 000 | 0x434026 |
+  | dwTriggerButton / RepeatInterval | `DIEB_NOTRIGGER` / 0 | 0x434070, 0x434078 |
+  | cAxes, rgdwAxes | 2: X (offset 0), Y (offset 4) | 0x43407c, 0x434034/0x434038 |
+  | rglDirection | {1, 0}: along X | 0x434040, 0x434048 |
+  | lpEnvelope | none | 0x43408b |
+  | type-specific | `DIRAMPFORCE { lStart = −10 000, lEnd = +10 000 }` (8 bytes) | 0x43404c, 0x434016, 0x434092 |
+
+  So one jolt is a full-scale shove from one side to the other along X in 100 ms.
+- No other effect is created, and nothing calls `Stop`, `Unload` or changes the effect
+  otherwise; an `atexit` handler (0x433250, registered by the static initialiser 0x433220)
+  releases it at exit. **confirmed** (the only other uses of 0x82979c are 0x433d60 and
+  0x434940; the 13 calls of 0x433260 / 0x434940 are the wrapper's own and the 12 below:
+  0x423cfc, 0x423d5c, 0x423da1, 0x423e01, 0x420523, 0x424562, 0x4245ad, 0x4245de, 0x42462a,
+  0x41bb5d, 0x41bd5f, 0x41bdba).
+
+**The option** (menus.md §4, **confirmed**): settings item 2 振動 with 切 / 弱 / 並 / 強
+(values 0–3) at eeprom +0x333 (`0x856353`), shown only when `g_has_ff` is set. The default
+image (0x467aa0: `00 02 01 02 00`) has **2 = 並 (Mid)**.
+
+**`ff_play_jolt` 0x434940** (**confirmed**, objdump 0x434940–0x4349e6):
+1. Returns unless `0x855ff8 & 2` (a stage is running, `Stage_Run`), `0x855ff8 & 0x200` (the
+   train is driving), the effect exists and the option is non-zero.
+2. Sets `dwGain` from the option: **3333 / 6666 / 10 000** (`mov [esp+0x14], imm32` at
+   0x434993, 0x43499d, 0x4349a7), calls `SetParameters(DIEP_GAIN)` and, if that succeeds,
+   `Start(1, 0)`. A `Start` while the effect plays restarts it.
+3. It reads no arguments. The wrapper 0x433260 passes one on, and the callers' values (`(4, 0)`,
+   `(4, 1)`, a shock rating) have no effect: every jolt is the same 100 ms ramp, only the gain
+   differs.
+
+**Callers** (every xref to 0x433260 and 0x434940, **confirmed**):
+
+| Where | When | Live? |
+|---|---|---|
+| train task 0x422c20 (rail joints, 0x423c79–0x423e2b) | each rail-joint click, with the joint sound 0x856d98 (audio-text.md §6.4): up to four per pattern period, two above 80 km/h, only for train types whose joint flag (bit 2) is set | yes |
+| turnout clatter task 0x4204d0 (audio-text.md §10.6) | each wheel-set click, with the joint sound: eight per turnout | yes, while driving |
+| bonus game's physics task 0x4241d0 | each rail-joint click of the EF63 | dead |
+| bonus game task 0x41b810 | the contact, success or failure, and every update after a failed (too hard) coupling | dead |
+
+The bonus game runs with `0x855ff8 & 0x200` clear: `Stage_Run` clears it after the arrival
+(0x4080d0, before the bonus check), and the only instructions that set it are 0x4084da (the
+driving loop), 0x4096e8 (`Coupling_Run`, the in-cab coupling minigame), 0x40a1c1 (the
+red-signal / ATS recovery) and the attract-demo creators 0x40e530 / 0x40e75d (`| 0x204`,
+without the stage-running bit 2). **confirmed** (every `or` into 0x855ff8 in the objdump
+listing). So the bonus game never vibrates, the attract demos never do, and the in-cab
+coupling minigame does through its train's rail joints.
+
+Nothing else vibrates: not the brakes or EB, the ATS, the horn, the obstacle, overruns, the
+coupling impact, a buffer stop or a game over. **confirmed** (no other callers).
+
+**Which modes and controllers.** The joystick is acquired in one place only, `Acquire` in
+`input_poll_joystick` 0x4341c0 (0x43423c) after a failed `GetDeviceState`, and that poll runs
+only in control modes 4–6 (0x4333d0). `Start` on an exclusive device that is not acquired
+fails (`DIERR_NOTEXCLUSIVEACQUIRED`), so in keyboard modes 0–3 nothing vibrates although the
+option is offered. Losing the window focus unacquires the device (foreground level), which
+stops the effect. **likely** (DirectInput's documented behaviour, not measured). Controllers:
+any DirectInput joystick whose driver offers a ramp-force effect, such as a force-feedback
+stick or wheel, or a pad whose driver maps forces onto rumble motors. The official PC
+Densha de GO! controller (gameport, DGOC44) has no force feedback, so the option stays hidden
+with it. **likely**.
+
+**Not measured in the original.** Under Wine the jolt needs a joystick with a ramp-force effect
+in Wine's DirectInput and a COM shim in the oracle hook (it proxies `DirectInputCreateA` only)
+to log `CreateEffect` / `SetParameters` / `Start`. The path is short and read completely, so the
+reading above stands; an oracle run stays open.
+
+### 11.2 How often
+
+At speed the joint clicks come in pairs per car-length pattern (period 12–150 m, audio-text.md
+§6.4), and a turnout adds eight clicks within a few metres. On the user's data, a scripted run
+of stage 0 (3000 ticks, test `sound::tests::jolts_follow_the_clicks_while_driving`) gives 40
+joint clicks and 16 turnout clicks while driving: 56 jolts.
+
+### 11.3 Port (shuppatsu)
+
+Implementation: `crates/shuppatsu/src/rumble.rs` (pure: `JoltSpec`, `Rumbler`),
+`gamepad::PadSource::set_motors` (the device, through gilrs' force feedback),
+`sound::Sound::take_jolts` (the events), `play.rs` / `app.rs` (wiring). Output only: the
+engine's simulation is untouched and never reads it.
+
+**Read from the exe:** the duration and the three gains, from the instructions above, with
+their opcode bytes checked first (`JoltSpec::read`; test `rumble::tests::spec_from_exe`). An
+exe with other code there gets no vibration and a log line, not a failed run.
+
+**Events.** The sound logic already runs the original's rail-joint state machine
+(`shuppatsu_audio::TrainSound`) and the turnout clatter (`TurnoutClatter`). `Sound::after_tick`
+counts their joint-code requests of the tick and keeps them as jolts while
+`Drive::train_driving()` (`0x855ff8 & 0x200`) and not in a demo (no stage-running bit). The
+sound option (サウンド オフ) does not matter, as in the original. With no sound device or
+`--mute`, a silent sound runs for the jolts when a pad that can vibrate is connected and the
+option is not 切.
+
+**The pulse** (port design: a modern pad has two rumble motors and no positional force).
+DirectInput's ramp runs from full force one way to full force the other, so its magnitude goes
+1 → 0 → 1 in 100 ms. gilrs updates the motors every 50 ms, too coarse to shape that, so the
+port plays a flat pulse at the gain:
+
+| 振動 | strong (low-frequency) motor | weak (high-frequency) motor |
+|---|---|---|
+| 切 Off | 0 | 0 |
+| 弱 Low | 0.333 | 0.167 |
+| 並 Mid | 0.667 | 0.333 |
+| 強 High | 1.0 | 0.5 |
+
+The strong motor carries the knock of the joint; the weak one at half (`rumble::WEAK_SHARE`)
+adds an edge, so 弱 is still felt (a heavy motor at a third barely spins up in 100 ms). The
+pulse lasts `round(100 ms / 33 ms)` = **3 game ticks**, on the game clock: it starts in the
+tick of the click, a click during a pulse restarts it (one `Start`, however many clicks in the
+tick), and the level is latched at its start. gilrs' 50 ms force-feedback ticks put ±50 ms on
+the edges. Tests: `rumble::tests::*`.
+
+**When it stops.** At once when the run is paused, the window loses the focus (the original's
+foreground acquisition), a demo, the ending, the opening or a stage intro runs, or the run is
+left; the menus never vibrate (apart from the preview below). Unplugging drops the pad's
+effects; a pad plugged in later vibrates from its first jolt. At exit the motors are set to
+zero and, if they were running, the game waits 100 ms so the stop reaches the pad (on Linux
+the kernel effect also ends by itself 100 ms after gilrs' last renewal). Nothing blocks: the
+levels go to gilrs' thread as channel messages, and unchanged levels send nothing. Headless
+runs and scripted pads (replays) open no device and never vibrate.
+
+**Which pad, which modes** (port choice). With `hybrid_input` on, the pad that the input
+follows vibrates in every control mode, keyboard modes included, as a modern game does; the
+original vibrates only in modes 4–6 (§11.1, a side effect of DirectInput's acquisition). With
+`hybrid_input` off, only the pad of a selected joystick mode (4–6) vibrates, as in the
+original. The pad picked is the first with force feedback, else the first (0x433d60).
+
+**The option.** 振動 is offered while that pad can vibrate (`Controls::ff_supported`, the
+port's `g_has_ff`; it follows hot-plugging). Hidden, it reads as 切, and the eeprom keeps its
+value. The default is the exe's: **並 (Mid)**. Port addition: moving the cursor on the 振動 page
+plays one jolt at the value under the cursor (`App::front_rumble`).
+
+**gilrs.** `Gamepad::is_ff_supported` and two effects per pad (one `Strong`, one `Weak`, full
+magnitude, scaled with `set_gain`, played and stopped). Linux (evdev): gilrs counts a pad as
+force feedback when it has `FF_SQUARE`, `FF_TRIANGLE`, `FF_SINE` and `FF_GAIN`, which the
+kernel's ff-memless adds to every rumble driver (xpad, hid-microsoft, xpadneo); it opens the
+node read-write in any case, and its thread uploads an `FF_RUMBLE` effect of 100 ms and plays
+it every 50 ms. The user's Xbox Wireless Controller over Bluetooth (045e:0b13, hid-microsoft)
+lists `EV_FF` with `FF_RUMBLE`, `FF_PERIODIC`, `FF_SQUARE`, `FF_TRIANGLE`, `FF_SINE` and
+`FF_GAIN` (`out/pad/xbox-bt-evtest.txt`), and gilrs already opens its node for reading the
+pad, so it qualifies. Windows: gilrs' default Windows.Gaming.Input backend sets
+`Gamepad.Vibration` (left motor = strong, right = weak; XInput pads), which holds until it is
+changed. Cross-checked by clippy for `x86_64-pc-windows-gnu`; not tried on Windows hardware.
+
+**Testing by hand.** `shuppatsu pad rumble` prints the pad, whether gilrs reports force
+feedback and, on Linux, each evdev node of the pad with its driver, its `EV_FF` capabilities
+(from sysfs) and whether it is writable, then plays the game's jolt at 弱, 並 and 強 and a
+one-second pulse at 強. `shuppatsu pad rumble <strong> <weak> [ms]` plays one pulse (levels
+0..1, 500 ms by default). gilrs reports device write errors only through the `log` crate,
+which the port does not install, so a pulse that cannot be felt has to be checked with the
+capabilities and permissions shown.
+
+**Needs hardware.** Feeling it on the user's pad (strength per level, the 3-tick pulse, the
+stop on pause and unplug) and on Windows.
