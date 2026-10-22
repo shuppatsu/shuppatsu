@@ -31,7 +31,7 @@ use shuppatsu_render::{Camera, FrameGeometry, PartLibrary, Projection, SubView};
 /// The BGM (0x42ff20(0x1a1)), released by the title picture's destroy 0x403d20.
 pub const MUSIC: u16 = 0x1a1;
 /// TR sets of the attract assets (`stage_assets_load(0x15)`: 0x463c74 row 8 = {1, 8}).
-const TR_SETS: [usize; 2] = [1, 8];
+pub(crate) const TR_SETS: [usize; 2] = [1, 8];
 /// Picture frames (0x457a20 i32[15]): B 0..5, D 5..10, G 10..15.
 const FRAMES: u32 = 0x457a20;
 /// The Komachi consist: pointer at 0x4573dc to 28-byte records `{part[5], offset, spacing}`.
@@ -199,6 +199,8 @@ impl Play {
         if let Some(s) = self.sound.as_mut() {
             s.request_ungated(MUSIC);
         }
+        // The scene of the hand-off to the drive (phase 3) loads meanwhile.
+        self.prefetch_station(ROUTE_STAGE_STATION, &TR_SETS);
         self.world = crate::screens::flow::WorldView::Hidden;
         self.opening = Some(Opening {
             phase: 0,
@@ -227,16 +229,11 @@ impl Play {
     }
 
     fn load_set(&mut self, k: usize) -> Result<()> {
-        let tex = format!("texTR{}.rom", k + 1);
-        self.data.add_textures(&mut self.scene.library, &tex)?;
-        let parts = format!("partsTR{}.rom", k + 1);
-        let bytes = self.data.read(&parts)?;
-        let entries = Rom2::parse(&bytes)?
-            .iter()
-            .map(Part::parse_entry)
-            .collect::<shuppatsu_formats::Result<Vec<_>>>()
-            .with_context(|| parts.clone())?;
-        self.scene.library.add_parts(entries);
+        // Already in a scene loaded ahead with its sets ([`Play::prefetch_station`]).
+        if self.scene.extra_sets.contains(&k) {
+            return Ok(());
+        }
+        add_set(&self.data, &mut self.scene, k)?;
         if let Some(g) = self.gpu.as_mut() {
             g.renderer
                 .upload_pages(&g.device, &g.queue, &self.scene.library.pages);
@@ -724,6 +721,25 @@ impl Play {
     }
 }
 
+/// Adds the `texTR`/`partsTR` set `k` (the opening's trains) to `scene`'s library.
+pub(crate) fn add_set(
+    data: &crate::scene::GameData,
+    scene: &mut crate::scene::RouteScene,
+    k: usize,
+) -> Result<()> {
+    let tex = format!("texTR{}.rom", k + 1);
+    data.add_textures(&mut scene.library, &tex)?;
+    let parts = format!("partsTR{}.rom", k + 1);
+    let bytes = data.read(&parts)?;
+    let entries = Rom2::parse(&bytes)?
+        .iter()
+        .map(Part::parse_entry)
+        .collect::<shuppatsu_formats::Result<Vec<_>>>()
+        .with_context(|| parts.clone())?;
+    scene.library.add_parts(entries);
+    scene.extra_sets.push(k);
+    Ok(())
+}
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -184,8 +184,9 @@ pub struct App {
     /// The stage intro is the run in [`Screen::Play`]; the departure board of this choice
     /// follows it.
     intro_chosen: Option<Chosen>,
-    /// The stage of the attract run (demo drive or opening) loaded ahead ([`Attract::next_run`]).
-    attract_ahead: Option<usize>,
+    /// The stage of the attract run loaded ahead, and whether it is the opening
+    /// ([`Attract::next_run`]).
+    attract_ahead: Option<(usize, bool)>,
     down: [bool; 256],
     menu_input: MenuInput,
     script: Script,
@@ -481,7 +482,7 @@ impl App {
                 // The run after the board: its route scene loads while the board shows.
                 let r = self.res.as_ref().expect("resources");
                 let up = play::page_uploader(r.gpu.as_ref());
-                play::load_scene_ahead(&r.data, &self.play_options(r, chosen), up);
+                play::load_scene_ahead(&r.data, &self.play_options(r, chosen), up, &[]);
                 let route = chosen.route;
                 let layer = &mut self.res.as_mut().expect("resources").layer;
                 let b = DepartureBoard::new(&self.defs.front, route, chosen.variant, layer);
@@ -987,8 +988,8 @@ impl App {
         };
         // Attract's next run (a demo drive or the opening) loads while the item before it shows.
         if let Screen::Attract(a) = &self.screen
-            && let Some(stage) = a.next_run(&self.defs.attract)
-            && self.attract_ahead != Some(stage)
+            && let Some((stage, opening)) = a.next_run(&self.defs.attract)
+            && self.attract_ahead != Some((stage, opening))
         {
             let chosen = Chosen {
                 group: 0,
@@ -998,8 +999,9 @@ impl App {
             };
             let r = self.res.as_ref().expect("resources");
             let up = play::page_uploader(r.gpu.as_ref());
-            play::load_scene_ahead(&r.data, &self.play_options(r, chosen), up);
-            self.attract_ahead = Some(stage);
+            let sets = if opening { play::OPENING_SETS } else { &[] };
+            play::load_scene_ahead(&r.data, &self.play_options(r, chosen), up, sets);
+            self.attract_ahead = Some((stage, opening));
         }
         // The stage intro is a run of its own: its route scene loads during the wait before it.
         if let Screen::Wait(TO_INTRO_TICKS, Next::Intro(chosen)) = self.screen
@@ -1007,7 +1009,7 @@ impl App {
         {
             let r = self.res.as_ref().expect("resources");
             let up = play::page_uploader(r.gpu.as_ref());
-            play::load_scene_ahead(&r.data, &self.play_options(r, chosen), up);
+            play::load_scene_ahead(&r.data, &self.play_options(r, chosen), up, &[]);
         }
         if let Some(from) = movie {
             self.screen = self.start_movie(from);

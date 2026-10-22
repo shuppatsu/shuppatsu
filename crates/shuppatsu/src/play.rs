@@ -195,6 +195,7 @@ pub fn load_scene_ahead(
     data: &GameData,
     opts: &PlayOptions,
     uploader: Option<shuppatsu_render::PageUploader>,
+    sets: &'static [usize],
 ) {
     let mut data = data.clone();
     data.texture_pack = opts.locale.texture_pack.clone();
@@ -219,7 +220,8 @@ pub fn load_scene_ahead(
             stage,
             pack,
         );
-        let scene = load_scene_for(&data, &key.0, key.1, (key.2, key.3, key.4), uploader)?;
+        let what = (key.2, key.3, key.4);
+        let scene = load_scene_with(&data, &key.0, key.1, what, uploader, sets)?;
         Ok(Ahead {
             key,
             start: (stage, difficulty, station),
@@ -944,6 +946,38 @@ fn load_scene_for(
     Ok(scene)
 }
 
+/// The `texTR` sets the attract opening adds to its scenes.
+pub const OPENING_SETS: &[usize] = &opening::TR_SETS;
+
+/// [`load_scene_for`] with the `texTR` sets `sets` added (the opening's trains) before the
+/// pages are uploaded.
+fn load_scene_with(
+    data: &GameData,
+    com: &str,
+    visibility: Visibility,
+    what: (crate::settings::Settings, crate::scene::Geometry, usize),
+    uploader: Option<shuppatsu_render::PageUploader>,
+    sets: &[usize],
+) -> Result<RouteScene> {
+    if sets.is_empty() {
+        return load_scene_for(data, com, visibility, what, uploader);
+    }
+    let mut scene = load_scene_for(data, com, visibility, what, None)?;
+    for &k in sets {
+        opening::add_set(data, &mut scene, k)?;
+    }
+    scene.library.prepare_seams();
+    let s = what.0;
+    scene.gpu_pages = uploader.map(|u| {
+        u.upload(
+            &scene.library.pages,
+            s.texture_filtering,
+            s.shading().anisotropic,
+        )
+    });
+    Ok(scene)
+}
+
 /// What a run started from, for replaying it alone from an issue mark ([`crate::marks`]).
 struct RunStart {
     /// The save as it was.
@@ -1454,19 +1488,37 @@ impl Play {
     /// result; [`Play::reload_scene`] takes it at the segment's start): the load (20-40 ms with
     /// its texture upload) stalled the tick that started the segment.
     fn load_next_scene(&mut self) {
-        let Some((com, name)) = self.drive.next_com() else {
-            return;
-        };
+        if let Some((com, name)) = self.drive.next_com() {
+            let name = name.to_owned();
+            self.load_scene_ahead(com, name, &[]);
+        }
+    }
+
+    /// Starts loading on a thread the scene of the segment holding `station`, which a
+    /// sequence (the opening, the ending) places the camera at later
+    /// ([`Drive::ending_place`]; [`Play::reload_scene`] takes it then).
+    /// With `sets`, the `texTR` sets the sequence adds to it (the opening's trains).
+    pub(crate) fn prefetch_station(&mut self, station: usize, sets: &'static [usize]) {
+        if let Some((com, name)) = self.drive.station_com(station) {
+            let name = name.to_owned();
+            self.load_scene_ahead(com, name, sets);
+        }
+    }
+
+    /// The scene of `.COM` file `com` (`name`) loading on a thread, unless it is the one
+    /// shown or already loading.
+    fn load_scene_ahead(&mut self, com: u32, name: String, sets: &'static [usize]) {
         if com == self.scene_com || self.scene_next.as_ref().is_some_and(|(c, _)| *c == com) {
             return;
         }
-        let (data, name) = (self.data.clone(), name.to_owned());
+        let data = self.data.clone();
         let (vis, what) = (
             self.visibility,
             (self.opts.settings, geometry(&self.opts), self.opts.stage),
         );
         let uploader = page_uploader(self.gpu.as_ref());
-        let job = std::thread::spawn(move || load_scene_for(&data, &name, vis, what, uploader));
+        let job =
+            std::thread::spawn(move || load_scene_with(&data, &name, vis, what, uploader, sets));
         self.scene_next = Some((com, job));
     }
 

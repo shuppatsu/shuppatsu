@@ -216,6 +216,8 @@ pub struct RouteScene {
     /// The texture pages already on the GPU when the scene was loaded on a thread
     /// ([`shuppatsu_render::PageUploader`]), for the run to take instead of uploading them.
     pub gpu_pages: Option<shuppatsu_render::UploadedPages>,
+    /// The extra `texTR`/`partsTR` sets added to the library (the opening's trains).
+    pub extra_sets: Vec<usize>,
 }
 
 impl RouteScene {
@@ -294,6 +296,7 @@ impl RouteScene {
             traffic_reach: None,
             signal_model: 0,
             gpu_pages: None,
+            extra_sets: Vec::new(),
         })
     }
 

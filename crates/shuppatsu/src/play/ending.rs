@@ -557,6 +557,25 @@ impl Play {
                 1 => {
                     self.ending_hide_panels(e);
                     self.drive.ending_place(e.idx - 1)?;
+                    // The next placement (as ph 0 picks it), or the final shot's station:
+                    // its scene loads while this one shows.
+                    let mut j = e.idx;
+                    if time(j) != -1 {
+                        loop {
+                            j += 1;
+                            if time(j) == -1 || row(j).is_some_and(|r| r.params[0] != -1) {
+                                break;
+                            }
+                        }
+                    }
+                    let next = if time(j) != -1 {
+                        Some(j - 1)
+                    } else {
+                        t.finals.get(stage).map(|f| f[0].max(0) as usize)
+                    };
+                    if let Some(s) = next {
+                        self.prefetch_station(s, &[]);
+                    }
                     e.world = true;
                     let jump = if stop {
                         prev.to_next_m - STOP_LEAD_M

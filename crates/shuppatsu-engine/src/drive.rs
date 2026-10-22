@@ -414,6 +414,14 @@ impl Drive {
             .unwrap_or("")
     }
 
+    /// The `.COM` index and file name of the segment holding `station` (what
+    /// [`Drive::ending_place`] loads for it).
+    pub fn station_com(&self, station: usize) -> Option<(u32, &str)> {
+        let (seg, _) = segment_for(&self.stage_data, self.rules.stage().0, station).ok()?;
+        let name = self.com_files.get(seg as usize)?.as_deref()?;
+        Some((seg, name))
+    }
+
     /// The `.COM` index and file name of the next segment's route, once loaded (at a station
     /// result) and until the segment's setup tick installs it.
     pub fn next_com(&self) -> Option<(u32, &str)> {

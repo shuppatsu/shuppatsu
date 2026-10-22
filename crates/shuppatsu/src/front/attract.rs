@@ -369,11 +369,11 @@ impl Attract {
         }
     }
 
-    /// The stage of the run (a demo drive, or the opening on stage 1) that attract starts
-    /// next, if no other screen item comes before it: what its owner can load ahead while the
+    /// The stage of the run (a demo drive, or the opening on stage 1: `true`) that attract
+    /// starts next, if no other screen item comes before it: what its owner can load ahead while the
     /// current item shows. A guess only for what the items do (the owner checks what it
     /// loaded against the run it starts).
-    pub fn next_run(&self, t: &AttractTables) -> Option<usize> {
+    pub fn next_run(&self, t: &AttractTables) -> Option<(usize, bool)> {
         let from = match self.phase {
             Phase::Item(i) | Phase::Gap(_, i) => i,
             Phase::Logo(..) | Phase::Photo(_) | Phase::Poster(_) | Phase::Picture(_) => {
@@ -387,9 +387,9 @@ impl Attract {
         for &f in t.items.get(from..)? {
             match f {
                 ITEM_DEMO_ROUTE => stage = demo_route(self.counters.walk),
-                ITEM_DEMO_DRIVE => return Some(stage),
-                ITEM_LESSON_DEMO => return Some(LESSON_STAGE),
-                ITEM_TITLE if !self.skip_opening => return Some(OPENING_STAGE),
+                ITEM_DEMO_DRIVE => return Some((stage, false)),
+                ITEM_LESSON_DEMO => return Some((LESSON_STAGE, false)),
+                ITEM_TITLE if !self.skip_opening => return Some((OPENING_STAGE, true)),
                 _ => return None,
             }
         }
