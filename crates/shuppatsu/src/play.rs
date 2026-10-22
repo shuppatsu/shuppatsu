@@ -1121,6 +1121,11 @@ impl Play {
         let input = self.menu_input;
         let mut sfx = Vec::new();
         if self.flow.paused() {
+            // The pause menu can restart the stage from station 0 (maybe another route part):
+            // its scene loads meanwhile.
+            if self.scene_next.is_none() {
+                self.prefetch_station(0, &[]);
+            }
             let result = self.flow.frozen_tick(&input, &mut sfx);
             self.poll();
             if let Some(r) = result {
