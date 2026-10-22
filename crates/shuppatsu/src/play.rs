@@ -114,13 +114,17 @@ struct Tables {
 
 fn start_drive(tables: &Tables, opts: &PlayOptions, station: usize) -> Result<Drive> {
     let drive = new_drive(tables, (opts.stage, opts.difficulty, station))?;
+    log_start(opts, &drive, station);
+    Ok(drive)
+}
+
+fn log_start(opts: &PlayOptions, drive: &Drive, station: usize) {
     eprintln!(
         "stage {} difficulty {} from station {station} ({})",
         opts.stage,
         opts.difficulty,
         drive.station_name(station).unwrap_or("?")
     );
-    Ok(drive)
 }
 
 /// The drive of `stage` at `difficulty` from `station`.
@@ -157,8 +161,17 @@ type SceneKey = (
     Option<PathBuf>,
 );
 
-/// A scene loading on a thread ahead of its run ([`load_scene_ahead`]), with its key.
-type SceneAhead = std::thread::JoinHandle<Result<(SceneKey, RouteScene)>>;
+/// A run's drive and route scene made on a thread ahead of it ([`load_scene_ahead`]).
+struct Ahead {
+    key: SceneKey,
+    /// Stage, difficulty and start station.
+    start: (usize, usize, usize),
+    drive: Drive,
+    scene: RouteScene,
+}
+
+/// A scene loading on a thread ahead of its run ([`load_scene_ahead`]).
+type SceneAhead = std::thread::JoinHandle<Result<Ahead>>;
 
 static SCENE_AHEAD: std::sync::Mutex<Option<SceneAhead>> = std::sync::Mutex::new(None);
 
@@ -174,9 +187,10 @@ fn scene_key(com: &str, opts: &PlayOptions) -> SceneKey {
     )
 }
 
-/// Starts loading on a thread the route scene of the run `opts` will start (the departure
-/// board shows for seconds before it); [`Play::new`] takes it if its key matches. The
-/// stage-start tick waited for that load (about 20 ms, its longest part).
+/// Starts making on a thread the drive and route scene of the run `opts` will start (the
+/// departure board shows for seconds before it, the stage intro waits half a second);
+/// [`Play::new`] takes them if made for the same options. The stage-start tick waited for
+/// the scene (about 20 ms, its longest part) and the drive (its route read: about 3 ms).
 pub fn load_scene_ahead(
     data: &GameData,
     opts: &PlayOptions,
@@ -206,7 +220,12 @@ pub fn load_scene_ahead(
             pack,
         );
         let scene = load_scene_for(&data, &key.0, key.1, (key.2, key.3, key.4), uploader)?;
-        Ok((key, scene))
+        Ok(Ahead {
+            key,
+            start: (stage, difficulty, station),
+            drive,
+            scene,
+        })
     });
     *SCENE_AHEAD.lock().unwrap_or_else(|e| e.into_inner()) = Some(job);
 }
@@ -216,16 +235,15 @@ pub fn page_uploader(gpu: Option<&Gpu>) -> Option<shuppatsu_render::PageUploader
     gpu.map(|g| g.renderer.page_uploader(&g.device, &g.queue))
 }
 
-/// The scene loaded ahead for `key`, if there is one ([`load_scene_ahead`]).
-fn scene_ahead(key: &SceneKey) -> Option<RouteScene> {
+/// The drive and scene made ahead for a run with `opts`, if there are ([`load_scene_ahead`]).
+fn take_ahead(opts: &PlayOptions) -> Option<(Drive, RouteScene)> {
     let job = SCENE_AHEAD
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .take()?;
-    match job.join() {
-        Ok(Ok((k, scene))) if k == *key => Some(scene),
-        _ => None,
-    }
+    let a = job.join().ok()?.ok()?;
+    let start = (opts.stage, opts.difficulty, opts.station);
+    (a.start == start && a.key == scene_key(a.drive.com_name(), opts)).then_some((a.drive, a.scene))
 }
 
 /// What a run borrows from its owner: moved into [`Play::new`] and handed back by
@@ -408,7 +426,16 @@ impl Play {
             .rules
             .stop_tolerance_m
             .get(opts.stage, opts.difficulty);
-        let drive = start_drive(&tables, &opts, opts.station)?;
+        // Made ahead while the departure board showed (or the wait before the stage intro), or
+        // here ([`load_scene_ahead`]).
+        let ahead = take_ahead(&opts);
+        let (drive, ahead) = match ahead {
+            Some((drive, scene)) => {
+                log_start(&opts, &drive, opts.station);
+                (drive, Some(scene))
+            }
+            None => (start_drive(&tables, &opts, opts.station)?, None),
+        };
 
         layer.slots.fill(Slot::CLEAR);
         layer.fans.clear();
@@ -427,8 +454,6 @@ impl Play {
         let canvas = shuppatsu_render::sprites::Composer::blank(layer.canvas_size());
         // The route scene loads on its own thread while the cab is set up (both take tens of ms
         // at a stage start).
-        // Loaded ahead while the departure board showed ([`load_scene_ahead`]), or here.
-        let ahead = scene_ahead(&scene_key(drive.com_name(), &opts));
         let scene_job = ahead.is_none().then(|| {
             let (data, com) = (data.clone(), drive.com_name().to_owned());
             let (vis, what) = (
