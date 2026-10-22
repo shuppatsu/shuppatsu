@@ -229,7 +229,15 @@ pub fn load_scene_ahead(
             scene,
         })
     });
-    *SCENE_AHEAD.lock().unwrap_or_else(|e| e.into_inner()) = Some(job);
+    let old = SCENE_AHEAD
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .replace(job);
+    // A scene made ahead and not taken (attract's next run when a menu was opened instead)
+    // is freed on a thread: its pages and buffers took ~10 ms on the menu's tick.
+    if let Some(old) = old {
+        std::thread::spawn(move || drop(old));
+    }
 }
 
 /// What a scene loader needs to upload the texture pages on its own thread, with a window.
@@ -245,7 +253,13 @@ fn take_ahead(opts: &PlayOptions) -> Option<(Drive, RouteScene)> {
         .take()?;
     let a = job.join().ok()?.ok()?;
     let start = (opts.stage, opts.difficulty, opts.station);
-    (a.start == start && a.key == scene_key(a.drive.com_name(), opts)).then_some((a.drive, a.scene))
+    if a.start == start && a.key == scene_key(a.drive.com_name(), opts) {
+        Some((a.drive, a.scene))
+    } else {
+        // Made for another run: freed on a thread, as in [`load_scene_ahead`].
+        std::thread::spawn(move || drop(a));
+        None
+    }
 }
 
 /// What a run borrows from its owner: moved into [`Play::new`] and handed back by
