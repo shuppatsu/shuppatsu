@@ -122,8 +122,8 @@ fn exe_tables() {
             assert!(s.delay >= -1, "sequence {id:#x}: {s:?}");
         }
     }
-    for id in 0x19..=0x23 {
-        assert_eq!(t.sequences[id][0].code, 0x1a7, "sequence {id:#x}");
+    for (id, seq) in (0x19..).zip(&t.sequences[0x19..=0x23]) {
+        assert_eq!(seq[0].code, 0x1a7, "sequence {id:#x}");
     }
     // Example from the notes: sequence 0x13 starts 0x149/100, 0x14a/130.
     assert_eq!(t.sequences[0x13][0], shuppatsu_audio::Step::new(0x149, 100));
@@ -171,7 +171,7 @@ fn table_sequences_play_through() {
     );
     let mut snd = SoundSystem::new(tables.clone());
     let mut buf = vec![0.0f32; 2 * 735]; // one 33 ms tick at 22050 Hz
-    for id in 0..tables.sequences.len() {
+    for (id, seq) in tables.sequences.iter().enumerate() {
         snd.request(0x1000 | id as u16);
         let mut ticks = 0;
         let mut played = 0;
@@ -187,10 +187,7 @@ fn table_sequences_play_through() {
             ticks += 1;
             assert!(ticks < 30 * 120, "sequence {id:#x} never ends");
         }
-        assert!(
-            played + 1 >= tables.sequences[id].len().min(12),
-            "sequence {id:#x}"
-        );
+        assert!(played + 1 >= seq.len().min(12), "sequence {id:#x}");
         mixer.apply(Command::StopAll);
     }
 }

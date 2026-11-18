@@ -534,8 +534,8 @@ impl Popups {
     }
 
     fn message_slots(&mut self, layer: &mut SpriteLayer) {
-        for slot in SLOT_MESSAGE..=SLOT_MESSAGE_SECONDS {
-            layer.slots[slot] = Slot {
+        for slot in &mut layer.slots[SLOT_MESSAGE..=SLOT_MESSAGE_SECONDS] {
+            *slot = Slot {
                 keep: true,
                 ..Slot::CLEAR
             };

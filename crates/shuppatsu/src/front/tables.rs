@@ -320,8 +320,8 @@ impl FrontTables {
             let s = exe.reader_at(GROUP_STAGES, 4 * GROUP_STAGE_MAX * GROUP_COUNT, WHAT)?;
             for i in 0..GROUP_COUNT {
                 groups[i].0 = i16::try_from(g.i32(20 * i)?)?;
-                for k in 0..GROUP_THUMBS {
-                    groups[i].1[k] = i16::try_from(g.i32(20 * i + 4 + 4 * k)?)?;
+                for (k, thumb) in groups[i].1.iter_mut().enumerate() {
+                    *thumb = i16::try_from(g.i32(20 * i + 4 + 4 * k)?)?;
                 }
                 // 0x435510 counts entries until −1, at most six.
                 for k in 0..GROUP_STAGE_MAX {

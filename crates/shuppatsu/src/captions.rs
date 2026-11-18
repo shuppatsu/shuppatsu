@@ -1025,8 +1025,8 @@ mod tests {
         assert_eq!((style.paint.index, style.cap), (0x1c, Some(21.0)));
         assert_eq!(style.outline.map(|p| p.index), Some(0x1d));
         assert_eq!(style.font, FontRole::Body);
-        for s in SLOT_CAPTION..SLOT_CAPTION + 3 {
-            assert_eq!(layer.slots[s].tilemap, -1);
+        for slot in &layer.slots[SLOT_CAPTION..SLOT_CAPTION + 3] {
+            assert_eq!(slot.tilemap, -1);
         }
         // Hidden under a time message.
         layer.reset_transient();

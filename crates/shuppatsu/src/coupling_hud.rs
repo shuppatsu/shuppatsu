@@ -277,8 +277,7 @@ impl CouplingHud {
 
     /// Intro tick 10: the slots are placed (layer 3, palette 4) and the static pictures set.
     fn setup(&mut self, layer: &mut SpriteLayer) {
-        for i in 0..SLOT_COUNT {
-            let (x, y) = self.t.slots[i];
+        for (i, &(x, y)) in self.t.slots.iter().enumerate() {
             slots::place(layer, FIRST_SLOT + i, x, y, LAYER, PALETTE);
         }
         for (slot, tbl) in STATIC_PICTURES {

@@ -116,8 +116,8 @@ fn scene_tables_reference_existing_parts() {
             if ty == scene::NO_RAIL {
                 continue;
             }
-            for group in 0..scene::RAIL_GROUPS {
-                let id = t.areas[*area].rail[group][usize::from(ty)];
+            for group in &t.areas[*area].rail {
+                let id = group[usize::from(ty)];
                 if !parts.contains(&id) {
                     *missing.entry((com, "rail")).or_default() += 1;
                 }

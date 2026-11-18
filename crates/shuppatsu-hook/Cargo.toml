@@ -8,3 +8,7 @@ publish.workspace = true
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+
+# Deliberately not `workspace = true`: the workspace denies `unsafe_code`, and this proxy DLL is
+# the one crate that needs it (FFI and hooks, each block with a SAFETY comment).
+[lints]
