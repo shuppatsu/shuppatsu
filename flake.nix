@@ -201,8 +201,10 @@
 
         LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath runtimeLibs;
         CARGO_TARGET_I686_PC_WINDOWS_GNU_LINKER = "${mingw32.stdenv.cc}/bin/i686-w64-mingw32-gcc";
-        # nixpkgs mingw gcc uses the mcfgthread threading model; libgcc_eh needs it.
-        CARGO_TARGET_I686_PC_WINDOWS_GNU_RUSTFLAGS = "-L native=${mingw32.windows.pthreads}/lib -L native=${mingw32.windows.mcfgthreads}/lib -C link-arg=-l:libmcfgthread.a -C link-arg=-lkernel32 -C link-arg=-lntdll";
+        # nixpkgs mingw gcc uses the mcfgthread threading model; libgcc_eh needs it. The i686
+        # mcfgthread is built with -fstack-protector, so libmingwex (its __stack_chk_guard and
+        # __stack_chk_fail; static, no libssp DLL) and the msvcrt/kernel32 those call follow it.
+        CARGO_TARGET_I686_PC_WINDOWS_GNU_RUSTFLAGS = "-L native=${mingw32.windows.pthreads}/lib -L native=${mingw32.windows.mcfgthreads}/lib -C link-arg=-l:libmcfgthread.a -C link-arg=-lkernel32 -C link-arg=-lntdll -C link-arg=-lmingwex -C link-arg=-lmsvcrt -C link-arg=-lkernel32";
         CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = "${mingwW64.stdenv.cc}/bin/x86_64-w64-mingw32-gcc";
         # Static mcfgthread (as for i686), so the exe needs no MinGW DLLs next to it.
         CARGO_TARGET_X86_64_PC_WINDOWS_GNU_RUSTFLAGS = "-L native=${mingwW64.windows.pthreads}/lib -L native=${mingwW64.windows.mcfgthreads}/lib -C link-arg=-l:libmcfgthread.a -C link-arg=-lkernel32 -C link-arg=-lntdll";
