@@ -352,6 +352,11 @@ pub fn default_path() -> Option<PathBuf> {
     Some(config_dir()?.join("eeprom.dat"))
 }
 
+/// One folder for everything the game writes (settings, saves, logs, issue marks and the
+/// imported game data), like a portable emulator's; a launcher sets it to its own data folder
+/// (RecompLauncher passes `{data}`, recomplauncher.json). Unset: the system's usual places.
+pub const HOME_VAR: &str = "SHUPPATSU_HOME";
+
 /// The config folder's name.
 const DIR_NAME: &str = "shuppatsu";
 /// Its name before the project was renamed; [`migrate`] copies it over once.
@@ -365,6 +370,10 @@ pub fn config_dir() -> Option<PathBuf> {
     static DIR: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     DIR.get_or_init(|| {
         let dir = config_dir_in(|k| std::env::var_os(k))?;
+        // A folder given by the launcher is its own; nothing to carry over into it.
+        if std::env::var_os(HOME_VAR).is_some_and(|v| !v.is_empty()) {
+            return Some(dir);
+        }
         match migrate(&dir) {
             Ok(None) => Some(dir),
             Ok(Some(note)) => {
@@ -400,6 +409,9 @@ pub fn migration_note() -> Option<&'static str> {
 /// migration.
 pub fn config_dir_in(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
     let absolute = |v: std::ffi::OsString| Some(PathBuf::from(v)).filter(|p| p.is_absolute());
+    if let Some(home) = env(HOME_VAR).and_then(absolute) {
+        return Some(home);
+    }
     let dir = if cfg!(windows) {
         env("APPDATA").and_then(absolute)?
     } else {

@@ -94,6 +94,8 @@ fn extracts_the_installed_files_from_the_image() {
     let track = Track::detect(&src, start).expect("an ISO 9660 data track");
     let iso = Iso::new(track).unwrap();
     assert_eq!(iso.volume, "DENGO3K");
+    // recomplauncher.json identifies the disc by this file in its top folder (`check.iso9660`).
+    assert!(iso.find("DENGO3K.ICO").unwrap().is_some_and(|e| !e.dir));
     let cab_entry = iso
         .find("DATA1.CAB")
         .unwrap()

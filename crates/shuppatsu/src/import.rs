@@ -114,13 +114,17 @@ fn find_ignoring_case(dir: &Path, name: &str) -> Option<PathBuf> {
 }
 
 /// The port's folder for imported game data: `%LOCALAPPDATA%\shuppatsu\game` on Windows,
-/// else `$XDG_DATA_HOME/shuppatsu/game` or `~/.local/share/shuppatsu/game`.
+/// else `$XDG_DATA_HOME/shuppatsu/game` or `~/.local/share/shuppatsu/game`; `$SHUPPATSU_HOME/game`
+/// when that is set (crate::save::HOME_VAR).
 pub fn import_dir() -> Option<PathBuf> {
     import_dir_in(|k| std::env::var_os(k))
 }
 
 fn import_dir_in(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
     let absolute = |v: std::ffi::OsString| Some(PathBuf::from(v)).filter(|p| p.is_absolute());
+    if let Some(home) = env(crate::save::HOME_VAR).and_then(absolute) {
+        return Some(home.join("game"));
+    }
     let base = if cfg!(windows) {
         env("LOCALAPPDATA").and_then(absolute)?
     } else {
@@ -356,9 +360,25 @@ fn read_exact_at(file: &File, offset: u64, buf: &mut [u8]) -> std::io::Result<()
 }
 
 /// `shuppatsu import <image or folder>`: imports from the command line, with progress.
+///
+/// `shuppatsu import --progress [--game=<path>]` is the launcher's windowless setup step
+/// (RecompLauncher's `prepare`): it prints `progress <0..1> <text>` lines on stdout, finishes
+/// at once with `progress 1 …` when a finished import is there (an update or a second copy
+/// changes nothing: every import is the same verified files), and without `--game` only
+/// checks for one.
 pub fn run(args: &[String]) -> Result<()> {
+    if args.iter().any(|a| a == "--progress") {
+        let game = args
+            .iter()
+            .find_map(|a| a.strip_prefix("--game="))
+            .map(PathBuf::from);
+        return prepare(game.as_deref());
+    }
     let [path] = args else {
-        bail!("usage: shuppatsu import <disc image (.cue, .mds/.mdf, .bin, .iso) or folder>");
+        bail!(
+            "usage: shuppatsu import <disc image (.cue, .mds/.mdf, .bin, .iso) or folder>\n       \
+             shuppatsu import --progress [--game=<path>]"
+        );
     };
     let source = classify(Path::new(path));
     let dir = import_printing(&source)?;
@@ -383,6 +403,46 @@ pub fn ensure(path: &Path) -> Result<()> {
     }
     let dir = import_printing(&source).with_context(|| format!("--disc {}", path.display()))?;
     eprintln!("imported and verified into {}", dir.display());
+    Ok(())
+}
+
+/// The launcher's setup step ([`run`] with `--progress`). The reason for a failure is the last
+/// thing printed (by `main`), in words a player can act on.
+fn prepare(game: Option<&Path>) -> Result<()> {
+    use std::io::Write;
+    let mut out = std::io::stdout();
+    if imported().is_some() {
+        writeln!(out, "progress 1 Game data already imported")?;
+        return Ok(());
+    }
+    let Some(game) = game else {
+        bail!("no game data imported yet: choose your disc image again");
+    };
+    let source = classify(game);
+    if matches!(source, Source::Installed(_)) {
+        bail!(
+            "{} is an installed game, not a disc image: choose the disc image (.cue, .mds/.mdf, \
+             .bin or .iso)",
+            game.display()
+        );
+    }
+    writeln!(out, "progress 0 Reading your disc image")?;
+    let mut last = String::new();
+    import(&source, &mut |p| {
+        if p.file != last {
+            let frac = p.done as f64 / p.total.max(1) as f64;
+            let text = if p.file.is_empty() {
+                "Checked all game files".to_owned()
+            } else {
+                format!("Unpacking {}", p.file)
+            };
+            // Progress is best effort: a closed pipe must not fail the import.
+            let _ = writeln!(out, "progress {frac:.3} {text}");
+            let _ = out.flush();
+            last.clone_from(&p.file);
+        }
+    })?;
+    writeln!(out, "progress 1 Game data imported and verified")?;
     Ok(())
 }
 
@@ -422,6 +482,22 @@ mod tests {
                     .map(|(_, v)| std::ffi::OsString::from(v))
             }
         };
+        // One folder for everything when a launcher gives one.
+        let home: &'static str = if cfg!(windows) { "C:\\r" } else { "/r" };
+        let with_home =
+            move |k: &str| (k == crate::save::HOME_VAR).then(|| std::ffi::OsString::from(home));
+        assert_eq!(
+            import_dir_in(with_home),
+            Some(PathBuf::from(home).join("game"))
+        );
+        assert_eq!(
+            crate::save::config_dir_in(with_home),
+            Some(PathBuf::from(home))
+        );
+        assert_eq!(
+            crate::marks::dir_in(with_home),
+            Some(PathBuf::from(home).join("marks"))
+        );
         if cfg!(windows) {
             assert_eq!(
                 import_dir_in(env(&[("LOCALAPPDATA", "C:\\Users\\a\\AppData\\Local")])),

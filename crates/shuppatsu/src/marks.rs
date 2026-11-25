@@ -65,7 +65,8 @@ pub fn key_event(event: &WindowEvent) -> bool {
 }
 
 /// `<data dir>/marks`: `%APPDATA%\shuppatsu\marks` on Windows, else
-/// `$XDG_DATA_HOME/shuppatsu/marks` or `~/.local/share/shuppatsu/marks`.
+/// `$XDG_DATA_HOME/shuppatsu/marks` or `~/.local/share/shuppatsu/marks` (`$SHUPPATSU_HOME/marks`
+/// when set, crate::save::HOME_VAR).
 pub fn dir() -> Option<PathBuf> {
     dir_in(|k| std::env::var_os(k))
 }
@@ -73,6 +74,9 @@ pub fn dir() -> Option<PathBuf> {
 /// [`dir`] with the environment looked up by `env` (relative values are ignored).
 pub fn dir_in(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
     let absolute = |v: std::ffi::OsString| Some(PathBuf::from(v)).filter(|p| p.is_absolute());
+    if let Some(home) = env(crate::save::HOME_VAR).and_then(absolute) {
+        return Some(home.join("marks"));
+    }
     let base = if cfg!(windows) {
         env("APPDATA").and_then(absolute)?
     } else {
