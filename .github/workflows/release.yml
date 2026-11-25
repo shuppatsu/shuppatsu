@@ -16,6 +16,11 @@ on:
 permissions:
   contents: read
 
+# Container jobs default to sh (dash); the steps use bash.
+defaults:
+  run:
+    shell: bash
+
 env:
   CARGO_TERM_COLOR: always
   # appimagetool 1.9.1 (github.com/AppImage/appimagetool), pinned by hash.
