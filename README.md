@@ -1,8 +1,9 @@
-| `even_track_width` | on | Rails and ballast keep one width, so they run straight through the joins. Off: the original's widths, which step slightly from piece to piece. |
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="assets/logo/header-dark.svg">
   <img alt="Shuppatsu 出発" src="assets/logo/header-light.svg">
 </picture>
+
+<a href="https://recomplauncher.com"><picture><source media="(prefers-color-scheme: dark)" srcset="https://recomplauncher.com/assets/press/launcher/badge-light.svg"><img alt="Get it on RecompLauncher" src="https://recomplauncher.com/assets/press/launcher/badge-dark.svg" height="48"></picture></a>
 
 # Shuppatsu
 
@@ -180,6 +181,10 @@ folder (`~/.local/share/shuppatsu/game` on Linux, `%LOCALAPPDATA%\shuppatsu\game
 Afterwards it starts straight into the game and the image is no longer needed. An installed
 game is used where it is and remembered in `config.toml`.
 
+With [RecompLauncher](https://recomplauncher.com), this step is the launcher's: it asks for the
+disc image, checks it is this disc, runs the import with a progress bar and keeps the game data,
+saves and settings in the game's own folder there (`recomplauncher.json`, `SHUPPATSU_HOME`).
+
 The same from the command line, or for launchers:
 
 ```sh
@@ -339,6 +344,8 @@ detail.
 | `early_activation` | on | Scenery and track appear as soon as they could be in view. Off: the original's pop-in 40–200 m ahead. |
 | `fine_depth` | on | Depth precision suited to the longer draw distance, with overlapping track and ground resolved in the original's order. Off: the original's 16-bit depth. |
 | `stable_track_variants` | off | Side tracks keep one model instead of flickering between variants as the original does. |
+| `even_track_width` | on | Rails and ballast keep one width, so they run straight through the joins. Off: the original's widths, which step slightly from piece to piece. |
+
 | `texture_filtering` | off | Smooth textures with mipmaps. Off: the original's sharp, unfiltered texels. |
 | `anisotropic` | off | Anisotropic filtering (2–16): sharp distant ground without shimmer. On its own it keeps close textures pixel-sharp. |
 | `msaa` | off | Anti-aliasing (2, 4 or 8 samples) for smooth edges on wires, rails and fences. |

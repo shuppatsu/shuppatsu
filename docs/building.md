@@ -66,7 +66,12 @@ release made by `github-actions` with:
 | `Shuppatsu-vX.Y.Z-Windows-x64.zip` | the Windows build |
 | `SHA256SUMS.txt` | their hashes |
 
-The names carry the system and processor, as RecompLauncher expects. A tag with a suffix
+The names carry the system and processor, as RecompLauncher expects. Every package has
+`recomplauncher.json` at its top (the AppImage at its root): the disc input, the import as a
+windowless setup step (`shuppatsu import --progress`), `SHUPPATSU_HOME={data}` so everything the
+game writes stays in the launcher's folder for it, and six settings it edits in `config.toml`.
+Validate changes with `check-jsonschema --schemafile <the schema> recomplauncher.json` (schema:
+https://recomplauncher.com/schema/recomplauncher.json). A tag with a suffix
 (`v0.2.0-beta.1`) becomes a pre-release. To release:
 
 ```sh

@@ -33,6 +33,8 @@ done
 cp LICENSE "$stage/LICENSE.txt"
 cp assets/fonts/OFL-Mplus.txt "$stage/OFL-Mplus.txt"
 cp docs/settings.md "$stage/settings.md"
+# RecompLauncher reads it at the top of the folder, which is also the AppImage's root.
+cp recomplauncher.json "$stage/recomplauncher.json"
 
 # AppImage entry points; also in the archive, so both are the same folder (a launcher that
 # unpacks the AppImage starts AppRun).
@@ -69,6 +71,7 @@ Contents
   shuppatsu-tools       command-line tools (check, inventory, export to PNG/glTF, ...)
   AppRun, shuppatsu.desktop, shuppatsu.png   AppImage entry point, desktop entry and icon
   settings.md           every setting and its config.toml key
+  recomplauncher.json   setup and settings for RecompLauncher (recomplauncher.com)
   LICENSE.txt           GPL-3.0-or-later (this program)
   OFL-Mplus.txt         SIL Open Font License of the bundled M+ font
 

@@ -1,0 +1,122 @@
+{
+  "$schema": "https://recomplauncher.com/schema/recomplauncher.json",
+  "format": 1,
+  "name": "Shuppatsu",
+  "repo": "shuppatsu/shuppatsu",
+  "inputs": [
+    {
+      "id": "game",
+      "label": "Your disc image of Densha de GO! 2 Kōsoku-hen 3000-bandai (Windows, 2000): the .mdf (with its .mds), the .bin of a .cue, or an .iso. An image inside a .zip or .rar has to be extracted first.",
+      "formats": [{ "type": "file" }],
+      "check": { "iso9660": "DENGO3K.ICO" }
+    }
+  ],
+  "prepare": {
+    "program": ["shuppatsu.exe", "Shuppatsu-Linux-x64.AppImage", "shuppatsu"],
+    "args": ["import", "--progress", "--game={input:game}"],
+    "label": "The game files from your disc, checked against the 3000-bandai release",
+    "env": { "SHUPPATSU_HOME": "{data}" },
+    "done": ["{data}/game/shuppatsu-import.toml"],
+    "keeps_copy": true
+  },
+  "start": {
+    "program": ["shuppatsu.exe", "Shuppatsu-Linux-x64.AppImage", "shuppatsu"],
+    "env": { "SHUPPATSU_HOME": "{data}" }
+  },
+  "saves": ["{data}/eeprom.dat", "{data}/joystick.dat", "{data}/config.toml"],
+  "folders": {
+    "game": [{ "path": "{data}/game" }],
+    "saves": [{ "path": "{data}" }],
+    "logs": [{ "path": "{data}" }]
+  },
+  "config": [
+    {
+      "id": "main",
+      "format": "toml",
+      "file": [{ "path": "{data}/config.toml" }]
+    }
+  ],
+  "settings": [
+    {
+      "id": "lang",
+      "label": "Language",
+      "group": "Language",
+      "help": "English draws translated text over the original art. 日本語 is the original, untouched. Unset, the game asks on its first start.",
+      "choices": [
+        { "label": "English", "set": { "lang": "\"en\"" } },
+        { "label": "日本語", "set": { "lang": "\"ja\"" } }
+      ]
+    },
+    {
+      "id": "fullscreen",
+      "label": "Full screen",
+      "group": "Display",
+      "help": "Borderless full screen at your monitor's resolution. Alt+Enter or F11 switches it in the game too.",
+      "choices": [
+        { "label": "Off", "set": { "fullscreen": "false" } },
+        { "label": "On", "set": { "fullscreen": "true" } }
+      ],
+      "defaults": { "fullscreen": "false" }
+    },
+    {
+      "id": "vsync",
+      "label": "V-Sync",
+      "group": "Display",
+      "help": "On: smooth frames at your display's rate. Off: as many frames as the PC can draw. The game itself always runs at the original's 30 ticks a second.",
+      "choices": [
+        { "label": "On", "set": { "vsync": "true" } },
+        { "label": "Off", "set": { "vsync": "false" } }
+      ],
+      "defaults": { "vsync": "true" }
+    },
+    {
+      "id": "hud_layout",
+      "label": "HUD layout",
+      "group": "Display",
+      "help": "Original: the 4:3 HUD and menus in the middle of the screen. Wide: the driving HUD at the edges of a widescreen.",
+      "choices": [
+        { "label": "Original", "set": { "hud_layout": "\"original\"" } },
+        { "label": "Wide", "set": { "hud_layout": "\"enhanced\"" } }
+      ],
+      "defaults": { "hud_layout": "\"original\"" }
+    },
+    {
+      "id": "draw_distance",
+      "label": "Draw distance",
+      "group": "Graphics",
+      "help": "How far ahead the scenery and track are drawn. The original draws 320 m.",
+      "choices": [
+        { "label": "Original (320 m)", "set": { "draw_distance": "\"original\"" } },
+        { "label": "640 m", "set": { "draw_distance": "\"2x\"" } },
+        { "label": "960 m", "set": { "draw_distance": "\"3x\"" } },
+        { "label": "1280 m", "set": { "draw_distance": "\"max\"" } }
+      ],
+      "defaults": { "draw_distance": "\"2x\"" }
+    },
+    {
+      "id": "msaa",
+      "label": "Anti-aliasing",
+      "group": "Graphics",
+      "help": "Smooths the edges of the 3D world, wires and fences included. The HUD stays sharp.",
+      "choices": [
+        { "label": "Off", "set": { "msaa": "1" } },
+        { "label": "2×", "set": { "msaa": "2" } },
+        { "label": "4×", "set": { "msaa": "4" } },
+        { "label": "8×", "set": { "msaa": "8" } }
+      ],
+      "defaults": { "msaa": "1" }
+    }
+  ],
+  "actions": [
+    {
+      "id": "saves",
+      "label": "Saves and settings",
+      "help": "The rankings, clear marks, controller calibration and config.toml.",
+      "open": "saves"
+    }
+  ],
+  "system": {
+    "windows": { "version": "10" },
+    "linux": { "glibc": "2.35" }
+  }
+}
