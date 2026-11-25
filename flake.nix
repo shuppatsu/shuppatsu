@@ -32,9 +32,9 @@
         ];
       };
 
-      mingw32 = pkgs.pkgsCross.mingw32;
+      mingw32 = pkgs.pkgsCross.mingw-msvcrt-i686;
       # The 64-bit Windows build of the game and tools (docs/building.md).
-      mingwW64 = pkgs.pkgsCross.mingwW64;
+      mingwW64 = pkgs.pkgsCross.mingw-msvcrt-x86_64;
 
       # Libraries winit/wgpu dlopen at runtime.
       runtimeLibs = with pkgs; [
