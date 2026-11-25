@@ -187,7 +187,7 @@ diff <(grep -E '^(path|sha256)' mine.toml) <(grep -E '^(path|sha256)' data-manif
 
 ### 4. Install and run
 
-**Windows (release zip):** unzip `shuppatsu-windows.zip` anywhere, put your extracted data in a
+**Windows (release zip):** unzip `Shuppatsu-vX.Y.Z-Windows-x64.zip` from the [releases](https://github.com/shuppatsu/shuppatsu/releases) anywhere, put your extracted data in a
 folder named `data` next to `shuppatsu.exe`, and start `shuppatsu.exe`.
 
 ```
@@ -210,9 +210,13 @@ On NixOS it works as is. On other distributions, Nix's Vulkan loader may not fin
 driver; run it through [nixGL](https://github.com/nix-community/nixGL) if it reports no
 adapter.
 
-**Linux without Nix:** build from source (see
-[Building from source](#building-from-source-and-development)); a prebuilt Linux archive is not
-provided yet.
+**Linux without Nix:** download `Shuppatsu-vX.Y.Z-Linux-x64.tar.xz` or
+`Shuppatsu-vX.Y.Z-Linux-x64.AppImage` from the
+[releases](https://github.com/shuppatsu/shuppatsu/releases). They need x86-64 Linux with
+glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or later) and run on Wayland or X11.
+Unpack the archive anywhere and put your data in a `data` folder next to `shuppatsu`, or start
+the AppImage with `--data <dir>`. You can also build from source (see
+[Building from source](#building-from-source-and-development)).
 
 **Where the game looks for your data**, first match wins:
 

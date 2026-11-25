@@ -20,6 +20,60 @@ Running from the dev shell works because it puts the Vulkan loader, Wayland and 
 `LD_LIBRARY_PATH` (and libglvnd's libEGL for the OpenGL fallback). A bare `target/release/shuppatsu`
 outside the shell can't find them on NixOS.
 
+### Portable Linux build
+
+`scripts/package-linux.sh` builds the release binaries, strips them and writes
+`out/dist/Shuppatsu-v<version>-Linux-x64.tar.xz` and the same folder as
+`Shuppatsu-v<version>-Linux-x64.AppImage` (with `AppRun`, `shuppatsu.desktop`, the 256 px icon,
+`LICENSE.txt`, `OFL-Mplus.txt`, `settings.md` and a `README-linux.txt`; no game data).
+
+The binaries only run on other distributions when built on an old base, so the release builds
+them in an `ubuntu:22.04` container: glibc 2.35 is the newest symbol version they need, and they
+link only libc, libm, libgcc_s, libasound and libudev. Vulkan, Wayland, xkbcommon, X11 and EGL
+are loaded at runtime from the player's system. A build in the dev shell links against
+`/nix/store` and runs only on Nix. To build the portable one locally:
+
+```sh
+docker run --rm -v "$PWD":/src -w /src ubuntu:22.04 bash -c '
+  apt-get update && apt-get install -y curl build-essential pkg-config libasound2-dev libudev-dev xz-utils file git &&
+  curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && . ~/.cargo/env &&
+  APPIMAGETOOL=/path/to/appimagetool scripts/package-linux.sh'
+```
+
+Without `appimagetool` (`$APPIMAGETOOL` or on `PATH`) only the archive is written. NixOS hosts
+with `programs.appimage.binfmt` route every AppImage, appimagetool included, to `appimage-run`,
+which doesn't exist inside a container. Extract appimagetool there first (`unsquashfs -o <ELF
+size>`) and point `APPIMAGETOOL` at its `AppRun`.
+
+Verified 2026-11-25: the archive's binaries start on Debian 12 and Fedora 41, and the AppImage
+plays the attract sequence from the disc data on NixOS (`appimage-run`, RADV).
+
+## Continuous integration and releases
+
+`.github/workflows/ci.yml` runs on every push to `main` and every pull request: `cargo fmt
+--check`, clippy with `-D warnings` and `cargo test --workspace` on Ubuntu (data tests skip), and
+the Windows cross build in the Nix dev shell.
+
+`.github/workflows/release.yml` runs when a `v*` tag is pushed. It checks that the tag matches
+the workspace version in `Cargo.toml`, builds the Linux packages in `ubuntu:22.04` and the
+Windows zip with `scripts/package-windows.sh` in the Nix dev shell, and publishes a GitHub
+release made by `github-actions` with:
+
+| Asset | Contents |
+|---|---|
+| `Shuppatsu-vX.Y.Z-Linux-x64.tar.xz` | portable Linux build |
+| `Shuppatsu-vX.Y.Z-Linux-x64.AppImage` | the same folder as an AppImage |
+| `Shuppatsu-vX.Y.Z-Windows-x64.zip` | the Windows build |
+| `SHA256SUMS.txt` | their hashes |
+
+The names carry the system and processor, as RecompLauncher expects. A tag with a suffix
+(`v0.2.0-beta.1`) becomes a pre-release. To release:
+
+```sh
+# bump [workspace.package] version in Cargo.toml, commit, then
+git tag v0.2.0 && git push origin v0.2.0
+```
+
 ## Windows (cross-compiled from Linux)
 
 The game and tools build for **x86_64-pc-windows-gnu** with nixpkgs' mingw-w64 GCC as the

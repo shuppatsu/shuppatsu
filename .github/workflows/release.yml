@@ -1,0 +1,116 @@
+# Builds the release packages when a version tag is pushed and publishes them as a GitHub
+# release (shown as made by github-actions). Tag vX.Y.Z must match the workspace version in
+# Cargo.toml; a tag with a suffix (v0.2.0-beta.1) becomes a pre-release.
+#
+# Assets, named as RecompLauncher expects (system and processor in the name):
+#   Shuppatsu-vX.Y.Z-Linux-x64.tar.xz    portable build from an ubuntu:22.04 container (glibc 2.35)
+#   Shuppatsu-vX.Y.Z-Linux-x64.AppImage  the same folder as an AppImage
+#   Shuppatsu-vX.Y.Z-Windows-x64.zip     mingw-w64 cross build from the Nix dev shell
+# No game data is involved anywhere: nothing here reads or produces any.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # appimagetool 1.9.1 (github.com/AppImage/appimagetool), pinned by hash.
+  APPIMAGETOOL_URL: https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+  APPIMAGETOOL_SHA256: ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+
+jobs:
+  version:
+    name: tag matches Cargo.toml
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: |
+          want="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          tag="${GITHUB_REF_NAME#v}"
+          tag="${tag%%-*}"
+          if [ "$tag" != "$want" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match workspace version $want"
+            exit 1
+          fi
+
+  linux:
+    needs: version
+    runs-on: ubuntu-24.04
+    container: ubuntu:22.04
+    steps:
+      - name: Build tools and system libraries
+        run: |
+          export DEBIAN_FRONTEND=noninteractive
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends ca-certificates curl git build-essential \
+            pkg-config libasound2-dev libudev-dev xz-utils file
+      - uses: actions/checkout@v7
+      - name: Rust toolchain
+        run: |
+          curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: appimagetool
+        run: |
+          curl -fsSL -o /usr/local/bin/appimagetool "$APPIMAGETOOL_URL"
+          echo "$APPIMAGETOOL_SHA256  /usr/local/bin/appimagetool" | sha256sum -c -
+          chmod 755 /usr/local/bin/appimagetool
+      - name: Package
+        run: |
+          export SHUPPATSU_GIT_REV="${GITHUB_SHA::12}"
+          scripts/package-linux.sh
+          # The tag may carry a pre-release suffix the workspace version does not.
+          cd out/dist
+          for f in Shuppatsu-v*-Linux-x64.tar.xz Shuppatsu-v*-Linux-x64.AppImage; do
+            mv "$f" "Shuppatsu-$GITHUB_REF_NAME-Linux-x64.${f#*Linux-x64.}"
+          done
+      - uses: actions/upload-artifact@v7
+        with:
+          name: linux
+          path: |
+            out/dist/*.tar.xz
+            out/dist/*.AppImage
+          if-no-files-found: error
+
+  windows:
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v32
+      - name: Package
+        run: |
+          export SHUPPATSU_GIT_REV="${GITHUB_SHA::12}"
+          nix develop -c scripts/package-windows.sh
+          mv out/dist/shuppatsu-windows.zip "out/dist/Shuppatsu-$GITHUB_REF_NAME-Windows-x64.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows
+          path: out/dist/*.zip
+          if-no-files-found: error
+
+  publish:
+    needs: [linux, windows]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          sha256sum Shuppatsu-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          pre=""
+          case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag $pre \
+            --title "Shuppatsu $GITHUB_REF_NAME" --generate-notes \
+            Shuppatsu-* SHA256SUMS.txt
