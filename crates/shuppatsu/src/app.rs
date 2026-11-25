@@ -1641,6 +1641,11 @@ impl ApplicationHandler for Root {
             s.about_to_wait();
             if s.done() {
                 self.start_game(event_loop);
+            } else if s.wants_polling() {
+                // Controllers have no window events: wake about every frame to read them.
+                event_loop.set_control_flow(ControlFlow::WaitUntil(
+                    Instant::now() + std::time::Duration::from_millis(16),
+                ));
             }
         }
     }

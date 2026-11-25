@@ -472,7 +472,7 @@ fn is_fullscreen_key(code: KeyCode, alt: bool) -> bool {
 /// the file). Headless runs have no window, so no keys.
 pub fn remember_fullscreen(on: bool) {
     let args: Vec<String> = std::env::args().collect();
-    let locks = crate::config::locks(|k| std::env::var_os(k), &args);
+    let locks = crate::config::locks(crate::config::process_env, &args);
     if locks.get("fullscreen").is_some() {
         return;
     }

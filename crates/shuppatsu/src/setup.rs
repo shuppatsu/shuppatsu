@@ -12,7 +12,10 @@
 //! system's removable media, the drives on Windows); a folder that is a copy of the disc or an
 //! installed game gets a "Use this folder" row. Keys: arrows, Page Up/Down, Home/End, Enter
 //! (or Right) to open or use, Backspace (or Left) for the parent folder, a letter to jump,
-//! Esc to quit. The mouse: point, click to select, double-click to open, wheel to scroll. A
+//! Esc to quit. A controller (any gilrs pad): D-pad or left stick to choose (held: repeats),
+//! A / Cross or Start to open or use, B / Circle for the parent folder, the shoulders to page,
+//! View / Share to quit; the hints name PlayStation buttons when `RECOMPLAUNCHER_PAD` says so.
+//! The mouse: point, click to select, double-click to open, wheel to scroll. A
 //! file or folder dropped onto the window is used directly. The import itself
 //! ([`crate::import`]) runs on a worker thread behind a progress bar.
 
@@ -39,6 +42,11 @@ const ROWS: usize = 15;
 /// The list's left and right edges.
 const LIST_X: (f32, f32) = (36.0, 604.0);
 const DOUBLE_CLICK: Duration = Duration::from_millis(450);
+/// A held D-pad direction or stick: first repeat after this, then every [`PAD_REPEAT`].
+const PAD_DELAY: Duration = Duration::from_millis(400);
+const PAD_REPEAT: Duration = Duration::from_millis(90);
+/// How far the stick must be pushed to step (of 1).
+const PAD_STICK: f32 = 0.5;
 
 /// The screen's string IDs in the catalogues' `[ui]` sections.
 pub const UI_IDS: &[&str] = &[
@@ -49,6 +57,8 @@ pub const UI_IDS: &[&str] = &[
     "setup_empty",
     "setup_keys",
     "setup_mouse",
+    "setup_pad",
+    "setup_pad_ps",
     "setup_importing",
     "setup_checking",
     "setup_failed",
@@ -94,6 +104,31 @@ enum FileKind {
     Other,
 }
 
+/// What a key or button does on the screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Action {
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    First,
+    Last,
+    /// Open a folder, use a file or folder, dismiss a message.
+    Activate,
+    /// The parent folder, or dismiss a message.
+    Back,
+    Quit,
+    /// The next row starting with this letter.
+    Jump(char),
+}
+
+/// The controllers (gilrs, as the game's own input): any pad steers the screen.
+struct Pad {
+    gilrs: gilrs::Gilrs,
+    /// The direction held and when it repeats next.
+    held: Option<(Action, Instant)>,
+}
+
 /// The screen's state.
 enum Phase {
     Browse,
@@ -126,6 +161,11 @@ pub struct Setup {
     /// Mouse position in window pixels, and the last click (row, when).
     mouse: (f64, f64),
     last_click: Option<(usize, Instant)>,
+    /// `None` when gilrs can't start (no access to input devices).
+    pad: Option<Pad>,
+    /// The button names to show: PlayStation's when the launcher says that pad is plugged in
+    /// (`RECOMPLAUNCHER_PAD`), else Xbox's.
+    playstation: bool,
     /// The window wants a redraw.
     dirty: bool,
     /// Set when the player quits from here.
@@ -150,6 +190,11 @@ impl Setup {
             phase: Phase::Browse,
             mouse: (-1.0, -1.0),
             last_click: None,
+            pad: gilrs::Gilrs::new()
+                .map_err(|e| eprintln!("setup screen: no controllers ({e})"))
+                .ok()
+                .map(|gilrs| Pad { gilrs, held: None }),
+            playstation: std::env::var("RECOMPLAUNCHER_PAD").is_ok_and(|p| p == "playstation"),
             dirty: true,
             quit: false,
         };
@@ -237,6 +282,7 @@ impl Setup {
 
     /// Per loop turn: follows the import and redraws when needed.
     pub fn about_to_wait(&mut self) {
+        self.poll_pad();
         if let Phase::Importing { worker, .. } = &self.phase {
             if worker.is_finished() {
                 let Phase::Importing {
@@ -368,12 +414,37 @@ impl Setup {
         let PhysicalKey::Code(code) = event.physical_key else {
             return;
         };
+        let action = match code {
+            KeyCode::ArrowUp => Action::Up,
+            KeyCode::ArrowDown => Action::Down,
+            KeyCode::PageUp => Action::PageUp,
+            KeyCode::PageDown => Action::PageDown,
+            KeyCode::Home => Action::First,
+            KeyCode::End => Action::Last,
+            KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::ArrowRight | KeyCode::Space => {
+                Action::Activate
+            }
+            KeyCode::Backspace | KeyCode::ArrowLeft => Action::Back,
+            KeyCode::Escape => Action::Quit,
+            _ => match &event.logical_key {
+                Key::Character(c) => match c.chars().next() {
+                    Some(ch) => Action::Jump(ch),
+                    None => return,
+                },
+                Key::Named(NamedKey::Space) => Action::Activate,
+                _ => return,
+            },
+        };
+        self.act(action);
+    }
+
+    /// One action from the keyboard or a controller.
+    fn act(&mut self, action: Action) {
         match &self.phase {
+            // A message: confirm, back or quit dismisses it (quit too, so a stray press
+            // never closes the game from an error).
             Phase::Failed(_) => {
-                if matches!(
-                    code,
-                    KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::Escape | KeyCode::Space
-                ) {
+                if matches!(action, Action::Activate | Action::Back | Action::Quit) {
                     self.phase = Phase::Browse;
                     self.dirty = true;
                 }
@@ -383,28 +454,90 @@ impl Setup {
             Phase::Browse => {}
         }
         let last = self.rows.len().saturating_sub(1);
-        match code {
-            KeyCode::ArrowUp => self.cursor = self.cursor.saturating_sub(1),
-            KeyCode::ArrowDown => self.cursor = (self.cursor + 1).min(last),
-            KeyCode::PageUp => self.cursor = self.cursor.saturating_sub(ROWS - 1),
-            KeyCode::PageDown => self.cursor = (self.cursor + ROWS - 1).min(last),
-            KeyCode::Home => self.cursor = 0,
-            KeyCode::End => self.cursor = last,
-            KeyCode::Enter | KeyCode::NumpadEnter | KeyCode::ArrowRight => self.activate(),
-            KeyCode::Backspace | KeyCode::ArrowLeft => self.up(),
-            KeyCode::Escape => self.quit = true,
-            _ => {
-                if let Key::Character(c) = &event.logical_key
-                    && let Some(ch) = c.chars().next()
-                {
-                    self.jump(ch);
-                } else if let Key::Named(NamedKey::Space) = event.logical_key {
-                    self.activate();
-                }
-            }
+        match action {
+            Action::Up => self.cursor = self.cursor.saturating_sub(1),
+            Action::Down => self.cursor = (self.cursor + 1).min(last),
+            Action::PageUp => self.cursor = self.cursor.saturating_sub(ROWS - 1),
+            Action::PageDown => self.cursor = (self.cursor + ROWS - 1).min(last),
+            Action::First => self.cursor = 0,
+            Action::Last => self.cursor = last,
+            Action::Activate => self.activate(),
+            Action::Back => self.up(),
+            Action::Quit => self.quit = true,
+            Action::Jump(ch) => self.jump(ch),
         }
         self.clamp_view();
         self.dirty = true;
+    }
+
+    /// The controllers' events since the last turn, and the held direction's repeat.
+    fn poll_pad(&mut self) {
+        let Some(pad) = self.pad.as_mut() else {
+            return;
+        };
+        let mut actions = Vec::new();
+        let now = Instant::now();
+        while let Some(gilrs::Event { event, .. }) = pad.gilrs.next_event() {
+            use gilrs::{Axis, Button, EventType};
+            match event {
+                EventType::ButtonPressed(b, _) => {
+                    let held = match b {
+                        Button::DPadUp => Some(Action::Up),
+                        Button::DPadDown => Some(Action::Down),
+                        Button::LeftTrigger | Button::LeftTrigger2 => Some(Action::PageUp),
+                        Button::RightTrigger | Button::RightTrigger2 => Some(Action::PageDown),
+                        _ => None,
+                    };
+                    if let Some(a) = held {
+                        pad.held = Some((a, now + PAD_DELAY));
+                        actions.push(a);
+                    }
+                    match b {
+                        Button::South | Button::Start | Button::DPadRight => {
+                            actions.push(Action::Activate)
+                        }
+                        Button::East | Button::DPadLeft => actions.push(Action::Back),
+                        Button::Select => actions.push(Action::Quit),
+                        _ => {}
+                    }
+                }
+                EventType::ButtonReleased(..) | EventType::Disconnected => pad.held = None,
+                EventType::AxisChanged(Axis::LeftStickY, v, _) => {
+                    // Up is positive; a half push steps, holding repeats.
+                    let dir = if v > PAD_STICK {
+                        Some(Action::Up)
+                    } else if v < -PAD_STICK {
+                        Some(Action::Down)
+                    } else {
+                        None
+                    };
+                    match (dir, pad.held) {
+                        (Some(a), Some((h, _))) if a == h => {}
+                        (Some(a), _) => {
+                            pad.held = Some((a, now + PAD_DELAY));
+                            actions.push(a);
+                        }
+                        (None, Some((Action::Up | Action::Down, _))) => pad.held = None,
+                        (None, _) => {}
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some((a, next)) = pad.held
+            && now >= next
+        {
+            pad.held = Some((a, now + PAD_REPEAT));
+            actions.push(a);
+        }
+        for a in actions {
+            self.act(a);
+        }
+    }
+
+    /// Whether a controller is being read (the event loop then wakes to poll it).
+    pub fn wants_polling(&self) -> bool {
+        self.pad.is_some()
     }
 
     /// Moves to the next row whose name starts with `ch` (case-insensitive), wrapping.
@@ -664,7 +797,22 @@ impl Setup {
                     &mut c,
                     ui.get("setup_keys"),
                     0.0,
-                    436.0,
+                    428.0,
+                    640.0,
+                    12.0,
+                    7.0,
+                    GREY,
+                    Align::Center,
+                );
+                text(
+                    &mut c,
+                    ui.get(if self.playstation {
+                        "setup_pad_ps"
+                    } else {
+                        "setup_pad"
+                    }),
+                    0.0,
+                    442.0,
                     640.0,
                     12.0,
                     7.0,
@@ -675,7 +823,7 @@ impl Setup {
                     &mut c,
                     ui.get("setup_mouse"),
                     0.0,
-                    452.0,
+                    456.0,
                     640.0,
                     12.0,
                     7.0,
@@ -1127,6 +1275,43 @@ mod tests {
             }
             std::fs::write(dir.join("setup-places-1280x800.ppm"), ppm).unwrap();
         }
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    /// The keyboard and the controller share these: steps, pages, back, and a message that
+    /// any confirm, back or quit dismisses without quitting.
+    #[test]
+    fn actions_move_and_dismiss() {
+        let tmp = std::env::temp_dir().join(format!("shuppatsu-setup-act-{}", std::process::id()));
+        for i in 0..40 {
+            std::fs::create_dir_all(tmp.join(format!("d{i:02}"))).unwrap();
+        }
+        let mut s = Setup::new((1280, 800), false, "en");
+        s.pad = None;
+        s.open(Some(tmp.clone()));
+        assert_eq!(s.cursor, 0);
+        s.act(Action::Down);
+        s.act(Action::Down);
+        assert_eq!(s.cursor, 2);
+        s.act(Action::PageDown);
+        assert_eq!(s.cursor, 2 + ROWS - 1);
+        assert!(s.top > 0, "the view follows the cursor");
+        s.act(Action::Last);
+        assert_eq!(s.cursor, s.rows.len() - 1);
+        s.act(Action::Activate); // opens d39
+        assert_eq!(s.dir.as_deref(), Some(tmp.join("d39").as_path()));
+        s.act(Action::Back);
+        assert_eq!(s.dir.as_deref(), Some(tmp.as_path()));
+        assert_eq!(
+            s.rows[s.cursor],
+            Row::Dir("d39".into()),
+            "back to the folder we were in"
+        );
+        s.phase = Phase::Failed("x".into());
+        s.act(Action::Quit);
+        assert!(!s.quit && matches!(s.phase, Phase::Browse));
+        s.act(Action::Quit);
+        assert!(s.quit);
         std::fs::remove_dir_all(&tmp).unwrap();
     }
 

@@ -170,8 +170,8 @@ from source (see [Building from source](#building-from-source-and-development)).
 ### 3. Choose your disc
 
 On the first start the game finds no game data and shows its **game data** screen. Pick your
-disc image there (`.cue`, `.mds` or `.mdf`, `.bin`, `.iso`), or drop it onto the window. A copy
-of the disc's files, the disc itself in a drive, or an installed copy of the original game work
+disc image there (`.cue`, `.mds` or `.mdf`, `.bin`, `.iso`) with the keyboard, the mouse or a
+controller, or drop it onto the window. A copy of the disc's files, the disc itself in a drive, or an installed copy of the original game work
 too: open the folder and choose **Use this folder**.
 
 An image or disc is imported once: the game unpacks the 57 game files (about 214 MB, a few
@@ -183,7 +183,8 @@ game is used where it is and remembered in `config.toml`.
 
 With [RecompLauncher](https://recomplauncher.com), this step is the launcher's: it asks for the
 disc image, checks it is this disc, runs the import with a progress bar and keeps the game data,
-saves and settings in the game's own folder there (`recomplauncher.json`, `SHUPPATSU_HOME`).
+saves and settings in the game's own folder there (`recomplauncher.json`, `SHUPPATSU_HOME`). In
+its Big Picture mode the game starts full screen.
 
 The same from the command line, or for launchers:
 

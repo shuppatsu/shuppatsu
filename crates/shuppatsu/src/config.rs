@@ -205,6 +205,28 @@ pub fn layered(
     Ok((cfg, settings))
 }
 
+/// The process environment as the settings see it. A launcher in its full-screen controller
+/// view (RecompLauncher's Big Picture mode: `RECOMPLAUNCHER_MODE=bigpicture`) starts the game
+/// full screen, as `SHUPPATSU_FULLSCREEN=1` would: over `config.toml` for that run only (the
+/// F11 toggle doesn't write the file then), under a flag and an explicit `SHUPPATSU_FULLSCREEN`.
+pub fn process_env(key: &str) -> Option<std::ffi::OsString> {
+    with_launcher_mode(key, |k| std::env::var_os(k))
+}
+
+fn with_launcher_mode(
+    key: &str,
+    get: impl Fn(&str) -> Option<std::ffi::OsString>,
+) -> Option<std::ffi::OsString> {
+    let own = get(key).filter(|v| !v.is_empty());
+    if own.is_none()
+        && key == "SHUPPATSU_FULLSCREEN"
+        && get("RECOMPLAUNCHER_MODE").is_some_and(|m| m == "bigpicture")
+    {
+        return Some("1".into());
+    }
+    own
+}
+
 /// [`layered`] with the user's file (unless `headless`) and the process environment.
 pub fn load(args: &mut Vec<String>, headless: bool) -> Result<(LocaleConfig, Settings)> {
     let file = if headless {
@@ -212,7 +234,7 @@ pub fn load(args: &mut Vec<String>, headless: bool) -> Result<(LocaleConfig, Set
     } else {
         path().map(|p| PortConfig::read(&p))
     };
-    layered(file.as_ref(), |k| std::env::var_os(k), args)
+    layered(file.as_ref(), process_env, args)
 }
 
 /// Whether `cfg.lang` can be drawn: the original's, or one with a catalogue.
@@ -394,7 +416,7 @@ pub fn load_locked(
     args: &mut Vec<String>,
     headless: bool,
 ) -> Result<(LocaleConfig, Settings, Locks)> {
-    let locks = locks(|k| std::env::var_os(k), args);
+    let locks = locks(process_env, args);
     let (cfg, settings) = load(args, headless)?;
     Ok((cfg, settings, locks))
 }
@@ -402,6 +424,40 @@ pub fn load_locked(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn big_picture_mode_starts_full_screen() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| {
+            move |k: &str| {
+                pairs
+                    .iter()
+                    .find(|(n, _)| *n == k)
+                    .map(|(_, v)| OsString::from(v))
+            }
+        };
+        let big = env(&[("RECOMPLAUNCHER_MODE", "bigpicture")]);
+        assert_eq!(
+            with_launcher_mode("SHUPPATSU_FULLSCREEN", big),
+            Some("1".into())
+        );
+        assert_eq!(with_launcher_mode("SHUPPATSU_VSYNC", big), None);
+        let desktop = env(&[("RECOMPLAUNCHER_MODE", "desktop")]);
+        assert_eq!(with_launcher_mode("SHUPPATSU_FULLSCREEN", desktop), None);
+        // An explicit variable wins, and a flag still wins over both (flags are applied last).
+        let off = env(&[
+            ("RECOMPLAUNCHER_MODE", "bigpicture"),
+            ("SHUPPATSU_FULLSCREEN", "0"),
+        ]);
+        assert_eq!(
+            with_launcher_mode("SHUPPATSU_FULLSCREEN", off),
+            Some("0".into())
+        );
+        let mut args = vec!["--no-fullscreen".to_owned()];
+        let (_, s) = layered(None, |k| with_launcher_mode(k, big), &mut args).unwrap();
+        assert!(!s.fullscreen);
+        let (_, s) = layered(None, |k| with_launcher_mode(k, big), &mut vec![]).unwrap();
+        assert!(s.fullscreen);
+    }
     use std::collections::HashMap;
     use std::ffi::OsString;
 
