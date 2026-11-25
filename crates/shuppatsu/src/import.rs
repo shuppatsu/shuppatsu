@@ -157,6 +157,19 @@ pub struct Progress {
 /// checks an installed game. Returns the folder holding `DATA` and `BIN`. `progress` is called
 /// before each file and at the end.
 pub fn import(source: &Source, progress: &mut dyn FnMut(&Progress)) -> Result<PathBuf> {
+    import_any(source, progress).map_err(|e| {
+        // Reading and writing files fails for its own reasons; the rest is the copy itself.
+        if e.chain()
+            .any(|c| c.downcast_ref::<std::io::Error>().is_some())
+        {
+            e
+        } else {
+            e.context(crate::exit::Exit::WrongDisc)
+        }
+    })
+}
+
+fn import_any(source: &Source, progress: &mut dyn FnMut(&Progress)) -> Result<PathBuf> {
     let want = manifest();
     match source {
         Source::Installed(dir) => {

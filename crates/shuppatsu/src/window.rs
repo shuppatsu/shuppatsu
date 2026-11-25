@@ -119,7 +119,11 @@ impl Gpu {
             .with_inner_size(winit::dpi::PhysicalSize::new(size.0, size.1))
             .with_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
         let attrs = crate::identity::apply(attrs);
-        let window = Arc::new(event_loop.create_window(attrs)?);
+        let window = Arc::new(
+            event_loop
+                .create_window(attrs)
+                .context(crate::exit::Exit::Graphics)?,
+        );
         // The game never reads the mouse: the pointer starts hidden ([`Cursor`]).
         window.set_cursor_visible(false);
         Ok(window)
@@ -165,9 +169,12 @@ impl Gpu {
                     ))
                 },
                 |instance| Ok(Some(instance.create_surface(window.clone())?)),
-            )?,
+            )
+            .context(crate::exit::Exit::Graphics)?,
         };
-        let surface = surface.context("no surface")?;
+        let surface = surface
+            .context("no surface")
+            .context(crate::exit::Exit::Graphics)?;
         let info = adapter.get_info();
         eprintln!("adapter: {} ({:?})", info.name, info.backend);
         let inner = window.inner_size();

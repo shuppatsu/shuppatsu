@@ -1,8 +1,8 @@
 //! Where the log goes on Windows. Release builds use the GUI subsystem (no console window), so
 //! a game started from Explorer has no stderr. Then:
 //!
-//! - by default stdout and stderr go to `shuppatsu.log` in the config directory
-//!   (`%APPDATA%\shuppatsu`), overwritten on each start;
+//! - by default stdout and stderr go to a new log in `logs\` of the config directory
+//!   (`%APPDATA%\shuppatsu\logs`, the newest five kept; crate::log_file);
 //! - `--console` attaches to the console of the shell that started the game, or opens a new one;
 //! - a fatal error is also shown in a message box.
 //!
@@ -31,9 +31,7 @@ pub fn init(console: bool) -> Option<std::path::PathBuf> {
             return None;
         }
     }
-    let dir = crate::save::config_dir()?;
-    std::fs::create_dir_all(&dir).ok()?;
-    let path = dir.join("shuppatsu.log");
+    let path = crate::log_file::new_path()?;
     let file = std::fs::File::create(&path).ok()?;
     let out = file.try_clone().ok()?;
     // The handles stay open for the life of the process (std writes to them by handle).
@@ -56,9 +54,9 @@ pub fn init(_console: bool) -> Option<std::path::PathBuf> {
 }
 
 /// With the log in `log` (no visible console): writes the fatal error there, shows it in a
-/// message box and exits with status 1. Otherwise returns, and `main` reports it as usual.
+/// message box and exits with `code` (crate::exit). Otherwise returns, and `main` reports it as usual.
 #[cfg(windows)]
-pub fn fatal(error: &anyhow::Error, log: Option<&std::path::Path>) {
+pub fn fatal(error: &anyhow::Error, log: Option<&std::path::Path>, code: u8) {
     let Some(log) = log else { return };
     eprintln!("Error: {error:?}");
     let text = format!("{error:#}\n\nLog: {}", log.display());
@@ -73,11 +71,11 @@ pub fn fatal(error: &anyhow::Error, log: Option<&std::path::Path>) {
             ffi::MB_ICONERROR,
         );
     }
-    std::process::exit(1);
+    std::process::exit(i32::from(code));
 }
 
 #[cfg(not(windows))]
-pub fn fatal(_error: &anyhow::Error, _log: Option<&std::path::Path>) {}
+pub fn fatal(_error: &anyhow::Error, _log: Option<&std::path::Path>, _code: u8) {}
 
 #[cfg(windows)]
 mod ffi {

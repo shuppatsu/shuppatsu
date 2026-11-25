@@ -13,7 +13,7 @@
 //! directly inside), or a folder holding either of those in an `extracted` subfolder (so
 //! `--data data` finds `data/extracted`).
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -68,6 +68,10 @@ fn split_flag(args: Vec<String>, name: &str) -> (Vec<String>, Option<PathBuf>) {
 
 /// The game's installed directory (holding `DATA` and `BIN`) from the lookup order above.
 pub fn locate() -> Result<PathBuf> {
+    locate_any().context(crate::exit::Exit::NoData)
+}
+
+fn locate_any() -> Result<PathBuf> {
     if let Some(d) = std::env::var_os("SHUPPATSU_DATA_DIR").filter(|d| !d.is_empty()) {
         return install_dir(Path::new(&d), "SHUPPATSU_DATA_DIR");
     }

@@ -14,6 +14,7 @@ mod coupling_hud;
 mod data_dir;
 mod departure_hud;
 mod desktop;
+mod exit;
 mod front;
 mod gamepad;
 mod glyphs;
@@ -26,6 +27,7 @@ mod import;
 mod input;
 mod label_audit;
 mod locale;
+mod log_file;
 mod logo;
 mod marks;
 mod movie;
@@ -95,8 +97,8 @@ options:
                            data; docs/building.md). Without any, a window asks for the disc
   --disc <image or folder> for launchers: import from it on the first start (as `import`), then
                            play; later starts use the import
-  --console                Windows: log to the starting shell's console or a new one, not to
-                           %APPDATA%\\shuppatsu\\shuppatsu.log
+  --console                Windows: log to the starting shell's console or a new one (every start
+                           also writes a log to %APPDATA%\\shuppatsu\\logs)
   --speed <km/h>           fly-through speed (default 80)
   --gradient-variant <0|1> sky/ground gradient set (1 = the timed alternate set)
   --fog                    view: linear fog everywhere (off by default); elsewhere the switch
@@ -932,14 +934,25 @@ fn cli_args() -> Vec<String> {
         .collect()
 }
 
-fn main() -> Result<()> {
+fn main() -> std::process::ExitCode {
     shuppatsu_render::perf::start();
     let log = win_console::init(std::env::args().any(|a| a == "--console"));
-    let result = run_main();
-    if let Err(e) = &result {
-        win_console::fatal(e, log.as_deref());
+    // Without win_console's file, the run is copied to a log file (log_file.rs); not for help.
+    let help = matches!(std::env::args().nth(1).as_deref(), Some("-h" | "--help"));
+    if log.is_none() && !help {
+        log_file::start();
     }
-    result
+    let code = match run_main() {
+        Ok(()) => 0,
+        Err(e) => {
+            let code = exit::code(&e);
+            win_console::fatal(&e, log.as_deref(), code);
+            eprintln!("Error: {e:?}");
+            code
+        }
+    };
+    log_file::finish();
+    std::process::ExitCode::from(code)
 }
 
 /// The input options from the settings: headless runs open no gamepad (they stay
