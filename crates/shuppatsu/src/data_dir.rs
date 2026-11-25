@@ -4,7 +4,9 @@
 //! 2. the `--data <dir>` flag (any position, any subcommand);
 //! 3. `data/extracted` or `data` next to the executable;
 //! 4. `data/extracted` or `data` in the current directory (a checkout, `nix run .`);
-//! 5. `data_dir` in config.toml (a relative path is relative to the config directory).
+//! 5. `data_dir` in config.toml (a relative path is relative to the config directory);
+//! 6. the game data imported from a disc image (crate::import, `shuppatsu import`, the setup
+//!    screen or `--disc`).
 //!
 //! A directory may be the extracted disc (`install/Program_Executable_Files/{DATA,BIN}` inside,
 //! as scripts/extract-disc.sh writes it) or an installed copy of the game (`DATA` and `BIN`
@@ -17,25 +19,45 @@ use std::sync::OnceLock;
 
 /// The `--data` value, recorded by [`args`].
 static FLAG: OnceLock<Option<PathBuf>> = OnceLock::new();
+/// The `--disc` value (an image or folder to import from, crate::import), recorded by [`args`].
+static DISC: OnceLock<Option<PathBuf>> = OnceLock::new();
+/// A game folder chosen at run time (an installed game given to `--disc` or picked on the
+/// setup screen), used right after `--data`.
+static CHOSEN: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// Makes [`locate`] return `dir` (a folder holding `DATA` and `BIN`) unless the environment
+/// or `--data` names one.
+pub fn choose(dir: PathBuf) {
+    *CHOSEN.lock().unwrap_or_else(|e| e.into_inner()) = Some(dir);
+}
 
 /// The installed layout inside an extracted disc.
 const DISC_INSTALL: &str = "install/Program_Executable_Files";
 
-/// The command line without `--data <dir>` / `--data=<dir>`, which it records for [`locate`].
+/// The command line without `--data <dir>` and `--disc <path>` (or `=` forms), which it
+/// records for [`locate`] and [`disc`].
 pub fn args() -> Vec<String> {
-    let (rest, flag) = split_flag(std::env::args().collect());
+    let (rest, flag) = split_flag(std::env::args().collect(), "--data");
+    let (rest, disc) = split_flag(rest, "--disc");
     let _ = FLAG.set(flag);
+    let _ = DISC.set(disc);
     rest
 }
 
-fn split_flag(args: Vec<String>) -> (Vec<String>, Option<PathBuf>) {
+/// The `--disc` path, once [`args`] has run.
+pub fn disc() -> Option<PathBuf> {
+    DISC.get().cloned().flatten()
+}
+
+fn split_flag(args: Vec<String>, name: &str) -> (Vec<String>, Option<PathBuf>) {
+    let eq = format!("{name}=");
     let mut rest = Vec::with_capacity(args.len());
     let mut flag = None;
     let mut it = args.into_iter();
     while let Some(a) = it.next() {
-        if a == "--data" {
+        if a == name {
             flag = it.next().map(PathBuf::from);
-        } else if let Some(v) = a.strip_prefix("--data=") {
+        } else if let Some(v) = a.strip_prefix(eq.as_str()) {
             flag = Some(PathBuf::from(v));
         } else {
             rest.push(a);
@@ -51,6 +73,9 @@ pub fn locate() -> Result<PathBuf> {
     }
     if let Some(Some(d)) = FLAG.get() {
         return install_dir(d, "--data");
+    }
+    if let Some(d) = CHOSEN.lock().unwrap_or_else(|e| e.into_inner()).clone() {
+        return Ok(d);
     }
     let exe_dir = std::env::current_exe()
         .ok()
@@ -72,10 +97,14 @@ pub fn locate() -> Result<PathBuf> {
     if let Some(d) = config_data_dir() {
         return install_dir(&d, "config.toml data_dir");
     }
+    if let Some(d) = crate::import::imported() {
+        return Ok(d);
+    }
     bail!(
-        "the game data was not found. Extract your disc and either put it in a folder named \
-         `data` next to the executable{} or in the current directory, pass --data <dir>, set SHUPPATSU_DATA_DIR, or set data_dir \
-         in {} (docs/building.md)",
+        "the game data was not found. Import your disc image with `shuppatsu import <image>` (or \
+         start the game in a window and choose it), or put an extracted disc or installed game in \
+         a folder named `data` next to the executable{} or in the current directory, pass --data \
+         <dir>, set SHUPPATSU_DATA_DIR, or set data_dir in {} (docs/building.md)",
         exe_dir.map_or(String::new(), |d| format!(
             " ({})",
             d.join("data").display()
@@ -85,7 +114,7 @@ pub fn locate() -> Result<PathBuf> {
 }
 
 /// `root` as an extracted disc or an installed game directory.
-fn try_install_dir(root: &Path) -> Option<PathBuf> {
+pub fn try_install_dir(root: &Path) -> Option<PathBuf> {
     let extracted = root.join("extracted");
     [
         root.join(DISC_INSTALL),
@@ -131,20 +160,19 @@ mod tests {
 
     #[test]
     fn data_flag_is_taken_out_anywhere() {
-        let (rest, flag) = split_flag(strings(&[
-            "shuppatsu",
-            "play",
-            "0",
-            "--data",
-            "/d",
-            "--mute",
-        ]));
+        let args = strings(&["shuppatsu", "play", "0", "--data", "/d", "--mute"]);
+        let (rest, flag) = split_flag(args, "--data");
         assert_eq!(rest, strings(&["shuppatsu", "play", "0", "--mute"]));
         assert_eq!(flag, Some(PathBuf::from("/d")));
-        let (rest, flag) = split_flag(strings(&["shuppatsu", "--data=C:\\x"]));
+        let (rest, flag) = split_flag(strings(&["shuppatsu", "--data=C:\\x"]), "--data");
         assert_eq!(rest, strings(&["shuppatsu"]));
         assert_eq!(flag, Some(PathBuf::from("C:\\x")));
-        assert_eq!(split_flag(strings(&["shuppatsu"])).1, None);
+        assert_eq!(split_flag(strings(&["shuppatsu"]), "--data").1, None);
+        let (rest, disc) = split_flag(strings(&["shuppatsu", "--disc", "/i.cue"]), "--disc");
+        assert_eq!(
+            (rest, disc),
+            (strings(&["shuppatsu"]), Some(PathBuf::from("/i.cue")))
+        );
     }
 
     #[test]

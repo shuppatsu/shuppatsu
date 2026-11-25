@@ -48,6 +48,12 @@ pub fn icon(size: IconSize) -> RgbaImage {
     RgbaImage::unpack(packed).expect("the embedded icon is valid (logo tests)")
 }
 
+/// The header board's pixels ([`board`]), for screens drawn before any game data exists
+/// (the setup screen, crate::setup).
+pub fn board_rgba() -> RgbaImage {
+    RgbaImage::unpack(logo_file!("board.shpk")).expect("the embedded board is valid (logo tests)")
+}
+
 /// The header board (the dark variant without backdrop or posts), 1232×264: four times its
 /// 308×66 place in the 640×480 design, so it is drawn 1:1 at the largest UI scale and
 /// area-averaged below. Partly transparent edges are flattened onto black, the screens behind

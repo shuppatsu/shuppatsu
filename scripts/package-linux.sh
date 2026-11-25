@@ -77,21 +77,27 @@ Requirements
   Vulkan driver (Mesa RADV/ANV/NVK or the NVIDIA driver; OpenGL 3.3 is the fallback),
   Wayland or X11, and ALSA (PipeWire and PulseAudio provide it).
 
-1. Get the game data from your disc
-  Extract your disc image with scripts/extract-disc.sh from the source repository, or copy
-  an installed copy of the game (the folder holding DATA and BIN).
+1. Start it and choose your disc
+  ./shuppatsu (or ./$name.AppImage). On the first start the game shows its game data
+  screen: choose your disc image (.cue, .mds/.mdf, .bin or .iso) or drop it onto the window.
+  The disc in a drive, a copy of its files, or an installed copy of the original game work
+  too: open the folder and choose "Use this folder". An image packed in an archive (.zip,
+  .rar, self-extracting .exe) must be extracted first.
 
-2. Tell the game where it is (the first that is set wins)
+  The game files are unpacked once, checked against the 3000-bandai release, and kept in
+  ~/.local/share/shuppatsu/game; the image is not needed afterwards. From a terminal:
+    shuppatsu import <image>      import and verify, then exit
+    shuppatsu --disc <image>      import on the first start, then play
+
+  "shuppatsu install-desktop" adds a menu entry; "shuppatsu --help" lists the options.
+
+2. Other places the game looks for its data (the first that is set wins)
   a. the environment variable SHUPPATSU_DATA_DIR
   b. shuppatsu --data <folder>
   c. a folder named "data" (or "data/extracted") next to the shuppatsu binary
   d. a folder named "data" (or "data/extracted") in the current directory
   e. data_dir = '/path/to/data' in ~/.config/shuppatsu/config.toml
-  With the AppImage, use a, b, d or e.
-
-3. Start it
-  ./shuppatsu (or ./$name.AppImage). "shuppatsu install-desktop" adds a menu entry.
-  "shuppatsu --help" lists the options.
+  f. the imported data
 
 Saves (eeprom.dat) and settings (config.toml) live in ~/.config/shuppatsu; issue marks in
 ~/.local/share/shuppatsu/marks.

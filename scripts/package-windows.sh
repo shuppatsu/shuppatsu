@@ -43,20 +43,24 @@ Contents
 Requirements
   Windows 10 or 11, 64-bit, with a Direct3D 12 or Vulkan graphics driver.
 
-1. Get the game data from your disc
-  You need a folder holding the game's DATA and BIN folders. Either layout works:
-    data\\DATA, data\\BIN                                (an installed copy of the game)
-    data\\install\\Program_Executable_Files\\DATA, ...BIN  (the disc extracted on Linux)
-  If the original game is installed, its folder already is one (by default
-  C:\\Program Files\\TAITO\\DENGO3K): point --data or SHUPPATSU_DATA_DIR at it, or copy its DATA
-  and BIN folders into a "data" folder next to shuppatsu.exe.
+1. Start shuppatsu.exe and choose your disc
+  On the first start the game shows its game data screen. Choose your disc image (.cue,
+  .mds/.mdf, .bin or .iso) or drop it onto the window; the disc in a drive, a copy of its
+  files, or an installed copy of the original game (by default
+  C:\\Program Files\\TAITO\\DENGO3K) work too: open the folder and choose "Use this folder".
+  An image packed in an archive (.zip, .rar, self-extracting .exe) must be extracted first.
 
-2. Tell the game where it is (the first that is set wins)
+  The game files are unpacked once, checked against the 3000-bandai release, and kept in
+  %LOCALAPPDATA%\\shuppatsu\\game; the image is not needed afterwards. From a command prompt:
+    shuppatsu.exe --console import <image>   import and verify, then exit
+    shuppatsu.exe --disc <image>             import on the first start, then play
+
+2. Other places the game looks for its data (the first that is set wins)
   a. the environment variable SHUPPATSU_DATA_DIR
   b. shuppatsu.exe --data <folder>
   c. a folder named "data" next to shuppatsu.exe (or "data\\extracted")
   d. data_dir = 'C:\\path\\to\\data' in %APPDATA%\\shuppatsu\\config.toml
-  Simplest: put the "data" folder next to shuppatsu.exe and double-click the exe.
+  e. the imported data
 
 Saves, settings and logs
   %APPDATA%\\shuppatsu\\ holds eeprom.dat (scores, names), config.toml (settings) and

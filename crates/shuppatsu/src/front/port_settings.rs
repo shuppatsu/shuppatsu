@@ -435,6 +435,7 @@ const UI_IDS: &[&str] = &[
 /// Whether `k` is a string ID of the `[ui]` section.
 pub fn known_ui_key(k: &str) -> bool {
     UI_IDS.contains(&k)
+        || crate::setup::UI_IDS.contains(&k)
         || ITEMS
             .iter()
             .any(|i| k == i.key || k.strip_suffix("_desc") == Some(i.key))
@@ -443,11 +444,15 @@ pub fn known_ui_key(k: &str) -> bool {
 /// Every string ID of the `[ui]` section.
 #[cfg(test)]
 pub fn ui_ids() -> impl Iterator<Item = String> {
-    UI_IDS.iter().map(|s| (*s).to_owned()).chain(
-        ITEMS
-            .iter()
-            .flat_map(|i| [i.key.to_owned(), format!("{}_desc", i.key)]),
-    )
+    UI_IDS
+        .iter()
+        .chain(crate::setup::UI_IDS)
+        .map(|s| (*s).to_owned())
+        .chain(
+            ITEMS
+                .iter()
+                .flat_map(|i| [i.key.to_owned(), format!("{}_desc", i.key)]),
+        )
 }
 
 /// The `[ui]` strings of a language, with English for any it lacks.

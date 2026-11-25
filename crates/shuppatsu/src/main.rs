@@ -22,6 +22,7 @@ mod hints;
 mod hud;
 mod hybrid;
 mod identity;
+mod import;
 mod input;
 mod label_audit;
 mod locale;
@@ -40,6 +41,7 @@ mod scene;
 mod screens;
 mod script;
 mod settings;
+mod setup;
 mod shot;
 mod slots;
 mod smooth;
@@ -76,6 +78,12 @@ usage: shuppatsu [options] [--joystick-dat <file>] [--combo <file>] [--mute]
        shuppatsu shot <route.com> --at <metres> --out <file.ppm> [options]
        shuppatsu pad <monitor|calibrate|learn> [--mode <4..6>] [--joystick-dat <file>] [--combo <file>]
        shuppatsu pad rumble [strong weak [ms]]   vibrate the pad (levels 0..1; none: the game's jolts)
+       shuppatsu import <image or folder>
+                     import the game data from a disc image (.cue, .mds/.mdf, .bin, .iso), a copy
+                     of the disc or a mounted disc, verified, into the port's data folder
+       shuppatsu import <image or folder>
+                     import the game data from a disc image (.cue, .mds/.mdf, .bin, .iso), a copy
+                     of the disc or a mounted disc, verified, into the port's data folder
        shuppatsu install-desktop [--exec <path>] [--uninstall]
                      desktop entry + icon under $XDG_DATA_HOME (opt-in; see --help)
        shuppatsu label-audit [--out <dir>] [--catalogue <en.toml>] [--palette <n>]
@@ -83,7 +91,10 @@ usage: shuppatsu [options] [--joystick-dat <file>] [--combo <file>] [--mute]
 
 options:
   --data <dir>             the extracted disc or installed game (after env SHUPPATSU_DATA_DIR; else
-                           data\\ next to the exe, else config.toml data_dir; docs/building.md)
+                           data\\ next to the exe, else config.toml data_dir, else the imported
+                           data; docs/building.md). Without any, a window asks for the disc
+  --disc <image or folder> for launchers: import from it on the first start (as `import`), then
+                           play; later starts use the import
   --console                Windows: log to the starting shell's console or a new one, not to
                            %APPDATA%\\shuppatsu\\shuppatsu.log
   --speed <km/h>           fly-through speed (default 80)
@@ -772,6 +783,10 @@ fn run_main() -> Result<()> {
         println!("{USAGE}");
         return Ok(());
     }
+    // A launcher passes the disc each start (`--disc <image>`): imported once, then used.
+    if let Some(disc) = data_dir::disc() {
+        import::ensure(&disc)?;
+    }
     if first.as_deref().is_none_or(|a| a.starts_with("--")) {
         return app::run(parse_app_args()?);
     }
@@ -781,6 +796,10 @@ fn run_main() -> Result<()> {
     if cli_args().into_iter().nth(1).as_deref() == Some("install-desktop") {
         let args: Vec<String> = cli_args().into_iter().skip(2).collect();
         return desktop::run(&args);
+    }
+    if cli_args().into_iter().nth(1).as_deref() == Some("import") {
+        let args: Vec<String> = cli_args().into_iter().skip(2).collect();
+        return import::run(&args);
     }
     if cli_args().into_iter().nth(1).as_deref() == Some("label-audit") {
         let args: Vec<String> = cli_args().into_iter().skip(2).collect();

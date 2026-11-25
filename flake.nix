@@ -61,6 +61,8 @@
           ./crates
           ./locales
           ./assets
+          # Hashes only (the import checks the disc against them; src/import.rs).
+          ./data-manifest
           ./docs/settings.md
           ./LICENSE
         ];

@@ -167,7 +167,13 @@ The first source that is set wins:
 2. `--data <dir>` (or `--data=<dir>`) on the `shuppatsu` command line, before or after a
    subcommand;
 3. `data/extracted` or `data` next to the executable;
-4. `data_dir = '<dir>'` in `config.toml`; a relative path is relative to the config directory.
+4. `data_dir = '<dir>'` in `config.toml`; a relative path is relative to the config directory;
+5. the data imported from a disc image (`shuppatsu import`, `--disc` or the game data screen;
+   `src/import.rs`, docs/re/disc-import.md): `$XDG_DATA_HOME/shuppatsu/game` (default
+   `~/.local/share/shuppatsu/game`) or `%LOCALAPPDATA%\shuppatsu\game`.
+
+Without any of them a windowed start shows the game data screen (`src/setup.rs`) instead of
+failing; headless runs fail with the error.
 
 If a source from 1, 2 or 4 is set but its directory doesn't fit either layout, that is an error;
 the game does not fall through to the next source. If nothing is found, the error names every

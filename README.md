@@ -26,7 +26,7 @@ unofficial fan project, not affiliated with the game's publishers (see [Legal](#
 * [The original game](#the-original-game)
 * [Why a new engine](#why-a-new-engine): the original's limitations and what this one adds
 * [Status](#status)
-* [Getting started](#getting-started): extracting your disc, installing a release, first start
+* [Getting started](#getting-started): imaging your disc, installing a release, choosing the disc
 * [Controls](#controls)
 * [Settings](#settings): every option, with what the original did
 * [Troubleshooting](#troubleshooting)
@@ -125,7 +125,7 @@ You need:
 * **Linux** (x86-64) or **Windows 10 or later** (x86-64);
 * a GPU with **Vulkan** (Linux) or **DirectX 12 / Vulkan** (Windows); any GPU from the last
   ten years should do. Without them the game falls back to OpenGL (GL 3.3 / GLES 3);
-* the **3000-bandai** disc, and about 450 MB of disk space for its extracted files.
+* the **3000-bandai** disc, and about 250 MB of disk space for the game files.
 
 ### 1. Make an image of your disc
 
@@ -138,64 +138,13 @@ cdrdao read-cd --read-raw --datafile dengo3k.bin --device /dev/sr0 dengo3k.toc
 toc2cue dengo3k.toc dengo3k.cue
 ```
 
-### 2. Extract it
+An image that came packed in an archive (`.zip`, `.rar`, a self-extracting `.exe`) has to be
+extracted with your archive tool first; the game reads the image, not the archive.
 
-`scripts/extract-disc.sh` (in this repository) unpacks an image without root or mounting and
-without running the Windows installer. It needs `bchunk`, `7z` and `unshield`; the Nix dev
-shell has all three.
+### 2. Install and run
 
-```sh
-nix develop                                  # or install bchunk, p7zip and unshield yourself
-scripts/extract-disc.sh /path/to/dengo3k.cue # also .mdf, .bin or .iso; for MDF/MDS pass the .mdf
-```
-
-It writes to `data/extracted` in the current directory (or `$SHUPPATSU_DATA_DIR`).
-
-**On Windows without the script:** install the game from your disc as usual and copy the
-installed folder (`C:\Program Files\TAITO\DENGO3K`, holding `BIN` and `DATA`). The engine reads
-that layout too.
-
-Either way the engine needs:
-
-```
-data/extracted/
-  install/Program_Executable_Files/
-    BIN/dengo3k.exe                      the original exe (its tables are read)
-    DATA/*.COM, cg.rom, tbl.rom, ...     routes, models, textures, sounds, music
-```
-
-or an installed game folder with `BIN` and `DATA` directly inside.
-
-### 3. Check it (optional)
-
-The quickest check is the exe's hash:
-
-```sh
-sha256sum data/extracted/install/Program_Executable_Files/BIN/dengo3k.exe
-# a5a555efe3ee8089d2d60268f58e4c72fc673a0b3adf5a1e8cfa1bf039c9353c
-```
-
-`shuppatsu-tools check` confirms that every file is read or known (`0 failed, 0 unknown`), and
-`shuppatsu-tools manifest` lists your files' hashes to compare with
-[`data-manifest/3000-bandai.toml`](data-manifest/3000-bandai.toml):
-
-```sh
-SHUPPATSU_DATA_DIR=data/extracted shuppatsu-tools check
-shuppatsu-tools manifest data/extracted 3000-bandai > mine.toml
-diff <(grep -E '^(path|sha256)' mine.toml) <(grep -E '^(path|sha256)' data-manifest/3000-bandai.toml)
-```
-
-### 4. Install and run
-
-**Windows (release zip):** unzip `Shuppatsu-vX.Y.Z-Windows-x64.zip` from the [releases](https://github.com/shuppatsu/shuppatsu/releases) anywhere, put your extracted data in a
-folder named `data` next to `shuppatsu.exe`, and start `shuppatsu.exe`.
-
-```
-shuppatsu\
-  shuppatsu.exe
-  data\                  ← your extracted disc (holding install\), or an installed game folder
-```
-
+**Windows (release zip):** unzip `Shuppatsu-vX.Y.Z-Windows-x64.zip` from the
+[releases](https://github.com/shuppatsu/shuppatsu/releases) anywhere and start `shuppatsu.exe`.
 There is no console window; the log goes to `%APPDATA%\shuppatsu\shuppatsu.log` (or start with
 `--console`). The exe and its window carry Shuppatsu's own icon ([`assets/logo/`](assets/logo/)).
 
@@ -214,9 +163,29 @@ adapter.
 `Shuppatsu-vX.Y.Z-Linux-x64.AppImage` from the
 [releases](https://github.com/shuppatsu/shuppatsu/releases). They need x86-64 Linux with
 glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or later) and run on Wayland or X11.
-Unpack the archive anywhere and put your data in a `data` folder next to `shuppatsu`, or start
-the AppImage with `--data <dir>`. You can also build from source (see
-[Building from source](#building-from-source-and-development)).
+Unpack the archive anywhere and start `shuppatsu`, or start the AppImage. You can also build
+from source (see [Building from source](#building-from-source-and-development)).
+
+### 3. Choose your disc
+
+On the first start the game finds no game data and shows its **game data** screen. Pick your
+disc image there (`.cue`, `.mds` or `.mdf`, `.bin`, `.iso`), or drop it onto the window. A copy
+of the disc's files, the disc itself in a drive, or an installed copy of the original game work
+too: open the folder and choose **Use this folder**.
+
+An image or disc is imported once: the game unpacks the 57 game files (about 214 MB, a few
+seconds), checks every one against the hashes of the 3000-bandai release in
+[`data-manifest/3000-bandai.toml`](data-manifest/3000-bandai.toml), and keeps them in its own
+folder (`~/.local/share/shuppatsu/game` on Linux, `%LOCALAPPDATA%\shuppatsu\game` on Windows).
+Afterwards it starts straight into the game and the image is no longer needed. An installed
+game is used where it is and remembered in `config.toml`.
+
+The same from the command line, or for launchers:
+
+```sh
+shuppatsu import /path/to/dengo3k.cue    # import and verify, with progress, then exit
+shuppatsu --disc /path/to/dengo3k.cue    # import on the first start, then play (later starts skip it)
+```
 
 **Where the game looks for your data**, first match wins:
 
@@ -224,11 +193,14 @@ the AppImage with `--data <dir>`. You can also build from source (see
 2. `--data <dir>` on the command line;
 3. a folder `data/extracted` or `data` next to the executable;
 4. a folder `data/extracted` or `data` in the current directory;
-5. `data_dir = "…"` in `config.toml` (see [Settings](#settings)).
+5. `data_dir = "…"` in `config.toml` (see [Settings](#settings));
+6. the imported game data.
 
-Each may point at an extracted disc or at an installed game folder.
+Each of 1–5 may point at an extracted disc (`install/Program_Executable_Files/{BIN,DATA}`, as
+`scripts/extract-disc.sh` writes it for development) or at an installed game folder (`BIN` and
+`DATA` directly inside).
 
-### 5. First start
+### 4. First start
 
 The game asks for the language once: **English** or **日本語** (the original, untouched). The
 choice is saved; `--lang` overrides it for one run, and removing the `lang` line from
@@ -409,10 +381,13 @@ detail.
 
 ## Troubleshooting
 
-* **`the game data was not found`**: put the extracted data where the game looks for it (see
-  [Install and run](#4-install-and-run)), or pass `--data /path/to/data/extracted`.
-* **`… not found in …/DATA`**: the extraction is incomplete or laid out differently. Check that
-  `DATA` and `BIN/dengo3k.exe` exist and run the [checks](#3-check-it-optional).
+* **`the game data was not found`** (headless runs, which can't show the game data screen): run
+  `shuppatsu import <image>` once, or pass `--data <dir>` (see [Choose your disc](#3-choose-your-disc)).
+* **The import says a file "differs" or "is not a file of the 3000-bandai disc"**: the image is
+  damaged (re-rip it, raw if you can) or it is another release of the game. Only 3000-bandai
+  is supported so far.
+* **`… not found in …/DATA`** with a folder you set yourself: it is incomplete or laid out
+  differently. Check that `DATA` and `BIN/dengo3k.exe` exist, or import the disc image instead.
 * **No window, or "no adapter" / Vulkan errors**: check `vulkaninfo --summary`. Outside NixOS,
   run the Nix package through nixGL.
 * **No Vulkan: the game falls back to OpenGL.** It logs `graphics: Gl (…): fallbacks: …` and

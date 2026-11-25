@@ -1575,6 +1575,77 @@ impl App {
     }
 }
 
+/// The event loop's handler when the game starts on the setup screen: the screen until the
+/// data is in place, then the game, whose window replaces the screen's.
+struct Root {
+    setup: Option<crate::setup::Setup>,
+    opts: Option<AppOptions>,
+    app: Option<App>,
+    error: Option<anyhow::Error>,
+}
+
+impl Root {
+    fn start_game(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(mut s) = self.setup.take() {
+            s.close();
+        }
+        let Some(opts) = self.opts.take() else {
+            return;
+        };
+        match App::new(opts) {
+            Ok(mut app) => {
+                app.gpu_early = Some(EarlyGpu::start(event_loop.owned_display_handle()));
+                event_loop.set_control_flow(ControlFlow::Poll);
+                app.resumed(event_loop);
+                self.app = Some(app);
+            }
+            Err(e) => {
+                self.error = Some(e.context("starting the game after the setup screen"));
+                event_loop.exit();
+            }
+        }
+    }
+}
+
+impl ApplicationHandler for Root {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(app) = self.app.as_mut() {
+            app.resumed(event_loop);
+        } else if let Some(s) = self.setup.as_mut()
+            && let Err(e) = s.resumed(event_loop)
+        {
+            self.error = Some(e.context("opening the setup window"));
+            event_loop.exit();
+        }
+    }
+
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+        if let Some(app) = self.app.as_mut() {
+            app.window_event(event_loop, id, event);
+            return;
+        }
+        if let Some(s) = self.setup.as_mut() {
+            s.window_event(&event);
+            if s.quit {
+                event_loop.exit();
+            }
+        }
+    }
+
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(app) = self.app.as_mut() {
+            app.about_to_wait(event_loop);
+            return;
+        }
+        if let Some(s) = self.setup.as_mut() {
+            s.about_to_wait();
+            if s.done() {
+                self.start_game(event_loop);
+            }
+        }
+    }
+}
+
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.gpu().is_some() {
@@ -1714,6 +1785,31 @@ const WARM_AFTER: Duration = Duration::from_millis(150);
 
 /// `shuppatsu` with no subcommand.
 pub fn run(opts: AppOptions) -> Result<()> {
+    // No game data: the setup screen in a window first (crate::setup), then the game in the
+    // same event loop. Headless runs have no window to ask in.
+    if opts.shot.is_none() && crate::data_dir::locate().is_err() {
+        let event_loop = EventLoop::new()?;
+        event_loop.set_control_flow(ControlFlow::Wait);
+        let lang = crate::setup::language(&opts.locale);
+        let mut root = Root {
+            setup: Some(crate::setup::Setup::new(
+                opts.size,
+                opts.settings.fullscreen,
+                &lang,
+            )),
+            opts: Some(opts),
+            app: None,
+            error: None,
+        };
+        event_loop.run_app(&mut root)?;
+        if let Some(e) = root.error {
+            return Err(e);
+        }
+        return match root.app {
+            Some(app) => finish(app),
+            None => Ok(()), // quit on the setup screen
+        };
+    }
     // With a window, its event loop comes first: the GPU device opens on its display while
     // the game data loads.
     let windowed = match opts.shot {
@@ -1732,6 +1828,11 @@ pub fn run(opts: AppOptions) -> Result<()> {
     app.gpu_early = Some(early);
     event_loop.set_control_flow(ControlFlow::Poll);
     event_loop.run_app(&mut app)?;
+    finish(app)
+}
+
+/// After the event loop: the save is written and any error reported.
+fn finish(mut app: App) -> Result<()> {
     shuppatsu_render::perf::flush();
     // The save is written at exit (0x434f50 on WinMain's shutdown path).
     let save = match (&mut app.screen, app.res.as_ref()) {
