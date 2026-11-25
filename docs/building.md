@@ -120,15 +120,17 @@ uses the same logo: the hinted 32 px icon in the title bar, 256 px for the taskb
 | Graphics | wgpu, **DX12 first**, then Vulkan, then GL (`gpu_backend.rs`). A backend is skipped when a probe pipeline does not compile. `WGPU_BACKEND=vulkan`/`dx12` forces one | wgpu defaults: Vulkan, else OpenGL (below) |
 | Audio | cpal, WASAPI | cpal, ALSA (PipeWire/Pulse through their ALSA plugins) |
 | Gamepads | gilrs, Windows.Gaming.Input | gilrs, evdev |
-| Config, saves, log | `%APPDATA%\shuppatsu\` (`config.toml`, `eeprom.dat`, `joystick.dat`, `shuppatsu.log`); copied once from `%APPDATA%\ddg\` (the folder's name before the rename) when only that exists | `$XDG_CONFIG_HOME/shuppatsu/` (`~/.config/shuppatsu`); likewise copied once from `~/.config/ddg` |
+| Config, saves, log | `%APPDATA%\shuppatsu\` (`config.toml`, `eeprom.dat`, `joystick.dat`, `logs\`); copied once from `%APPDATA%\ddg\` (the folder's name before the rename) when only that exists | `$XDG_CONFIG_HOME/shuppatsu/` (`~/.config/shuppatsu`); likewise copied once from `~/.config/ddg` |
 | Console | release: GUI subsystem, no console window (see below); debug: console | terminal |
 | File names | case-insensitive file system | data files are matched case-insensitively (`GameData::read`) |
 | Font lists (`--font a;b`) | `;`-separated (`std::env::split_paths`) | `:`-separated |
 | `install-desktop` | not available (make a shortcut) | desktop entry + icon |
 
 **Logs on Windows** (`win_console.rs`): a release `shuppatsu.exe` started without a usable stderr
-(from Explorer or a shortcut) writes stdout and stderr to `%APPDATA%\shuppatsu\shuppatsu.log`, which is
-overwritten on each start. If it fails to start, it also shows the error in a message box.
+(from Explorer or a shortcut) writes stdout and stderr to a new log in `%APPDATA%\shuppatsu\logs\`
+(the newest five are kept). Every other start copies them there as well (`log_file.rs`): on
+Linux `~/.config/shuppatsu/logs/`, with `SHUPPATSU_HOME` its `logs/`, so a launcher always has the
+log of a crash. If it fails to start, it also shows the error in a message box.
 `--console` attaches to the console of the command prompt that started it, or opens a new one.
 A redirected stderr (`shuppatsu.exe 2> log.txt`) is used as it is. `shuppatsu-tools.exe` is a normal
 console program.

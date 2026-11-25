@@ -146,8 +146,8 @@ extracted with your archive tool first; the game reads the image, not the archiv
 
 **Windows (release zip):** unzip `Shuppatsu-vX.Y.Z-Windows-x64.zip` from the
 [releases](https://github.com/shuppatsu/shuppatsu/releases) anywhere and start `shuppatsu.exe`.
-There is no console window; the log goes to `%APPDATA%\shuppatsu\shuppatsu.log` (or start with
-`--console`). The exe and its window carry Shuppatsu's own icon ([`assets/logo/`](assets/logo/)).
+There is no console window; each start writes a log to `%APPDATA%\shuppatsu\logs\` (or start
+with `--console`). The exe and its window carry Shuppatsu's own icon ([`assets/logo/`](assets/logo/)).
 
 **Linux with Nix:**
 
@@ -461,8 +461,8 @@ each claim with its evidence and confidence, are in [docs/re/](docs/re/); the di
 
 ### Contributing
 
-* **Bug reports**: describe what happened, attach the log (Linux: the terminal; Windows:
-  `%APPDATA%\shuppatsu\shuppatsu.log`) and, if useful, a screenshot. For something seen on
+* **Bug reports**: describe what happened, attach the newest log (`~/.config/shuppatsu/logs/` on
+  Linux, `%APPDATA%\shuppatsu\logs\` on Windows) and, if useful, a screenshot. For something seen on
   screen, attach an [issue mark](docs/marks.md) (F12) instead. Reports from real Windows
   machines, gamepads and Densha de GO! controllers are especially welcome.
 * **Translations**: the strings live in [`locales/`](locales/);

@@ -27,7 +27,12 @@
   "folders": {
     "game": [{ "path": "{data}/game" }],
     "saves": [{ "path": "{data}" }],
-    "logs": [{ "path": "{data}" }]
+    "logs": [{ "path": "{data}/logs" }]
+  },
+  "exit_codes": {
+    "10": "The game data isn't there. Set the game up again on its page, with your disc image.",
+    "11": "This copy isn't the Densha de GO! 2 Kōsoku-hen 3000-bandai disc, or it is damaged. Only that release is supported; a damaged image can be ripped again.",
+    "12": "The game couldn't start its graphics. It needs Vulkan or DirectX 12 (or at least OpenGL 3.3): update your graphics driver."
   },
   "config": [
     {
@@ -113,6 +118,12 @@
       "label": "Saves and settings",
       "help": "The rankings, clear marks, controller calibration and config.toml.",
       "open": "saves"
+    },
+    {
+      "id": "logs",
+      "label": "Logs",
+      "help": "One log per start, the newest five kept. The newest goes with a bug report.",
+      "open": "logs"
     }
   ],
   "system": {

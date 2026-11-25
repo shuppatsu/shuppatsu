@@ -67,7 +67,7 @@ Requirements
 
 Saves, settings and logs
   %APPDATA%\\shuppatsu\\ holds eeprom.dat (scores, names), config.toml (settings) and
-  shuppatsu.log (the log of the last start). The game shows a message box if it cannot start;
+  logs\\ (one log per start, the newest five). The game shows a message box if it cannot start;
   the log has the details. Run "shuppatsu.exe --console" from a command prompt to see the log
   there instead. A %APPDATA%\\ddg\\ folder from an older version is copied to
   %APPDATA%\\shuppatsu\\ on the first start (the old folder is kept).

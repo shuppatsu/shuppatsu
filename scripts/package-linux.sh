@@ -21,6 +21,10 @@ cd "$root"
 version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
 name="Shuppatsu-v$version-Linux-x64"
 
+# The binaries look in their own lib/ for the libraries bundled below ($ORIGIN/lib, before the
+# system's), so they start where the system lacks them, as in a Flatpak runtime (RecompLauncher's FLATPAK.md).
+# shellcheck disable=SC2016 # $ORIGIN is for the linker, not the shell
+export RUSTFLAGS="${RUSTFLAGS:-} -C link-arg=-Wl,-rpath,\$ORIGIN/lib"
 cargo build --release --locked -p shuppatsu -p shuppatsu-tools
 
 dist=out/dist
@@ -30,6 +34,14 @@ mkdir -p "$stage"
 for exe in shuppatsu shuppatsu-tools; do
   strip -o "$stage/$exe" "target/release/$exe"
 done
+# libudev (controllers, through gilrs) is bundled: its ABI and the udev database it reads are
+# stable, and some runtimes lack it. libasound is not, as the AppImage excludelist says: a
+# bundled one would not match the system's ALSA plugins (PipeWire, PulseAudio), and every
+# desktop and Flatpak runtime has it. Everything else is glibc or loaded at run time.
+mkdir -p "$stage/lib"
+udev="$(ldd target/release/shuppatsu | awk '/libudev\.so\.1/ {print $3}')"
+[ -n "$udev" ] || { echo "libudev.so.1 not found in ldd output" >&2; exit 1; }
+cp -L "$udev" "$stage/lib/libudev.so.1"
 cp LICENSE "$stage/LICENSE.txt"
 cp assets/fonts/OFL-Mplus.txt "$stage/OFL-Mplus.txt"
 cp docs/settings.md "$stage/settings.md"
@@ -70,6 +82,7 @@ Contents
   shuppatsu             the game
   shuppatsu-tools       command-line tools (check, inventory, export to PNG/glTF, ...)
   AppRun, shuppatsu.desktop, shuppatsu.png   AppImage entry point, desktop entry and icon
+  lib/libudev.so.1      for controllers (bundled, as some systems lack it)
   settings.md           every setting and its config.toml key
   recomplauncher.json   setup and settings for RecompLauncher (recomplauncher.com)
   LICENSE.txt           GPL-3.0-or-later (this program)
@@ -102,7 +115,8 @@ Requirements
   e. data_dir = '/path/to/data' in ~/.config/shuppatsu/config.toml
   f. the imported data
 
-Saves (eeprom.dat) and settings (config.toml) live in ~/.config/shuppatsu; issue marks in
+Saves (eeprom.dat), settings (config.toml) and a log of each start (logs/, the newest five)
+live in ~/.config/shuppatsu; issue marks in
 ~/.local/share/shuppatsu/marks.
 
 Source code, controls and troubleshooting: see the project's README.
