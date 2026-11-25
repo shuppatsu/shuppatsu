@@ -196,6 +196,9 @@
             ghidra
             # 11.0 stable segfaults in glibc 2.44 __tunables_init via wine-preloader; 11.19 works.
             wineWow64Packages.unstable
+
+            # GitHub: pushing, releases, CI status
+            gh
           ])
           ++ runtimeLibs;
 
