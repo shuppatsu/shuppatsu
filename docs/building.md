@@ -71,9 +71,11 @@ The names carry the system and processor, as RecompLauncher expects. Every packa
 windowless setup step (`shuppatsu import --progress`), `SHUPPATSU_HOME={data}` so everything the
 game writes stays in the launcher's folder for it, and six settings it edits in `config.toml`.
 Validate changes with `check-jsonschema --schemafile <the schema> recomplauncher.json` (schema:
-https://recomplauncher.com/schema/recomplauncher.json). What to send when submitting it to
-RecompLauncher, and the listing's text, tags and art: [recomplauncher-listing.md](recomplauncher-listing.md). A tag with a suffix
-(`v0.2.0-beta.1`) becomes a pre-release. To release:
+https://recomplauncher.com/schema/recomplauncher.json). It also lists exit codes 10–12 and the logs
+folder. What to send when submitting the game to RecompLauncher (the listing's text, tags and
+art): [recomplauncher-listing.md](recomplauncher-listing.md).
+
+A tag with a suffix (`v0.2.0-beta.1`) becomes a pre-release. To release:
 
 ```sh
 # bump [workspace.package] version in Cargo.toml, commit, then
