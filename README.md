@@ -22,8 +22,37 @@ unofficial fan project, not affiliated with the game's publishers (see [Legal](#
 <!-- Screenshots: images of the running game are derived from game data, so they are not
      committed to this repository (see "Legal"). Link to externally hosted ones here. -->
 
+## Quick start
+
+1. **Have your disc image ready**: your own *3000-bandai* disc ripped to `.cue`/`.bin`,
+   `.mdf`/`.mds` or `.iso` ([how](#1-make-an-image-of-your-disc)). An image packed in a `.zip`
+   or `.rar` has to be extracted first.
+2. **Download** the release for your system from
+   [Releases](https://github.com/shuppatsu/shuppatsu/releases): Windows (`.zip`) or Linux
+   (`.AppImage` or `.tar.xz`). Or install it from [RecompLauncher](https://recomplauncher.com),
+   which does step 3 for you.
+3. **Start it and choose the disc image** on the game data screen (keyboard, mouse or
+   controller, or drop it onto the window). It is checked and imported once, in a few seconds.
+4. **Pick English or 日本語**, then drive.
+
+You need Windows 10 or later or x86-64 Linux, and a GPU with Vulkan or DirectX 12 (OpenGL 3.3
+works as a fallback). Details: [Getting started](#getting-started).
+
+**Highlights** (each one a setting; [the full list](#what-this-engine-adds)):
+
+* Driving, signals, scoring and penalties **exactly like the original**, checked against
+  recorded runs of it.
+* **Widescreen and ultrawide** without pop-in at the edges, and **high refresh rates** with the
+  original's 30 Hz simulation interpolated.
+* **English** throughout, with subtitles for every voice line; Japanese untouched.
+* **Controllers**: gamepads and the Densha de GO! controllers, together with the keyboard.
+* **Sharper and farther**: twice the draw distance, anti-aliasing, anisotropic filtering, no LOD
+  pop, and [texture packs](docs/texture-packs.md).
+* **Native on Linux and Windows**, Steam Deck sized (1280×800 by default); no CD in the drive.
+
 ## Contents
 
+* [Quick start](#quick-start)
 * [The original game](#the-original-game)
 * [Why a new engine](#why-a-new-engine): the original's limitations and what this one adds
 * [Status](#status)
