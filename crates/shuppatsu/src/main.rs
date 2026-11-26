@@ -83,9 +83,6 @@ usage: shuppatsu [options] [--joystick-dat <file>] [--combo <file>] [--mute]
        shuppatsu import <image or folder>
                      import the game data from a disc image (.cue, .mds/.mdf, .bin, .iso), a copy
                      of the disc or a mounted disc, verified, into the port's data folder
-       shuppatsu import <image or folder>
-                     import the game data from a disc image (.cue, .mds/.mdf, .bin, .iso), a copy
-                     of the disc or a mounted disc, verified, into the port's data folder
        shuppatsu install-desktop [--exec <path>] [--uninstall]
                      desktop entry + icon under $XDG_DATA_HOME (opt-in; see --help)
        shuppatsu label-audit [--out <dir>] [--catalogue <en.toml>] [--palette <n>]

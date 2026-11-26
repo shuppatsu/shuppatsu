@@ -49,8 +49,32 @@ into this repository (CLAUDE.md, rule 1), and screenshots of the running game ar
 
 - **Icon and logo**: the project's own, `assets/logo/gen/icon-512.png` and the station-board
   header (`assets/logo/header-dark.svg` / `header-light.svg`). Original artwork, no game data.
-- **Cover and hero**: ask RecompLauncher to use its own catalog art for the game, as it does for
-  other entries, or send screenshots hosted outside the repository (README comment at the top).
+- **Cover and hero**: send our own, rendered without the HUD (the launcher draws its logo over
+  the hero), with the submission. RecompLauncher hosts them; nothing goes into a repository.
+
+### Screenshots
+
+Large projects keep gameplay images out of their code repositories: on their own website
+(Ship of Harkinian, OpenMW) or as a GitHub attachment in the README (devilutionX). Ours are
+README attachments, uploaded from an org account (not a personal one), and the art above.
+They are rendered headless into the gitignored `out/screenshots/`:
+
+```sh
+printf '0 0 0\n200 5 0\n' > go.txt     # power notch 5 from tick 200
+E="--lang en --hud-layout enhanced --msaa 8 --draw-distance max --hud-upscale --anisotropic 16 --inputs go.txt"
+O="--lang en --hud-layout original --no-msaa --draw-distance original --original-visibility --inputs go.txt"
+shuppatsu play 15 $E --size 3840x2160 --shot 3000:tokaido.ppm   # Amagasaki, a 223 passing
+shuppatsu play 9  $E --size 3840x2160 --shot 3000:hokuhoku.ppm  # Saigata, 131 km/h
+shuppatsu play 18 $E --size 3840x2160 --shot 3000:akita.ppm     # Yarimiuchi, signal, snow
+shuppatsu play 18 $O --size 1440x1080 --shot 3000:compare-original-4x3.ppm
+shuppatsu play 18 $E --size 2560x1080 --shot 3000:compare-shuppatsu-21x9.ppm
+shuppatsu shot akita1a.com --at 2000 --size 3840x2160 --msaa 8 --draw-distance max \
+  --anisotropic 16 --out hero.ppm                               # no HUD; cover: centre 2:3 crop
+```
+
+The before/after pair is the same moment: the original's 4:3 look against widescreen with
+every enhancement on. Uploaded images and where they are used are listed in the README's top
+comment once uploaded.
 
 ## After it is listed
 
