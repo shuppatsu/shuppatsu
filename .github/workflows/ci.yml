@@ -1,5 +1,6 @@
 # Checks every push to main and every pull request: formatting, clippy and the tests on Linux,
-# and that the Windows build (cross-compiled in the Nix dev shell, as docs/building.md does it)
+# clippy and the tests on macOS (the experimental build), and that the Windows build
+# (cross-compiled in the Nix dev shell, as docs/building.md does it)
 # still links. Data-dependent tests skip: CI has no game data and never gets any.
 name: CI
 
@@ -59,3 +60,32 @@ jobs:
           key: windows-${{ hashFiles('Cargo.lock', 'flake.lock') }}
           restore-keys: windows-
       - run: nix develop -c cargo build --release --locked --target x86_64-pc-windows-gnu -p shuppatsu -p shuppatsu-tools
+
+  macos:
+    name: clippy, test (macOS)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup default stable
+      - uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: macos-${{ hashFiles('Cargo.lock') }}
+          restore-keys: macos-
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+      # The package as a downloadable artifact (the workflow run's page), for Mac testers.
+      - name: Package
+        run: SHUPPATSU_GIT_REV="${GITHUB_SHA::12}" scripts/package-macos.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: shuppatsu-macos
+          path: out/dist/*.zip
+          if-no-files-found: error
+          retention-days: 30

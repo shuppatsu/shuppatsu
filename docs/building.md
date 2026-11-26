@@ -1,3 +1,4 @@
+| `Shuppatsu-vX.Y.Z-macOS.zip` | `Shuppatsu.app`, universal (Apple Silicon and Intel), macOS 11+; experimental |
 # Building
 
 Everything comes from the flake's dev shell (`nix develop`); nothing is installed imperatively.
@@ -51,12 +52,14 @@ plays the attract sequence from the disc data on NixOS (`appimage-run`, RADV).
 ## Continuous integration and releases
 
 `.github/workflows/ci.yml` runs on every push to `main` and every pull request: `cargo fmt
---check`, clippy with `-D warnings` and `cargo test --workspace` on Ubuntu (data tests skip), and
-the Windows cross build in the Nix dev shell.
+--check`, clippy with `-D warnings` and `cargo test --workspace` on Ubuntu (data tests skip), the Windows cross build in the Nix dev shell, and clippy, the tests and
+`scripts/package-macos.sh` on a GitHub macOS runner. That job keeps the macOS zip as an artifact
+(30 days) on the run's page, for Mac testers.
 
 `.github/workflows/release.yml` runs when a `v*` tag is pushed. It checks that the tag matches
 the workspace version in `Cargo.toml`, builds the Linux packages in `ubuntu:22.04` and the
-Windows zip with `scripts/package-windows.sh` in the Nix dev shell, and publishes a GitHub
+Windows zip with `scripts/package-windows.sh` in the Nix dev shell and the macOS zip with
+`scripts/package-macos.sh` on a macOS runner, and publishes a GitHub
 release made by `github-actions` with:
 
 | Asset | Contents |
@@ -81,6 +84,20 @@ A tag with a suffix (`v0.2.0-beta.1`) becomes a pre-release. To release:
 # bump [workspace.package] version in Cargo.toml, commit, then
 git tag v0.2.0 && git push origin v0.2.0
 ```
+
+## macOS (experimental)
+
+`scripts/package-macos.sh`, on a Mac with Xcode's command-line tools and rustup, builds both
+Apple targets, joins them with `lipo` into one universal `Shuppatsu.app` (`shuppatsu` and
+`shuppatsu-tools` in `Contents/MacOS`, the icon made from `assets/logo/gen/` with `iconutil`),
+signs it ad hoc and writes `out/dist/Shuppatsu-v<version>-macOS.zip` with `ditto`. There is no
+Apple Developer ID signature or notarisation: that needs a paid Apple account in a real
+person's name, so players approve the first start once (README-macos.txt). The code needs
+nothing Mac-specific beyond the folders: settings, saves, logs, marks and the imported game are
+in `~/Library/Application Support/shuppatsu` (`save::mac_support_dir`), and the setup screen
+lists `/Volumes`. wgpu draws with Metal.
+
+Not yet run on a Mac by the project: CI only proves it builds and its tests pass.
 
 ## Windows (cross-compiled from Linux)
 

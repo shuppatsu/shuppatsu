@@ -6,6 +6,7 @@
 #   Shuppatsu-vX.Y.Z-Linux-x64.tar.xz    portable build from an ubuntu:22.04 container (glibc 2.35)
 #   Shuppatsu-vX.Y.Z-Linux-x64.AppImage  the same folder as an AppImage
 #   Shuppatsu-vX.Y.Z-Windows-x64.zip     mingw-w64 cross build from the Nix dev shell
+#   Shuppatsu-vX.Y.Z-macOS.zip           universal Shuppatsu.app (experimental, signed ad hoc)
 # No game data is involved anywhere: nothing here reads or produces any.
 name: Release
 
@@ -97,8 +98,29 @@ jobs:
           path: out/dist/*.zip
           if-no-files-found: error
 
+  macos:
+    needs: version
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - name: Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Package
+        run: |
+          export SHUPPATSU_GIT_REV="${GITHUB_SHA::12}"
+          scripts/package-macos.sh
+          cd out/dist
+          mv Shuppatsu-v*-macOS.zip "Shuppatsu-$GITHUB_REF_NAME-macOS.zip"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: macos
+          path: out/dist/*.zip
+          if-no-files-found: error
+
   publish:
-    needs: [linux, windows]
+    needs: [linux, windows, macos]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

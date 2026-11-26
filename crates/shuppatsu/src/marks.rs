@@ -79,6 +79,8 @@ pub fn dir_in(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBu
     }
     let base = if cfg!(windows) {
         env("APPDATA").and_then(absolute)?
+    } else if cfg!(target_os = "macos") {
+        crate::save::mac_support_dir(&env)?
     } else {
         env("XDG_DATA_HOME").and_then(absolute).or_else(|| {
             env("HOME")

@@ -22,6 +22,9 @@ pub fn run(args: &[String]) -> Result<()> {
     if cfg!(windows) {
         bail!("install-desktop is for Linux desktops; on Windows make a shortcut to shuppatsu.exe");
     }
+    if cfg!(target_os = "macos") {
+        bail!("install-desktop is for Linux desktops; on a Mac drag Shuppatsu.app to Applications");
+    }
     let mut exec: Option<PathBuf> = None;
     let mut uninstall = false;
     let mut it = args.iter();

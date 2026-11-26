@@ -46,15 +46,16 @@ unofficial fan project, not affiliated with the game's publishers (see [Legal](#
    `.mdf`/`.mds` or `.iso` ([how](#1-make-an-image-of-your-disc)). An image packed in a `.zip`
    or `.rar` has to be extracted first.
 2. **Download** the release for your system from
-   [Releases](https://github.com/shuppatsu/shuppatsu/releases): Windows (`.zip`) or Linux
-   (`.AppImage` or `.tar.xz`). Or install it from [RecompLauncher](https://recomplauncher.com),
-   which does step 3 for you.
+   [Releases](https://github.com/shuppatsu/shuppatsu/releases): Windows (`.zip`), Linux
+   (`.AppImage` or `.tar.xz`) or, experimental, macOS (`-macOS.zip`).
+   Or install it from [RecompLauncher](https://recomplauncher.com), which does step 3 for you.
 3. **Start it and choose the disc image** on the game data screen (keyboard, mouse or
    controller, or drop it onto the window). It is checked and imported once, in a few seconds.
 4. **Pick English or 日本語**, then drive.
 
-You need Windows 10 or later or x86-64 Linux, and a GPU with Vulkan or DirectX 12 (OpenGL 3.3
-works as a fallback). Details: [Getting started](#getting-started).
+You need Windows 10 or later, x86-64 Linux or macOS 11 or later, and a GPU with Vulkan,
+DirectX 12 or Metal (OpenGL 3.3 works as a fallback). The macOS build is experimental: it
+has not been tested on a Mac yet. Details: [Getting started](#getting-started).
 
 **Highlights** (each one a setting; [the full list](#what-this-engine-adds)):
 
@@ -214,6 +215,15 @@ glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or later) and run on Way
 Unpack the archive anywhere and start `shuppatsu`, or start the AppImage. You can also build
 from source (see [Building from source](#building-from-source-and-development)).
 
+**macOS (experimental):** download `Shuppatsu-vX.Y.Z-macOS.zip` from the
+[releases](https://github.com/shuppatsu/shuppatsu/releases), unzip it and start
+`Shuppatsu.app` (Apple Silicon or Intel, macOS 11 or later). It is signed ad hoc, not with an
+Apple Developer ID, so macOS stops the first start: open it once, then choose **Open Anyway**
+under System Settings → Privacy & Security (or run
+`xattr -dr com.apple.quarantine Shuppatsu.app`). Saves, settings, logs and the imported game
+live in `~/Library/Application Support/shuppatsu`. Nobody has tested this build on a Mac yet:
+please report how it goes in an issue.
+
 ### 3. Choose your disc
 
 On the first start the game finds no game data and shows its **game data** screen. Pick your
@@ -224,7 +234,8 @@ too: open the folder and choose **Use this folder**.
 An image or disc is imported once: the game unpacks the 57 game files (about 214 MB, a few
 seconds), checks every one against the hashes of the 3000-bandai release in
 [`data-manifest/3000-bandai.toml`](data-manifest/3000-bandai.toml), and keeps them in its own
-folder (`~/.local/share/shuppatsu/game` on Linux, `%LOCALAPPDATA%\shuppatsu\game` on Windows).
+folder (`~/.local/share/shuppatsu/game` on Linux, `%LOCALAPPDATA%\shuppatsu\game` on Windows,
+`~/Library/Application Support/shuppatsu/game` on macOS).
 Afterwards it starts straight into the game and the image is no longer needed. An installed
 game is used where it is and remembered in `config.toml`.
 

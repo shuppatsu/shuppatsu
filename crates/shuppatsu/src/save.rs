@@ -414,12 +414,23 @@ pub fn config_dir_in(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option
     }
     let dir = if cfg!(windows) {
         env("APPDATA").and_then(absolute)?
+    } else if cfg!(target_os = "macos") {
+        mac_support_dir(&env)?
     } else {
         env("XDG_CONFIG_HOME")
             .and_then(absolute)
             .or_else(|| env("HOME").and_then(absolute).map(|h| h.join(".config")))?
     };
     Some(dir.join(DIR_NAME))
+}
+
+/// `~/Library/Application Support`: where a Mac keeps an app's settings and data. Mac apps
+/// don't follow the XDG variables, so on macOS settings, saves, logs, marks and the imported
+/// game all live in `~/Library/Application Support/shuppatsu`.
+pub fn mac_support_dir(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
+    let home = PathBuf::from(env("HOME")?);
+    home.is_absolute()
+        .then(|| home.join("Library").join("Application Support"))
 }
 
 /// When `dir` does not exist but its old-named sibling (`ddg`, from before the rename) does,
@@ -461,6 +472,19 @@ fn copy_tree(from: &Path, to: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_mac_folder_is_application_support() {
+        fn env(home: &'static str) -> impl Fn(&str) -> Option<std::ffi::OsString> {
+            move |k| (k == "HOME").then(|| home.into())
+        }
+        assert_eq!(
+            mac_support_dir(env("/Users/a")),
+            Some(PathBuf::from("/Users/a/Library/Application Support"))
+        );
+        assert_eq!(mac_support_dir(env("rel")), None);
+        assert_eq!(mac_support_dir(|_: &str| None), None);
+    }
 
     /// A synthetic default image (tests must not depend on game data).
     fn defaults() -> Eeprom {

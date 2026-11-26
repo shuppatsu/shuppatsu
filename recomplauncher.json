@@ -12,7 +12,7 @@
     }
   ],
   "prepare": {
-    "program": ["shuppatsu.exe", "Shuppatsu-Linux-x64.AppImage", "shuppatsu"],
+    "program": ["shuppatsu.exe", "Shuppatsu-Linux-x64.AppImage", "Shuppatsu.app", "Shuppatsu.app/Contents/MacOS/shuppatsu", "shuppatsu"],
     "args": ["import", "--progress", "--game={input:game}"],
     "label": "The game files from your disc, checked against the 3000-bandai release",
     "env": { "SHUPPATSU_HOME": "{data}" },
@@ -20,7 +20,7 @@
     "keeps_copy": true
   },
   "start": {
-    "program": ["shuppatsu.exe", "Shuppatsu-Linux-x64.AppImage", "shuppatsu"],
+    "program": ["shuppatsu.exe", "Shuppatsu-Linux-x64.AppImage", "Shuppatsu.app", "Shuppatsu.app/Contents/MacOS/shuppatsu", "shuppatsu"],
     "env": { "SHUPPATSU_HOME": "{data}" }
   },
   "saves": ["{data}/eeprom.dat", "{data}/joystick.dat", "{data}/config.toml"],
@@ -32,7 +32,7 @@
   "exit_codes": {
     "10": "The game data isn't there. Set the game up again on its page, with your disc image.",
     "11": "This copy isn't the Densha de GO! 2 Kōsoku-hen 3000-bandai disc, or it is damaged. Only that release is supported; a damaged image can be ripped again.",
-    "12": "The game couldn't start its graphics. It needs Vulkan or DirectX 12 (or at least OpenGL 3.3): update your graphics driver."
+    "12": "The game couldn't start its graphics. It needs Vulkan, DirectX 12 or Metal (or at least OpenGL 3.3): update your graphics driver or system."
   },
   "config": [
     {
@@ -128,6 +128,7 @@
   ],
   "system": {
     "windows": { "version": "10" },
-    "linux": { "glibc": "2.35" }
+    "linux": { "glibc": "2.35" },
+    "macos": { "version": "11" }
   }
 }

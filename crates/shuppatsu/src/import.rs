@@ -114,6 +114,7 @@ fn find_ignoring_case(dir: &Path, name: &str) -> Option<PathBuf> {
 }
 
 /// The port's folder for imported game data: `%LOCALAPPDATA%\shuppatsu\game` on Windows,
+/// `~/Library/Application Support/shuppatsu/game` on macOS,
 /// else `$XDG_DATA_HOME/shuppatsu/game` or `~/.local/share/shuppatsu/game`; `$SHUPPATSU_HOME/game`
 /// when that is set (crate::save::HOME_VAR).
 pub fn import_dir() -> Option<PathBuf> {
@@ -127,6 +128,8 @@ fn import_dir_in(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<Pat
     }
     let base = if cfg!(windows) {
         env("LOCALAPPDATA").and_then(absolute)?
+    } else if cfg!(target_os = "macos") {
+        crate::save::mac_support_dir(&env)?
     } else {
         env("XDG_DATA_HOME").and_then(absolute).or_else(|| {
             env("HOME")

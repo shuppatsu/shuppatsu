@@ -182,6 +182,7 @@ switches (docs/settings.md): --<name> turns one on, --no-<name> off; config.toml
   --unique-routes          route select lists each stage of a group once [on]
 
 settings file: $XDG_CONFIG_HOME/shuppatsu/config.toml (~/.config/shuppatsu; %APPDATA%\\shuppatsu on Windows;
+  ~/Library/Application Support/shuppatsu on macOS;
   copied once from the old ddg folder if only that exists),
   keys lang, hud_layout, ui_scaling, ui_scale, font, display_font, texture_pack and the
   switches above (docs/settings.md, docs/localisation.md). Flags override the environment,

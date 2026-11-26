@@ -1000,7 +1000,7 @@ fn home() -> Option<PathBuf> {
 }
 
 /// Where to start looking: home, its Downloads, the removable media, the root (or the
-/// drives on Windows).
+/// drives on Windows, /Volumes on a Mac).
 fn places() -> Vec<(String, PathBuf)> {
     let mut out = Vec::new();
     if let Some(h) = home() {
@@ -1021,7 +1021,10 @@ fn places() -> Vec<(String, PathBuf)> {
     } else {
         let user = std::env::var("USER").unwrap_or_default();
         let mut media = vec![PathBuf::from("/media"), PathBuf::from("/mnt")];
-        if !user.is_empty() {
+        if cfg!(target_os = "macos") {
+            // Discs, disk images and USB sticks mount here (with the startup disk).
+            media = vec![PathBuf::from("/Volumes")];
+        } else if !user.is_empty() {
             media.insert(0, PathBuf::from("/run/media").join(&user));
             media.insert(1, PathBuf::from("/media").join(&user));
         }
