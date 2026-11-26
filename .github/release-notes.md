@@ -1,7 +1,6 @@
 ## Downloads
 
-Pick the one file for your computer. You also need your own copy of the original game disc:
-none of its files are included (see [Getting started](https://github.com/shuppatsu/shuppatsu#getting-started)).
+Pick the one file for your computer. You also need your own copy of the original game disc: none of its files are included (see [Getting started](https://github.com/shuppatsu/shuppatsu#getting-started)).
 
 | Your computer | Download | Then |
 |---|---|---|
@@ -11,11 +10,7 @@ none of its files are included (see [Getting started](https://github.com/shuppat
 | **Linux** with Nix | nothing to download | `nix run github:shuppatsu/shuppatsu` |
 | **Mac** (experimental), macOS 11 or later, Apple Silicon or Intel | [Shuppatsu-@TAG@-macOS.zip](https://github.com/shuppatsu/shuppatsu/releases/download/@TAG@/Shuppatsu-@TAG@-macOS.zip) | Unzip it and start `Shuppatsu.app`. macOS blocks the first start: choose **Open Anyway** under System Settings → Privacy & Security. Not tested on a real Mac yet; please report how it goes. |
 
-The Linux builds need x86-64 with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or
-later). [SHA256SUMS.txt](https://github.com/shuppatsu/shuppatsu/releases/download/@TAG@/SHA256SUMS.txt)
-lets you check a download; you don't need it to play. The "Source code" archives are only for
-building it yourself.
+The Linux builds need x86-64 with glibc 2.35 or newer (Ubuntu 22.04, Debian 12, Fedora 36 or later). [SHA256SUMS.txt](https://github.com/shuppatsu/shuppatsu/releases/download/@TAG@/SHA256SUMS.txt) lets you check a download; you don't need it to play. The "Source code" archives are only for building it yourself.
 
-Problems? See [Troubleshooting](https://github.com/shuppatsu/shuppatsu#troubleshooting) or
-[open an issue](https://github.com/shuppatsu/shuppatsu/issues).
+Problems? See [Troubleshooting](https://github.com/shuppatsu/shuppatsu#troubleshooting) or [open an issue](https://github.com/shuppatsu/shuppatsu/issues).
 
