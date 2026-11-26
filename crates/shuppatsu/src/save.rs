@@ -590,12 +590,13 @@ mod tests {
         std::fs::remove_dir_all(&base).unwrap();
     }
 
-    /// A fresh `$XDG_CONFIG_HOME` under the system temp dir (never the real home); the
-    /// environment is passed to [`config_dir_in`], not set on the process.
+    /// A fresh settings folder under the system temp dir (never the real home), given as
+    /// `$SHUPPATSU_HOME` so it is the same on every system; the environment is passed to
+    /// [`config_dir_in`], not set on the process.
     fn temp_xdg(name: &str) -> (PathBuf, PathBuf) {
         let xdg = std::env::temp_dir().join(format!("shuppatsu-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&xdg);
-        let env = |k: &str| (k == "XDG_CONFIG_HOME").then(|| xdg.clone().into_os_string());
+        let env = |k: &str| (k == HOME_VAR).then(|| xdg.clone().into_os_string());
         let path = config_dir_in(env).unwrap().join("eeprom.dat");
         assert!(path.starts_with(&xdg), "{}", path.display());
         (xdg, path)

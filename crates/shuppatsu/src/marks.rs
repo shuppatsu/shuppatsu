@@ -549,6 +549,11 @@ mod tests {
         let home = |k: &str| (k == "HOME").then(|| "/home/a".into());
         if cfg!(windows) {
             assert!(dir_in(xdg).unwrap().ends_with("shuppatsu/marks"));
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(
+                dir_in(xdg).unwrap(),
+                Path::new("/home/a/Library/Application Support/shuppatsu/marks")
+            );
         } else {
             assert_eq!(dir_in(xdg).unwrap(), Path::new("/x/data/shuppatsu/marks"));
             assert_eq!(

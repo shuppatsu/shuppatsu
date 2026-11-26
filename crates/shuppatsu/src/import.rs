@@ -101,10 +101,8 @@ fn extension(path: &Path) -> String {
 
 /// `dir/name`, matching the name without regard to case (disc copies keep the disc's case).
 fn find_ignoring_case(dir: &Path, name: &str) -> Option<PathBuf> {
-    let exact = dir.join(name);
-    if exact.is_file() {
-        return Some(exact);
-    }
+    // Always from the listing, never dir.join(name): on a case-insensitive file system (macOS,
+    // Windows) that would "find" the file under our spelling, not its own.
     std::fs::read_dir(dir)
         .ok()?
         .flatten()
@@ -519,6 +517,14 @@ mod tests {
                 import_dir_in(env(&[("LOCALAPPDATA", "C:\\Users\\a\\AppData\\Local")])),
                 Some(PathBuf::from(
                     "C:\\Users\\a\\AppData\\Local\\shuppatsu\\game"
+                ))
+            );
+        } else if cfg!(target_os = "macos") {
+            // XDG_DATA_HOME is not for Mac apps.
+            assert_eq!(
+                import_dir_in(env(&[("XDG_DATA_HOME", "/x"), ("HOME", "/Users/a")])),
+                Some(PathBuf::from(
+                    "/Users/a/Library/Application Support/shuppatsu/game"
                 ))
             );
         } else {
