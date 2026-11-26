@@ -20,7 +20,25 @@ unofficial fan project, not affiliated with the game's publishers (see [Legal](#
 (*shuppatsu shinkō*), the call a Japanese driver makes when the starting signal clears.
 
 <!-- Screenshots: images of the running game are derived from game data, so they are not
-     committed to this repository (see "Legal"). Link to externally hosted ones here. -->
+     committed to this repository (see "Legal"). These are GitHub attachments; how they were
+     rendered is in docs/recomplauncher-listing.md, "Screenshots". -->
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/4e68daed-87f6-476a-a334-3e972b24bbb0" width="42%"
+       alt="The original approaching Yūrakuchō: 640×480, in Japanese, the view ends at 320 m">
+  <img src="https://github.com/user-attachments/assets/1851e4d5-d8c1-4204-baaf-e655aefc0208" width="56%"
+       alt="Shuppatsu at the same moment: 16:9 in English, the city and Tokyo Tower beyond 320 m">
+  <br>
+  <sub><b>The original</b> at 640×480 &nbsp;·&nbsp; <b>Shuppatsu</b> at 16:9: anti-aliasing,
+  four times the draw distance, English</sub>
+</p>
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/a6055cec-2086-42c7-8aa5-773f6d39496b" width="32%"
+       alt="Approaching Amagasaki on the Tōkaidō Line, a 223 alongside">
+  <img src="https://github.com/user-attachments/assets/0aab6096-eef6-4fbe-88ee-14855c845d85" width="32%"
+       alt="The Hokuhoku Line at 131 km/h">
+  <img src="https://github.com/user-attachments/assets/2def0eef-6f4e-4da3-aab7-cbd5e5640b6d" width="32%"
+       alt="The Akita Shinkansen in snow, a Reduce 70 signal ahead">
+</p>
 
 ## Quick start
 
