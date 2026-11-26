@@ -125,6 +125,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: .github/release-notes.md
+          sparse-checkout-cone-mode: false
+          path: src
       - uses: actions/download-artifact@v8
         with:
           path: dist
@@ -138,6 +143,8 @@ jobs:
           cat SHA256SUMS.txt
           pre=""
           case "$GITHUB_REF_NAME" in *-*) pre="--prerelease" ;; esac
+          # The download table (which file is for whom) first, then GitHub's change list.
+          sed "s/@TAG@/$GITHUB_REF_NAME/g" ../src/.github/release-notes.md > ../notes.md
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag $pre \
-            --title "Shuppatsu $GITHUB_REF_NAME" --generate-notes \
+            --title "Shuppatsu $GITHUB_REF_NAME" --notes-file ../notes.md --generate-notes \
             Shuppatsu-* SHA256SUMS.txt
