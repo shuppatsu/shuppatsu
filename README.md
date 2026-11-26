@@ -9,7 +9,7 @@
 
 **Shuppatsu** (出発): an open-source engine for playing **Densha de GO! 2 Kōsoku-hen
 3000-bandai** (電車でGO！２ 高速編 ３０００番台) from your own disc, written from scratch in Rust
-for Linux and Windows. The routes, models, textures, sounds, music and the original's own
+for Linux, Windows and (experimental) macOS. The routes, models, textures, sounds, music and the original's own
 tables are read from the disc's files at runtime.
 
 It is a new engine. It is not an emulator, not a wrapper around the original exe and not a
@@ -67,7 +67,7 @@ has not been tested on a Mac yet. Details: [Getting started](#getting-started).
 * **Controllers**: gamepads and the Densha de GO! controllers, together with the keyboard.
 * **Sharper and farther**: twice the draw distance, anti-aliasing, anisotropic filtering, no LOD
   pop, and [texture packs](docs/texture-packs.md).
-* **Native on Linux and Windows**, Steam Deck sized (1280×800 by default); no CD in the drive.
+* **Native on Linux, Windows and macOS** (experimental), Steam Deck sized (1280×800 by default); no CD in the drive.
 
 ## Contents
 
