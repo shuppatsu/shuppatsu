@@ -62,15 +62,22 @@ They are rendered headless into the gitignored `out/screenshots/`:
 ```sh
 printf '0 0 0\n200 5 0\n' > go.txt     # power notch 5 from tick 200
 E="--lang en --hud-layout enhanced --msaa 8 --draw-distance max --hud-upscale --anisotropic 16 --inputs go.txt"
-O="--lang en --hud-layout original --no-msaa --draw-distance original --original-visibility --inputs go.txt"
+# the original as it ran: 640×480, Japanese, every enhancement off
+O="--lang ja --hud-layout original --no-msaa --draw-distance original --no-wide-visibility
+   --no-far-traffic --no-max-lod --no-even-track-width --no-early-activation --no-distance-fade
+   --no-fine-depth --no-wide-weather --inputs go.txt"
 shuppatsu play 15 $E --size 3840x2160 --shot 3000:tokaido.ppm   # Amagasaki, a 223 passing
 shuppatsu play 9  $E --size 3840x2160 --shot 3000:hokuhoku.ppm  # Saigata, 131 km/h
 shuppatsu play 18 $E --size 3840x2160 --shot 3000:akita.ppm     # Yarimiuchi, signal, snow
-shuppatsu play 18 $O --size 1440x1080 --shot 3000:compare-original-4x3.ppm
-shuppatsu play 18 $E --size 2560x1080 --shot 3000:compare-shuppatsu-21x9.ppm
-shuppatsu shot akita1a.com --at 2000 --size 3840x2160 --msaa 8 --draw-distance max \
-  --anisotropic 16 --out hero.ppm                               # no HUD; cover: centre 2:3 crop
+shuppatsu play 18 $O --size 640x480 --shot 3000:compare-original-4x3.ppm   # shown ×2, point-sampled
+shuppatsu play 18 $E --size 2240x960 --shot 3000:compare-shuppatsu-21x9.ppm
+A="--size 3840x2160 --msaa 8 --draw-distance max --anisotropic 16"         # no HUD
+shuppatsu shot keihin1c.com --at 650 $A --out hero.ppm     # Keihin-Tōhoku at sunset, two trains
+shuppatsu shot keihin1c.com --at 1450 $A --out cover.ppm   # a crowded platform
 ```
+
+The cover is the centre 2:3 of `cover.ppm` at 800×1200, darkened at the top, with the
+station-board logo (`assets/logo/header-dark.svg`, 720 px wide) over it.
 
 The before/after pair is the same moment: the original's 4:3 look against widescreen with
 every enhancement on. Uploaded images and where they are used are listed in the README's top
